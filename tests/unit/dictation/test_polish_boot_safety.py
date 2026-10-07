@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -123,7 +124,7 @@ def test_no_module_under_jarvis_brain_calls_the_polish_pass() -> None:
     offenders: list[str] = []
     for path in sorted(_BRAIN_DIR.rglob("*.py")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        if "dictation.polish" in text or "polish_transcript" in text:
+        if re.search(r"\bdictation\.polish\b", text) or "polish_transcript" in text:
             offenders.append(str(path.relative_to(_REPO_ROOT)))
     assert offenders == [], offenders
 

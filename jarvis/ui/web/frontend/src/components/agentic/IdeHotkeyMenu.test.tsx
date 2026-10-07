@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { CTRL_HINT_DELAY_MS, IdeHotkeyMenu } from "./IdeHotkeyMenu";
+import { IdeHotkeyMenu } from "./IdeHotkeyMenu";
 import type { IdeHotkeyAction } from "./ideHotkeys";
 
 const AGENTS = [{ name: "claude", label: "Claude Code" }, { name: "codex", label: "Codex" }];
@@ -12,103 +12,113 @@ function setup(enabled = true) {
   const passed: number[] = [];
   const view = render(<>
     <textarea aria-label="terminal" onKeyDown={(event) => terminalKeys.push(event.key)} />
-    <IdeHotkeyMenu enabled={enabled} agents={AGENTS} pane="T1" onAction={(action) => actions.push(action)} onRenamePane={(name) => renames.push(name)} onPassThrough={() => passed.push(1)} />
+    <IdeHotkeyMenu enabled={enabled} agents={AGENTS} pane="T1" onAction={(action) => actions.push(action)}
+      onRenamePane={(name) => renames.push(name)} onPassThrough={() => passed.push(1)} />
   </>);
   const terminal = screen.getByLabelText("terminal");
   terminal.focus();
   const key = (init: KeyboardEventInit & { key: string }) => act(() => { fireEvent.keyDown(document.activeElement ?? terminal, init); });
   const leader = () => key({ key: "b", code: "KeyB", ctrlKey: true });
-  return { actions, renames, terminalKeys, passed, key, leader, view };
+  const isOn = () => screen.queryByRole("dialog", { name: "IDE shortcuts" }) !== null;
+  return { actions, renames, terminalKeys, passed, key, leader, isOn, view };
 }
 
 describe("IdeHotkeyMenu", () => {
-  it("Ctrl+B twice hands one Ctrl+B to the pane", () => {
-    const { leader, passed } = setup();
+  it("one Ctrl+B turns the mode on, without the terminal seeing the chord", () => {
+    const { leader, terminalKeys, isOn } = setup();
     leader();
-    leader();
-    expect(passed).toEqual([1]);
-    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
-  });
-
-  it("opens on Ctrl+B without the terminal ever seeing the chord", () => {
-    const { leader, terminalKeys } = setup();
-    leader();
-    expect(screen.getByRole("dialog", { name: "IDE shortcuts" })).toBeTruthy();
+    expect(isOn()).toBe(true);
+    expect(screen.getByText("PREFIX")).toBeTruthy();
     expect(screen.getByText("Claude Code")).toBeTruthy();
     expect(terminalKeys).toEqual([]);
   });
 
-  it("C then → asks for a Claude Code pane to the right, and swallows both keys", () => {
-    const { leader, key, actions, terminalKeys } = setup();
+  it("stays on across actions until Escape", () => {
+    const { leader, key, actions, isOn, terminalKeys } = setup();
+    leader();
+    key({ key: "ArrowLeft", code: "ArrowLeft" });
+    key({ key: "ArrowDown", code: "ArrowDown" });
+    key({ key: "v", code: "KeyV" });
+    expect(actions).toEqual([
+      { kind: "focus-pane", direction: "left" },
+      { kind: "focus-pane", direction: "down" },
+      { kind: "split", direction: "right" },
+    ]);
+    expect(isOn()).toBe(true);
+    key({ key: "Escape", code: "Escape" });
+    expect(isOn()).toBe(false);
+    expect(terminalKeys).toEqual([]);
+  });
+
+  it("C then → asks for a Claude Code pane to the right and stays on", () => {
+    const { leader, key, actions, isOn } = setup();
     leader();
     key({ key: "c", code: "KeyC" });
     expect(screen.getByText("CLAUDE CODE")).toBeTruthy();
     key({ key: "ArrowRight", code: "ArrowRight" });
     expect(actions).toEqual([{ kind: "spawn", agent: "claude", direction: "right" }]);
-    expect(terminalKeys).toEqual([]);
-    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
+    expect(screen.getByText("PREFIX")).toBeTruthy();
+    expect(isOn()).toBe(true);
   });
 
-  it("R asks for the new pane name and hands it over on Enter", () => {
+  it("swallows a key it does not use instead of typing it into the agent", () => {
+    const { leader, key, terminalKeys, isOn } = setup();
+    leader();
+    key({ key: "j", code: "KeyJ" });
+    expect(terminalKeys).toEqual([]);
+    expect(isOn()).toBe(true);
+  });
+
+  it("lets a Ctrl chord through and leaves the mode", () => {
+    const { leader, key, terminalKeys, isOn } = setup();
+    leader();
+    key({ key: "c", code: "KeyC", ctrlKey: true });
+    expect(terminalKeys).toEqual(["c"]);
+    expect(isOn()).toBe(false);
+  });
+
+  it("hands over the agent picker and leaves the mode for its dialog", () => {
+    const { leader, key, actions, isOn } = setup();
+    leader();
+    key({ key: "+", code: "BracketRight" });
+    expect(actions).toEqual([{ kind: "agent-picker" }]);
+    expect(isOn()).toBe(false);
+  });
+
+  it("Ctrl+B again hands one Ctrl+B to the pane and leaves", () => {
+    const { leader, passed, isOn } = setup();
+    leader();
+    leader();
+    expect(passed).toEqual([1]);
+    expect(isOn()).toBe(false);
+  });
+
+  it("R renames inside the bar and returns to the mode", () => {
     const { leader, key, renames } = setup();
     leader();
     key({ key: "r", code: "KeyR" });
-    const field = screen.getByRole("textbox", { name: /Rename T1/ });
+    const field = screen.getByRole("textbox", { name: "Rename T1" });
     fireEvent.change(field, { target: { value: "API" } });
     act(() => { fireEvent.submit(field.closest("form")!); });
     expect(renames).toEqual(["API"]);
+    expect(screen.getByText("PREFIX")).toBeTruthy();
   });
 
-  it("lets every key through while closed, and stays shut while disabled", () => {
-    const { key, terminalKeys } = setup(false);
+  it("? shows every key; the next key goes back to the bar", () => {
+    const { leader, key, isOn } = setup();
+    leader();
+    key({ key: "?", code: "Minus", shiftKey: true });
+    expect(screen.getByRole("region", { name: "All keys" })).toBeTruthy();
+    key({ key: "a", code: "KeyA" });
+    expect(screen.queryByRole("region", { name: "All keys" })).toBeNull();
+    expect(isOn()).toBe(true);
+  });
+
+  it("lets every key through while off, and stays off while disabled", () => {
+    const { key, terminalKeys, isOn } = setup(false);
     key({ key: "b", code: "KeyB", ctrlKey: true });
     key({ key: "c", code: "KeyC" });
-    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
+    expect(isOn()).toBe(false);
     expect(terminalKeys).toEqual(["b", "c"]);
-  });
-
-  describe("the Ctrl hint", () => {
-    afterEach(() => { vi.useRealTimers(); });
-
-    it("shows what B does once Ctrl is held alone, and opens the menu on click", () => {
-      vi.useFakeTimers();
-      const { key } = setup();
-      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
-      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS); });
-      const hint = screen.getByRole("button", { name: /opens the IDE key menu/ });
-      act(() => { fireEvent.mouseDown(hint); });
-      expect(screen.getByRole("dialog", { name: "IDE shortcuts" })).toBeTruthy();
-    });
-
-    it("never flashes during a quick Ctrl+C, and leaves when Ctrl is let go", () => {
-      vi.useFakeTimers();
-      const { key } = setup();
-      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
-      key({ key: "c", code: "KeyC", ctrlKey: true });
-      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS * 2); });
-      expect(screen.queryByRole("button", { name: /opens the IDE key menu/ })).toBeNull();
-      key({ key: "Control", code: "ControlLeft", ctrlKey: true });
-      act(() => { vi.advanceTimersByTime(CTRL_HINT_DELAY_MS); });
-      expect(screen.getByRole("button", { name: /opens the IDE key menu/ })).toBeTruthy();
-      act(() => { fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" }); });
-      expect(screen.queryByRole("button", { name: /opens the IDE key menu/ })).toBeNull();
-    });
-  });
-
-  it("shows a PREFIX mode bar, and ? opens the full key list", () => {
-    const { leader, key } = setup();
-    leader();
-    expect(screen.getByText("PREFIX")).toBeTruthy();
-    key({ key: "?", code: "Minus", shiftKey: true });
-    expect(screen.getByText("All keys")).toBeTruthy();
-    key({ key: "a", code: "KeyA" });
-    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
-  });
-
-  it("Escape closes the menu", () => {
-    const { leader, key } = setup();
-    leader();
-    key({ key: "Escape", code: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "IDE shortcuts" })).toBeNull();
   });
 });

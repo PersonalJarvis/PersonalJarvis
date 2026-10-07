@@ -11,24 +11,24 @@ every PR red for reasons it did not cause. The ratchet splits the two:
 * any other failure is NEW — it blocks the change that introduced it;
 * a known failure that now passes is reported so the baseline can shrink
   (``update`` rewrites it from a full run; it may only get smaller in review);
-* ``flaky_files`` lists test FILES whose tests flip between runs on a busy
-  runner (timing-sensitive). Any failure inside such a file is known. It is
-  kept by hand, ``update`` preserves it, and it stays short on purpose.
+* Historical ``flaky_files`` metadata is informational. Only exact known
+  test identities can be waived; a new failure in a flaky file still blocks.
 
 Commands::
 
     ratchet_tests.py check --baseline B.json report*.json     # per shard, blocking
     ratchet_tests.py summary --baseline B.json --floor report*.json
     ratchet_tests.py update --out B.json report*.json          # regenerate
+    ratchet_tests.py prune --baseline B.json --os linux run1/ run2/ run3/
     ratchet_tests.py durations --out D.json dur*.json          # merge timing caches
 
-A missing baseline file means "not bootstrapped yet": ``check`` reports and
-passes, so a first run on a new OS leg can produce its own baseline.
+A missing baseline means no failures have been approved for that OS.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -67,17 +67,6 @@ def load_flaky_files(path: Path | None) -> list[str]:
     return list(json.loads(path.read_text(encoding="utf-8")).get("flaky_files", []))
 
 
-def in_flaky_file(test_id: str, flaky_files: list[str]) -> bool:
-    """True when ``test_id`` (dotted ``module::name`` or ``path::<crash>``) lives
-    in one of ``flaky_files`` (repo-relative ``.py`` paths)."""
-    head = test_id.split("::", 1)[0]
-    for file in flaky_files:
-        dotted = file[:-3].replace("/", ".") if file.endswith(".py") else file
-        if head == file or head == dotted or head.startswith(dotted + "."):
-            return True
-    return False
-
-
 def failed_ids(reports: list[dict]) -> set[str]:
     return {normalize(fid) for report in reports for fid in report.get("failed_ids", [])}
 
@@ -89,17 +78,40 @@ def _summary(lines: list[str]) -> None:
             handle.write("\n".join(lines) + "\n")
 
 
+def partition_errors(reports: list[dict], expected_shards: int) -> list[str]:
+    """Prove all files were assigned exactly once, not merely a passed-count floor."""
+    wanted = {f"{i}/{expected_shards}" for i in range(1, expected_shards + 1)}
+    if len(reports) != expected_shards or {r.get("shard") for r in reports} != wanted:
+        return ["missing or duplicate shard reports"]
+    if any(not isinstance(r.get("file_paths"), list) for r in reports):
+        return ["shard reports lack file-level coverage evidence"]
+    files = [file for r in reports for file in r["file_paths"]]
+    if len(files) != len(set(files)):
+        return ["test files were assigned to multiple shards"]
+    digest = hashlib.sha256("\n".join(sorted(files)).encode("utf-8")).hexdigest()
+    if any(r.get("suite_files") != len(files) or r.get("suite_digest") != digest for r in reports):
+        return ["shard coverage does not match the discovered suite"]
+    return []
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     reports = load_reports(args.reports)
+    if not reports or any(
+        not isinstance(r.get("failed_ids"), list)
+        or not isinstance(r.get("counts"), dict)
+        or r.get("files", 0) < 1
+        or r.get("counts", {}).get("tests", 0) < 1
+        or (r.get("counts", {}).get("failed", 0) > 0 and not r.get("failed_ids"))
+        for r in reports
+    ):
+        print("::error::Missing, empty, or malformed test evidence")
+        return 1
     baseline = load_baseline(args.baseline)
     failures = failed_ids(reports)
     if baseline is None:
-        print(f"[ratchet] no baseline at {args.baseline} - report-only bootstrap mode")
-        for fid in sorted(failures):
-            print(f"  failing: {fid}")
-        return 0
-    flaky_files = load_flaky_files(args.baseline)
-    new = sorted(f for f in failures - baseline if not in_flaky_file(f, flaky_files))
+        print(f"[ratchet] no baseline at {args.baseline} - every failure is new")
+        baseline = set()
+    new = sorted(failures - baseline)
     known = sorted(set(failures) - set(new))
     flaky = sorted({f for r in reports for f in r.get("flaky_files", [])})
     print(f"[ratchet] {len(failures)} failing ids: {len(new)} new, {len(known)} known (baselined)")
@@ -127,6 +139,12 @@ def cmd_summary(args: argparse.Namespace) -> int:
         for key in counts:
             counts[key] += report.get("counts", {}).get(key, 0)
     status = 0
+    if args.expected_shards:
+        errors = partition_errors(reports, args.expected_shards)
+        for error in errors:
+            print(f"::error::{error}")
+        if errors:
+            status = 1
     lines = [
         f"### Test suite ({len(reports)} shards)",
         "",
@@ -146,7 +164,10 @@ def cmd_summary(args: argparse.Namespace) -> int:
         fixed = sorted(baseline - failed_ids(reports))
         if fixed:
             lines.append("")
-            lines.append(f"{len(fixed)} baselined failure(s) now pass — shrink the baseline:")
+            lines.append(
+                f"{len(fixed)} baseline failure(s) not observed; confirm they passed "
+                "rather than skipped before removing them:"
+            )
             lines.extend(f"- `{fid}`" for fid in fixed[:50])
     slowest = max(reports, key=lambda r: float(r.get("elapsed_seconds", 0)))
     lines.append(f"Slowest shard: {slowest.get('shard')} ({slowest.get('elapsed_seconds')} s)")
@@ -174,6 +195,46 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def junit_outcomes(run_dir: Path, os_name: str) -> dict[str, str]:
+    """Outcome per test id in one run's merged JUnit files; any failure wins."""
+    import xml.etree.ElementTree as ET
+
+    outcomes: dict[str, str] = {}
+    for path in sorted(run_dir.rglob(f"junit-{os_name}-*.xml")):
+        root = ET.parse(path).getroot()  # noqa: S314 - our own CI artifact
+        for case in root.iter("testcase"):
+            fid = normalize(f"{case.get('classname', '')}::{case.get('name', '')}")
+            if case.find("failure") is not None or case.find("error") is not None:
+                outcomes[fid] = "failed"
+            elif case.find("skipped") is not None:
+                outcomes.setdefault(fid, "skipped")
+            elif outcomes.get(fid) != "failed":
+                outcomes[fid] = "passed"
+    return outcomes
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    """Drop baseline entries that PASSED (not skipped) in every given full run.
+
+    Each positional directory holds one run's downloaded ``tests-<os>-*``
+    artifacts. Requiring several runs keeps tests that flip between runs.
+    """
+    data = json.loads(args.baseline.read_text(encoding="utf-8"))
+    known = data.get("known_failures", [])
+    runs = [junit_outcomes(run_dir, args.os) for run_dir in args.runs]
+    if not runs or any(not run for run in runs):
+        print("::error::every run directory needs JUnit evidence for this OS")
+        return 1
+    proven = {fid for fid in known if all(run.get(normalize(fid)) == "passed" for run in runs)}
+    data["known_failures"] = [fid for fid in known if fid not in proven]
+    args.baseline.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"[ratchet] pruned {len(proven)} of {len(known)} known failures "
+        f"(passed in all {len(runs)} runs); {len(data['known_failures'])} remain"
+    )
+    return 0
+
+
 def cmd_durations(args: argparse.Namespace) -> int:
     merged: dict[str, float] = {}
     if args.base and args.base.is_file():
@@ -197,10 +258,15 @@ def main(argv: list[str] | None = None) -> int:
     summary = sub.add_parser("summary")
     summary.add_argument("--baseline", type=Path)
     summary.add_argument("--floor", action="store_true")
+    summary.add_argument("--expected-shards", type=int)
     summary.add_argument("reports", nargs="+", type=Path)
     update = sub.add_parser("update")
     update.add_argument("--out", type=Path, required=True)
     update.add_argument("reports", nargs="+", type=Path)
+    prune = sub.add_parser("prune")
+    prune.add_argument("--baseline", type=Path, required=True)
+    prune.add_argument("--os", required=True, choices=["linux", "windows", "macos"])
+    prune.add_argument("runs", nargs="+", type=Path)
     durations = sub.add_parser("durations")
     durations.add_argument("--base", type=Path)
     durations.add_argument("--out", type=Path, required=True)
@@ -210,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "summary": cmd_summary,
         "update": cmd_update,
+        "prune": cmd_prune,
         "durations": cmd_durations,
     }[args.cmd]
     return handler(args)

@@ -4,14 +4,13 @@ import { create } from "zustand";
  * The Agentic IDE's right-hand side panel: open or shut, which tabs it holds,
  * and which one is in front.
  *
- * Two places need the answer and neither can reach the other by props: the
- * toggle lives in the window caption (`TopBar`), the panel itself inside the
- * IDE view. The state survives a reload through localStorage, which may be
+ * The panel, its closed-state rail and the explorer path routing all need the
+ * answer, so it lives in one store. The state survives a reload through localStorage, which may be
  * blocked — every read and write degrades to the defaults instead of throwing.
  */
 
 /** Every function the panel can show. A new one is a new id plus a registry entry. */
-export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "office" | `terminal:${string}`;
+export type SidePanelTabId = "agents" | "changes" | "files" | "search" | "git" | "skills" | "subscriptions" | "office" | `terminal:${string}`;
 
 export interface SidePanelTerminal {
   id: `terminal:${string}`;
@@ -22,7 +21,7 @@ export interface SidePanelTerminal {
 
 export const MAX_TERMINAL_TABS = 16;
 
-export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "office"];
+export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "search", "git", "skills", "subscriptions", "office"];
 
 /**
  * DOM id of the panel host, for the toggle's `aria-controls`.
@@ -93,7 +92,6 @@ interface IdeSidePanelState {
   terminals: SidePanelTerminal[];
   addTerminalTab: (workspaceId: string, workspaceName: string) => void;
   setOpen: (open: boolean) => void;
-  toggle: () => void;
   /** Open a tab (or bring it forward when it is already open). */
   openTab: (id: SidePanelTabId) => void;
   select: (id: SidePanelTabId) => void;
@@ -150,7 +148,6 @@ export const useIdeSidePanelStore = create<IdeSidePanelState>((set, get) => {
       if (!open) set({ spotlight: null, maximized: false, inUse: false });
       commit({ open });
     },
-    toggle: () => get().setOpen(!get().open),
     openTab: (id) => {
       const { tabs } = get();
       commit({ open: true, tabs: tabs.includes(id) ? tabs : [...tabs, id], active: id });

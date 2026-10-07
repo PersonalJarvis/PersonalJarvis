@@ -528,6 +528,35 @@ def test_safe_mode_capability_probe_is_cached(monkeypatch: pytest.MonkeyPatch) -
     assert calls == 1
 
 
+@pytest.mark.parametrize(
+    ("returncode", "stderr", "expected"),
+    [
+        # A CLI that knows the hidden flag rejects the probe value by name.
+        (1, "error: option '--thinking-display <display>' argument 'probe' is invalid.", True),
+        # An older CLI ignores the flag next to --version and prints its version.
+        (0, "", False),
+    ],
+)
+def test_thinking_display_probe_reads_the_rejection(
+    monkeypatch: pytest.MonkeyPatch, returncode: int, stderr: str, expected: bool
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(
+            argv, returncode, stdout="2.1.0 (Claude Code)", stderr=stderr
+        )
+
+    monkeypatch.setattr(claude_auth.subprocess, "run", fake_run)
+
+    assert claude_auth.claude_cli_thinking_display_known(["claude"]) is False
+    assert claude_auth.claude_cli_supports_thinking_display(["claude"]) is expected
+    assert claude_auth.claude_cli_supports_thinking_display(["claude"]) is expected
+    assert claude_auth.claude_cli_thinking_display_known(["claude"]) is expected
+    assert calls == [["claude", "--thinking-display", "probe", "--version"]]
+
+
 def test_windows_cmd_resolves_to_adjacent_node_entrypoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -53,9 +53,6 @@ vi.mock("@/views/settings/LanguagesGroup", () => ({
 vi.mock("@/views/settings/AppSettingsGroup", () => ({
   AppSettingsGroup: () => null,
 }));
-vi.mock("@/views/settings/JarvisApiGroup", () => ({
-  JarvisApiGroup: () => null,
-}));
 // RealtimeVoiceGroup uses react-query (useVoiceMode) and needs a
 // QueryClientProvider this test doesn't set up — silence it like the other
 // sibling groups above, unrelated to wake-word.

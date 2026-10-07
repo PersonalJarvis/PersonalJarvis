@@ -110,7 +110,9 @@ def _validated_chat_runner(
 
 
 class CreateAgentBody(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    #: Empty = one-click creation: placeholder name, random look, and the agent
+    #: proposes its own identity in its first conversation.
+    name: str | None = Field(default=None, max_length=40)
     title: str = ""
     description: str = ""
     tier: str = "specialist"
@@ -191,6 +193,10 @@ class MessageBody(BaseModel):
 class ChatGroupBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     members: list[str] = Field(min_length=2, max_length=50)
+
+
+class MeetingMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8_000)
 
 
 class AssignBody(BaseModel):
@@ -341,6 +347,10 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         )
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    progression = getattr(request.app.state, "progression", None)
+    if created and progression is not None:
+        # Growing the team levels the person up (jarvis/progression).
+        await progression.note_agent_hired(agent.agent_id)
     return {
         "agent": agent.to_dict(),
         "created": created,
@@ -439,6 +449,9 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
 
     try:
         session = ensure_session(svc, rt.config(), agent)
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session.session_id)
     except PermissionError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
@@ -509,7 +522,7 @@ async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[s
         raise HTTPException(422, "group members must be unique")
     for member_id in members:
         agent = await rt.roster.get(member_id)
-        if agent is None or agent.tier == "lead" or agent.state == "archived":
+        if agent is None or agent.state == "archived":
             raise HTTPException(422, f"agent {member_id} is unavailable for a group")
     return members
 
@@ -519,6 +532,39 @@ async def list_chat_groups(request: Request) -> dict[str, Any]:
     """List persistent Society group chats and their members."""
     rt = await _runtime(request)
     return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.get("/chat-groups/{group_id}/meeting")
+async def get_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Read the shared meeting transcript without starting an agent turn."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting", openapi_extra={"x-jarvis-dangerous": True})
+async def send_group_meeting(
+    group_id: str, body: MeetingMessageBody, request: Request,
+) -> dict[str, Any]:
+    """Ask each group member for one contribution in the shared meeting."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.start(group_id, body.text)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting/stop", openapi_extra={"x-jarvis-dangerous": True})
+async def stop_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Stop the group's meeting without interrupting unrelated agent work."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.stop(group_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
 
 
 @router.post("/chat-groups")
@@ -541,7 +587,10 @@ async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
     members = await _valid_group_members(rt, body.members)
-    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+    async with rt.meetings.group_mutation():
+        if rt.meetings.is_running(group_id):
+            raise HTTPException(409, "Stop the meeting before changing its members.")
+        return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
 
 
 @router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
@@ -550,7 +599,12 @@ async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
     rt = await _runtime(request)
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
-    await rt.store.delete_chat_group(group_id)
+    async with rt.meetings.group_mutation():
+        try:
+            await rt.meetings.stop(group_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        await rt.store.delete_chat_group(group_id)
     return {"deleted": True}
 
 
@@ -759,6 +813,40 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
 
 
 # --------------------------------------------------------------- providers
+
+
+class ProviderPrefsBody(BaseModel):
+    """The agents' provider choices from the API Keys page (any field may be left out)."""
+
+    disabled: list[str] | None = Field(default=None, max_length=256)
+    api_only: list[str] | None = Field(default=None, max_length=256)
+    hidden_models: dict[str, list[str]] | None = None
+
+
+@router.get("/provider-prefs", summary="Which providers and models the agents may run on")
+def get_provider_prefs() -> dict[str, Any]:
+    from jarvis.agent_chat import agent_provider_prefs
+
+    return agent_provider_prefs.load().to_dict()
+
+
+@router.put("/provider-prefs", summary="Turn providers and models on or off for the agents")
+def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
+    """Merge the given fields into the saved choices; ids outside the
+    agents' catalog are refused so a typo cannot hide a seat for good."""
+    from jarvis.agent_chat import agent_provider_prefs
+    from jarvis.agent_chat.catalog import offers
+
+    current = agent_provider_prefs.load().to_dict()
+    patch = body.model_dump(exclude_none=True)
+    ids = set(patch.get("disabled", [])) | set(patch.get("api_only", [])) | set(
+        patch.get("hidden_models", {})
+    )
+    unknown = sorted(i for i in ids if not offers(agent_provider_prefs.AGENT_SURFACE, i))
+    if unknown:
+        raise HTTPException(422, f"Not an agent provider: {', '.join(unknown)}")
+    saved = agent_provider_prefs.save(agent_provider_prefs.parse({**current, **patch}))
+    return saved.to_dict()
 
 
 class ModelBody(BaseModel):
@@ -971,13 +1059,12 @@ async def agent_browser_status(agent_id: str, request: Request) -> dict[str, Any
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    return rt.browser.status_for(agent)
+    return await asyncio.to_thread(rt.browser.status_for, agent)
 
 
 @router.post("/agents/{agent_id}/browser/login", openapi_extra={"x-jarvis-dangerous": True})
 async def agent_browser_login(agent_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
-    """Open the agent's browser profile headed so the person can sign in once.
-    Returns when the window is closed, /login/done is called, or 15 minutes pass."""
+    """Take manual control of the same live browser for website sign-in."""
     from jarvis.society.browser.session import BrowserUnavailable
 
     rt = await _runtime(request)

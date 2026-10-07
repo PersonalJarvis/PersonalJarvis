@@ -167,6 +167,20 @@ async def test_ready_provider_opens_after_one_probe(call, make_provider):
         assert len(live.provider.opened_with) == 1
         assert live.sent("error_spoken") == []
         assert len(live.sent("audio_ready")) == 1
+        assert live.sent("audio_ready")[0]["sound_effects"] is True
+    finally:
+        await live.session.end()
+
+
+@both_providers
+@pytest.mark.asyncio
+async def test_readiness_cue_respects_the_shared_sound_effects_switch(call, make_provider):
+    config = _config()
+    config.ui = SimpleNamespace(sound_effects=False)
+    live = call(make_provider(), config)
+    await live.start()
+    try:
+        assert live.sent("audio_ready")[0]["sound_effects"] is False
     finally:
         await live.session.end()
 
@@ -276,10 +290,12 @@ async def test_slow_tool_releases_the_model_with_an_honest_pending_result(
         assert gateway.finished == []  # the tool itself was not cancelled
         assert session._has_pending_work()  # its receipt is still owed
         release.set()
-        for _ in range(50):
-            if not session._has_pending_work():
-                break
-            await asyncio.sleep(0.01)
+        # Await the released work itself instead of polling a wall clock: its
+        # receipt lands after the tool body returns, which a loaded Windows CI
+        # runner can stretch past half a second.
+        await asyncio.wait_for(
+            asyncio.gather(*[job for job in session._jobs if not job.done()]), 5.0
+        )
         assert gateway.finished == ["search_web"]
         assert not session._has_pending_work()
         assert len(connection.tool_results) == 1  # the late result is not re-sent

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "miro",
+  "version": "1.0.0",
+  "description": "Read and create content on your Miro boards",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Miro",
+      "category": "Media & Creativity",
+      "logo_slug": "miro",
+      "logo_color": "050038",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.miro.com/",
+        "discovery_url": "https://mcp.miro.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.miro.com/",
+        "auth_header_template": "Authorization: Bearer ${plugin_miro_access_token}"
+      },
+      "post_install_hint_md": "Sign in with Miro and choose the team Jarvis may access."
+    }
+  }
+}

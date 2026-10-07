@@ -316,7 +316,7 @@ export function PetsView() {
                       onSelect={() => choose(NO_PET_ID)}
                       selectedLabel={t("pets.selected")}
                     >
-                      <PetControlStripPreview size="sm" />
+                      <PetControlStripPreview size="sm" companion />
                     </PetTile>
                   </li>
                   {data.pets.map((pet) => (
@@ -416,7 +416,7 @@ function ActivePetCard({
             {stateLabel}
           </span>
         )}
-        <PetControlStripPreview />
+        <PetControlStripPreview companion />
       </div>
 
       <div className="flex min-w-0 flex-col">

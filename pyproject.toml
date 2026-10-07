@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "2.8.0"
+version = "2.9.0"
 description = "Turn your computer into an AI agent that coordinates apps, tools, models, and other agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -65,6 +65,16 @@ dependencies = [
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
     "json-repair>=0.30",
+    # The code editor detects the encoding of non-UTF-8 text files with it
+    # (lazy import); already installed through requests, declared because
+    # Jarvis imports it directly.
+    "charset-normalizer>=3.4",
+    # The code editor's Python completions, hovers and go-to-definition
+    # (static analysis, lazy import; pure Python).
+    "jedi>=0.19",
+    # The code editor's delete moves files to the system trash (Recycle Bin,
+    # macOS Trash, freedesktop trash) instead of erasing them; pure Python.
+    "Send2Trash>=1.8.3",
     # Current security fixes on every architecture. The reviewed native index
     # supplies Intel macOS and Windows ARM64 wheels without end-user compilers.
     "cryptography>=50.0.2",
@@ -327,14 +337,13 @@ desktop = [
     "winrt-Windows.Media.Control>=3.2; sys_platform == 'win32'",
     "pystray>=0.19",
     "pywebview>=5.3",
-    # macOS needs pynput for Computer-Use keyboard actuation and the has_hotkey
-    # capability probe; its global hotkeys run on a listen-only Quartz event tap
-    # instead (jarvis/trigger/backends/quartz.py, BUG-077). Linux keeps
-    # pyautogui/no-op fallbacks: pynput would otherwise compile evdev against
-    # host kernel headers, breaking the advertised [full] install on a stock
-    # headless image. ptyprocess is the POSIX terminal backend; Windows keeps
-    # pywinpty above.
-    "pynput>=1.7; sys_platform == 'darwin'",
+    # macOS Computer-Use keyboard actuation and Windows AppShot key events.
+    # macOS global hotkeys use a listen-only Quartz event tap (BUG-077).
+    # Linux retains pyautogui/no-op fallbacks to avoid compiling evdev against
+    # host kernel headers on stock headless images. Windows AppShot shortcuts
+    # use key events so brief taps are never polled away. ptyprocess is the
+    # POSIX terminal backend; Windows keeps pywinpty above.
+    "pynput>=1.7; sys_platform == 'darwin' or sys_platform == 'win32'",
     "ptyprocess>=0.7; sys_platform != 'win32'",
     # Screen capture (mss) + desktop input automation (pyautogui) — all-platform
     # desktop deps that need a display (useless on a headless VPS). Both are
@@ -353,6 +362,9 @@ desktop = [
     # so the dep is unsatisfiable there for every CPython. The indicator's
     # probe already degrades to a logged no-op where PySide6 is absent.
     "pyside6-essentials>=6.7; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    # Wayland screen recording uses Qt's user-approved ScreenCast portal.
+    "pyside6-addons>=6.7; sys_platform == 'linux' and platform_machine != 'aarch64'",
+    "av>=14; sys_platform != 'win32' or platform_machine != 'ARM64'",
     # Drag-drop ONTO the floating overlay (bar/mascot): the cross-platform tkdnd
     # Tcl extension, with bundled binaries for Windows / macOS / Linux. Registered
     # onto the live Tk root in place (jarvis/overlay/drop_target.py). All-platform
@@ -485,6 +497,11 @@ tts-eval = [
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
+# Same entry point under the product name, so `personal-jarvis` in a terminal
+# starts (and `personal-jarvis update` updates) the app exactly like `jarvis`.
+# Never add a `personaljarvis` alias: Windows paths ignore case, and the venv's
+# Scripts folder already holds `PersonalJarvis.exe`, the branded launcher.
+personal-jarvis = "jarvis.__main__:main"
 # Phase 8.5 — Review-Pipeline-Run-GC (Plan §6.5).
 jarvis-review-gc = "jarvis.cli.review_gc:main"
 # Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).
@@ -681,6 +698,14 @@ spotify = "jarvis.plugins.tool.spotify_rest:SpotifyRestTool"
 # (AP-5/AP-14). Entry-point name matches the catalog native_tool + token-store
 # key "youtube_music".
 youtube_music = "jarvis.plugins.tool.youtube_music_rest:YouTubeMusicRestTool"
+# Slack (marketplace plugin, 2026-10-05) — search/read/post over the Slack Web
+# API with the marketplace-stored user token. Native rather than Slack's hosted
+# MCP server: Slack admits only Marketplace-listed or internal apps to that
+# server, and the shared publisher app is a distributed but unlisted app.
+# Router-tier; reads are "safe", posting keeps "ask" (echo-confirm). Never a
+# spawn (AP-5/AP-14). Entry-point name matches the catalog native_tool +
+# token-store key "slack".
+slack = "jarvis.plugins.tool.slack_rest:SlackRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"
@@ -823,7 +848,11 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["jarvis*"]
+# ``conductor`` is the scheduled-jobs engine behind /api/conductor/* and the
+# ``jarvis conductor`` commands. Left out, it imported only when the app ran
+# with the checkout as its working directory (run.bat), so the console script,
+# autostart and every wheel install served no Conductor API at all.
+include = ["jarvis*", "conductor*"]
 exclude = ["*.__pycache__", "*.__pycache__.*"]
 
 [tool.setuptools.exclude-package-data]
@@ -831,6 +860,8 @@ exclude = ["*.__pycache__", "*.__pycache__.*"]
 "*" = ["*.pyc", "*.pyo", "**/__pycache__/*"]
 
 [tool.setuptools.package-data]
+# Read via Path(__file__) by conductor.core.store / conductor.core.seed.
+conductor = ["core/schema.sql", "seed/*.yaml"]
 jarvis = [
     "ui/web/dist/**/*",
     "ui/web/dist/*",

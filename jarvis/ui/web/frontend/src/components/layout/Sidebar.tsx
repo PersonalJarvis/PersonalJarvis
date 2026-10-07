@@ -2,7 +2,6 @@ import {
   Loader2,
   Mic,
   ChevronDown,
-  ChevronLeft,
   MoreHorizontal,
   Plus,
 } from "lucide-react";
@@ -25,18 +24,19 @@ import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
-import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
+import { LazyIdeProjectTree } from "@/components/agentic/LazyIdeProjectTree";
+import { IDE_SECTIONS } from "@/lib/ideSections";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
-// The query alone, not ./PublishIdentity: the sign-in UI stays out of the entry chunk.
-import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
+import { usePublishIdentity } from "@/hooks/usePublishIdentity";
 import { PetMark } from "@/components/pets/PetMark";
 import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
 import { useAgentChatStore } from "@/store/agentChat";
+import { apiKeysHealthError } from "@/lib/apiKeysTab";
 
 // The person's most-used agents. The roster query and the agent faces live in
 // the society code, so they load on their own chunk, not in the sidebar's.
@@ -66,17 +66,6 @@ const UpdateButton = lazy(() =>
  * file is outside this change; once it lands these can go back to `cn`.
  */
 
-/**
- * The section ids the Agentic IDE answers to.
- *
- * Mirrors the nav row's own `matchIds` (see ./navGroups): the section has been
- * renamed twice and the older ids are still what some entry points set.
- */
-const IDE_SECTIONS: readonly string[] = [
-  "agentic-ide",
-  "chat-workspace",
-  "agentic-ide-classic",
-];
 
 /**
  * The voice status dot, in the three colours a status is allowed to have.
@@ -256,10 +245,7 @@ export function Sidebar({
   // amber "needs setup" state is intentionally NOT shown here: on a fresh install
   // every unconfigured section would light up and the bar would never be calm.
   const { health: sectionHealth } = useSectionHealth();
-  const apikeysHasError = useMemo(
-    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
-    [sectionHealth],
-  );
+  const apikeysHasError = useMemo(() => apiKeysHealthError(sectionHealth), [sectionHealth]);
   // The footer card IS the button that opens API Keys, so its dot carries that
   // page's verdict rather than a decorative grey mark. Three honest states:
   // something is failing, something has answered, or nothing has reported yet
@@ -271,8 +257,8 @@ export function Sidebar({
   const pluginAttention = usePluginAttention();
   const pluginsNeedReconnect = pluginAttention.count > 0;
   // The Local models health monitor (D7) writes a `local_models` record; a
-  // failing or half-configured local setup gets the same amber dot — badge
-  // only, never a toast.
+  // failing or half-configured local setup marks the profile button, the
+  // hub's entry point — badge only, never a toast.
   const localModelsHealth = sectionHealth.local_models;
   const localModelsNeedAttention =
     localModelsHealth?.status === "error" || localModelsHealth?.status === "needs_setup";
@@ -327,7 +313,7 @@ export function Sidebar({
 
   const allItems = NAV_GROUPS.flat();
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
-  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis"];
+  const toolIds = ["memory", "board", "docs", "sessions", "clis"];
   const toolItems = toolIds.map(findItem);
   // Artifacts ("visualization") sits directly in the main list where the
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
@@ -353,8 +339,8 @@ export function Sidebar({
       badge={item.id === "agents" ? agentsCount : undefined}
       betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
       alert={item.id === "apikeys" && apikeysHasError} alertTitle={t("sidebar.apikeys_alert")}
-      warn={item.id === "plugins" ? pluginsNeedReconnect : item.id === "local-models" && localModelsNeedAttention}
-      warnTitle={item.id === "local-models" ? localModelsHealth?.detail || localModelsHealth?.reason || undefined : pluginWarnTitle}
+      warn={item.id === "plugins" && pluginsNeedReconnect}
+      warnTitle={pluginWarnTitle}
       onClick={() => { setActive(item.id); }} />;
   };
 
@@ -514,13 +500,10 @@ export function Sidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-        {onIdeSection ? <nav aria-label="IDE navigation" className="px-2 pt-2">
-          <button type="button" data-testid="ide-back-to-jarvis" onClick={() => setActive("chats")}
-            className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ChevronLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
-            {!railed && <span>Back to Jarvis</span>}
-          </button>
-          {railed && <div className="mt-2 flex flex-col items-center gap-1 border-t border-border/60 pt-2">
+        {/* The IDE has no "back" row: the caption's back arrow leaves it, so
+            the workspace tree starts right under the sidebar header. */}
+        {onIdeSection ? (railed && <nav aria-label="IDE navigation" className="px-2 pt-2">
+          <div className="flex flex-col items-center gap-1">
             <button type="button" aria-label="Workspace options" title="Workspace options"
               disabled={!activeIdeWorkspaceId}
               onClick={() => { if (activeIdeWorkspaceId) openIdeWorkspaceOptions(activeIdeWorkspaceId); }}
@@ -531,8 +514,8 @@ export function Sidebar({
               className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Mic aria-hidden className="h-4 w-4" />
             </button>
-          </div>}
-        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-px px-2 py-2">
+          </div>
+        </nav>) : <nav aria-label={t("sidebar.sections")} className="space-y-px px-2 py-2">
           <ul className="space-y-px">
             {/* One door: a fresh typed chat. Voice is a mode INSIDE the chat
                 now (its top bar's button), so there is nothing to choose
@@ -560,7 +543,7 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
-          ? <IdeProjectTree />
+          ? <LazyIdeProjectTree />
           : <><Suspense fallback={null}><SidebarAgents /></Suspense><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
       </div>
 

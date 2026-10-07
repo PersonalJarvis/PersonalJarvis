@@ -34,6 +34,7 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import ntpath
 import os
 import subprocess
 import tempfile
@@ -95,7 +96,7 @@ def _shortcut_path() -> Path:
 
 
 def _norm(p: str | None) -> str:
-    return os.path.normcase(os.path.normpath(p)) if p else ""
+    return ntpath.normcase(ntpath.normpath(p)) if p else ""
 
 
 def _current_user_id() -> str:

@@ -13,6 +13,23 @@ export const CAMERA_LIMITS = {
   maxDistance: 140,
 } as const;
 
+/** Near clip plane up close, and the most it may grow to when zoomed out. */
+const NEAR_MIN = 0.2;
+const NEAR_MAX = 6;
+/** Near plane per metre of orbit distance: the closest geometry is always far more than this in front. */
+const NEAR_PER_METRE = 0.04;
+
+/**
+ * The near clip plane for a camera this far from its orbit target. Depth
+ * precision falls with distance squared over the near plane: with a fixed
+ * 0.2 m near plane, the oak floor 1 mm above the dark slab fought it in black
+ * bands once the camera was zoomed out (~0.6 cm of precision at 140 m).
+ * Growing the near plane with the zoom keeps it under a millimetre everywhere.
+ */
+export function depthNear(distance: number): number {
+  return Math.min(NEAR_MAX, Math.max(NEAR_MIN, distance * NEAR_PER_METRE));
+}
+
 /**
  * A press that travelled further than this (CSS px) turned the camera; the
  * click it ends in is not a click. Measured over the whole press, so a drag

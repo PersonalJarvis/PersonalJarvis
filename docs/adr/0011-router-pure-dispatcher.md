@@ -1428,3 +1428,26 @@ Mission workers lose the `awareness-recall` grant (ADR-0030).
 - `tests/unit/brain/test_routing.py` (exact router set)
 - `tests/unit/brain/test_evidence_gate.py`, `tests/unit/brain/test_evidence_gate_wiring.py` (honest refusal for the `activity` domain)
 - `tests/missions/test_worker_capability_parity.py` (the worker grant)
+
+## Amendment 2026-10-05 — Marketplace native tool `slack`
+
+The Slack plugin used to execute through Slack's hosted MCP server. Slack
+admits only Marketplace-listed or internal apps to that server; the shared
+publisher app is publicly distributed but unlisted, so every end user would
+be refused. The catalog entry therefore drops its MCP server block and binds
+`"native_tool": "slack"`, a REST tool over the Slack Web API that uses the
+same marketplace user token. With no MCP server block, the virtual
+`mcp-tools`/`plugin-tools` loaders expand to nothing for Slack, so `slack`
+joins `ROUTER_TOOLS` directly, for the same reason as the other marketplace
+native tools.
+
+| Tool | Added | Backing | Risk | Recursion guard? |
+|---|---|---|---|---|
+| `slack` | 2026-10-05 | Slack Web API (`search.messages`, `conversations.*`, `users.*`, `chat.postMessage`) via the marketplace user token with rotation refresh | `ask` statically; every read downgrades to `safe` via `risk_tier_for_args`; `post_message` stays `ask` (echo-confirm) | n/a — a direct REST call, never a spawn; router-tier only (AP-5/AP-14) |
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_slack_rest.py` — `ok: false` mapping without
+  echoing provider text, `token_expired` → one refresh + retry, `Retry-After`
+  handling, cursor pagination, channel/DM resolution, per-action risk tiers.
+- `tests/unit/brain/test_routing.py` (exact router set includes `slack`).

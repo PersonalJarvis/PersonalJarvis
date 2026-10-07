@@ -57,8 +57,6 @@ _SHORTLIST_2026_08_24 = (
     "qwen3.6:27b",
     "muse-glimmer:30b",
     "ornith:35b",
-    "embeddinggemma",
-    "qwen3-embedding:4b",
 )
 
 _RUNTIME_OLLAMA_MODELS = tuple(
@@ -83,7 +81,7 @@ def _manifest(client: httpx.Client, model: str) -> httpx.Response:
 def registry() -> httpx.Client:
     with httpx.Client(timeout=15.0) as client:
         try:
-            probe = _manifest(client, "qwen3-embedding:4b")
+            probe = _manifest(client, RECOMMENDED_MODELS[0].id)
         except Exception as exc:  # noqa: BLE001 — offline is a skip, not a failure
             pytest.skip(f"Ollama registry unreachable: {type(exc).__name__} {exc}")
         if probe.status_code != 200:

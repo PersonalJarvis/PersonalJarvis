@@ -164,7 +164,12 @@ export function RosterRail({
 
   const lead = useMemo(() => agents.find((a) => a.tier === "lead") ?? null, [agents]);
   const groupedIds = useMemo(() => new Set(groups.flatMap((group) => group.members)), [groups]);
-  const visibleGroups = groups.filter((group) => `${group.name} ${group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? "").join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
+  // A group may hold the lead, who wears the assistant's chosen name everywhere.
+  const memberName = (id: string) => {
+    const agent = agents.find((row) => row.agentId === id);
+    return agent ? societyDisplayName(agent, assistantName) : id;
+  };
+  const visibleGroups = groups.filter((group) => `${group.name} ${group.members.map(memberName).join(" ")}`.toLowerCase().includes(query.trim().toLowerCase()));
 
   const { leadVisible, rows } = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -586,7 +591,7 @@ export function RosterRail({
               <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-foreground">{group.name}</span>
                 <span className="block truncate text-xs text-muted-foreground">{groupHover?.kind === "group" && groupHover.id === group.group_id
                   ? t(groupReady ? "society.groups.release_to_group" : "society.groups.hold_to_group")
-                  : group.members.map((id) => agents.find((agent) => agent.agentId === id)?.name ?? id).join(", ")}</span>
+                  : group.members.map(memberName).join(", ")}</span>
               </span>
             </button>
           </li>)}

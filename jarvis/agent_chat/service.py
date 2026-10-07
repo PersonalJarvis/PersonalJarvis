@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import shutil
+import sqlite3
 import time
 import uuid
 from collections.abc import Callable
@@ -32,11 +33,12 @@ from pathlib import Path
 from typing import Any, Final
 
 from jarvis.agent_chat import attachments as chat_attachments
+from jarvis.agent_chat import turn_prompts
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+from jarvis.agent_chat.permissions import default_permission, ladder_key, normalize_permission
 from jarvis.agent_chat.questions import (
     CANCELLED,
     MAX_ASKS_PER_TURN,
@@ -59,12 +61,61 @@ from jarvis.agent_chat.store import (
     AgentChatStore,
 )
 from jarvis.agent_chat.surface_kits import kit_for
+from jarvis.agent_chat.turn_host_client import TurnHandedOver
 from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
 
+#: What a turn cut off by a restart says (``_seal_orphaned_turns``).
+_ORPHANED_TURN_ERROR: Final = (
+    "Jarvis restarted while this turn was running. "
+    "Everything after the last step shown here was not captured."
+)
+
 Subscriber = asyncio.Queue[dict[str, Any]]
+
+
+def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
+    """The app's event loop, and whether this code runs on it.
+
+    The service is built on first use, and the first use is often a plain
+    ``def`` route that the web framework runs in a worker thread, where no
+    loop is running. Finding no loop there sealed every thread turn the turn
+    host still held as "Jarvis restarted" (2026-10-06): the worker thread asks
+    the loop it was dispatched from instead.
+    """
+    try:
+        return asyncio.get_running_loop(), True
+    except RuntimeError:  # no loop on this thread: fall through to the dispatching loop
+        pass
+    try:
+        from anyio.from_thread import run_sync
+
+        return run_sync(asyncio.get_running_loop), False
+    except Exception:  # noqa: BLE001 - not a framework worker: no loop to reach
+        log.debug("agent chat: built outside any event loop")
+        return None, False
+
+
+def _orphan_event(turn_id: str, started_ms: int, last_ms: int) -> dict[str, Any]:
+    """The ``turn_finished`` that closes a turn a restart cut off."""
+    return {
+        **make_event(
+            "turn_finished",
+            {
+                "turn_id": turn_id,
+                "status": "error",
+                "duration_ms": max(0, last_ms - started_ms),
+                "usage": {},
+                "error": _ORPHANED_TURN_ERROR,
+                "cost_usd": None,
+            },
+        ),
+        "ts_ms": last_ms,
+    }
+
+
 DECISIONS: tuple[str, ...] = ("allow", "allow_always", "deny")
 
 
@@ -105,6 +156,12 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
         # is only reachable through a stale session or a hand-made request.
         return api_runner if supports_api_runner(row.id) else "unknown"
     if row.id == "claude-api":
+        # The API Keys page can set the agents' Claude to its key instead of
+        # the subscription; that choice narrows the agents' surface only.
+        from jarvis.agent_chat.agent_provider_prefs import forces_api
+
+        if forces_api(row.id, surface):
+            return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner
@@ -207,7 +264,7 @@ def _current_task() -> asyncio.Task[Any] | None:
 
 
 class _Running:
-    __slots__ = ("asks", "task", "cancel", "turn_id", "setup_task", "ready")
+    __slots__ = ("asks", "task", "cancel", "turn_id", "setup_task", "ready", "detached")
 
     def __init__(self, turn_id: str, cancel: asyncio.Event) -> None:
         self.turn_id = turn_id
@@ -217,6 +274,9 @@ class _Running:
         self.ready = asyncio.Event()
         #: Question cards this turn has shown (MAX_ASKS_PER_TURN).
         self.asks = 0
+        #: The app is shutting down and this turn's CLI keeps running in the
+        #: turn host: the task ends without closing the turn.
+        self.detached = False
 
 
 class AgentChatService:
@@ -276,6 +336,243 @@ class AgentChatService:
         # The archived voice chat's history while one is continued (bind_voice_chat).
         self._voice_archive_history: Callable[[], list[Any]] | None = None
         self._retire_cli_seats()
+        self._seal_orphaned_turns()
+
+    def _seal_orphaned_turns(self) -> None:
+        """Close every turn a previous process left open.
+
+        The runner's task lives in memory, so a turn that was running when the
+        app quit, crashed or was restarted can never send another event: its
+        CLI's pipe went with the old process. Left open, the thread showed
+        "Working" for ever and froze on the last line the old process wrote,
+        while the agent's real ending never arrived (2026-10-05). This service
+        is built once per process, before it runs a turn of its own, so every
+        open turn here is such an orphan. It ends as failed, stamped with the
+        last moment the session heard anything, so the thread list keeps its
+        order. A CLI that outlived its parent is not hunted down here: a stop
+        by folder would also hit the person's own terminals in that folder.
+
+        A thread turn (surface ``agent``) is the exception: its CLI runs in
+        the turn host (``turn_host_client``) and may still be working. While
+        such a host or its spool exists, those turns are held as running and
+        handed to :meth:`_reattach_hosted`, which carries on every one the
+        host still knows and seals the rest exactly like here.
+        """
+        try:
+            orphans = self.store.open_turns()
+        except sqlite3.Error:
+            log.warning("agent chat: could not look for turns a restart left open", exc_info=True)
+            return
+        loop, on_loop = _app_loop()
+        hosted_possible: bool | None = None
+        deferred: list[tuple[str, str, int, int]] = []
+        sealed = 0
+        for session_id, turn_id, started_ms, last_ms in orphans:
+            if not turn_id:
+                continue
+            if loop is not None and self._may_be_hosted(session_id):
+                if hosted_possible is None:
+                    from jarvis.agent_chat import turn_host_client
+
+                    hosted_possible = turn_host_client.may_hold_turns()
+                if hosted_possible:
+                    deferred.append((session_id, turn_id, started_ms, last_ms))
+                    continue
+            self.store.append_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+            sealed += 1
+        if sealed:
+            log.info("agent chat: closed %d turn(s) a restart left open", sealed)
+        if deferred and loop is not None:
+            for session_id, turn_id, _started, _last in deferred:
+                # Held as running until the host answers: a message sent now
+                # must not start a second CLI on the same conversation.
+                held = _Running(turn_id, asyncio.Event())
+                held.setup_task = None
+                self._running[session_id] = held
+            if on_loop:
+                self._reattach_task = loop.create_task(
+                    self._reattach_hosted(deferred), name="agent-chat-reattach"
+                )
+            else:
+                # Built in a worker thread (a sync route): hand the work to the
+                # app's loop, where every turn task of this service runs.
+                self._reattach_task = asyncio.run_coroutine_threadsafe(
+                    self._reattach_hosted(deferred), loop
+                )
+
+    async def wait_reattached(self) -> None:
+        """Until the restart's thread turns are reattached or sealed (tests, tools)."""
+        task = getattr(self, "_reattach_task", None)
+        if task is None:
+            return
+        if isinstance(task, asyncio.Future):
+            await task
+        else:
+            await asyncio.wrap_future(task)
+
+    def _may_be_hosted(self, session_id: str) -> bool:
+        session = self.store.get_session(session_id)
+        return session is not None and session.surface == "agent"
+
+    async def _reattach_hosted(self, orphans: list[tuple[str, str, int, int]]) -> None:
+        """Carry on every open thread turn whose CLI the turn host still holds."""
+        try:
+            await self._reattach_hosted_turns(orphans)
+        except Exception:  # noqa: BLE001 — a held thread must never stay on Working
+            log.exception("agent chat: reattaching thread turns failed")
+            for session_id, turn_id, started_ms, last_ms in orphans:
+                held = self._running.get(session_id)
+                if held is None or held.turn_id != turn_id or held.task is not None:
+                    continue
+                self._running.pop(session_id, None)
+                held.ready.set()
+                if self.store.turn_terminal(session_id, turn_id) is None:
+                    self._publish_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+
+    async def _reattach_hosted_turns(self, orphans: list[tuple[str, str, int, int]]) -> None:
+        from jarvis.agent_chat import turn_host_client
+
+        client = None
+        for delay in (0.0, 5.0, 15.0, 30.0):
+            if delay:
+                await asyncio.sleep(delay)
+            client = await turn_host_client.get_client(start=False)
+            # Patience only for a host that is alive but busy; a spool alone
+            # is read at once.
+            if client is not None or not await asyncio.to_thread(turn_host_client.host_running):
+                break
+        by_turn: dict[str, Any] = {}
+        if client is not None:
+            for host_id, info in list(client.turns.items()):
+                meta = info.get("meta") or {}
+                by_turn[str(meta.get("turn_id") or "")] = ("host", host_id)
+        for record in turn_host_client.read_spool():
+            meta = record.get("meta") or {}
+            by_turn.setdefault(str(meta.get("turn_id") or ""), ("spool", record))
+        open_ids = {turn_id for _sid, turn_id, _s, _l in orphans}
+        resumed = 0
+        for session_id, turn_id, started_ms, last_ms in orphans:
+            held = self._running.get(session_id)
+            source = by_turn.get(turn_id)
+            proc = None
+            try:
+                if source is not None and source[0] == "host" and client is not None:
+                    proc = await client.attach(source[1])
+                elif source is not None and source[0] == "spool":
+                    proc = turn_host_client.spooled_cli(source[1])
+            except (ConnectionError, OSError, ValueError, KeyError):
+                log.warning("agent chat: could not reattach turn %s", turn_id, exc_info=True)
+                proc = None
+            if proc is None or held is None or held.turn_id != turn_id:
+                if held is not None and held.turn_id == turn_id and held.task is None:
+                    self._running.pop(session_id, None)
+                    held.ready.set()
+                if self.store.turn_terminal(session_id, turn_id) is None:
+                    self._publish_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+                continue
+            self._resume_hosted_turn(session_id, held, proc)
+            resumed += 1
+        # A CLI the host holds for a turn nobody has open any more (closed by
+        # an older build, deleted thread) has no reader: end it.
+        for turn_id, source in by_turn.items():
+            if not turn_id or turn_id in open_ids:
+                continue
+            try:
+                if source[0] == "host" and client is not None:
+                    stray = await client.attach(source[1])
+                    if stray is not None:
+                        stray.kill()
+                        stray.release()
+                elif source[0] == "spool":
+                    turn_host_client.spooled_cli(source[1]).release()
+            except (ConnectionError, OSError, ValueError, KeyError):
+                log.warning("agent chat: stray hosted turn %s not ended", turn_id, exc_info=True)
+        if resumed:
+            log.info("agent chat: carried on %d thread turn(s) across a restart", resumed)
+
+    def _resume_hosted_turn(self, session_id: str, run: _Running, proc: Any) -> None:
+        """Run the rest of a reattached thread turn as this session's task."""
+        from jarvis.agent_chat.runner_cli import resume_hosted_cli_turn
+
+        session = self.store.get_session(session_id)
+        assert session is not None
+        turn_id = run.turn_id
+        runner = str((getattr(proc, "meta", {}) or {}).get("runner") or "")
+        kit = kit_for(session.surface)
+        handle = TurnHandle(
+            session=session,
+            turn_id=turn_id,
+            emit=lambda ev: self._emit(session_id, ev),
+            request_approval=lambda call_id, name, args, summary: self._ask(
+                session_id, turn_id, call_id, name, args, summary
+            ),
+            cancel=run.cancel,
+            history=self.store.list_events(session_id),
+            assistant_name=self._assistant_name(),
+            bus=self._bus(),
+            surface=session.surface,
+            stance=session.permission_mode if kit.uses_stance else "",
+            control_service=self,
+        )
+
+        async def _carry_on() -> None:
+            finished = False
+            try:
+                vendor = await resume_hosted_cli_turn(handle, proc)
+                finished = True
+                if vendor and vendor != session.vendor_session:
+                    self.store.update_session(session_id, vendor_session=vendor)
+            except asyncio.CancelledError:
+                if not run.detached:
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "turn_finished",
+                            {
+                                "turn_id": turn_id,
+                                "status": "cancelled",
+                                "duration_ms": 0,
+                                "usage": {},
+                                "error": None,
+                            },
+                        ),
+                    )
+                raise
+            except TurnHandedOver:
+                run.detached = True
+                log.info("agent chat turn %s handed over to another app process", turn_id)
+            except Exception as exc:  # noqa: BLE001 — a runner bug must not leave the UI spinning
+                log.exception("agent chat: reattached turn %s crashed", turn_id)
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "turn_finished",
+                        {
+                            "turn_id": turn_id,
+                            "status": "error",
+                            "duration_ms": 0,
+                            "usage": {},
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    ),
+                )
+            finally:
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
+                for aid in self.pending_approvals(session_id):
+                    fut = self._approvals.pop(aid, None)
+                    self._approval_session.pop(aid, None)
+                    if fut is not None and not fut.done():
+                        fut.set_result("cancel")
+                self._cancel_questions(session_id)
+                if finished and kit.turn_prompts:
+                    try:
+                        await self._open_turn_prompts(session_id, turn_id, runner)
+                    except Exception:  # noqa: BLE001 — a missing card leaves the reply readable
+                        log.exception("agent chat: end-of-turn card failed for %s", turn_id)
+
+        run.task = asyncio.create_task(_carry_on(), name=f"agent-chat-{turn_id[:8]}")
+        run.ready.set()
 
     def _retire_cli_seats(self) -> None:
         """Move chats off a CLI seat their surface no longer offers.
@@ -733,6 +1030,12 @@ class AgentChatService:
             # What the turn receives; ``text`` stays what the person typed so the
             # timeline shows their sentence rather than a page of extracted PDF.
             prompt = chat_attachments.compose(text, attached)
+            if attached and session.surface == "jarvis":
+                image_context = await asyncio.to_thread(
+                    chat_attachments.handoff_context, session.cwd, attached, session_id=session_id,
+                )
+                if image_context:
+                    prompt += "\n\n" + image_context
             # Agent cards serialize Add selections as capability pins. Translate the
             # browser pin to the same validated receipt used by the root composer.
             if session.surface == "jarvis" and any(
@@ -1075,6 +1378,10 @@ class AgentChatService:
                 if completion is not None:
                     await completion.publish()
             except asyncio.CancelledError:
+                if run.detached:
+                    # The CLI keeps working in the turn host; the next app
+                    # start carries this turn on, so it stays open.
+                    raise
                 await self._emit(
                     session_id,
                     make_event(
@@ -1093,6 +1400,11 @@ class AgentChatService:
                     ),
                 )
                 raise
+            except TurnHandedOver:
+                # Another app process attached to the turn host and carries
+                # this turn on; it stays open for that process to finish.
+                run.detached = True
+                log.info("agent chat turn %s handed over to another app process", turn_id)
             except Exception as exc:  # noqa: BLE001 — a runner bug must not leave the UI spinning
                 log.exception("agent chat turn %s crashed", turn_id)
                 await self._emit(
@@ -1127,7 +1439,7 @@ class AgentChatService:
                     ),
                 )
                 current_chat_turn.reset(origin_token)
-                if kit.turn_completed is not None:
+                if kit.turn_completed is not None and not run.detached:
                     try:
                         first_seq = max(
                             (int(e.get("seq") or 0) for e in history), default=history_start
@@ -1144,6 +1456,17 @@ class AgentChatService:
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
                 self._cancel_questions(session_id)
+                if (
+                    kit.turn_prompts
+                    and origin.direct_user
+                    and control_runner is None
+                    and not native_goal
+                    and not run.detached
+                ):
+                    try:
+                        await self._open_turn_prompts(session_id, turn_id, runner)
+                    except Exception:  # noqa: BLE001 — a missing card leaves the reply readable
+                        log.exception("agent chat: end-of-turn card failed for %s", turn_id)
                 if hasattr(self, "_controls"):
                     await self._controls.turn_completed(
                         session_id, turn_id, origin.user_text, origin.direct_user, read_only
@@ -1384,8 +1707,26 @@ class AgentChatService:
         return True
 
     async def cancel_all(self) -> None:
+        """App shutdown: stop every turn — except thread turns the turn host keeps.
+
+        Those CLIs go on working in the host; their tasks end without closing
+        the turn, and the next app start carries them on (``_reattach_hosted``).
+        """
         if hasattr(self, "_controls"):
             await self._controls.close()
+        from jarvis.agent_chat import turn_host_client
+
+        hosted = turn_host_client.live_turn_ids()
+        detached: list[asyncio.Task[None]] = []
+        for run in list(self._running.values()):
+            if run.turn_id in hosted and run.task is not None and not run.task.done():
+                run.detached = True
+                run.task.cancel()
+                detached.append(run.task)
+        if detached:
+            await asyncio.gather(*detached, return_exceptions=True)
+            log.info("agent chat: %d thread turn(s) keep running in the turn host", len(detached))
+        turn_host_client.detach_all()
         for sid in list(dict.fromkeys([*self._running, *self._preparing])):
             await self.cancel(sid)
 
@@ -1709,6 +2050,167 @@ class AgentChatService:
                 open_q.closing = CANCELLED
                 open_q.wake.set()
             questions.pop(qid, None)
+
+    # ------------------------------------------------------------ end-of-turn cards
+
+    #: How far back a finished turn's reply is looked for. The question block
+    #: ends the reply, so the newest events always hold it.
+    _TURN_PROMPT_TAIL: Final[int] = 2000
+
+    def _turn_prompt_lock(self) -> asyncio.Lock:
+        # Lazily: a service built without __init__ (test doubles) still works.
+        lock: asyncio.Lock | None = getattr(self, "_prompt_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._prompt_lock = lock
+        return lock
+
+    async def _open_turn_prompts(self, session_id: str, turn_id: str, runner: str) -> None:
+        """After a coding agent's turn: its question card, else its plan card.
+
+        A reply ending in a ``jarvis-ask`` block opens a deferred question
+        card; a finished turn while the session is still in plan mode opens a
+        plan card. Nothing waits on either — the answer is the next message.
+        """
+        events = self.store.list_events(session_id, tail=self._TURN_PROMPT_TAIL)
+        status, text = turn_prompts.turn_reply(events, turn_id)
+        if status != "done":
+            return
+        specs = turn_prompts.parse_ask_block(text)
+        if specs:
+            await self._emit(
+                session_id,
+                make_event(
+                    "question_required",
+                    {
+                        "turn_id": turn_id,
+                        "question_id": uuid.uuid4().hex,
+                        "asker": "",
+                        "questions": [spec.to_payload() for spec in specs],
+                        "deferred": True,
+                    },
+                ),
+            )
+            return
+        session = self.store.get_session(session_id)
+        if session is None or session.permission_mode != "plan" or not text.strip():
+            return
+        build = default_permission(ladder_key(session.surface, runner))
+        if build == "plan":
+            return
+        await self._emit(
+            session_id,
+            make_event("plan_ready", {"turn_id": turn_id, "build_mode": build}),
+        )
+
+    async def answer_turn_question(
+        self,
+        session_id: str,
+        question_id: str,
+        *,
+        index: int = 0,
+        option_index: int | None = None,
+        text: str | None = None,
+    ) -> bool:
+        """The person's answer to one question of an end-of-turn card.
+
+        False for an unknown, closed or already answered question; raises
+        ``ValueError`` for an answer that does not fit. The last answer closes
+        the card and sends the answers to the agent as the next message.
+        """
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            try:
+                answers = turn_prompts.answer(
+                    card, index, option_index=option_index, text=text
+                )
+            except IndexError:  # a stale option index is a no-op click; the caller reports False
+                return False
+            if any(a is None for a in answers):
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "question_progress",
+                        {
+                            "turn_id": card.turn_id,
+                            "question_id": question_id,
+                            "answers": [a.to_payload() if a else None for a in answers],
+                        },
+                    ),
+                )
+                return True
+            final = [a for a in answers if a is not None]
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final)
+        return True
+
+    async def skip_turn_question(self, session_id: str, question_id: str) -> bool:
+        """The person closed an end-of-turn card: the agent's recommendations stand."""
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            final = turn_prompts.skipped(card)
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final)
+        return True
+
+    async def _resolve_turn_question(
+        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+    ) -> None:
+        await self._emit(
+            session_id,
+            make_event(
+                "question_resolved",
+                {
+                    "turn_id": card.turn_id,
+                    "question_id": card.question_id,
+                    "answers": [a.to_payload() for a in answers],
+                },
+            ),
+        )
+
+    async def _send_turn_answer(
+        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+    ) -> None:
+        await self.send(
+            session_id,
+            turn_prompts.answers_prompt(card.specs, answers),
+            display_text=turn_prompts.answers_display(card.specs, answers),
+        )
+
+    async def resolve_turn_plan(self, session_id: str, turn_id: str, decision: str) -> bool:
+        """The person's answer to a plan card: ``build`` or ``keep``.
+
+        ``build`` moves the session to the build mode the card offered and
+        sends the go-ahead as the next message; ``keep`` only closes the card,
+        so the person can tell the agent what to change. False when the card
+        is not open (any more).
+        """
+        if decision not in turn_prompts.PLAN_DECISIONS:
+            raise ValueError(f"decision must be one of {turn_prompts.PLAN_DECISIONS}")
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_plan(self.store.list_events(session_id), turn_id)
+            if card is None:
+                return False
+            await self._emit(
+                session_id,
+                make_event("plan_resolved", {"turn_id": turn_id, "decision": decision}),
+            )
+            if decision == turn_prompts.PLAN_KEEP:
+                return True
+            session = self.store.get_session(session_id)
+            build = card.build_mode
+            if session is not None and build and session.permission_mode != build:
+                self.store.update_session(session_id, permission_mode=build)
+                await self._emit(
+                    session_id,
+                    make_event("session_updated", {"permission_mode": build}),
+                )
+        await self.send(session_id, turn_prompts.PLAN_GO_AHEAD)
+        return True
 
 
 __all__ = [

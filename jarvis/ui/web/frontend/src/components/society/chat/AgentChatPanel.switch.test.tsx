@@ -40,7 +40,9 @@ vi.mock("@/components/agentchat/useComposerDictation", () => ({
   useComposerDictation: () => ({ dictating: false, stop() {}, toggle() {} }),
 }));
 vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () => null }));
-vi.mock("@/components/agentchat/useChatAttachments", () => ({
+vi.mock("@/components/agentchat/useChatAttachments", async (importOriginal) => ({
+  // The pure helpers (attachmentMedia, ...) stay real; only the hook is scripted.
+  ...(await importOriginal<typeof import("@/components/agentchat/useChatAttachments")>()),
   useChatAttachments: () => ({
     attachments: attachmentState.current,
     analyzing: 0,
@@ -242,7 +244,10 @@ it("reads archived calls on the actual voice stage and returns there fresh after
   expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
   expect(screen.getByTestId("voice-stage").getAttribute("data-empty")).toBe("true");
   expect(screen.queryByText("Archived question")).toBeNull();
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/agent-chat/voice-chat", expect.objectContaining({
+    method: "PUT", body: JSON.stringify({ session_id: null, voice_session_id: null }),
+  })));
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/api/chats/voice/new")).toBe(false);
 });
 
 it.each(["specialist", "lead"] as const)("/clear empties only the %s view and keeps its session and context", (tier) => {

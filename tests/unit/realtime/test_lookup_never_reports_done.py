@@ -245,10 +245,10 @@ def test_a_plain_string_payload_is_read() -> None:
 
 def test_the_fact_list_is_bounded() -> None:
     rows = [
-        {"title": f"Hit {index}", "snippet": "x" * 900, "url": ""}
-        for index in range(20)
+        {"title": f"Hit {index}", "snippet": "x" * 9000, "url": ""}
+        for index in range(60)
     ]
     facts = _lookup_facts([("search_web", _search_result(rows))])
 
-    assert len(facts["retrieved"]) <= 5
-    assert all(len(item) <= 320 for item in facts["retrieved"])
+    assert len(facts["retrieved"]) == 50
+    assert all(len(item) <= 4000 for item in facts["retrieved"])

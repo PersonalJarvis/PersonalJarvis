@@ -33,8 +33,9 @@ on:
     types: [closed]
   workflow_dispatch:
 
+# Read-only by default; the job below asks for the push it makes.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   # One constant group, NOT keyed on the ref: every run of this job pushes to
@@ -50,16 +51,18 @@ jobs:
     # A closed-but-not-merged pull request adds nobody.
     if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # The job pushes, so it needs a real branch rather than a detached HEAD.
           ref: main
-          # main is protected. GITHUB_TOKEN can never push there; a maintainer
-          # token in INTEGRATION_TOKEN (the secret release-cut also reads) can
-          # when its owner may bypass the protection.
-          token: ${{ secrets.INTEGRATION_TOKEN || github.token }}
+          # The push token never lands in .git/config: only the commit step
+          # below receives it, so nothing else in this job runs beside it.
+          persist-credentials: false
 
       - name: Set up Python 3.11
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -73,6 +76,11 @@ jobs:
         run: python scripts/ci/update_contributors.py
 
       - name: Commit when it changed
+        env:
+          # main is protected. GITHUB_TOKEN can never push there; a maintainer
+          # token in INTEGRATION_TOKEN (the secret release-cut also reads) can
+          # when its owner may bypass the protection.
+          PUSH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
         run: |
           set -euo pipefail
           if git diff --quiet -- README.md; then
@@ -86,8 +94,9 @@ jobs:
           # Someone may have pushed while this ran. Rebase once, then push; a
           # second failure is reported rather than swallowed, so a genuinely
           # broken job is visible instead of quietly skipping every week.
-          git pull --rebase --ff-only origin main
-          if ! git push origin main 2> push.err; then
+          remote="https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git pull --rebase --ff-only "$remote" main
+          if ! git push "$remote" HEAD:main 2> push.err; then
             cat push.err
             if grep -q "GH006\|protected branch" push.err; then
               # Branch protection, not a broken job: say so once per run

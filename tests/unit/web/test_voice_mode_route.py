@@ -1,40 +1,67 @@
-"""Task 7 — the browser-voice connect gate, inverted to default OFF.
+"""The browser-voice connect gate, then the voice-mode settings routes.
 
-``_browser_voice_enabled`` now serves the /ws/audio socket only when the user
-has explicitly opted into a voice surface: realtime mode ([voice].mode ==
-"realtime") or the classic bridge ([browser_voice].enabled == True). A missing
-[browser_voice] section is False, not True (the old default-ON contract).
+``browser_voice_enabled`` decides whether /ws/audio serves a browser-held
+call. Realtime mode always serves it (the socket carries the realtime call and
+its classic fallback). Pipeline mode serves the classic STT -> brain -> TTS
+bridge while ``[browser_voice].enabled`` is on — the default. Issue #399: the
+section used to be missing from ``JarvisConfig``, so ``load_config`` dropped
+it and pipeline mode could never serve the bridge.
 
-NOTE: a later task (T8) appends settings-route handler tests to this same
-file — keep additions here additive and self-contained.
+NOTE: the settings-route handler tests further down share this file — keep
+additions here additive and self-contained.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.browser_voice.route import _browser_voice_enabled
+from jarvis.browser_voice.route import browser_voice_enabled
+from jarvis.core import config as cfg_mod
+from jarvis.core.config import JarvisConfig
 from jarvis.ui.web.settings_routes import router
 
 
-def test_gate_default_off_when_pipeline_and_no_browser_voice():
-    cfg = SimpleNamespace(voice=SimpleNamespace(mode="pipeline"))
-    assert _browser_voice_enabled(cfg) is False
+def test_gate_on_by_default_in_pipeline_mode():
+    cfg = JarvisConfig.model_validate({"voice": {"mode": "pipeline"}})
+    assert cfg.browser_voice.enabled is True
+    assert browser_voice_enabled(cfg) is True
 
 
-def test_gate_on_for_realtime_mode():
-    cfg = SimpleNamespace(voice=SimpleNamespace(mode="realtime"))
-    assert _browser_voice_enabled(cfg) is True
-
-
-def test_gate_on_for_explicit_classic_browser_voice():
-    cfg = SimpleNamespace(
-        voice=SimpleNamespace(mode="pipeline"), browser_voice=SimpleNamespace(enabled=True)
+def test_gate_off_when_the_classic_bridge_is_switched_off():
+    cfg = JarvisConfig.model_validate(
+        {"voice": {"mode": "pipeline"}, "browser_voice": {"enabled": False}}
     )
-    assert _browser_voice_enabled(cfg) is True
+    assert browser_voice_enabled(cfg) is False
+
+
+def test_gate_on_for_realtime_mode_even_with_the_classic_bridge_off():
+    # The desktop hands realtime media to the WebView over the same socket;
+    # the classic switch must never take that away.
+    cfg = JarvisConfig.model_validate(
+        {"voice": {"mode": "realtime"}, "browser_voice": {"enabled": False}}
+    )
+    assert browser_voice_enabled(cfg) is True
+
+
+def test_gate_treats_a_config_without_the_section_like_the_default():
+    cfg = SimpleNamespace(voice=SimpleNamespace(mode="pipeline"))
+    assert browser_voice_enabled(cfg) is True
+
+
+def test_load_config_keeps_the_browser_voice_table(tmp_path: Path):
+    # The exact reproduction from issue #399: the table used to be dropped
+    # during validation, so ``load_config().browser_voice`` raised.
+    path = tmp_path / "jarvis.toml"
+    path.write_text(
+        '[voice]\nmode = "pipeline"\n\n[browser_voice]\nenabled = false\n',
+        encoding="utf-8",
+    )
+    loaded = cfg_mod.load_config(path)
+    assert loaded.browser_voice.enabled is False
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +104,12 @@ def test_get_voice_mode(monkeypatch):
 
 
 def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
+    import jarvis.realtime.factory as rf
     from jarvis.ui.web import settings_routes
 
+    # An offer-requiring transport without browser audio. Fixed here, because
+    # without a pin the answer follows the host's real credentials.
+    monkeypatch.setattr(rf, "realtime_browser_audio", lambda _cfg: False)
     monkeypatch.setattr(
         settings_routes,
         "_realtime_available_provider",
@@ -162,6 +193,22 @@ def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
     assert body["active_provider"] == "gemini-live"
     assert body["active_provider_label"] == "Gemini Live"
     assert body["active_model"] == "gemini-3.1-flash-live-preview"
+
+
+def test_get_voice_mode_reports_browser_audio_of_the_automatic_provider(monkeypatch):
+    """Issue #399: a Gemini-only install with no pinned realtime provider
+    reported ``active_provider: gemini-live`` next to ``browser_audio: false``
+    although Gemini Live declares browser audio."""
+    import jarvis.realtime.factory as rf
+
+    def only_gemini(candidates):
+        keys = {c[0] for c in candidates}
+        return "sk-x" if "gemini_api_key" in keys else None
+
+    monkeypatch.setattr(rf, "get_secret_any", only_gemini)
+    body = TestClient(_app(mode="realtime")).get("/api/settings/voice-mode").json()
+    assert body["active_provider"] == "gemini-live"
+    assert body["browser_audio"] is True
 
 
 def test_get_voice_mode_reports_pinned_realtime_model(monkeypatch):

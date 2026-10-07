@@ -619,6 +619,9 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # capabilities guide, which now permits the complete 30-voice Gemini
 # prebuilt roster. Same names on both sockets (AI Studio vs Cloud project).
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
+    # GPT-Live chooses its voice at session startup. Keep the provider's
+    # documented default available even when the richer voice roster changes.
+    "openai-live": _ids(["marin"]),
     # A self-hosted server ships whatever voices its operator installed, and a
     # list of OpenAI voice names would be a guess the server then rejects. One
     # honest entry: the adapter sends no voice override and the server uses its

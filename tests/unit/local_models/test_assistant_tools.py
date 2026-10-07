@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -148,7 +149,14 @@ async def test_safe_reads_run_through_the_executor_on_the_fake_server() -> None:
     assert status.output["voice"]["status"] is None
 
 
-async def test_test_plan_tool_reports_per_role() -> None:
+async def test_test_plan_tool_reports_per_role(monkeypatch) -> None:
+    probes = []
+
+    async def probe(_self, provider, model, *, timeout_s):
+        probes.append((provider, model))
+        return SimpleNamespace(ok=True, error=None, latency_ms=1.0)
+
+    monkeypatch.setattr("jarvis.brain.healthcheck.BrainHealthChecker.probe", probe)
     fake = _server()
     tools = build_tools(_cfg(chat="qwen3.5:4b"), root=ROOT, transport=fake.transport())
     executor, _bus = _executor()
@@ -156,6 +164,7 @@ async def test_test_plan_tool_reports_per_role() -> None:
     assert result.success, result.error
     assert result.output["roles"]["chat"]["status"] == "ok"
     assert result.output["overall"] == "ok"
+    assert probes == [("ollama", "qwen3.5:4b")]
 
 
 async def test_a_failing_handler_is_an_honest_tool_error_not_an_exception() -> None:

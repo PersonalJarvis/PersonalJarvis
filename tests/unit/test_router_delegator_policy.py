@@ -55,8 +55,8 @@ class TestDelegatorPolicyInPrompt:
             "the router spawn worker missions for simple questions"
         )
         assert "BEI UNSICHERHEIT: MACH ES SELBST" in SYSTEM_PROMPT
-        # The reversed doctrine keeps 'delegier' for the genuinely heavy case.
-        assert "delegier" in SYSTEM_PROMPT.lower()
+        # Delegation to an existing agent remains an explicit tool choice.
+        assert "delegate_to_agent" in SYSTEM_PROMPT
 
     def test_news_question_routed_to_search_web_not_spawn(self) -> None:
         """The concrete 2026-06-10 complaint, pinned as a prompt example:

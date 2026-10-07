@@ -55,6 +55,9 @@ _NATIVE_PROBES: dict[str, tuple[str, dict[str, str], str]] = {
         {"maxResults": "1"},
         "kind",
     ),
+    # auth.test only identifies the token's user; Slack answers failures as
+    # HTTP 200 with ok=false and an "error" key, which the check rejects.
+    "slack": ("https://slack.com/api/auth.test", {}, "user_id"),
     "spotify": ("https://api.spotify.com/v1/me", {}, "id"),
     "youtube_music": (
         "https://www.googleapis.com/youtube/v3/playlists",
@@ -79,7 +82,12 @@ async def _verify_native(spec: PluginSpec, tokens: Tokens) -> None:
         )
         response.raise_for_status()
         payload = response.json()
-        if not isinstance(payload, dict) or expected not in payload or payload.get("error"):
+        if (
+            not isinstance(payload, dict)
+            or expected not in payload
+            or payload.get("error")
+            or payload.get("ok") is False
+        ):
             raise ConnectionVerificationError(
                 "The provider returned an unusable resource response."
             )

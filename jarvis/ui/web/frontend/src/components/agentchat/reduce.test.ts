@@ -98,6 +98,21 @@ describe("agent-chat reduce", () => {
     expect((tl.items[0] as TurnItem).blocks).toHaveLength(2);
   });
 
+  it("grows one thought when a message's thinking arrives in several blocks", () => {
+    // The CLI sends each thinking block of one message as its own event,
+    // carrying everything the message thought so far (2026-10-05 thread).
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t7" }),
+      ev("reasoning", { turn_id: "t7", message_id: "m1", text: "first", duration_ms: 7595 }),
+      ev("reasoning", { turn_id: "t7", message_id: "m1", text: "first\n\nsecond", duration_ms: 7597 }),
+      ev("reasoning", { turn_id: "t7", message_id: "m2", text: "other message" }),
+    ]);
+    const turn = tl.items[0] as TurnItem;
+    expect(turn.blocks).toHaveLength(2);
+    expect(turn.blocks[0]).toMatchObject({ kind: "reasoning", text: "first\n\nsecond", durationMs: 7597 });
+    expect(turn.blocks[1]).toMatchObject({ kind: "reasoning", text: "other message" });
+  });
+
   it("ends a live thought when text or a tool call follows, and times tool calls from the log", () => {
     let tl = reduceEvents(EMPTY_TIMELINE, [
       ev("turn_started", { turn_id: "t6" }),
@@ -246,5 +261,19 @@ describe("agent-chat reduce: notices", () => {
       ev("notice", { kind: "proposal_resolved", proposal_id: "p9", status: "rejected", text: "Rejected." }),
     );
     expect(orphan.items).toHaveLength(1);
+  });
+
+  it("keeps what an identity undo restores on the resolved card", () => {
+    const previous = { name: "Nova", title: "", description: "", focus: [] };
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("notice", { kind: "proposal", proposal_id: "p2", proposal_kind: "identity",
+        summary: "Become Mail Desk", payload: { name: "Mail Desk" }, status: "pending" }),
+      ev("notice", { kind: "proposal_resolved", proposal_id: "p2", proposal_kind: "identity",
+        status: "applied", text: "I am now Mail Desk.", previous }),
+    ]);
+    const card = tl.items[0];
+    if (card.type !== "notice") throw new Error("unreachable");
+    expect(card.resolved).toBe("applied");
+    expect(card.data.previous).toEqual(previous);
   });
 });

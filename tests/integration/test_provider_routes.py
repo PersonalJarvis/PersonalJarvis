@@ -186,6 +186,7 @@ def test_section_health_returns_all_tabs(
             "dictation",
             "subagents",
             "advanced",
+            "local_models",
         }
         valid = {"ok", "needs_setup", "error", "unknown"}
         for sec in body["sections"].values():
@@ -656,12 +657,15 @@ def test_list_providers_reports_codex_without_leaking_auth_files(
             )
 
     monkeypatch.setattr("jarvis.ui.web.provider_routes.CodexAuthService", _FakeCodexService)
+    monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _FakeCodexService)
     with TestClient(server_with_brain.app) as client:
         body = client.get("/api/providers").json()
         codex = next(p for p in body["providers"] if p["id"] == "codex")
         assert codex["configured"] is True
         assert codex["codex_status"]["mode"] == "chatgpt"
-        assert "auth.json" not in client.get("/api/providers").text
+        assert "auth.json" not in str(codex["codex_status"])
+        forbidden = {"auth", "api_key", "access_token", "refresh_token"}
+        assert not forbidden & codex["codex_status"].keys()
 
 
 def test_codex_binary_path_persists_to_config(

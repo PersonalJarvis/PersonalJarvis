@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, PenLine, Trash2 } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
+import { AppshotRecordingPanel } from "@/components/appshot/AppshotRecordingPanel";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect, type BrandedSelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 import {
   fetchAppshotSettings,
   fetchLatestAppshot,
@@ -17,13 +18,16 @@ import {
   type AppshotMeta,
   type AppshotSettings,
   type AppshotSettingsPatch,
+  CARD_SECONDS_CHOICES,
+  KEEP_NEWEST_CHOICES,
+  openAppshotEditorWindow,
 } from "@/lib/appshotApi";
 import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
+import { AppshotLibrary } from "@/views/AppshotLibrary";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
-import { AppshotEditor } from "@/views/AppshotEditor";
 
 /**
  * Appshots — show the assistant the window you are working in.
@@ -31,9 +35,10 @@ import { AppshotEditor } from "@/views/AppshotEditor";
  * One page for the whole feature: the master switch (it is also the switch
  * for every other screen look, `[screen_context].enabled`), the two global
  * shortcuts (front window, and a dragged-out area), where a shortcut appshot
- * goes, the sound and the flash, try-it buttons, and the last appshot so the
- * user sees exactly what was handed over.
- * That picture lives in backend memory for `deck_preview_s` and is fetched
+ * goes, the sound and the flash, try-it buttons, the last appshot so the
+ * user sees exactly what was handed over, and the gallery of every appshot
+ * and edit kept so far (`AppshotLibrary`).
+ * The last picture lives in backend memory for `deck_preview_s` and is fetched
  * with `no-store`; this view keeps no copy.
  */
 
@@ -215,10 +220,9 @@ export function AppshotsView() {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
-  const editorId = useAppshotEditor((s) => s.openId);
   const openEditor = useAppshotEditor((s) => s.open);
-  const closeEditor = useAppshotEditor((s) => s.close);
-  const [revision, setRevision] = useState(0);
+  // Bumped by AppshotEditorHost when an edit replaced the held picture.
+  const revision = useAppshotEditor((s) => s.revision);
   // While a shortcut field records (or refuses a gesture), its row says so
   // in place of the description.
   const [fieldStatus, setFieldStatus] = useState<{ window: string | null; region: string | null }>({
@@ -247,7 +251,8 @@ export function AppshotsView() {
     };
   }, [pushToast]);
 
-  // Refetch the last appshot whenever the backend reports a new one.
+  // Refetch the last appshot whenever the backend reports a new one, or an
+  // edit replaced it.
   useEffect(() => {
     let active = true;
     fetchLatestAppshot()
@@ -256,7 +261,7 @@ export function AppshotsView() {
     return () => {
       active = false;
     };
-  }, [lastAppshotEvent]);
+  }, [lastAppshotEvent, revision]);
 
   useEffect(
     () => () => {
@@ -332,6 +337,33 @@ export function AppshotsView() {
   }, [pushToast]);
 
 
+  // The card and editor strings live in the editor's own locale chunk.
+  const editorReady = useLocaleChunk("appshot_editor");
+  const cardOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      CARD_SECONDS_CHOICES.map((seconds) => ({
+        value: String(seconds),
+        label:
+          seconds === 0
+            ? t("appshot_editor.card_until_closed")
+            : seconds >= 60
+              ? t("appshot_editor.card_minutes_option").replace("{0}", String(seconds / 60))
+              : t("appshot_editor.card_seconds_option").replace("{0}", String(seconds)),
+      })),
+    // `editorReady` re-labels the options once the chunk has arrived.
+    [t, editorReady],
+  );
+  const keepOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      KEEP_NEWEST_CHOICES.map((count) => ({
+        value: String(count),
+        label:
+          count === 0
+            ? t("appshot_editor.keep_all")
+            : t("appshot_editor.keep_option").replace("{0}", String(count)),
+      })),
+    [t, editorReady],
+  );
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
       { value: "auto", label: t("appshots.target_auto") },
@@ -515,14 +547,77 @@ export function AppshotsView() {
                   }
                 />
                 <Row
+                  label={editorReady ? t("appshot_editor.card_seconds") : ""}
+                  hint={editorReady ? t("appshot_editor.card_seconds_hint") : ""}
+                  control={
+                    <BrandedSelect
+                      value={String(settings.card_seconds ?? 6)}
+                      options={cardOptions}
+                      ariaLabel={editorReady ? t("appshot_editor.card_seconds") : ""}
+                      disabled={disabled || saving || !settings.effect}
+                      testId="appshots-card-seconds"
+                      onValueChange={(value) => void save({ card_seconds: Number(value) })}
+                    />
+                  }
+                />
+                {typeof settings.library === "boolean" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.library_label") : ""}
+                    hint={editorReady ? t("appshot_editor.library_hint") : ""}
+                    control={
+                      <Switch
+                        checked={settings.library}
+                        disabled={saving}
+                        aria-label={editorReady ? t("appshot_editor.library_label") : ""}
+                        data-testid="appshots-library"
+                        onCheckedChange={(library) => void save({ library })}
+                      />
+                    }
+                  />
+                )}
+                {typeof settings.keep_newest === "number" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.keep_label") : ""}
+                    hint={editorReady ? t("appshot_editor.keep_hint") : ""}
+                    control={
+                      <BrandedSelect
+                        value={String(settings.keep_newest)}
+                        options={keepOptions}
+                        ariaLabel={editorReady ? t("appshot_editor.keep_label") : ""}
+                        disabled={saving}
+                        testId="appshots-keep-newest"
+                        onValueChange={(value) => void save({ keep_newest: Number(value) })}
+                      />
+                    }
+                  />
+                )}
+                {typeof settings.copy_to_clipboard === "boolean" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                    hint={editorReady ? t("appshot_editor.clipboard_hint") : ""}
+                    control={
+                      <Switch
+                        checked={settings.copy_to_clipboard}
+                        disabled={saving}
+                        aria-label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                        data-testid="appshots-clipboard"
+                        onCheckedChange={(copy_to_clipboard) => void save({ copy_to_clipboard })}
+                      />
+                    }
+                  />
+                )}
+                <Row
                   label={t("appshots.try_label")}
                   hint={
                     countdown !== null
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
                       : picking
                         ? t("appshots.try_picking")
-                        : !settings.readiness.capture
-                          ? settings.readiness.capture_detail
+                        : settings.readiness.capture === false
+                          ? t("appshots.effect_unavailable").replace(
+                              "{0}",
+                              settings.readiness.capture_detail,
+                            )
                           : t("appshots.try_hint")
                   }
                   control={
@@ -568,7 +663,12 @@ export function AppshotsView() {
                 shot={latest}
                 revision={revision}
                 onForget={() => void forget()}
-                onEdit={() => openEditor(latest.id)}
+                onEdit={() => {
+                  // Its own window where the desktop shell can; else over this page.
+                  void openAppshotEditorWindow(latest.id).then((inWindow) => {
+                    if (!inWindow) openEditor(latest.id);
+                  });
+                }}
               />
             ) : (
               <PreviewDemo />
@@ -576,21 +676,17 @@ export function AppshotsView() {
           </div>
         </div>
 
+        <AppshotLibrary
+          enabled={settings?.library}
+          refreshKey={`${lastAppshotEvent}:${revision}`}
+        />
+
+        {settings && typeof settings.recording_hotkey === "string" && (
+          <AppshotRecordingPanel settings={settings} saving={saving}
+            onShortcut={(recording_hotkey) => save({ recording_hotkey })} />
+        )}
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>
-      {editorId !== null && (
-        <AppshotEditor
-          appshotId={editorId}
-          onClose={() => {
-            closeEditor();
-            // An applied edit changed the held picture: show the new one.
-            setRevision((n) => n + 1);
-            fetchLatestAppshot()
-              .then((body) => setLatest(body.appshot))
-              .catch(() => undefined);
-          }}
-        />
-      )}
     </div>
   );
 }

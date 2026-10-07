@@ -6,7 +6,7 @@ import { ThemeProvider } from "./hooks/useTheme";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
-import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
+import { POLL_MS, bundleFingerprint, installBundleWatch } from "./lib/bundleWatch";
 import { reloadHeld, setReloadHold } from "./lib/reloadHold";
 import { useEventStore } from "./store/events";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
@@ -55,6 +55,8 @@ useEventStore.subscribe((state) =>
     window.addEventListener(kind, noteInput, { capture: true, passive: true });
   }
   installBundleWatch({
+    // The server may already have changed before our first poll completes.
+    baseline: bundleFingerprint(document.head.innerHTML),
     fetchIndex: () =>
       fetch("/", {
         cache: "no-store",
@@ -129,6 +131,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// The appshot editor's own desktop window (a click on the corner card) loads
+// just the editor, not the app around it. Lazy, so the app never carries it.
+const AppshotEditorWindow = React.lazy(() =>
+  import("./views/AppshotEditorWindow").then((m) => ({ default: m.AppshotEditorWindow })),
+);
+const isEditorWindow = new URLSearchParams(window.location.search).get("view") === "appshot-editor";
+
 function renderApp(): void {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -139,8 +148,18 @@ function renderApp(): void {
             resetKey="root"
             onRecover={() => window.location.reload()}
           >
-            <AuthGate>
-              <App />
+            <AuthGate quiet={isEditorWindow}>
+              {isEditorWindow ? (
+                <React.Suspense
+                  fallback={
+                    <div className="fixed inset-0 bg-popover" data-testid="appshot-editor-window" />
+                  }
+                >
+                  <AppshotEditorWindow />
+                </React.Suspense>
+              ) : (
+                <App />
+              )}
             </AuthGate>
           </ViewErrorBoundary>
         </ThemeProvider>

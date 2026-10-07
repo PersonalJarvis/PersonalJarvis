@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-youtube_studio
 description: Upload videos, read and reply to comments, and inspect channel analytics
-when_to_use: Use for explicit operations on the connected YouTube Studio account.
+when_to_use: Use when the user requests operations on the connected YouTube Studio account.
 category: integrations
 plugin_id: youtube_studio
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

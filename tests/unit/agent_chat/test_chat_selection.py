@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from jarvis.agent_chat.service import AgentChatService
 from jarvis.agent_chat.store import AgentChatStore, ChatSelection
-from jarvis.society.runtime import SocietyRuntime
+from jarvis.society.runtime import SocietyRuntime, current_runtime, set_current_runtime
 from jarvis.ui.web import agent_chat_routes
 from jarvis.ui.web.society_routes import router as society_router
 
@@ -26,9 +26,13 @@ def app(tmp_path, monkeypatch):
     application.include_router(agent_chat_routes.router)
     application.include_router(society_router)
     application.state.agent_chat = AgentChatService(AgentChatStore(tmp_path / "chat.db"))
+    previous = current_runtime()
     runtime = SocietyRuntime(tmp_path / "society", seed_starter_team=False)
     application.state.society_factory = lambda: runtime
-    return application
+    yield application
+    # A runtime registers itself process-wide; left behind, every later Jarvis
+    # chat test sees its agent hands (a browser tool) in the turn's tool set.
+    set_current_runtime(previous)
 
 
 def test_selection_survives_restart_without_creating_a_chat(tmp_path: Path):

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "fireflies",
+  "version": "1.0.0",
+  "description": "Meeting transcripts, summaries and action items",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Fireflies",
+      "category": "Knowledge & Reading",
+      "logo_slug": "fireflies",
+      "logo_color": "6C2BD9",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://api.fireflies.ai/mcp",
+        "discovery_url": "https://api.fireflies.ai/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://api.fireflies.ai/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_fireflies_access_token}"
+      },
+      "post_install_hint_md": "Sign in with the Fireflies account that holds your meetings. Available transcripts follow your plan."
+    }
+  }
+}

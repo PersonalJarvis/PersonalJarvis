@@ -28,6 +28,7 @@ import {
   type PublishIdentityWire,
 } from "@/components/marketplace/PublishIdentity";
 import { setUiLanguage } from "@/i18n";
+import { usePublishIdentity } from "@/hooks/usePublishIdentity";
 
 const SIGNED_OUT: PublishIdentityWire = { enabled: true, signed_in: false };
 const SIGNED_IN: PublishIdentityWire = {
@@ -169,4 +170,21 @@ describe("GithubSignInDialog", () => {
     expect(await screen.findByText("Mit GitHub anmelden")).toBeTruthy(); // i18n-allow
     expect(await screen.findByText("Dein Einmal-Code")).toBeTruthy(); // i18n-allow
   });
+});
+
+function SidebarIdentity() {
+  const identity = usePublishIdentity();
+  return <span data-testid="lightweight-identity">{identity.data?.signed_in ? "Connected" : "Disconnected"}</span>;
+}
+
+it("updates the lightweight sidebar observer when the publishing UI signs out", async () => {
+  const server = stubServer(SIGNED_IN);
+  renderWith(<><SidebarIdentity /><PublisherChip onSignIn={() => undefined} /></>);
+  const chip = await screen.findByTestId("publisher-chip");
+  expect(screen.getByTestId("lightweight-identity").textContent).toBe("Connected");
+  fireEvent.click(chip);
+  fireEvent.click(screen.getByRole("menuitem", { name: /Sign out/ }));
+  await waitFor(() => expect(server.deleted).toBe(1));
+  await waitFor(() => expect(screen.getByTestId("lightweight-identity").textContent).toBe("Disconnected"));
+  expect(await screen.findByTestId("publisher-chip-signed-out")).toBeTruthy();
 });

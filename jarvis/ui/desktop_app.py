@@ -32,7 +32,7 @@ from filelock import FileLock, Timeout
 
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
-from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.process_utils import drop_inherited_electron_node_mode, ensure_standard_streams
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -43,9 +43,14 @@ if TYPE_CHECKING:
 # is "Personal Jarvis Dev", so neither instance ever raises the other's window.
 WINDOW_TITLE = current_instance().display_name
 
+# True while the WebView shows the app's own document — booted or still
+# booting. A stale error body has no ``#root``. See ``_reload_window_if_stale``.
+_SPA_DOCUMENT_PROBE = "document.getElementById('root') !== null"
+
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.
 ensure_standard_streams()
+drop_inherited_electron_node_mode()
 
 if sys.platform == "win32":
     try:
@@ -109,6 +114,15 @@ DETACHABLE_VIEWS: dict[str, str] = {
     # picture is something you keep looking at WHILE you carry on working, and
     # on a second monitor it stops competing with the section that produced it.
     "visualization": "Visualization",
+    # The appshot editor: a click on the corner card opens
+    # it in front of the user without raising or resizing the main window.
+    # Always on one appshot (``&appshot=<id>``); ONE window is reused.
+    "appshot-editor": "Appshot Editor",
+    # The Jarvis X annotation editor. Never a section of the main window: it
+    # opens from a capture's thumbnail card or the library, always on one
+    # item (``&item=<id>``), and ONE editor window is reused — opening another
+    # capture navigates it instead of stacking windows (open_jarvisx_editor).
+    "jarvisx-editor": "Jarvis X Editor",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
@@ -139,6 +153,10 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 #: above a full cold boot, including model prefetch on a cold disk.
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
 
+# The force-exit backstop must outwait the server's bounded profile cleanup.
+# The asynchronous backend drain below continues to own orderly loop shutdown.
+_SHUTDOWN_FORCE_EXIT_MIN_S = 45.0
+
 
 def _clamp_pet_scale(value: object) -> float:
     """``[ui] pet_scale`` as a usable multiplier: 0.5–2.0, 1.0 when unusable."""
@@ -157,6 +175,24 @@ def _pet_toggle_hotkey(cfg: Any) -> str:
     """``[trigger] hotkey_pet_toggle``, stripped; empty when unset or disabled."""
     value = getattr(getattr(cfg, "trigger", None), "hotkey_pet_toggle", "")
     return str(value or "").strip()
+
+
+
+def _cached_orb_window(cache: dict[str, Any]) -> Any | None:
+    """The orb window among the cached overlay surfaces, if one was built."""
+    from jarvis.ui.overlay_styles import ORB_STYLES
+
+    for key, surface in cache.items():
+        if key in ORB_STYLES and hasattr(surface, "set_style"):
+            return surface
+    return None
+
+
+def _recache_surface(cache: dict[str, Any], surface: Any, style: str) -> None:
+    """Key ``surface`` under ``style`` only — one window, one cache entry."""
+    for key in [k for k, v in cache.items() if v is surface]:
+        cache.pop(key, None)
+    cache[style] = surface
 
 
 def boot_overlay_style(configured: str | None, *, instance: Any | None = None) -> str:
@@ -699,7 +735,12 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
     the supported recovery. Every attachment is detached in ``finally`` so a
     failed focus attempt cannot poison keyboard routing.
     """
-    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # SW_RESTORE only for a minimized window: on a maximized one it means
+    # "back to the normal size", which shrank the app every time something
+    # merely asked to bring it forward (an appshot card click, 2026-10-03).
+    restore = _is_minimized(hwnd, user32)
+    if restore:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     if user32.SetForegroundWindow(hwnd):
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -722,7 +763,8 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
         ):
             attached_target = bool(user32.AttachThreadInput(current_thread, target_thread, True))
         user32.BringWindowToTop(hwnd)
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if restore:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -782,6 +824,173 @@ def _window_answers(hwnd: int, user32: Any, *, timeout_ms: int = _WINDOW_ANSWER_
         return True
 
 
+def _is_minimized(hwnd: int, user32: Any) -> bool:
+    """``IsIconic`` when the binding has it; an unknown state counts as minimized
+    so the old restore-everything behaviour is the fallback, never a no-op."""
+    probe = getattr(user32, "IsIconic", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe(hwnd))
+    except Exception:  # noqa: BLE001 - unreadable state: restore as before
+        return True
+
+
+def window_needs_restore(title: str) -> bool:
+    """Whether raising the window titled ``title`` must restore it first.
+
+    ``True`` for a minimized or hidden window, and wherever it cannot be told
+    (other OSes, no such window). ``False`` for a visible one — restoring
+    that would turn a maximized window back into its smaller normal size.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd:
+            return True
+        return bool(user32.IsIconic(hwnd)) or not bool(user32.IsWindowVisible(hwnd))
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return True
+
+
+#: ``WINDOWPLACEMENT.flags``: a minimized window that comes back maximized.
+_WPF_RESTORETOMAXIMIZED = 0x0002
+
+
+def _placement_restores_maximized(hwnd: int, user32: Any) -> bool:
+    """Was this (minimized) window maximized before it was minimized?
+
+    ``GetWindowPlacement`` keeps that in ``WPF_RESTORETOMAXIMIZED``. Unknown
+    counts as "no", the old restore-to-normal behaviour.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Placement(ctypes.Structure):
+            _fields_ = [
+                ("length", wintypes.UINT),
+                ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT),
+                ("ptMinPosition", wintypes.POINT),
+                ("ptMaxPosition", wintypes.POINT),
+                ("rcNormalPosition", wintypes.RECT),
+            ]
+
+        placement = _Placement()
+        placement.length = ctypes.sizeof(_Placement)
+        if not user32.GetWindowPlacement(hwnd, ctypes.byref(placement)):
+            return False
+        return bool(placement.flags & _WPF_RESTORETOMAXIMIZED)
+    except Exception:  # noqa: BLE001 - unknown placement: restore as before
+        return False
+
+
+def window_restores_maximized(title: str) -> bool:
+    """Whether the minimized window titled ``title`` was maximized before.
+
+    pywebview's ``restore()`` sets the normal size, so a maximized window that
+    was minimized came back small; such a window is restored by Win32
+    ``SW_RESTORE`` alone (``_bring_window_to_front_by_title``), which returns
+    it maximized. ``False`` off Windows and whenever it cannot be told.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd or not user32.IsIconic(hwnd):
+            return False
+        return _placement_restores_maximized(hwnd, user32)
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return False
+
+
+def detached_window_size(view: str, screen: tuple[int, int] | None) -> tuple[int, int]:
+    """Opening size of a detached window.
+
+    The appshot editor opens in compact proportions: about two fifths of
+    the screen's width and a little under half its height, centred — a tool
+    window in front of the app, never one that looks like the app shrunk. It
+    never goes below the size its whole toolbar needs. Every other view keeps
+    the compact default.
+    """
+    if view != "appshot-editor" or not screen:
+        return 1100, 750
+    screen_w, screen_h = screen
+    width = min(screen_w, max(_EDITOR_MIN_SIZE[0], int(screen_w * 0.4)))
+    height = min(screen_h, max(_EDITOR_MIN_SIZE[1], int(screen_h * 0.46)))
+    return width, height
+
+
+#: The smallest appshot editor window that still shows every toolbar button.
+_EDITOR_MIN_SIZE = (900, 600)
+
+
+def _primary_screen_size(webview_module: Any) -> tuple[int, int] | None:
+    """The first screen's size in pywebview's units, or None when unknown."""
+    try:
+        screen = webview_module.screens[0]
+        return int(screen.width), int(screen.height)
+    except Exception:  # noqa: BLE001 - unknown screen: the default size
+        return None
+
+
+def _repaint_webview_shown_from_hidden(window: Any) -> None:
+    """Paint a WebView that was created hidden.
+
+    On Windows the editor window is created hidden so the first click is
+    instant. WebView2 builds its surface while that form is hidden, then
+    ``show()`` reveals a blank frame — the window's own background, with none
+    of the page — until the form's size actually changes. One pixel out and
+    back is enough. Other platforms paint on show, so this is a no-op there.
+    """
+    if sys.platform != "win32":
+        return
+    size = _window_size_for_repaint(window)
+    if size is None:
+        return
+    width, height = size
+    try:
+        window.resize(width, height + 1)
+        window.resize(width, height)
+    except Exception:  # noqa: BLE001 - the window is already shown; a failed nudge must not fail the open
+        from loguru import logger
+
+        logger.debug("The appshot editor window could not be nudged to paint", exc_info=True)
+
+
+def _window_size_for_repaint(window: Any) -> tuple[int, int] | None:
+    """The window's current size, or the size it was created at."""
+    for read in (
+        lambda: (int(window.width), int(window.height)),
+        lambda: (int(window.initial_width), int(window.initial_height)),
+    ):
+        try:
+            width, height = read()
+        except Exception:  # noqa: BLE001 - a cross-thread size read can fail; try the other source
+            continue
+        if width >= 2 and height >= 2:
+            return width, height
+    return None
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -821,6 +1030,8 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.IsIconic.argtypes = [wintypes.HWND]
         user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
         user32.MoveWindow.argtypes = [
             wintypes.HWND,
             ctypes.c_int,
@@ -874,11 +1085,18 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         offscreen_minimized = rect.left <= -30000 or rect.top <= -30000
 
         # Order matters: SHOW/RESTORE first, then move if needed, then
-        # Foreground+Active for keyboard focus.
-        user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
-        user32.ShowWindow(hwnd, 5)  # SW_SHOW
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        if was_minimized or offscreen_minimized:
+        # Foreground+Active for keyboard focus. A window that is already on
+        # screen keeps its state: SHOWNORMAL/RESTORE would un-maximize it.
+        # A window minimized while maximized comes back maximized: SW_RESTORE
+        # alone does that, SW_SHOWNORMAL and the move below would shrink it.
+        to_maximized = was_minimized and _placement_restores_maximized(hwnd, user32)
+        if to_maximized:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        elif was_minimized or offscreen_minimized or not user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if (was_minimized or offscreen_minimized) and not to_maximized:
             width = max(900, min(1600, rect.right - rect.left))
             height = max(600, min(1000, rect.bottom - rect.top))
             if width > 5000 or height > 5000:
@@ -1987,7 +2205,6 @@ class DesktopApp:
         # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
         # this import; prefetching still overlaps all subsequent backend work.
         from jarvis.speech.warmup_prefetch import (
-            start_anthropic_import_prefetch,
             start_tts_import_prefetch,
             start_wake_import_prefetch,
         )
@@ -1997,12 +2214,9 @@ class DesktopApp:
         # from the wake import and remains a logged no-op for another provider
         # or a headless host without the optional dependency.
         start_tts_import_prefetch()
-        # Anthropic SDK import is the GIL stall that froze the desktop
-        # window on 2026-08-28 (worker thread in ``from anthropic import
-        # AsyncAnthropic``; Tk bar stopped pumping; health timed out).
-        # Prefetch here so the first recap/wiki/claude-api turn is a cache
-        # hit. Not voice-gated: those callers run with voice off too.
-        start_anthropic_import_prefetch()
+        # Background providers import their SDK when their actual consumer
+        # needs it. Warming every installed SDK here competes with voice and
+        # the route graph even when the selected providers never use it.
 
         # Start the audio-device settle after the shell paint too. Phase A then
         # reuses the result instead of re-paying the blocking stability poll.
@@ -2047,7 +2261,9 @@ class DesktopApp:
         # /api/health while it builds — that is what lets the window appear at
         # bind time rather than after the ~1 s ctor. WebServer.__init__ is
         # loop-agnostic (pure construction + route mounting), so off-loop is safe.
-        server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
+        server = loop.run_until_complete(
+            asyncio.to_thread(WebServer, self.cfg, defer_feature_routes=True)
+        )
         self._server = server
         _db_mark("webserver_ctor")
 
@@ -2662,6 +2878,20 @@ class DesktopApp:
         # handler runs on the asyncio loop and immediately thread-hops, because
         # pywebview calls block their calling thread (see _on_show_window_requested).
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
+        # The appshot card and the Appshots page open the editor in a window
+        # of its own (jarvis.appshot.editor_window holds the opener; it is
+        # always called from a worker thread, as open_detached_window needs).
+        try:
+            from jarvis.appshot.editor_window import EDITOR_VIEW, register_window_opener
+
+            register_window_opener(
+                lambda query: self.open_detached_window(EDITOR_VIEW, query=query),
+                prewarm=self.prewarm_appshot_editor,
+            )
+        except Exception as exc:  # noqa: BLE001 - the page editor stays the fallback
+            from loguru import logger as _alog
+
+            _alog.opt(exception=exc).debug("appshot editor window wiring skipped")
         # The pet's pen asks for a fresh chat: the window comes up through the
         # very same off-loop path; the frontend opens the new chat itself.
         server.bus.subscribe(ComposeRequested, self._on_show_window_requested)
@@ -2921,7 +3151,9 @@ class DesktopApp:
                 if exc is not None:
                     from loguru import logger as _slog
 
-                    _slog.opt(exception=exc).error("Voice/orb startup task crashed.")
+                    _slog.opt(exception=exc).error(
+                        "Startup task {} crashed.", task.get_name()
+                    )
 
             # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
             # the (light base/cpu) wake model has finished loading. The heavy
@@ -2992,6 +3224,15 @@ class DesktopApp:
                         "Heavy backend: wake-model gate timed out (12 s) — "
                         "starting the backend anyway."
                     )
+                if self._shutdown_done:
+                    return
+                # Route imports/mounting and the board used to run before the
+                # speech task even existed. Complete them off-loop only after
+                # wake warmup, and never expose a partially installed API.
+                await server.prepare_app()
+                if self._shutdown_done:
+                    return
+                _db_mark("feature_routes")
                 # Hand the REAL app to the bootstrap BEFORE the heavy _init_*
                 # chain runs. Every route whose subsystem is still warming
                 # answers its documented 503/None placeholder (the WebServer
@@ -3032,6 +3273,10 @@ class DesktopApp:
                     from jarvis.agentic_ide.session import schedule_boot_restore
 
                     schedule_boot_restore()
+                    # Carry on the IDE thread turns the turn host kept running.
+                    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+                    schedule_turn_reattach(server.app.state)
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
 
@@ -3096,7 +3341,10 @@ class DesktopApp:
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
 
-            loop.create_task(_heavy_backend_bg(), name="heavy-backend")
+            self._heavy_backend_task = loop.create_task(
+                _heavy_backend_bg(), name="heavy-backend"
+            )
+            self._heavy_backend_task.add_done_callback(_log_speech_and_orb_done)
             loop.call_soon(self._start_virtual_cursor)
             # Watch this loop from OFF it, for the rest of the process's life.
             # Everything the user touches — every WebSocket frame, every route,
@@ -3400,54 +3648,12 @@ class DesktopApp:
             # companion process whose MAIN thread owns the Tk mainloop
             # (jarvis.ui.jarvisbar.host), remote-driven over stdio; the init
             # line's "surface" key selects bar vs. mascot.
-            from loguru import logger
-
-            if style == "jarvis_bar":
-                try:
-                    from jarvis.ui.jarvisbar.subprocess_overlay import (
-                        SubprocessBarOverlay,
-                    )
-
-                    surface = SubprocessBarOverlay(
-                        persistent=self.cfg.ui.bar_persistent,
-                        accent=self.cfg.ui.bar_accent,
-                        startup_gated=gate_until_voice_ready,
-                        size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
-                        follow_cursor_monitor=getattr(
-                            self.cfg.ui, "bar_follow_cursor_monitor", True
-                        ),
-                    )
-                    surface.start_in_thread()
-                    logger.info(
-                        "JarvisBar hosted out-of-process on macOS (jarvis.ui.jarvisbar.host)."
-                    )
-                    return surface
-                except Exception:  # noqa: BLE001 — cosmetic; never block boot
-                    logger.opt(exception=True).warning(
-                        "macOS JarvisBar host failed to start — falling back to the no-op surface."
-                    )
-            elif style != "none":
-                try:
-                    from jarvis.ui.jarvisbar.subprocess_overlay import (
-                        SubprocessMascotOverlay,
-                    )
-
-                    surface = SubprocessMascotOverlay(
-                        mascot_path=self.cfg.ui.orb_mascot_path or None,
-                        style=style,
-                        **self._pet_surface_kwargs(),
-                    )
-                    surface.start_in_thread()
-                    logger.info(
-                        "Orb window hosted out-of-process on macOS "
-                        "(jarvis.ui.jarvisbar.host, style={}).",
-                        style,
-                    )
-                    return surface
-                except Exception:  # noqa: BLE001 — cosmetic; never block boot
-                    logger.opt(exception=True).warning(
-                        "macOS orb host failed to start — falling back to the no-op surface."
-                    )
+            if style != "none":
+                hosted = self._build_hosted_surface(
+                    style, gate_until_voice_ready=gate_until_voice_ready
+                )
+                if hosted is not None:
+                    return hosted
             from jarvis.ui.jarvisbar import NullOverlay
 
             return NullOverlay()
@@ -3478,6 +3684,54 @@ class DesktopApp:
                 **self._pet_surface_kwargs(),
             )
         surface.start_in_thread()
+        return surface
+
+    def _build_hosted_surface(self, style: str, *, gate_until_voice_ready: bool = False):
+        """Start the bar or the orb window in its own companion process.
+
+        ``jarvis.ui.jarvisbar.host`` owns the Tk (or Qt) root on its own MAIN
+        thread, so nothing in this process ever creates or destroys a root.
+        That makes it the macOS boot surface (BUG-057) and, on every OS, the
+        surface a live style switch builds: a second in-process root aborts
+        the whole app (BUG-031), while a host process can be started and
+        stopped any number of times. Returns ``None`` when the host could not
+        be started; the caller decides how to degrade.
+        """
+        from loguru import logger
+
+        from jarvis.ui.overlay_styles import BAR_STYLE, ORB_STYLES
+
+        try:
+            if style == BAR_STYLE:
+                from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+
+                surface = SubprocessBarOverlay(
+                    persistent=self.cfg.ui.bar_persistent,
+                    accent=self.cfg.ui.bar_accent,
+                    startup_gated=gate_until_voice_ready,
+                    size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
+                    follow_cursor_monitor=getattr(self.cfg.ui, "bar_follow_cursor_monitor", True),
+                )
+            elif style in ORB_STYLES:
+                from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
+
+                surface = SubprocessMascotOverlay(
+                    mascot_path=self.cfg.ui.orb_mascot_path or None,
+                    style=style,
+                    **self._pet_surface_kwargs(),
+                )
+            else:
+                return None
+            # The host imports its renderer before it reports ready; give a
+            # cold interpreter more room than the 3 s default.
+            surface.start_in_thread(timeout=10.0)
+        except Exception:  # noqa: BLE001 — cosmetic; the caller degrades
+            logger.opt(exception=True).warning("Overlay host for style={} failed to start.", style)
+            return None
+        if getattr(surface, "_proc", None) is None:
+            logger.warning("Overlay host for style={} did not start.", style)
+            return None
+        logger.info("Overlay hosted out-of-process (jarvis.ui.jarvisbar.host, style={}).", style)
         return surface
 
     def _pet_surface_kwargs(self) -> dict[str, object]:
@@ -3679,31 +3933,31 @@ class DesktopApp:
             return {"ok": True, "applied_live": False, "enabled": enabled}
 
     def swap_overlay(self, style: str) -> dict[str, object]:
-        """Apply an overlay style change at runtime *as far as is Tk-safe*.
+        """Switch the on-screen overlay style live.
 
-        Hard constraint: this NEVER creates a new ``tk.Tk()`` root at runtime.
-        Tkinter cannot create per-style Tk roots on short-lived threads and tear
-        them down: when a destroyed root's Python wrapper is later garbage-
-        collected on a different thread, Tcl aborts the WHOLE PROCESS with
-        ``Tcl_AsyncDelete: async handler deleted by the wrong thread`` (proven
-        live — ``screenshots/live_swap_three_cycles.py``, BUG-031). The "park +
-        join + rebuild" approach looked safe in a 2-root throwaway test only
-        because that test called ``os._exit()`` before GC ran. So the only live
-        transitions we allow are the ones that touch no new root:
+        Hard constraint: this NEVER creates a ``tk.Tk()`` root in THIS process
+        at runtime. Building a second in-process root and tearing one down
+        aborts the whole app with ``Tcl_AsyncDelete: async handler deleted by
+        the wrong thread`` (BUG-031). The transitions therefore are:
 
-        - ``"none"``           → hide the current surface (NullOverlay no-op).
-        - an already-built style (cached, e.g. the boot surface re-selected)
-                               → show it again (same root, never destroyed).
+        - ``"none"``              → the rootless ``NullOverlay``.
+        - one orb look to another → re-style the live orb window (same root).
+        - an already-built style  → show it again (same root, never destroyed).
+        - anything else           → start the surface in its own host process
+                                    (``_build_hosted_surface``), whose root
+                                    lives on that process's main thread.
 
-        Any transition that would need a brand-new real surface (e.g. boot was
-        the mascot and the user picks the bar for the first time) returns
-        ``applied_live=False``; the choice is persisted and the route reports
-        ``restart_required``. The frontend turns that into a one-click
-        self-restart so the user never has to close + reopen by hand. Guarded.
+        The surface being left is taken off the screen at once, so the old look
+        never lingers beside the new one (the 2026-10-06 "the pet stays next to
+        the bar" report). A hosted surface is stopped — its process ends — and
+        an in-process one is only hidden, never destroyed. ``applied_live`` is
+        False only when a host fails to start; the route then reports
+        ``restart_required`` and the frontend offers a one-click restart.
         """
         from loguru import logger
 
         from jarvis.ui.overlay_styles import (
+            HIDDEN_STYLE,
             ORB_STYLES,
             OVERLAY_STYLES,
             PERSISTENT_ORB_STYLES,
@@ -3716,23 +3970,25 @@ class DesktopApp:
         if bridge is None:
             # No live bridge (headless / overlay unavailable) — persisted only.
             return {"ok": True, "applied_live": False, "style": style}
+        # What is on screen right now. Not cfg.ui.orb_style: the settings route
+        # stores the NEW style there before it calls this method.
+        previous = str(
+            getattr(self, "_live_overlay_style", None)
+            or getattr(self.cfg.ui, "orb_style", "")
+            or ""
+        )
         try:
             cache = getattr(self, "_surfaces", None)
             if cache is None:
                 cache = self._surfaces = {}
             old = getattr(self, "_orb", None)
 
-            # Mascot <-> voice orb is a RENDERER swap inside one window, not a
-            # new surface: the orb window stays, only what it paints changes. So
-            # this transition applies live even though every other first-time
-            # transition needs a restart (a second tk.Tk() root would abort the
-            # process — BUG-031).
+            # Mascot <-> voice orb <-> pet is a RENDERER swap inside one window,
+            # not a new surface: the orb window stays, only what it paints
+            # changes.
             if style in ORB_STYLES and old is not None and hasattr(old, "set_style"):
-                previous = str(getattr(self.cfg.ui, "orb_style", "") or "")
                 old.set_style(style)
-                for key in [k for k, v in cache.items() if v is old]:
-                    cache.pop(key, None)
-                cache[style] = old
+                _recache_surface(cache, old, style)
                 # The idle regime travels with the look: the pet stays up
                 # while idle, the mascot and the voice orb pop up per session.
                 bridge._hide_on_idle = self._hide_on_idle_for(style)
@@ -3741,40 +3997,38 @@ class DesktopApp:
                     old.show(mode)
                 elif previous in PERSISTENT_ORB_STYLES and mode == "idle":
                     old.hide()
-                try:
-                    self.cfg.ui.orb_style = style  # best-effort in-memory
-                except Exception:  # noqa: BLE001
-                    logger.debug("in-memory orb_style update skipped", exc_info=True)
+                self._note_live_overlay_style(style)
                 logger.info("Orb window re-styled live to {}.", style)
                 return {"ok": True, "applied_live": True, "style": style}
 
-            if style == "none":
-                new = cache.get("none")
+            if style == HIDDEN_STYLE:
+                new = cache.get(HIDDEN_STYLE)
                 if new is None:
                     from jarvis.ui.jarvisbar import NullOverlay  # no Tk root
 
                     new = NullOverlay()
-                    cache["none"] = new
+                    cache[HIDDEN_STYLE] = new
+            elif style in ORB_STYLES and (window := _cached_orb_window(cache)) is not None:
+                # The orb window built earlier (e.g. at boot) wears any orb
+                # look, so it is reused rather than built a second time.
+                window.set_style(style)
+                _recache_surface(cache, window, style)
+                new = window
             else:
                 new = cache.get(style)
                 if new is None:
-                    # A new tk.Tk() root at runtime would cross-thread-abort the
-                    # process (Tcl_AsyncDelete, BUG-031). Persist only; the route
-                    # surfaces restart_required (frontend = one-click restart).
-                    logger.info(
-                        "Overlay style '{}' needs a restart (no live Tk root yet).",
-                        style,
-                    )
-                    return {"ok": True, "applied_live": False, "style": style}
+                    new = self._build_hosted_surface(style)
+                    if new is None:
+                        # The host would not start. Persisted only; the route
+                        # reports restart_required (one-click restart).
+                        return {"ok": True, "applied_live": False, "style": style}
+                    cache[style] = new
 
             bridge.set_surface(new)
             self._orb = new
             bridge._hide_on_idle = self._hide_on_idle_for(style)
             if old is not None and old is not new:
-                try:
-                    old.hide()
-                except Exception:  # noqa: BLE001
-                    logger.debug("old overlay hide failed", exc_info=True)
+                self._retire_overlay_surface(old, cache)
             try:
                 if (
                     style == "jarvis_bar" and self.cfg.ui.bar_persistent
@@ -3782,10 +4036,7 @@ class DesktopApp:
                     new.show("idle")
             except Exception:  # noqa: BLE001
                 logger.debug("post-swap show failed", exc_info=True)
-            try:
-                self.cfg.ui.orb_style = style  # best-effort in-memory
-            except Exception:  # noqa: BLE001
-                logger.debug("in-memory orb_style update skipped", exc_info=True)
+            self._note_live_overlay_style(style)
             logger.info("Overlay swapped live to style={}.", style)
             return {"ok": True, "applied_live": True, "style": style}
         except Exception as exc:  # noqa: BLE001
@@ -3793,6 +4044,38 @@ class DesktopApp:
                 "overlay live-swap failed (persisted; applies on restart)"
             )
             return {"ok": True, "applied_live": False, "style": style}
+
+    def _note_live_overlay_style(self, style: str) -> None:
+        """Remember which style is on screen (in memory and in the config)."""
+        self._live_overlay_style = style
+        try:
+            self.cfg.ui.orb_style = style  # best-effort in-memory
+        except Exception:  # noqa: BLE001 — a frozen model is not an error
+            from loguru import logger
+
+            logger.debug("in-memory orb_style update skipped", exc_info=True)
+
+    def _retire_overlay_surface(self, surface: Any, cache: dict[str, Any]) -> None:
+        """Take a surface that is no longer selected off the screen.
+
+        A surface in a host process is stopped and forgotten: its process ends,
+        and a later switch back simply starts a fresh one. A surface in this
+        process keeps its Tk root (destroying it aborts the app, BUG-031), so it
+        is only hidden and stays cached for reuse.
+        """
+        from loguru import logger
+
+        from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+
+        try:
+            if isinstance(surface, SubprocessBarOverlay):
+                for key in [k for k, v in cache.items() if v is surface]:
+                    cache.pop(key, None)
+                surface.stop()
+            else:
+                surface.hide()
+        except Exception:  # noqa: BLE001 — cosmetic; the new surface is already live
+            logger.debug("retiring the previous overlay failed", exc_info=True)
 
     def request_restart(self) -> bool:
         """Cleanly self-restart the app to deliver a pending overlay change.
@@ -4188,6 +4471,7 @@ class DesktopApp:
                 # Cache the boot surface so a later swap back to it reuses the
                 # same Tk root instead of building a second one.
                 self._surfaces = {orb_style: surface}
+                self._live_overlay_style = orb_style
                 logger.info(
                     "On-screen overlay active: style={} (persistent={}, accent={}).",
                     orb_style,
@@ -4926,8 +5210,11 @@ class DesktopApp:
                 self._ensure_main_window()
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
+        needs_restore = window_needs_restore(WINDOW_TITLE)
+        to_maximized = window_restores_maximized(WINDOW_TITLE)
         self._window.show()
-        self._window.restore()
+        if needs_restore and not to_maximized:
+            self._window.restore()
         self._window_visible = True
         focused = _bring_window_to_front_by_title(WINDOW_TITLE)
         # Restore the persistent bar if a prior minimise cleared it.
@@ -5068,7 +5355,7 @@ class DesktopApp:
 
         return resolve_theme(self._configured_theme())
 
-    def open_detached_window(self, view: str) -> dict[str, Any]:
+    def open_detached_window(self, view: str, query: str = "") -> dict[str, Any]:
         """Open ``view`` in its own solo window — MUST run on a worker thread.
 
         pywebview materializes runtime windows only from a thread whose name is
@@ -5080,11 +5367,26 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
-        fallback = f"/?view={view}&solo=1"
+        suffix = f"&{query}" if query else ""
+        fallback = f"/?view={view}&solo=1{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
+        if existing is not None and view == "appshot-editor":
+            # The editor window is kept warm and hidden between uses: point it
+            # at the appshot in place and show it — no reload, no boot screen.
+            return self._show_warm_editor(existing, query, fallback)
         if existing is not None:
+            if query:
+                # Same window, new content: navigate it rather than open a
+                # second one (the title is the window's identity on Windows).
+                try:
+                    existing.load_url(f"{self._url()}{fallback}")
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger
+
+                    logger.opt(exception=exc).warning("Detached '{}' could not navigate", view)
+                    return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
             _bring_window_to_front_by_title(self._detached_title(view))
             return {"ok": True, "already_open": True, "view": view}
         if self._window is None and not self._detached_windows:
@@ -5096,11 +5398,12 @@ class DesktopApp:
             import webview  # noqa: PLC0415 — [desktop] extra, never module-level
 
             title = self._detached_title(view)
+            width, height = detached_window_size(view, _primary_screen_size(webview))
             window = webview.create_window(
                 title,
-                f"{self._url()}/?view={view}&solo=1",
-                width=1100,
-                height=750,
+                f"{self._url()}{fallback}",
+                width=width,
+                height=height,
                 min_size=(800, 520),
                 resizable=True,
                 # Cocoa owns the traffic lights and their native zoom/fullscreen behavior.
@@ -5129,6 +5432,95 @@ class DesktopApp:
         self._publish_detached_event_threadsafe(view, opened=True)
         return {"ok": True, "already_open": False, "view": view}
 
+    def open_jarvisx_editor(self, item_id: str) -> dict[str, Any]:
+        """Open (or re-point) the Jarvis X editor window on one capture.
+
+        Worker-thread only, like :meth:`open_detached_window`: the card click
+        and ``POST /api/jarvisx/items/<id>/open-editor`` both reach it through
+        ``asyncio.to_thread``. ``item_id`` is the library's hex id, validated
+        by the caller, so it is safe to put into the URL as is.
+        """
+        return self.open_detached_window("jarvisx-editor", query=f"item={item_id}")
+
+    def _show_warm_editor(self, window: Any, query: str, fallback: str) -> dict[str, Any]:
+        """Show the kept-warm appshot editor on the appshot (or recording) in ``query``."""
+        shot_id = query.partition("appshot=")[2].split("&", 1)[0]
+        hook = "__jarvisOpenAppshot"
+        if not shot_id:
+            # The same window plays and trims screen recordings.
+            shot_id = query.partition("recording=")[2].split("&", 1)[0]
+            hook = "__jarvisOpenRecording"
+        pointed = False
+        if shot_id:
+            try:
+                # Only a real boolean true means the page switched in place.
+                # Anything else (still loading, a script error object, a
+                # string) must navigate, or the window opens on the empty shell.
+                pointed = (
+                    window.evaluate_js(
+                        f"typeof window.{hook} === 'function'"
+                        f" && window.{hook}({json.dumps(shot_id)})"
+                    )
+                    is True
+                )
+            except Exception:  # noqa: BLE001 - still loading: navigate instead
+                pointed = False
+        try:
+            if shot_id and not pointed:
+                # The page has not finished loading yet: load it on this shot.
+                window.load_url(f"{self._url()}{fallback}")
+            window.show()
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+
+            logger.opt(exception=exc).warning("The appshot editor window could not be shown")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        # After show: a window created hidden stays a blank frame until resized.
+        _repaint_webview_shown_from_hidden(window)
+        _bring_window_to_front_by_title(self._detached_title("appshot-editor"))
+        return {"ok": True, "already_open": True, "view": "appshot-editor"}
+
+    def prewarm_appshot_editor(self) -> dict[str, Any]:
+        """Create the appshot editor window hidden, so its first click is instant.
+
+        Worker-thread only, like :meth:`open_detached_window`. Called when an
+        appshot is taken: by the time its corner card is clicked, the editor
+        page has loaded behind the scenes. A no-op when it already exists.
+        """
+        view = "appshot-editor"
+        if view in self._detached_windows:
+            return {"ok": True, "already_open": True}
+        if self._window is None:
+            return {"ok": False, "reason": "no_live_window"}
+        try:
+            import webview  # noqa: PLC0415 — [desktop] extra, never module-level
+
+            width, height = detached_window_size(view, _primary_screen_size(webview))
+            window = webview.create_window(
+                self._detached_title(view),
+                f"{self._url()}/?view={view}&solo=1",
+                width=width,
+                height=height,
+                min_size=_EDITOR_MIN_SIZE,
+                resizable=True,
+                frameless=True,
+                easy_drag=False,
+                confirm_close=False,
+                hidden=True,
+                background_color=self._window_background(),
+                **TEXT_SELECTABLE,
+            )
+        except Exception as exc:  # noqa: BLE001 - opening on click still works
+            from loguru import logger
+
+            logger.opt(exception=exc).debug("The appshot editor could not be prepared")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        self._detached_windows[view] = window
+        self._arm_window_frame(window)
+        window.events.loaded += lambda w=window, v=view: self._inject_into_secondary(w, v)
+        window.events.closed += lambda v=view: self._on_detached_closed(v)
+        return {"ok": True, "already_open": False}
+
     def close_detached_window(self, view: str) -> dict[str, Any]:
         """Close the detached window for ``view`` — worker-thread only.
 
@@ -5139,6 +5531,15 @@ class DesktopApp:
         window = self._detached_windows.get(view)
         if window is None:
             return {"ok": False, "reason": "not_detached"}
+        if view == "appshot-editor":
+            # Hidden, not destroyed: the next appshot opens it at once.
+            try:
+                window.hide()
+                return {"ok": True, "view": view, "hidden": True}
+            except Exception as exc:  # noqa: BLE001 - a window that will not hide is closed
+                from loguru import logger
+
+                logger.opt(exception=exc).debug("Appshot editor window would not hide; closing it")
         try:
             window.destroy()
         except Exception as exc:  # noqa: BLE001
@@ -5861,12 +6262,23 @@ class DesktopApp:
         # lives. Windows and macOS are native; Linux is a logged no-op until its
         # GTK source lands. Never blocks the window.
         try:
-            from pathlib import Path as _Path
-
+            from jarvis.appshot.dragfile import drag_folder
+            from jarvis.platform.user_dirs import downloads_dir
             from jarvis.ui.native_drag import install_native_drag
 
-            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads"])
+            # Downloads for saved files; the appshot drag folder for the
+            # editor's "Drag me" handle (jarvis/appshot/dragfile.py).
+            install_native_drag(allowed_base_dirs=[downloads_dir(), drag_folder()])
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
+            pass
+
+        # macOS: Cmd+W goes to the page (closes a code-editor tab) instead of
+        # closing the window; a logged no-op everywhere else. Before start().
+        try:
+            from jarvis.ui.macos_editor_keys import install_macos_editor_keys
+
+            install_macos_editor_keys()
+        except Exception:  # noqa: BLE001, S110 - key routing is never load-bearing
             pass
 
         # webview.start blocks the main thread. func/args gets called after
@@ -5929,11 +6341,7 @@ class DesktopApp:
             self._hand_off_to_background_service()
         code = self.shutdown()
         if self._user_requested_quit:
-            with suppress(Exception):
-                sys.stdout.flush()
-            with suppress(Exception):
-                sys.stderr.flush()
-            os._exit(code)
+            self._exit_after_backend_shutdown(code)
         return code
 
     def _degrade_to_browser_ui(self, exc: BaseException, *, remedy: str | None = None) -> int:
@@ -6232,8 +6640,15 @@ class DesktopApp:
                 self._ensure_main_window()
             return
         try:
+            # pywebview's restore() un-maximizes a visible window too; only a
+            # minimized or hidden one needs it.
+            needs_restore = window_needs_restore(WINDOW_TITLE)
+            # A window minimized while maximized is restored by Win32 below,
+            # which brings it back maximized; pywebview's restore would not.
+            to_maximized = window_restores_maximized(WINDOW_TITLE)
             self._window.show()
-            self._window.restore()
+            if needs_restore and not to_maximized:
+                self._window.restore()
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)
             self._reload_window_if_stale()
@@ -6255,25 +6670,31 @@ class DesktopApp:
         rendered last. When the user hides the window for a while and
         the FastAPI server later recovers, ``show()`` only un-hides the
         cached frame — including stale 4xx/5xx pages such as the bare
-        ``Internal Server Error`` body. Probing ``document.title`` lets
-        us recognise that the React app never booted and forces a fresh
-        navigation to the SPA root.
+        ``Internal Server Error`` body. The SPA document always carries
+        ``#root`` (from ``index.html``, before React even mounts); an error
+        body never does, so its absence is what forces a fresh navigation.
+
+        The probe used to look for "Jarvis" in ``document.title``, but the
+        title has been the neutral "Assistant" since 2026-07-01, so EVERY
+        show — a tray click, the orb, a click on the appshot card — reloaded
+        a perfectly healthy window: the editor the card had just opened was
+        wiped and a running voice call hung up.
         """
         if self._window is None:
             return
         from loguru import logger
 
         try:
-            title = self._window.evaluate_js("document.title")
+            booted = self._window.evaluate_js(_SPA_DOCUMENT_PROBE)
         except Exception as exc:  # noqa: BLE001
-            # A probe that ALWAYS fails looks identical to "the SPA never
-            # booted", so every show() reloads the window — the reload loop
-            # that reads as a flickering window at startup. Distinguishing a
-            # broken probe from a genuinely stale frame needs this line.
-            logger.debug("Staleness probe failed, assuming a stale frame: {}", exc)
-            title = None
-        if title and isinstance(title, str) and "Jarvis" in title:
+            # A probe that fails says nothing about the page; reloading on it
+            # would reload a healthy window on every show (the old loop that
+            # read as a flickering window at startup), so keep what is there.
+            logger.debug("Staleness probe failed; leaving the window as it is: {}", exc)
             return
+        if booted is True:
+            return
+        logger.info("The window shows no app (stale error page); reloading it.")
         try:
             self._window.load_url(self._url())
         except Exception as exc:  # noqa: BLE001
@@ -6466,11 +6887,75 @@ class DesktopApp:
         bounded worst case, so it only fires on a genuine infinite hang.
         """
 
+        after_s = max(after_s, _SHUTDOWN_FORCE_EXIT_MIN_S)
+
         def _kill() -> None:
             time.sleep(after_s)
             os._exit(0)
 
         threading.Thread(target=_kill, name="jarvis-force-exit", daemon=True).start()
+
+    _BACKEND_SHUTDOWN_WAIT_S = 3.0
+
+    async def _drain_backend_shutdown(self, server: Any, bootstrap: Any) -> None:
+        """Keep the backend loop alive until its owned construction is drained."""
+        loop = asyncio.get_running_loop()
+
+        async def cleanup() -> None:
+            try:
+                if bootstrap is not None:
+                    await bootstrap.stop()
+            finally:
+                await server.stop()
+
+        owned = asyncio.create_task(cleanup(), name="desktop-backend-cleanup")
+        try:
+            try:
+                await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                # Cancellation of a waiting caller cannot abandon construction
+                # or close its loop early. Propagate only after owned cleanup.
+                await asyncio.shield(owned)
+                raise
+        finally:
+            loop.call_soon(loop.stop)
+
+    def _exit_after_backend_shutdown(self, code: int) -> None:
+        """Exit after orderly cleanup without blocking the GUI thread.
+
+        The existing force-exit watchdog remains the emergency deadline for a
+        genuinely wedged native call. A normal slow route build gets to finish
+        and release its stores before the process exits.
+        """
+        future = getattr(self, "_backend_shutdown_future", None)
+        backend = getattr(self, "_backend_thread", None)
+
+        def finish() -> None:
+            try:
+                if future is not None:
+                    future.result()
+            except Exception:
+                logging.getLogger(__name__).exception("Backend cleanup failed before exit")
+            finally:
+                if backend is not None and backend is not threading.current_thread():
+                    backend.join()
+                with suppress(Exception):
+                    sys.stdout.flush()
+                with suppress(Exception):
+                    sys.stderr.flush()
+                os._exit(code)
+
+        if (future is not None and not future.done()) or (
+            backend is not None and backend.is_alive()
+        ):
+            # Non-daemon: returning from the launcher must not let interpreter
+            # shutdown kill the backend before its cleanup coroutine resumes.
+            self._shutdown_exit_thread = threading.Thread(
+                target=finish, name="desktop-cleanup-exit", daemon=False
+            )
+            self._shutdown_exit_thread.start()
+        else:
+            finish()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
@@ -6598,6 +7083,9 @@ class DesktopApp:
                     from loguru import logger as _logger
 
                     _logger.warning("Wake-upgrade task cancel did not dispatch: {}", exc)
+            _heavy = getattr(self, "_heavy_backend_task", None)
+            if _heavy is not None and not _heavy.done():
+                loop.call_soon_threadsafe(_heavy.cancel)
             _wml = getattr(self, "_wake_model_loaded", None)
             if _wml is not None:
                 try:
@@ -6679,35 +7167,31 @@ class DesktopApp:
                 # _pty_cleanup already logs its own failure; this only bounds
                 # how long the quit waits for it.
                 pass
-            # Stop the serve-first bootstrap (it owns the listening socket).
-            if self._bootstrap is not None:
+            # The GUI only waits briefly. The backend owns the full drain and
+            # stops its loop AFTER server cleanup, including any deferred route
+            # worker. A GUI timeout must not close a loop that still owns work.
+            shutdown_coro = self._drain_backend_shutdown(server, self._bootstrap)
+            try:
+                self._backend_shutdown_future = asyncio.run_coroutine_threadsafe(
+                    shutdown_coro, loop
+                )
+            except RuntimeError as exc:
+                shutdown_coro.close()
+                logging.getLogger(__name__).warning(
+                    "Backend shutdown could not be scheduled: %s", exc
+                )
+            else:
                 try:
-                    asyncio.run_coroutine_threadsafe(self._bootstrap.stop(), loop).result(
-                        timeout=3.0
+                    self._backend_shutdown_future.result(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
+                except TimeoutError:
+                    logging.getLogger(__name__).info(
+                        "Backend cleanup continues after the bounded desktop wait"
                     )
-                except Exception:  # noqa: BLE001, S110
-                    # Timed out or already down; the loop stop below is the
-                    # backstop that frees the socket either way.
-                    pass
-            try:
-                fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
-                try:
-                    fut.result(timeout=3.0)
-                except Exception:  # noqa: BLE001, S110
-                    # Server shutdown may hang; the event loop still stops forcibly.
-                    pass
-            except Exception:  # noqa: BLE001, S110
-                # Could not even schedule the stop (loop already closing); the
-                # forced loop.stop below covers it.
-                pass
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:  # noqa: BLE001, S110
-                # The loop is already stopped or closed — the desired end state.
-                pass
+                except Exception:
+                    logging.getLogger(__name__).exception("Backend shutdown failed")
 
         if self._backend_thread is not None:
-            self._backend_thread.join(timeout=3.0)
+            self._backend_thread.join(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
 
         # Tray last — pystray.stop() prevents the tray icon from lingering
         # in the taskbar after the process ends.

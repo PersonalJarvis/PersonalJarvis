@@ -45,6 +45,7 @@ identity:
   timezone: Europe/Berlin
   work_hours: null             # "09:00-19:00" or open
   devices: []                  # "headset during the day", "speaker in the evening"
+  about: null                  # a short self-description in the user's own words
 
 # ---- Cluster 2: Communication style (dynamic, calibrated) ----
 communication:

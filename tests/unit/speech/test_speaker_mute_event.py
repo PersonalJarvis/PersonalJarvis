@@ -1,17 +1,7 @@
-"""Speaker mute on the real ``SpeechPipeline`` (docs/pets.md).
+"""Speaker output state, independent volume and cross-thread UI snapshots.
 
-Speaker mute is TTS volume 0. Two contracts live on the pipeline:
-
-* ``get_tts_volume`` reports the volume in effect. Without it the orb/pet
-  speaker disc read every volume as "audible", so a click could mute the voice
-  but never bring it back (the live bug this closes).
-* ``set_tts_volume`` — the one choke point every writer ends in — broadcasts
-  ``VoiceSpeakerMuteChanged`` exactly when the muted-ness FLIPS, from whatever
-  thread it is called on (the REST threadpool, the overlay's Tk thread), and
-  the event is delivered on the pipeline's own loop.
-
-Also covers the pet shortcut, which the pipeline dispatches like every other
-global hotkey and answers with ``PetVisibilityToggleRequested``.
+The real SpeechPipeline owns output mute. Every sink receives its snapshot;
+muting never changes the microphone or overwrites the configured volume.
 """
 from __future__ import annotations
 
@@ -47,6 +37,10 @@ class VolumePlayer:
 
     _volume: float = 1.0
     calls: list[float] = field(default_factory=list)
+    muted: bool = False
+
+    def set_muted(self, muted: bool) -> None:
+        self.muted = muted
 
     def set_volume(self, volume: float) -> None:
         self.calls.append(volume)
@@ -105,26 +99,26 @@ def test_get_tts_volume_without_a_player_falls_back_to_what_was_asked() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_event_fires_only_when_the_muted_ness_flips() -> None:
+async def test_output_snapshots_include_volume_and_ordered_revisions() -> None:
     bus = EventBus()
     pipeline, player = _pipeline(bus, volume=0.8)
     seen: list[VoiceSpeakerMuteChanged] = _collect(bus, VoiceSpeakerMuteChanged)
 
     pipeline.set_tts_volume(0.5, source="settings")  # audible → audible
     await _drain()
-    assert seen == []
+    assert [(e.muted, e.volume, e.revision) for e in seen] == [(False, 0.5, 1)]
 
     pipeline.set_tts_volume(0.0, source="pet")  # audible → silent
     await _drain()
-    assert [(e.muted, e.source) for e in seen] == [(True, "pet")]
+    assert (seen[-1].muted, seen[-1].volume, seen[-1].source) == (False, 0.0, "pet")
 
     pipeline.set_tts_volume(0.0, source="pet")  # silent → silent
     await _drain()
-    assert len(seen) == 1
+    assert len(seen) == 3
 
     pipeline.set_tts_volume(0.7, source="settings")  # silent → audible
     await _drain()
-    assert [(e.muted, e.source) for e in seen] == [(True, "pet"), (False, "settings")]
+    assert (seen[-1].muted, seen[-1].source, seen[-1].revision) == (False, "settings", 4)
     assert player.calls == [0.5, 0.0, 0.0, 0.7]
 
 
@@ -154,7 +148,7 @@ async def test_a_call_from_another_thread_publishes_on_the_pipeline_loop() -> No
         delivered.set()
 
     bus.subscribe(VoiceSpeakerMuteChanged, _record)
-    await asyncio.to_thread(pipeline.set_tts_volume, 0.0, source="pet")
+    await asyncio.to_thread(pipeline.set_speaker_muted, True, source="pet")
     await asyncio.wait_for(delivered.wait(), timeout=2.0)
 
     assert seen == [(True, threading.get_ident())]
@@ -177,11 +171,13 @@ def test_the_speaker_disc_can_unmute_again(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(runtime_refs, "_SPEECH_PIPELINE", [pipeline])
 
     assert controls.toggle_speaker_mute() is True
-    assert player._volume == 0.0
+    assert player._volume == pytest.approx(0.9)
+    assert player.muted is True
     assert controls.speaker_is_muted() is True
 
     assert controls.toggle_speaker_mute() is False
     assert player._volume == pytest.approx(0.9)
+    assert player.muted is False
     assert controls.speaker_is_muted() is False
 
 

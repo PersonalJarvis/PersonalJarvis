@@ -62,8 +62,12 @@ export function nextAppZoom(level: number, intent: AppZoomIntent): number {
   return APP_ZOOM_LEVELS[Math.min(APP_ZOOM_LEVELS.length - 1, Math.max(0, next))];
 }
 
-/** Keys whose identity is the character they type, not their position. */
-const CHARACTER_KEYS = new Set(["plus", "minus"]);
+/**
+ * Keys whose identity is the character they type, not their position. `?` is
+ * one too: Shift+`/` on a US keyboard, Shift+`ß` on a German one — the other  i18n-allow: names a key cap
+ * in-app chords (the shortcut overview) record it through this module.
+ */
+const CHARACTER_KEYS = new Set(["plus", "minus", "question"]);
 
 const NAMED_CODES: Record<string, string> = {
   Space: "space",
@@ -106,6 +110,7 @@ export function appZoomKeyToken(event: Pick<AppZoomKeyEvent, "key" | "code">): s
   if (code === "NumpadInsert") return "0"; // keypad 0 with NumLock off
   if (key === "+" || (key === "=" && code === "Equal")) return "plus";
   if (key === "-" || (key === "_" && code === "Minus")) return "minus";
+  if (key === "?") return "question";
   if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
   if (/^Digit[0-9]$/.test(code)) return code.slice(5);
   if (/^F[0-9]{1,2}$/.test(code)) return code.toLowerCase();
@@ -202,6 +207,7 @@ export function appZoomComboProblem(
 const KEY_LABEL: Record<string, string> = {
   plus: "+",
   minus: "-",
+  question: "?",
   space: "Space",
   up: "↑",
   down: "↓",

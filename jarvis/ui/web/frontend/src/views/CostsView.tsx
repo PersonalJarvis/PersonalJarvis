@@ -202,7 +202,7 @@ export function CostsView() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
+      <div className="flex w-full flex-col gap-4 px-8 py-6">
         <PanelHeader
           title={t("costs_view.title")}
           subtitle={
@@ -1528,7 +1528,7 @@ function DayReport({
 
   return (
     <ScrollArea className="h-full">
-      <div className="mx-auto flex max-w-[1180px] flex-col gap-4 px-6 py-6">
+      <div className="flex w-full flex-col gap-4 px-8 py-6">
         <BackLink label={t("costs_view.day_back")} onClick={onBack} />
 
         <DetailHeader

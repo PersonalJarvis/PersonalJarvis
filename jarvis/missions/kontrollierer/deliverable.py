@@ -104,9 +104,9 @@ _DELIVERABLE_TEMPLATES: Final[dict[str, dict[str, str]]] = {
         "many": "Fertig. {count} Dateien als Artefakte hinterlegt.",  # i18n-allow
     },
     "en": {
-        "one": "Done. I've filed {name} as an artifact.",
-        "few": "Done. {count} files filed as artifacts: {joined}.",
-        "many": "Done. {count} files filed as artifacts.",
+        "one": "Done. I have saved {name} as an artifact.",
+        "few": "Done. I have saved {count} files as artifacts: {joined}.",
+        "many": "Done. I have saved {count} files as artifacts.",
     },
 }
 

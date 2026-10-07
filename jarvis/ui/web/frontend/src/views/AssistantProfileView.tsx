@@ -42,8 +42,8 @@ import { MemorySection } from "@/views/assistant/MemorySection";
 import { RecentSection } from "@/views/assistant/RecentSection";
 import { TextAction } from "@/views/assistant/Section";
 
-/** The reading column — the same measure as the Profile page. */
-const COLUMN = "mx-auto w-full max-w-[760px]";
+/** The full Settings hub column — the same measure as the Profile page. */
+const COLUMN = "w-full";
 
 function headerLine(t: (key: string) => string, profile: SoulProfile | undefined): string | undefined {
   if (!profile) return undefined;

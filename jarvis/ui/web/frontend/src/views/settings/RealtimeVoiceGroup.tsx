@@ -1,9 +1,8 @@
-import { Radio } from "lucide-react";
-
 import { Switch } from "@/components/ui/switch";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { realtimeTransportIssueKey } from "@/lib/realtimeTransportIssue";
 import { useT } from "@/i18n";
+import { SettingsRow } from "@/views/settings/SettingsLayout";
 
 /**
  * Provider-neutral Realtime voice toggle inside the Settings view. It flips
@@ -64,49 +63,46 @@ export function RealtimeVoiceGroup() {
       ? t(realtimeTransportIssueKey(transportIssue))
       : transportOfferDetail;
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Radio className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-medium">{t("settings_view.realtime_voice.title")}</h4>
-            <Switch
-              checked={on}
-              disabled={isLoading || isSaving || (!on && !realtimeAvailable)}
-              aria-label={t("settings_view.realtime_voice.title")}
-              onCheckedChange={(next) => setMode(next ? "realtime" : "pipeline")}
-            />
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {realtimeAvailable
-              ? t("settings_view.realtime_voice.description")
-              : t("settings_view.realtime_voice.unavailable")}
-          </p>
-          <p className="mt-1.5 text-micro text-muted-foreground" aria-live="polite">
-            {runtimeText}
-          </p>
-          {on && lastStartError && (
-            <p
-              data-testid="realtime-last-start-error"
-              className="mt-1 text-micro text-foreground"
-              aria-live="polite"
-            >
-              {t("voice_state.connect_failed")
-                .replace("{0}", lastStartError.provider || "?")
-                .replace("{1}", lastStartError.message)}
-            </p>
-          )}
-          {offerDetail && (
-            <p
-              data-testid="realtime-transport-offer-detail"
-              className="mt-1 text-micro text-foreground"
-              aria-live="polite"
-            >
-              {offerDetail}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
+    <SettingsRow
+      id="settings-realtime-voice"
+      title={t("settings_view.realtime_voice.title")}
+      description={
+        realtimeAvailable
+          ? t("settings_view.realtime_voice.description")
+          : t("settings_view.realtime_voice.unavailable")
+      }
+      control={
+        <Switch
+          checked={on}
+          disabled={isLoading || isSaving || (!on && !realtimeAvailable)}
+          aria-label={t("settings_view.realtime_voice.title")}
+          onCheckedChange={(next) => setMode(next ? "realtime" : "pipeline")}
+        />
+      }
+    >
+      <p className="text-sm text-muted-foreground" aria-live="polite">
+        {runtimeText}
+      </p>
+      {on && lastStartError && (
+        <p
+          data-testid="realtime-last-start-error"
+          className="text-sm text-foreground"
+          aria-live="polite"
+        >
+          {t("voice_state.connect_failed")
+            .replace("{0}", lastStartError.provider || "?")
+            .replace("{1}", lastStartError.message)}
+        </p>
+      )}
+      {offerDetail && (
+        <p
+          data-testid="realtime-transport-offer-detail"
+          className="text-sm text-foreground"
+          aria-live="polite"
+        >
+          {offerDetail}
+        </p>
+      )}
+    </SettingsRow>
   );
 }

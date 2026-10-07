@@ -237,7 +237,7 @@ describe("CustomCliDialog", () => {
     );
     expect(field("custom-cli-name").value).toBe("Helix");
     expect(field("custom-cli-command").value).toBe("helix");
-    expect(field("custom-cli-at-reference").checked).toBe(true);
+    expect(screen.getByTestId("custom-cli-at-reference").getAttribute("aria-checked")).toBe("true");
   });
 });
 

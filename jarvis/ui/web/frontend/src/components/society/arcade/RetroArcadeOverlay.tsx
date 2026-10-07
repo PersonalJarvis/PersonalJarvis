@@ -12,6 +12,7 @@
  * Phase changes are React state (rare); the loop itself runs on refs and
  * never sets state per frame. The HUD polls the game ten times a second.
  */
+import { reportWorldAction } from "../progression/progressionApi";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { useReducedMotion } from "framer-motion";
 import { useT } from "@/i18n";
@@ -147,6 +148,8 @@ export function RetroArcadeOverlay({ gameId, onClose, loadGame = loadRetroGame }
       const previous = readBest(gameId);
       const newBest = saveBest(gameId, score);
       const kept = Math.max(previous, score);
+      // A scored round pays the person a little XP; a new record a little more (metered on the server).
+      if (score > 0) void reportWorldAction(newBest ? "arcade_record" : "arcade_round");
       setBest(kept);
       setResult({ score, best: kept, newBest, won });
       overAt = now;
@@ -245,10 +248,9 @@ export function RetroArcadeOverlay({ gameId, onClose, loadGame = loadRetroGame }
         swallow(event);
       }
     };
+    // Releases are noted but never swallowed: everyone listening (the office's own walking keys too) must hear them.
     const up = (event: KeyboardEvent) => {
-      const code = event.code;
-      // Released keys always count, even with a modifier down, or they would stick.
-      if (releaseKey(tracker.current, code) || code === "Enter" || code === "NumpadEnter" || code === "KeyP") swallow(event);
+      releaseKey(tracker.current, event.code);
     };
     // Leaving the window (or hiding it) pauses and forgets held keys: their keyup never arrives.
     const visibility = () => { if (document.hidden) pause(); };

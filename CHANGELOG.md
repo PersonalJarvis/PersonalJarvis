@@ -9,6 +9,34 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Built-in plugins that have not yet passed a full end-to-end sign-in test now show a Preview badge, and releases no longer wait for every plugin to pass that test. A plugin is marked verified only after its complete journey was observed.
+
+---
+
+## [2.9.0] — 2026-10-05
+
+### Added
+
+- Share agents as reusable templates without running a publishing server.
+- Updated desktop interfaces and bundled assets for the integrated release.
+
+### Fixed
+
+- Preserve browser tabs and stable native capture when handing control between a person and an agent.
+- Keep delegated results attached to their originating chat and serialize direct chat sessions.
+- Require a separate confirmation before ending a voice conversation.
+- Bound Windows clipboard reads so dictation cannot remain blocked on delayed clipboard data.
+- Retry brief file locks when saving dictation history so completed restorations are retained.
+- Restore macOS desktop controls and request native permissions at the point of use.
+- Defer optional browser setup on headless installations and repair cross-platform lifecycle behavior.
+- Strengthen execution, credential storage, refresh and release-admission boundaries.
+
+### Known limitations
+
+- Full end-to-end plugin acceptance is deferred for 2.9.0 under a one-time maintainer-approved exception. The 46 outstanding plugin journeys remain unverified, and some sign-ins still require publisher setup. Existing audit results are unchanged; this exception does not apply to later releases.
+
 ---
 
 ## [2.8.0] — 2026-10-03

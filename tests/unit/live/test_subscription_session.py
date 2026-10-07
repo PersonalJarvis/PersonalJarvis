@@ -11,6 +11,7 @@ from jarvis.live.config import LiveConfig
 from jarvis.live.state import LiveLedger
 from jarvis.live.tools import LiveTools
 from tests.fakes.fake_subscription_session import (
+    AppshotSubscriptionGateway,
     ScriptedSubscriptionReasoning,
     SubscriptionConnection,
     SubscriptionEvents,
@@ -27,7 +28,7 @@ def make_session(monkeypatch, tmp_path):
 
     sessions = []
 
-    def make(rounds):
+    def make(rounds, gateway=None):
         reasoning = ScriptedSubscriptionReasoning(rounds)
         monkeypatch.setattr(module, "SubscriptionReasoning", lambda **kwargs: reasoning)
         config = SimpleNamespace(
@@ -56,7 +57,7 @@ def make_session(monkeypatch, tmp_path):
             bus=bus,
         )
         ledger = LiveLedger(tmp_path / f"{session.session_id}.sqlite3")
-        gateway = SubscriptionGateway()
+        gateway = gateway or SubscriptionGateway()
         session._ledger = ledger
         session._connection = SubscriptionConnection()
         session._tools = LiveTools(
@@ -327,6 +328,61 @@ async def test_screenshot_tool_result_becomes_a_supported_image_input(make_sessi
         {"type": "input_image", "image_url": "data:image/png;base64,AAAA"} in item["content"]
         for item in image_messages
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refused", [False, True])
+async def test_new_appshot_request_keeps_old_image_as_context_and_uses_new_tool_result(
+    make_session, refused,
+):
+    gateway = AppshotSubscriptionGateway(refused=refused)
+    capture = {
+        "id": "fresh-shot", "type": "function_call", "call_id": "capture-1",
+        "name": "take_appshot", "arguments": '{"scope":"window"}',
+    }
+    session, reasoning, _, _, _, _ = make_session([
+        completed_response("r1", [capture]),
+        completed_response("r2", [spoken_result("Capture refused." if refused else "Captured.")]),
+    ], gateway=gateway)
+    await session.attach_appshot(b"OLD", "image/png", "An earlier skill editor screenshot")
+    request = "Take a new appshot and look at my current screen."
+    await session._delegate("fresh-request", request)
+
+    first = reasoning.requests[0]
+    assert "take_appshot" in {tool["name"] for tool in first["tools"]}
+    assert first["input"][-1]["content"][0]["text"] == request
+    previous = first["input"][-2]["content"]
+    assert "Earlier screen snapshot" in previous[0]["text"]
+    assert previous[-1]["image_url"] == "data:image/png;base64,T0xE"
+    assert [(name, args) for name, args, _ in gateway.calls] == [
+        ("take_appshot", {"scope": "window"}),
+    ]
+    followup = reasoning.requests[1]["input"]
+    result = next(item for item in followup if item.get("type") == "function_call_output")
+    assert json.loads(result["output"])["success"] is not refused
+    assert ("data:image/png;base64,TkVX" in json.dumps(followup)) is not refused
+    if refused:
+        assert "Blocked by the privacy filter" in result["output"]
+    else:
+        assert session._image_context == [
+            {"type": "input_image", "image_url": "data:image/png;base64,TkVX"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_existing_appshot_stays_available_for_a_followup_without_recapture(make_session):
+    session, reasoning, gateway, _, _, _ = make_session([
+        completed_response("r1", [spoken_result("This image shows a skill editor.")]),
+        completed_response("r2", [spoken_result("The button in that image says Save.")]),
+    ])
+    await session.attach_appshot(b"OLD", "image/png", "A supplied screenshot")
+    for index, request in enumerate(("Describe this image.", "What does its button say?")):
+        await session._delegate(f"image-{index}", request)
+        items = reasoning.requests[index]["input"]
+        assert items[-1]["content"][0]["text"] == request
+        assert "data:image/png;base64,T0xE" in json.dumps(items)
+        assert "Earlier screen snapshot" in json.dumps(items)
+    assert gateway.calls == []
 
 
 @pytest.mark.asyncio
@@ -819,7 +875,7 @@ async def test_terminal_subscription_reconnect_error_stops_shared_retry_loop(
         raise SubscriptionLiveError(code)
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
     session, _, _, _, _, _ = make_session([])
     session._provider.reattach_session = reattach
     assert not await session._wait_for_connection()
@@ -848,7 +904,7 @@ async def test_subscription_transient_control_outage_reuses_call_and_shared_budg
         return restored
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
     session, _, _, messages, _, _ = make_session([])
     old = session._connection
     session._provider.reattach_session = reattach
@@ -875,7 +931,7 @@ async def test_terminal_subscription_recovery_on_pump_task_still_closes_resource
         raise SubscriptionLiveError("authentication_required")
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
     session, reasoning, _, _, _, _ = make_session([])
     session._provider.reattach_session = reattach
     session._pump_task = asyncio.create_task(session._wait_for_connection())
@@ -1006,3 +1062,73 @@ async def test_started_report_without_final_caption_has_bounded_receipt(make_ses
     assert session._report_timeout is not None
     session._report_start_timed_out()
     assert session.take_report_outcome() == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current", ["What's up?", "Continue with the agent I mentioned."])
+async def test_archived_request_is_context_for_the_current_delegation(make_session, current):
+    session, reasoning, gateway, _, _, _ = make_session(
+        [completed_response("reply", [spoken_result("I am here.")])]
+    )
+    previous = "Prompt the Codex agent in the Computer Use workspace."
+    session._initial_seed = [{"role": "user", "delta": previous}]
+    session._tools.user_text = current
+    await session._event({
+        "type": "session.delegation.created",
+        "delegation": {"id": "current-request"},
+        "prompt": current,
+    })
+    await wait_for_jobs(session)
+    items = reasoning.requests[0]["input"]
+    assert items[0]["role"] == "assistant"
+    assert previous in items[0]["content"][0]["text"]
+    user_texts = [
+        part["text"] for item in items if item.get("role") == "user"
+        for part in item["content"] if part.get("type") == "input_text"
+    ]
+    assert user_texts[-1] == current
+    assert previous not in user_texts
+    assert gateway.calls == []
+
+
+def test_subscription_and_api_share_explicit_voice_and_thinking_identity():
+    identity = "Your name is Lyra. Respect the user's saved identity instructions."
+    for mode in ("api_key", "chatgpt_subscription"):
+        profile = LiveConfig(
+            configured=True, auth_mode=mode, backend_model="api-model",
+            subscription_backend_model="subscription-model",
+        )
+        session = profile.session_config(language="en", tools=[], identity=identity)
+        backend = profile.backend_config(language="en", tools=[], identity=identity)
+        assert session["instructions"].startswith(identity)
+        assert backend["instructions"].startswith(identity)
+        assert "Jarvis then asks its own hang-up confirmation" in backend["instructions"]
+        assert session["delegation"]["type"] == (
+            "client" if mode == "chatgpt_subscription" else "responses"
+        )
+
+
+async def test_subscription_reasoning_inherits_configured_identity(make_session, monkeypatch):
+    import jarvis.live.subscription as module
+
+    monkeypatch.setattr(module, "_identity", lambda config: "Your name is Lyra.")
+    session, reasoning, _, _, _, _ = make_session(
+        [completed_response("r1", [spoken_result()])]
+    )
+    await session._delegate("d1", "Inspect state")
+    assert reasoning.requests[0]["instructions"].startswith("Your name is Lyra.")
+
+
+async def test_subscription_keeps_jarvis_hangup_confirmation_and_model_pin(make_session):
+    session, _, _, messages, _, _ = make_session([])
+    session._tools.ask_hangup = session._ask_voice_hangup
+    session._tools.user_text = "Hang up"
+    session._tools.revision = 1
+    first = await session._tools.execute("hangup-request", "end_call", {}, 1)
+    assert first["confirmation_required"] and not session._tools.end_requested
+    assert any(message.get("type") == "error_spoken" for message in messages)
+    assert session._tools.model_selection.provider == "openai-chatgpt-subscription"
+    session._tools.user_text = "Yes"
+    session._tools.revision = 2
+    confirmed = await session._tools.execute("hangup-confirm", "end_call", {}, 2)
+    assert confirmed["success"] and session._tools.end_requested

@@ -27,7 +27,10 @@ import time
 
 from jarvis.core.branding import CONFIG_FILE_NAME
 from jarvis.core.branding import PRODUCT_NAME as APP_DISPLAY_NAME
-from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.process_utils import (
+    drop_inherited_electron_node_mode,
+    ensure_standard_streams,
+)
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 
 # Boot-profiling anchor (opt-in via JARVIS_BOOT_PROFILE=1). ``main()`` stamps the
@@ -42,6 +45,8 @@ _BOOT_PROFILE_T0: float | None = None
 # streams. Uvicorn probes stdout while configuring its formatter, so repair the
 # streams before any desktop/backend construction can begin.
 ensure_standard_streams()
+# Programs this app opens must start as themselves, not as bare Node.js.
+drop_inherited_electron_node_mode()
 
 # DPI awareness — claim PER_MONITOR_AWARE for the whole process BEFORE anything
 # imports pywebview. Windows honours only the FIRST process-awareness claim, and
@@ -845,6 +850,10 @@ async def _run_headless(args) -> int:
     from jarvis.agentic_ide.session import schedule_boot_restore
 
     schedule_boot_restore()
+    # Carry on the IDE thread turns the turn host kept running.
+    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+    schedule_turn_reattach(server.app.state)
 
     # The full app's init chain is done and the chat handler is subscribed — hand
     # the real ASGI app to the already-listening bootstrap server, which now

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  ArrowRight,
+  ArrowUpRight,
   Check,
+  ChevronRight,
   ExternalLink,
   FileInput,
   FileText,
@@ -11,14 +12,17 @@ import {
   Package,
   RefreshCw,
   Search,
+  ShieldAlert,
   Store,
   UploadCloud,
-  Wand2,
   X,
 } from "lucide-react";
 
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { TabBar } from "@/components/layout/SectionTabBar";
 import { ViewHeader } from "@/views/ChatsView";
 import {
   GithubSignInDialog,
@@ -26,9 +30,10 @@ import {
   usePublishIdentity,
 } from "@/components/marketplace/PublishIdentity";
 import { PublishStudio } from "@/components/marketplace/PublishStudio";
-import { fill, useLocaleChunk, useT } from "@/i18n";
+import { fill, useI18nStore, useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
+import { bundledPluginLogo } from "@/lib/pluginLogos";
 import { useEventStore, type SectionId } from "@/store/events";
 import { installAgentTemplate, readFileText, type AgentTemplateWire } from "@/lib/agentShare";
 import { AgentSymbol } from "@/components/society/AgentSymbol";
@@ -57,15 +62,15 @@ import {
 //
 // Everything here is UNREVIEWED third-party content. The registry auto-merges
 // submissions that pass automated checks, so every install goes through the
-// detail drawer, where the publisher, the source and the actual published
-// files are on screen before the button is reachable.
+// detail sheet, where the publisher, the destination, the source and the
+// actual published files are on screen before the button is reachable.
 // ---------------------------------------------------------------------------
 
 /** The public storefront — the same catalogue, on the web. */
 const MARKETPLACE_WEB_URL = "https://github.com/PersonalJarvis/marketplace";
 
 type Kind = "plugin" | "skill" | "agent";
-type KindFilter = "all" | Kind | "mine";
+type KindFilter = "all" | Kind | "installed" | "mine";
 
 /** One entry of any kind, flattened into what the storefront draws. */
 interface Entry {
@@ -73,13 +78,20 @@ interface Entry {
   /** The registry name — the id every API route takes. */
   name: string;
   title: string;
-  description: string;
+  /** Null when the index carries nothing readable (a leaked `|`, a blank). */
+  description: string | null;
   publisher?: string | null;
   version?: string | null;
+  publishedAt?: string | null;
   categories: string[];
   sourceUrl?: string | null;
   installed: boolean;
+  /** Plugins only: the installed version differs from the published one. */
+  updateAvailable?: boolean;
+  installedVersion?: string | null;
+  featured?: boolean;
   /** Plugins only — the brand tile. */
+  logoSlug?: string | null;
   logoUrl?: string | null;
   logoColor?: string | null;
   /** A plugin whose manifest this client could not read. */
@@ -88,7 +100,7 @@ interface Entry {
   /**
    * Where installing this would eventually send data, or what it would run.
    *
-   * The whole reason the drawer exists: the registry auto-merges submissions
+   * The whole reason the sheet exists: the registry auto-merges submissions
    * that pass automated checks, so the only honest consent is showing the
    * destination verbatim before the button is pressed — the same three cases
    * the plugin consent dialog spells out (hosted URL / stdio argv / neither).
@@ -102,6 +114,8 @@ interface Entry {
   portableAgents?: string[] | null;
   /** Agents only: the template the install turns into a new teammate. */
   agent?: AgentTemplateWire | null;
+  /** Plugins only: the publisher's note on what to do after installing. */
+  postInstallHint?: string | null;
 }
 
 /** Where an installed entry of this kind now lives in the app. */
@@ -111,27 +125,46 @@ const HOME_SECTION: Record<Kind, SectionId> = {
   agent: "agents",
 };
 
+/**
+ * A description worth printing, or null.
+ *
+ * The index generator has served a bare YAML block marker (`"|"`) as a
+ * description; a card that prints one stray bar reads as broken. Anything
+ * with no letter or digit in it is treated as missing.
+ */
+function readableText(raw: string | null | undefined): string | null {
+  const text = (raw ?? "").trim();
+  return /[\p{L}\p{N}]/u.test(text) ? text : null;
+}
+
 function pluginEntry(p: CommunityPluginWire): Entry {
   const raw = (p.logo_color ?? "").trim();
+  const installedVersion = p.installed_version ?? null;
   return {
     kind: "plugin",
     name: p.id ?? p.name,
     title: p.display_name ?? p.name,
-    description: p.description ?? "",
+    description: readableText(p.description),
     publisher: p.publisher,
     version: p.version,
+    publishedAt: p.published_at ?? null,
     categories: p.category ? [p.category] : [],
     sourceUrl: p.source_url,
     installed: Boolean(p.installed),
-    logoUrl:
-      p.logo_url ??
-      (p.logo_slug ? `https://cdn.simpleicons.org/${p.logo_slug}/F4F4F5` : null),
+    installedVersion,
+    updateAvailable: Boolean(
+      p.installed && installedVersion && p.version && installedVersion !== p.version,
+    ),
+    featured: Boolean(p.featured),
+    logoSlug: p.logo_slug ?? null,
+    logoUrl: p.logo_url ?? null,
     logoColor: /^[0-9a-fA-F]{6}$/.test(raw) ? `#${raw}` : null,
     broken: !p.valid,
     problem: p.error ?? null,
     mcp: p.mcp_server ?? null,
     authMode: p.auth?.mode ?? null,
     seedConflict: Boolean(p.seed_conflict),
+    postInstallHint: readableText(p.post_install_hint_md),
   };
 }
 
@@ -140,9 +173,10 @@ function skillEntry(s: CommunitySkillWire): Entry {
     kind: "skill",
     name: s.name,
     title: s.title || s.name,
-    description: s.description ?? "",
+    description: readableText(s.description),
     publisher: s.publisher,
     version: s.version,
+    publishedAt: s.published_at ?? null,
     categories: s.categories ?? [],
     sourceUrl: s.source_url,
     installed: Boolean(s.installed),
@@ -182,13 +216,41 @@ function matches(entry: Entry, needle: string): boolean {
   const hay = [
     entry.title,
     entry.name,
-    entry.description,
+    entry.description ?? "",
     entry.publisher ?? "",
     entry.categories.join(" "),
   ]
     .join(" ")
     .toLowerCase();
   return hay.includes(needle);
+}
+
+function passesFilter(entry: Entry, filter: KindFilter, login: string | null): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "installed":
+      return entry.installed;
+    case "mine":
+      return login !== null && entry.publisher === login;
+    default:
+      return entry.kind === filter;
+  }
+}
+
+/** Featured first, then the newest publication, then by name. */
+function storeOrder(a: Entry, b: Entry): number {
+  if (Boolean(a.featured) !== Boolean(b.featured)) return a.featured ? -1 : 1;
+  const at = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+  const bt = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+  if (at !== bt) return bt - at;
+  return a.title.localeCompare(b.title);
+}
+
+/** Registry category slugs ("productivity") read as labels ("Productivity"). */
+function categoryLabel(category: string): string {
+  const spaced = category.replace(/[-_]+/g, " ").trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 async function fetchCommunity(): Promise<CommunityResponse> {
@@ -212,21 +274,24 @@ interface InstallResultWire {
 
 export function MarketplaceView() {
   const t = useT();
-  // The publish half's strings ride in a lazy chunk (bundle budget); the
-  // shelves render from the main file meanwhile, the hero waits for it.
+  // Section-only strings ride in a lazy chunk (bundle budget). The header and
+  // toolbar render from the main locale file; the shelves wait for the chunk
+  // so no card ever paints a raw key.
   const localeReady = useLocaleChunk("marketplace");
   const queryClient = useQueryClient();
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<KindFilter>("all");
   const [openEntry, setOpenEntry] = useState<Entry | null>(null);
   const [landing, setLanding] = useState<InstallResultWire | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [signInOpen, setSignInOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const identity = usePublishIdentity();
   const login = identity.data?.signed_in ? (identity.data.login ?? null) : null;
   const publishEnabled = identity.data?.enabled !== false;
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ["marketplace-community"],
     queryFn: fetchCommunity,
     // The store stays live while it is open: a publish that just merged shows
@@ -263,8 +328,10 @@ export function MarketplaceView() {
       }
       return res.json();
     },
-    onSuccess: (result) => {
-      setOpenEntry(null);
+    onSuccess: (result, installed) => {
+      // Close the sheet only if it still shows what was installed — the person
+      // may have moved on to another entry while the request ran.
+      setOpenEntry((current) => (current?.name === installed.name ? null : current));
       setLanding(result);
       // Everything that lists installed things must reflect the new arrival.
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
@@ -303,29 +370,59 @@ export function MarketplaceView() {
     },
   });
 
+  const openDetail = (entry: Entry) => {
+    // An error from a previous entry's install must not follow the sheet; a
+    // running install keeps its state so its spinner and toast stay honest.
+    if (!install.isPending) install.reset();
+    setOpenEntry(entry);
+  };
+
+  // "/" jumps into the search, the way every storefront with a search does —
+  // unless the person is already typing somewhere, or a modal layer is open
+  // (focus must not escape into the page behind it).
+  const modalOpen = openEntry !== null || studioOpen || signInOpen;
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (modalOpenRef.current) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const entries = useMemo<Entry[]>(() => {
     if (!data) return [];
     return [
       ...(data.plugins ?? []).map(pluginEntry),
       ...(data.skills ?? []).map(skillEntry),
       ...(data.agents ?? []).map(agentEntry),
-    ];
+    ].sort(storeOrder);
   }, [data]);
 
   const needle = query.trim().toLowerCase();
-  const mineCount = useMemo(
-    () => (login ? entries.filter((e) => e.publisher === login).length : 0),
-    [entries, login],
+  // The chip counts answer "how many would I see here", so they follow the
+  // search — "Plugins 1" beside zero results is a small lie.
+  const searched = useMemo(() => entries.filter((e) => matches(e, needle)), [entries, needle]);
+  const counts = useMemo<Record<KindFilter, number>>(
+    () => ({
+      all: searched.length,
+      plugin: searched.filter((e) => e.kind === "plugin").length,
+      skill: searched.filter((e) => e.kind === "skill").length,
+      agent: searched.filter((e) => e.kind === "agent").length,
+      installed: searched.filter((e) => e.installed).length,
+      mine: login ? searched.filter((e) => e.publisher === login).length : 0,
+    }),
+    [searched, login],
   );
   const visible = useMemo(
-    () =>
-      entries.filter(
-        (e) =>
-          (kindFilter === "all" ||
-            (kindFilter === "mine" ? e.publisher === login : e.kind === kindFilter)) &&
-          matches(e, needle),
-      ),
-    [entries, kindFilter, needle, login],
+    () => searched.filter((e) => passesFilter(e, kindFilter, login)),
+    [searched, kindFilter, login],
   );
 
   const plugins = visible.filter((e) => e.kind === "plugin");
@@ -334,13 +431,23 @@ export function MarketplaceView() {
 
   const status = data?.status;
   const offline = status === "stale" || status === "unavailable";
+  const ready = !isLoading && !error && localeReady;
+  // Switched off, or unreachable with nothing cached: there is no shelf to
+  // invite anybody onto, so the page says only that.
+  const indexDown = entries.length === 0 && (status === "disabled" || status === "unavailable");
+  const frontPage = kindFilter === "all" && !needle;
+
+  const clearAll = () => {
+    setQuery("");
+    setKindFilter("all");
+  };
 
   return (
     <div className="relative flex h-full min-h-0 flex-col">
       <ViewHeader
         icon={<Store className="h-4 w-4 text-muted-foreground" />}
         title={t("marketplace.title")}
-        subtitle={subtitleFor(t, data, isLoading)}
+        subtitle={subtitleFor(t, data, isLoading, localeReady)}
         right={
           <div className="flex items-center gap-2">
             <Button
@@ -349,6 +456,7 @@ export function MarketplaceView() {
               onClick={() => refresh.mutate()}
               disabled={refresh.isPending}
               title={t("marketplace.refresh")}
+              aria-label={t("marketplace.refresh")}
             >
               <RefreshCw
                 className={cn("h-4 w-4", refresh.isPending && "animate-spin")}
@@ -380,116 +488,126 @@ export function MarketplaceView() {
         }
       />
 
-      <div className="flex items-center gap-3 border-b border-border bg-background px-6 py-3 backdrop-blur-sm">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute -z-10 left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+      <div className="shrink-0 border-b border-border px-8">
+        <div className="flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2">
+          <FilterTabs
+            active={kindFilter}
+            onChange={setKindFilter}
+            counts={counts}
+            showInstalled={localeReady && entries.some((e) => e.installed)}
+            showMine={localeReady && login !== null}
+            t={t}
+          />
+          <SearchField
+            inputRef={searchRef}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={setQuery}
             placeholder={t("marketplace.search_placeholder")}
-            aria-label={t("marketplace.search_placeholder")}
-            className={cn(
-              "h-9 w-full rounded-md border border-border bg-background pl-9 pr-3",
-              "text-sm text-foreground placeholder:text-faint-foreground",
-              "outline-none transition-colors focus:border-border-strong",
-            )}
+            clearLabel={t("marketplace.empty_clear")}
           />
         </div>
-        <FilterChips
-          active={kindFilter}
-          onChange={setKindFilter}
-          counts={{
-            all: entries.length,
-            plugin: entries.filter((e) => e.kind === "plugin").length,
-            skill: entries.filter((e) => e.kind === "skill").length,
-            agent: entries.filter((e) => e.kind === "agent").length,
-            mine: mineCount,
-          }}
-          showMine={login !== null}
-          t={t}
-        />
       </div>
 
+      {refresh.error && (
+        <div className="shrink-0 border-b border-destructive/20 bg-destructive/[0.08] px-8 py-2">
+          <p
+            role="alert"
+            className="flex w-full max-w-6xl items-center gap-2 text-xs text-destructive"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {(refresh.error as Error).message}
+          </p>
+        </div>
+      )}
+
       {offline && (
-        <p className="flex items-center gap-2 border-b bg-secondary px-6 py-2 text-xs text-foreground">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          {status === "unavailable"
-            ? t("marketplace.status_unavailable")
-            : t("marketplace.status_stale")}
-        </p>
+        <div className="shrink-0 border-b border-warning/20 bg-warning/[0.08] px-8 py-2">
+          <div className="flex w-full max-w-6xl items-center gap-2 text-xs text-foreground">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+            <span className="min-w-0 flex-1">
+              {status === "unavailable"
+                ? t("marketplace.status_unavailable")
+                : t("marketplace.status_stale")}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => refresh.mutate()}
+              disabled={refresh.isPending}
+            >
+              {refresh.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              {localeReady ? t("marketplace.retry") : t("marketplace.refresh")}
+            </Button>
+          </div>
+        </div>
       )}
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-6 py-5">
-          {isLoading && (
-            <p className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              {t("marketplace.loading")}
-            </p>
-          )}
+        {/* Left-aligned under the header and the toolbar, capped so a wide
+            window does not stretch three cards into a slab. */}
+        <div className="w-full max-w-[calc(72rem+4rem)] px-8 py-6">
+          {(isLoading || (!error && !localeReady)) && <SkeletonGrid />}
 
-          {error && !isLoading && (
-            <p className="flex items-center gap-2 py-10 text-sm text-destructive">
-              <AlertTriangle className="h-4 w-4" />
-              {(error as Error).message}
-            </p>
-          )}
-
-          {!isLoading && !error && localeReady && kindFilter === "all" && !needle && (
-            <Hero
-              data={data}
-              login={login}
-              publishEnabled={publishEnabled}
-              onPublish={() => setStudioOpen(true)}
-              onSignIn={() => setSignInOpen(true)}
-              t={t}
-            />
-          )}
-
-          {!isLoading && !error && visible.length === 0 && (
+          {error && !isLoading && localeReady && (
             <EmptyState
-              query={query}
-              mine={kindFilter === "mine"}
-              onClear={() => {
-                setQuery("");
-                setKindFilter("all");
-              }}
-              onPublish={() => setStudioOpen(true)}
+              icon={<AlertTriangle />}
+              title={t("marketplace.error_title")}
+              description={(error as Error).message}
+              actions={
+                <Button size="sm" onClick={() => refetch()} disabled={isRefetching}>
+                  {isRefetching && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                  {t("marketplace.retry")}
+                </Button>
+              }
+            />
+          )}
+
+          {ready && frontPage && !indexDown && (
+            <Hero publishEnabled={publishEnabled} t={t} />
+          )}
+
+          {ready && indexDown && (
+            <EmptyState
+              icon={status === "disabled" ? <Store /> : <AlertTriangle />}
+              title={
+                status === "disabled"
+                  ? t("marketplace.status_disabled")
+                  : t("marketplace.error_title")
+              }
+              description={
+                status === "unavailable" ? t("marketplace.status_unavailable") : undefined
+              }
+            />
+          )}
+
+          {ready && visible.length === 0 && !indexDown && (
+            <NoResults
+              query={query.trim()}
+              filter={kindFilter}
+              onClear={clearAll}
+              onPublish={publishEnabled ? () => setStudioOpen(true) : null}
+              onBrowseBuiltIn={() => setActiveSection("plugins")}
               t={t}
             />
           )}
 
-          {plugins.length > 0 && (
+          {ready && plugins.length > 0 && (
             <Shelf
               title={t("marketplace.shelf_plugins")}
               hint={t("marketplace.shelf_plugins_hint")}
               count={plugins.length}
             >
-              <EntryList
-                entries={plugins}
-                onOpen={setOpenEntry}
-                icon={(entry) => <BrandTile entry={entry} />}
-                t={t}
-              />
+              <EntryGrid entries={plugins} onOpen={openDetail} t={t} />
             </Shelf>
           )}
 
-          {skills.length > 0 && (
+          {ready && skills.length > 0 && (
             <Shelf
               title={t("marketplace.shelf_skills")}
               hint={t("marketplace.shelf_skills_hint")}
               count={skills.length}
             >
-              <EntryList
-                entries={skills}
-                onOpen={setOpenEntry}
-                icon={() => (
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary">
-                    <Wand2 className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                )}
-                t={t}
-              />
+              <EntryGrid entries={skills} onOpen={openDetail} t={t} />
             </Shelf>
           )}
 
@@ -499,17 +617,16 @@ export function MarketplaceView() {
               hint={t("marketplace.shelf_agents_hint")}
               count={agents.length}
             >
-              <EntryList
+              <EntryGrid
                 entries={agents}
-                onOpen={setOpenEntry}
-                icon={(entry) => <AgentTile entry={entry} />}
+                onOpen={openDetail}
                 t={t}
               />
             </Shelf>
           )}
 
-          {!isLoading && !error && (
-            <PublishFooter
+          {ready && visible.length > 0 && !indexDown && (
+            <PublishInvite
               enabled={publishEnabled}
               onPublish={() => setStudioOpen(true)}
               onImport={(file) => importAgent.mutate(file)}
@@ -522,12 +639,20 @@ export function MarketplaceView() {
       </ScrollArea>
 
       {openEntry && (
-        <EntryDrawer
+        <EntrySheet
           entry={openEntry}
           onClose={() => setOpenEntry(null)}
           onInstall={() => install.mutate(openEntry)}
-          installing={install.isPending}
-          installError={install.error ? (install.error as Error).message : null}
+          onOpenHome={() => {
+            setOpenEntry(null);
+            setActiveSection(HOME_SECTION[openEntry.kind]);
+          }}
+          installing={install.isPending && install.variables?.name === openEntry.name}
+          installError={
+            install.error && install.variables?.name === openEntry.name
+              ? (install.error as Error).message
+              : null
+          }
           t={t}
         />
       )}
@@ -542,11 +667,12 @@ export function MarketplaceView() {
 
 type Translate = (key: string) => string;
 
-/** "12 entries · index 24 · updated 4 days ago", or the honest alternative. */
+/** "3 published entries · Updated Sep 30", or the honest alternative. */
 function subtitleFor(
   t: Translate,
   data: CommunityResponse | undefined,
   loading: boolean,
+  localeReady: boolean,
 ): string {
   if (loading) return t("marketplace.loading");
   if (!data) return "";
@@ -554,67 +680,123 @@ function subtitleFor(
   const total =
     (data.plugins?.length ?? 0) + (data.skills?.length ?? 0) + (data.agents?.length ?? 0);
   const parts = [fill(t("marketplace.subtitle_count"), { count: total })];
-  if (data.revision != null) {
-    parts.push(fill(t("marketplace.subtitle_revision"), { revision: data.revision }));
+  if (data.generated_at && localeReady) {
+    parts.push(fill(t("marketplace.subtitle_updated"), { date: formatDate(data.generated_at) }));
   }
-  if (data.generated_at) parts.push(formatDate(data.generated_at));
   return parts.join(" · ");
 }
 
+/** A date in the app's UI language — not the operating system's. */
 function formatDate(iso: string): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return iso;
-  return parsed.toLocaleDateString(undefined, {
+  return parsed.toLocaleDateString(useI18nStore.getState().ui, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
 }
 
-function FilterChips({
+function SearchField({
+  inputRef,
+  value,
+  onChange,
+  placeholder,
+  clearLabel,
+}: {
+  inputRef: React.RefObject<HTMLInputElement>;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  clearLabel: string;
+}) {
+  return (
+    <div className="relative my-1.5 min-w-[240px] max-w-md flex-1 sm:ml-auto">
+      <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && value) {
+            event.stopPropagation();
+            onChange("");
+          }
+        }}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className={cn(
+          "h-9 w-full rounded-md border border-border-strong bg-input pl-9 pr-16",
+          "text-base text-foreground placeholder:text-foreground-faint",
+          "transition-colors focus-visible:border-accent focus-visible:outline-none",
+          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        )}
+      />
+      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+        {value ? (
+          <button
+            type="button"
+            onClick={() => {
+              onChange("");
+              inputRef.current?.focus();
+            }}
+            aria-label={clearLabel}
+            title={clearLabel}
+            className="grid h-6 w-6 place-items-center rounded text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <kbd
+            aria-hidden
+            className="grid h-5 min-w-5 place-items-center rounded border border-border px-1 font-mono text-xs text-muted-foreground"
+          >
+            /
+          </kbd>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The kind switch: the house underline tabs, each with its live count. */
+function FilterTabs({
   active,
   onChange,
   counts,
+  showInstalled,
   showMine,
   t,
 }: {
   active: KindFilter;
   onChange: (kind: KindFilter) => void;
   counts: Record<KindFilter, number>;
+  showInstalled: boolean;
   showMine: boolean;
   t: Translate;
 }) {
-  const chips: { id: KindFilter; label: string }[] = [
-    { id: "all", label: t("marketplace.filter_all") },
-    { id: "plugin", label: t("marketplace.filter_plugins") },
-    { id: "skill", label: t("marketplace.filter_skills") },
-    { id: "agent", label: t("marketplace.filter_agents") },
-  ];
-  if (showMine) chips.push({ id: "mine", label: t("marketplace.filter_mine") });
+  const ids: KindFilter[] = ["all", "plugin", "skill", "agent"];
+  if (showInstalled || active === "installed") ids.push("installed");
+  if (showMine) ids.push("mine");
+  const label: Record<KindFilter, string> = {
+    all: t("marketplace.filter_all"),
+    plugin: t("marketplace.filter_plugins"),
+    skill: t("marketplace.filter_skills"),
+    agent: t("marketplace.filter_agents"),
+    installed: t("marketplace.installed"),
+    mine: t("marketplace.filter_mine"),
+  };
   return (
-    <div className="flex shrink-0 items-center gap-1">
-      {chips.map((chip) => (
-        <button
-          key={chip.id}
-          type="button"
-          onClick={() => onChange(chip.id)}
-          aria-pressed={active === chip.id}
-          className={cn(
-            "rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
-            active === chip.id
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-          )}
-        >
-          {chip.label}
-          <span className="ml-1.5 tabular-nums opacity-60">{counts[chip.id]}</span>
-        </button>
-      ))}
-    </div>
+    <TabBar
+      tabs={ids.map((id) => ({ id, label: label[id], count: counts[id] }))}
+      active={active}
+      onChange={(id) => onChange(id as KindFilter)}
+      className="shrink-0 border-b-0"
+    />
   );
 }
 
-/** A titled band of the storefront. Not a card — a heading and its row. */
+/** A titled band of the storefront: a heading, a quiet hint, and its cards. */
 function Shelf({
   title,
   hint,
@@ -627,41 +809,131 @@ function Shelf({
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-8 last:mb-0">
-      <div className="mb-3 flex items-baseline gap-3">
-        <h3 className="font-display text-sm font-semibold tracking-tight text-foreground">
-          {title}
-        </h3>
-        <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
-        <span className="min-w-0 truncate text-xs font-medium text-foreground">{hint}</span>
+    <section className="mb-10 last:mb-0">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
+        <span className="text-sm tabular-nums text-muted-foreground">{count}</span>
+        <span className="w-full text-sm text-muted-foreground sm:ml-2 sm:w-auto">{hint}</span>
       </div>
       {children}
     </section>
   );
 }
 
-function BrandTile({ entry }: { entry: Entry }) {
+const GRID = "grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))]";
+
+function SkeletonGrid() {
+  return (
+    <div role="status" aria-busy="true" data-testid="marketplace-skeleton">
+      <div className="mb-3 h-5 w-32 rounded bg-secondary" />
+      <div className={GRID}>
+        {Array.from({ length: 6 }, (_, index) => (
+          <div key={index} className="flex h-[148px] flex-col gap-3 rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-secondary" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3.5 w-2/5 rounded bg-secondary" />
+                <div className="h-3 w-1/4 rounded bg-secondary" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <div className="h-3 w-full rounded bg-secondary" />
+              <div className="h-3 w-3/4 rounded bg-secondary" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- Brand marks -----------------------------------------------------------
+// The same three tiers the built-in Plugins catalog uses, so one brand looks
+// the same in both places: a full-colour mark (bundled or published) on the
+// white app-icon surface, else the Simple Icons glyph on the brand's own
+// colour, else a monogram on that colour.
+const DEFAULT_BRAND_TILE = "#3F3F46";
+/** Bundled marks drawn in white; on the white app-icon surface they invert. */
+const INVERTED_MARKS = new Set(["github", "vercel", "notion", "cal_com"]);
+
+/** A glyph colour that stays legible on the tile (a few brands are near-white). */
+function glyphColor(tileHex: string): string {
+  const hex = tileHex.replace("#", "");
+  if (hex.length !== 6) return "ffffff";
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return luminance > 0.6 ? "111111" : "ffffff";
+}
+
+function EntryMark({ entry, size = "md" }: { entry: Entry; size?: "md" | "lg" }) {
   const [failed, setFailed] = useState(false);
+  const box = size === "lg" ? "h-12 w-12 rounded-xl" : "h-10 w-10 rounded-lg";
+
+  if (entry.broken) {
+    return (
+      <div className={cn("grid shrink-0 place-items-center border border-border bg-muted", box)}>
+        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (entry.kind === "agent") return <AgentTile entry={entry} />;
+
+  if (entry.kind === "skill") {
+    // Skills carry no artwork; the initial gives each one a face of its own
+    // on the neutral ground instead of one shared wand for all of them.
+    return (
+      <div
+        className={cn(
+          "grid shrink-0 place-items-center border border-border bg-secondary font-semibold text-foreground",
+          box,
+          size === "lg" ? "text-lg" : "text-base",
+        )}
+      >
+        {entry.title.slice(0, 1).toUpperCase()}
+      </div>
+    );
+  }
+
+  const tile = entry.logoColor ?? DEFAULT_BRAND_TILE;
+  const fullColour = bundledPluginLogo(entry.name) ?? entry.logoUrl ?? null;
+  const src =
+    fullColour ??
+    (entry.logoSlug
+      ? `https://cdn.simpleicons.org/${entry.logoSlug}/${glyphColor(tile)}`
+      : null);
+  const monogram = failed || !src;
+  const onWhite = Boolean(fullColour) && !monogram;
+
   return (
     <div
-      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border"
-      style={{ backgroundColor: entry.logoColor ?? undefined }}
+      className={cn(
+        "grid shrink-0 place-items-center overflow-hidden border",
+        box,
+        onWhite ? "border-border bg-[hsl(var(--plugin-icon-surface))]" : "border-border/60",
+      )}
+      style={onWhite ? undefined : { backgroundColor: tile }}
     >
-      {failed || !entry.logoUrl ? (
-        <span
-          className={cn(
-            "text-sm font-semibold",
-            entry.logoColor ? "text-white/90" : "text-muted-foreground",
-          )}
-        >
+      {monogram ? (
+        <span className="text-sm font-semibold" style={{ color: `#${glyphColor(tile)}` }}>
           {entry.title.slice(0, 1).toUpperCase()}
         </span>
       ) : (
         <img
-          src={entry.logoUrl}
+          src={src}
           alt=""
           loading="lazy"
-          className="h-5 w-5"
+          className={cn(
+            onWhite && INVERTED_MARKS.has(entry.name.replace(/-/g, "_")) && "invert",
+            onWhite
+              ? size === "lg"
+                ? "h-8 w-8"
+                : "h-7 w-7"
+              : size === "lg"
+                ? "h-6 w-6"
+                : "h-5 w-5",
+          )}
           onError={() => setFailed(true)}
         />
       )}
@@ -669,192 +941,198 @@ function BrandTile({ entry }: { entry: Entry }) {
   );
 }
 
-/** Rows with a hairline between them — a list, deliberately not a grid of boxes. */
-function EntryList({
+/**
+ * The state an entry is in, as one small label — or nothing when it is just
+ * on the shelf. A `<span>` with the badge recipe, because it sits inside the
+ * card's `<button>`, which allows phrasing content only.
+ */
+function EntryState({ entry, t }: { entry: Entry; t: Translate }) {
+  if (entry.updateAvailable) {
+    return (
+      <span className={cn(badgeVariants({ variant: "accent" }), "shrink-0")}>
+        {t("marketplace.update_available")}
+      </span>
+    );
+  }
+  if (entry.installed) {
+    return (
+      <span className={cn(badgeVariants({ variant: "success" }), "shrink-0")}>
+        <Check />
+        {t("marketplace.installed")}
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Cards in a grid: each one an object you press as a whole to open its sheet. */
+function EntryGrid({
   entries,
   onOpen,
-  icon,
   t,
 }: {
   entries: Entry[];
   onOpen: (entry: Entry) => void;
-  icon: (entry: Entry) => React.ReactNode;
   t: Translate;
 }) {
   return (
-    <div className="divide-y divide-border/70 overflow-hidden rounded-xl border border-border bg-card backdrop-blur-sm">
+    <div className={GRID}>
       {entries.map((entry) => (
-        <button
-          key={`${entry.kind}:${entry.name}`}
-          type="button"
-          onClick={() => onOpen(entry)}
-          className={cn(
-            "flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors",
-            "hover:bg-secondary focus-visible:outline-none focus-visible:bg-secondary",
-          )}
-        >
-          {entry.broken ? (
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-border bg-muted">
-              <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-            </div>
-          ) : (
-            icon(entry)
-          )}
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-semibold text-foreground">
-                {entry.title}
-              </span>
-              {entry.installed && (
-                <span className="flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-micro font-medium text-foreground-strong">
-                  <Check className="h-3 w-3" />
-                  {t("marketplace.installed")}
-                </span>
-              )}
-            </div>
-            <p className="truncate text-xs text-muted-foreground">
-              {entry.broken
-                ? (entry.problem ?? t("marketplace.entry_unreadable"))
-                : entry.description}
-            </p>
-          </div>
-          <div className="hidden shrink-0 items-center gap-3 text-micro text-muted-foreground sm:flex">
-            {entry.publisher && <span className="truncate">{entry.publisher}</span>}
-            {entry.version && <span className="tabular-nums">v{entry.version}</span>}
-          </div>
-          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-        </button>
+        <EntryCard key={`${entry.kind}:${entry.name}`} entry={entry} onOpen={onOpen} t={t} />
       ))}
     </div>
   );
 }
 
-function EmptyState({
+function EntryCard({
+  entry,
+  onOpen,
+  t,
+}: {
+  entry: Entry;
+  onOpen: (entry: Entry) => void;
+  t: Translate;
+}) {
+  const meta = [
+    entry.categories[0] ? categoryLabel(entry.categories[0]) : null,
+    entry.version ? `v${entry.version}` : null,
+    entry.publishedAt ? formatDate(entry.publishedAt) : null,
+  ].filter(Boolean);
+  const description = entry.broken
+    ? (entry.problem ?? t("marketplace.entry_unreadable"))
+    : (entry.description ?? t("marketplace.description_missing"));
+
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(entry)}
+      data-testid={`marketplace-card-${entry.name}`}
+      className={cn(
+        "group flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left shadow-rim",
+        "transition-colors hover:border-border-strong",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+      )}
+    >
+      <div className="flex w-full min-w-0 items-start gap-3">
+        <EntryMark entry={entry} />
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-base font-semibold text-foreground-strong">
+            {entry.title}
+          </span>
+          <span className="block truncate text-sm text-muted-foreground">
+            {entry.publisher ? `@${entry.publisher}` : t(`marketplace.kind_${entry.kind}`)}
+          </span>
+        </div>
+        <EntryState entry={entry} t={t} />
+      </div>
+      <span
+        className={cn(
+          "line-clamp-2 min-h-[40px] text-base",
+          entry.description || entry.broken ? "text-muted-foreground" : "italic text-foreground-faint",
+        )}
+      >
+        {description}
+      </span>
+      <div className="mt-auto flex w-full items-center gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate tabular-nums">{meta.join(" · ")}</span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-foreground-faint transition-colors group-hover:text-foreground" />
+      </div>
+    </button>
+  );
+}
+
+function NoResults({
   query,
-  mine,
+  filter,
   onClear,
   onPublish,
+  onBrowseBuiltIn,
   t,
 }: {
   query: string;
-  mine: boolean;
+  filter: KindFilter;
   onClear: () => void;
-  onPublish: () => void;
+  onPublish: (() => void) | null;
+  onBrowseBuiltIn: () => void;
   t: Translate;
 }) {
-  if (mine && !query) {
+  if (filter === "mine" && !query) {
     return (
-      <div className="py-16 text-center" data-testid="marketplace-empty-mine">
-        <UploadCloud className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">{t("marketplace.empty_mine")}</p>
-        <Button size="sm" className="mt-3" onClick={onPublish}>
-          <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
-          {t("marketplace.publish_cta")}
-        </Button>
+      <div data-testid="marketplace-empty-mine">
+        <EmptyState
+          icon={<UploadCloud />}
+          title={t("marketplace.empty_mine")}
+          actions={
+            onPublish && (
+              <Button size="sm" onClick={onPublish}>
+                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                {t("marketplace.publish_cta")}
+              </Button>
+            )
+          }
+        />
       </div>
     );
   }
+  if (query) {
+    return (
+      <EmptyState
+        icon={<Search />}
+        title={fill(t("marketplace.empty_search"), { query })}
+        description={t("marketplace.empty_search_builtin")}
+        actions={
+          <>
+            <Button size="sm" onClick={onBrowseBuiltIn}>
+              {t("marketplace.browse_builtin")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={onClear}>
+              {t("marketplace.empty_clear")}
+            </Button>
+          </>
+        }
+      />
+    );
+  }
   return (
-    <div className="py-16 text-center">
-      <Package className="mx-auto mb-3 h-6 w-6 text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">
-        {query ? fill(t("marketplace.empty_search"), { query }) : t("marketplace.empty")}
-      </p>
-      {query && (
-        <Button variant="ghost" size="sm" className="mt-3" onClick={onClear}>
-          {t("marketplace.empty_clear")}
-        </Button>
-      )}
-    </div>
+    <EmptyState
+      icon={<Package />}
+      title={t("marketplace.empty")}
+      actions={
+        filter !== "all" ? (
+          <Button size="sm" variant="outline" onClick={onClear}>
+            {t("marketplace.show_all")}
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }
 
 /**
- * The storefront's marquee: what the community has put on the shelves, and
- * the one door that matters for anybody who built something — publish, in
- * this app, under their GitHub name. Drawn only on the unfiltered front page
- * so a search never has to scroll past it.
+ * The storefront's opening line: what this shelf is and how it is vetted.
+ * Drawn on the unfiltered front page only, so a search never scrolls past
+ * it. It carries no buttons — Publish lives in the header and at the foot of
+ * the page, and a third copy here only made the page louder.
  */
-function Hero({
-  data,
-  login,
-  publishEnabled,
-  onPublish,
-  onSignIn,
-  t,
-}: {
-  data: CommunityResponse | undefined;
-  login: string | null;
-  publishEnabled: boolean;
-  onPublish: () => void;
-  onSignIn: () => void;
-  t: Translate;
-}) {
-  const counts = {
-    plugins: data?.plugins?.length ?? 0,
-    skills: data?.skills?.length ?? 0,
-    agents: data?.agents?.length ?? 0,
-  };
+function Hero({ publishEnabled, t }: { publishEnabled: boolean; t: Translate }) {
   return (
     <section
-      className="relative isolate mb-8 overflow-hidden rounded-2xl border border-border bg-card p-6 backdrop-blur-sm"
+      className="mb-8 rounded-lg border border-border bg-card px-5 py-4 shadow-rim"
       data-testid="marketplace-hero"
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -z-10 -right-24 -top-24 hidden h-72 w-72 rounded-full bg-secondary blur-3xl dark:block"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -z-10 -bottom-28 left-1/3 hidden h-64 w-64 rounded-full bg-secondary blur-3xl dark:block"
-      />
-      <div className="relative flex flex-wrap items-end gap-6">
-        <div className="min-w-0 flex-1">
-          <p className="text-micro font-semibold text-muted-foreground">
-            {t("marketplace.hero_eyebrow")}
-          </p>
-          <h3 className="mt-1 font-display text-2xl tracking-tight text-foreground">
-            {t("marketplace.hero_title")}
-          </h3>
-          <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-            {t("marketplace.hero_body")}
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            {publishEnabled && (
-              <Button size="sm" onClick={onPublish} data-testid="hero-publish">
-                <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
-                {login ? t("marketplace.hero_publish_signed_in") : t("marketplace.publish_cta")}
-              </Button>
-            )}
-            {!login && publishEnabled && (
-              <Button size="sm" variant="ghost" onClick={onSignIn}>
-                {t("marketplace.identity_sign_in")}
-              </Button>
-            )}
-          </div>
-        </div>
-        <dl className="grid grid-cols-3 gap-3 sm:gap-4">
-          <Stat value={counts.plugins} label={t("marketplace.filter_plugins")} />
-          <Stat value={counts.skills} label={t("marketplace.filter_skills")} />
-          <Stat value={counts.agents} label={t("marketplace.filter_agents")} />
-        </dl>
-      </div>
+      <p className="text-xs font-medium text-accent">{t("marketplace.hero_eyebrow")}</p>
+      <h2 className="mt-0.5 text-lg font-semibold text-foreground-strong">
+        {t("marketplace.hero_title")}
+      </h2>
+      <p className="mt-1 max-w-2xl text-base text-muted-foreground">
+        {publishEnabled ? t("marketplace.hero_body") : t("marketplace.hero_body_browse")}
+      </p>
     </section>
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-background px-4 py-3 text-center">
-      <dd className="font-display text-2xl tabular-nums tracking-tight text-foreground">
-        {value}
-      </dd>
-      <dt className="text-micro text-muted-foreground">{label}</dt>
-    </div>
-  );
-}
-
-function PublishFooter({
+/** The closing invitation: publish in the app when it can, on the web otherwise. */
+function PublishInvite({
   enabled,
   onPublish,
   onImport,
@@ -871,9 +1149,17 @@ function PublishFooter({
 }) {
   const fileInput = useRef<HTMLInputElement | null>(null);
   return (
-    <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-3 backdrop-blur-sm">
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
+    <div className="mt-10 flex flex-wrap items-center gap-4 rounded-lg border border-dashed border-border-strong px-5 py-4">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground">
+        <UploadCloud className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1 basis-[280px]">
+        <p className="text-base font-semibold text-foreground-strong">
+          {t("marketplace.publish_card_title")}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          {enabled ? t("marketplace.publish_card_body") : t("marketplace.publish_hint")}
+        </p>
         {importError && (
           <p role="alert" className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -881,7 +1167,7 @@ function PublishFooter({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <input
           ref={fileInput}
           type="file"
@@ -908,15 +1194,17 @@ function PublishFooter({
           )}
           {t("marketplace.import_agent")}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
-          title={t("marketplace.publish_on_web")}
-        >
-          {t("marketplace.publish_on_web")}
-          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-        </Button>
+        {!enabled && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
+            title={t("marketplace.publish_on_web")}
+          >
+            {t("marketplace.publish_on_web")}
+            <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+          </Button>
+        )}
         {enabled && (
           <Button size="sm" onClick={onPublish}>
             <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
@@ -928,7 +1216,7 @@ function PublishFooter({
   );
 }
 
-/** The published bytes of one entry, fetched only when its drawer opens. */
+/** The published bytes of one entry, fetched only when its sheet opens. */
 function useEntryContents(name: string | null) {
   return useQuery({
     queryKey: ["marketplace-community-contents", name],
@@ -945,16 +1233,21 @@ function useEntryContents(name: string | null) {
   });
 }
 
+/** Tab stops inside the sheet, for the focus trap. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+
 /**
- * The trust boundary. Nothing installs from a list row — the publisher, the
- * source repo and the actual published files are on screen first, because this
- * is unreviewed third-party content and the person clicking deserves to see
- * what they are about to run.
+ * The trust boundary. Nothing installs from a card — the publisher, where
+ * the data goes, the source repo and the actual published files are on
+ * screen first, because this is unreviewed third-party content and the person
+ * clicking deserves to see what they are about to run.
  */
-function EntryDrawer({
+function EntrySheet({
   entry,
   onClose,
   onInstall,
+  onOpenHome,
   installing,
   installError,
   t,
@@ -962,124 +1255,204 @@ function EntryDrawer({
   entry: Entry;
   onClose: () => void;
   onInstall: () => void;
+  onOpenHome: () => void;
   installing: boolean;
   installError: string | null;
   t: Translate;
 }) {
   const contents = useEntryContents(entry.name);
+  const sheetRef = useRef<HTMLElement>(null);
+  const titleId = `marketplace-sheet-${entry.kind}-${entry.name}`;
+  // The parent hands a fresh `onClose` every render (the index refetches each
+  // minute); the focus effect below must run once per opening, not per render.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
+    // Focus moves into the sheet and returns to the card that opened it.
+    const opener = document.activeElement as HTMLElement | null;
+    sheetRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !sheetRef.current) return;
+      const stops = Array.from(sheetRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (stops.length === 0) return;
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      opener?.focus?.();
+    };
+  }, []);
+
+  const byline = [
+    entry.publisher ? `@${entry.publisher}` : null,
+    entry.version ? `v${entry.version}` : null,
+    entry.publishedAt ? formatDate(entry.publishedAt) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <div className="absolute inset-0 z-40 flex justify-end">
       <button
         type="button"
+        tabIndex={-1}
         aria-label={t("marketplace.close")}
         onClick={onClose}
-        className="absolute inset-0 bg-background backdrop-blur-sm"
+        className="absolute inset-0 bg-scrim/40 backdrop-blur-[2px]"
       />
-      {/* A drawer over a scrim leaves the plane, so it takes the floating
+      {/* A sheet over a scrim leaves the plane, so it takes the floating
           ground and its cast edge instead of the card ground. */}
-      <aside className="relative flex h-full w-full max-w-md flex-col bg-popover shadow-float">
-        <header className="flex items-start gap-3 border-b border-border px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <p className="text-micro text-muted-foreground">
-              {t(`marketplace.kind_${entry.kind}`)}
-            </p>
-            <h3 className="truncate font-display text-base font-semibold tracking-tight">
-              {entry.title}
-            </h3>
-            <p className="truncate text-xs text-muted-foreground">
-              {[entry.publisher, entry.version ? `v${entry.version}` : null]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
+      <aside
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex h-full w-full max-w-[520px] flex-col border-l border-border bg-popover shadow-float"
+      >
+        <header className="border-b border-border px-6 pb-5 pt-5">
+          <div className="flex items-start gap-4">
+            <EntryMark entry={entry} size="lg" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs text-muted-foreground">
+                {t(`marketplace.kind_${entry.kind}`)}
+              </p>
+              <h2 id={titleId} className="truncate text-xl font-semibold text-foreground-strong">
+                {entry.title}
+              </h2>
+              {byline && <p className="truncate text-sm text-muted-foreground">{byline}</p>}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              aria-label={t("marketplace.close")}
+              data-autofocus
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label={t("marketplace.close")}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="mt-4">
+            <SheetAction
+              entry={entry}
+              onInstall={onInstall}
+              onOpenHome={onOpenHome}
+              installing={installing}
+              installError={installError}
+              t={t}
+            />
+          </div>
         </header>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="space-y-5 px-5 py-4">
-            {entry.description && (
-              <p className="text-sm leading-relaxed text-foreground">
-                {entry.description}
+          <div className="space-y-6 px-6 py-5">
+            <SheetSection title={t("marketplace.section_about")}>
+              <p
+                className={cn(
+                  "text-base leading-relaxed",
+                  entry.description ? "text-foreground" : "italic text-foreground-faint",
+                )}
+              >
+                {entry.description ?? t("marketplace.description_missing")}
               </p>
-            )}
-
-            {entry.categories.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {entry.categories.map((category) => (
-                  <span
-                    key={category}
-                    className="rounded-full border border-border px-2 py-0.5 text-micro text-muted-foreground"
-                  >
-                    {category}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <p className="rounded-lg bg-secondary px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-              {t("marketplace.unreviewed_note")}
-            </p>
+              {entry.categories.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {entry.categories.map((category) => (
+                    <Badge key={category}>{categoryLabel(category)}</Badge>
+                  ))}
+                </div>
+              )}
+            </SheetSection>
 
             <Destination entry={entry} t={t} />
 
-            {entry.sourceUrl && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => openExternalUrl(entry.sourceUrl as string)}
-              >
-                {t("marketplace.view_source")}
-                <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-              </Button>
+            {entry.postInstallHint && (
+              <SheetSection title={t("marketplace.section_after")}>
+                <p className="whitespace-pre-line text-sm text-muted-foreground">
+                  {entry.postInstallHint}
+                </p>
+              </SheetSection>
             )}
 
-            <div>
-              <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                <FileText className="h-3.5 w-3.5" />
-                {t("marketplace.files")}
-              </h4>
+            <SheetSection title={t("marketplace.section_trust")}>
+              <div className="flex items-start gap-2.5 rounded-lg border border-warning/20 bg-warning/[0.08] px-3 py-2.5">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                <p className="text-sm leading-relaxed text-foreground">
+                  {t("marketplace.unreviewed_note")}
+                </p>
+              </div>
+              {entry.sourceUrl && (
+                <button
+                  type="button"
+                  onClick={() => openExternalUrl(entry.sourceUrl as string)}
+                  className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
+                >
+                  {t("marketplace.view_source")}
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </SheetSection>
+
+            <SheetSection
+              title={t("marketplace.files")}
+              icon={<FileText className="h-3.5 w-3.5" />}
+            >
               {contents.isLoading && (
-                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   {t("marketplace.files_loading")}
                 </p>
               )}
               {contents.error && (
-                <p className="text-xs text-destructive">
-                  {(contents.error as Error).message}
+                <p className="text-sm text-destructive">{(contents.error as Error).message}</p>
+              )}
+              {contents.data?.error && (
+                <p
+                  role="alert"
+                  className="mb-2 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/[0.08] px-3 py-2 text-sm text-foreground"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                  {contents.data.error}
                 </p>
               )}
-              {contents.data && (
-                <div className="space-y-2">
+              {contents.data && !(contents.data.error && contents.data.files.length === 0) && (
+                <div className="overflow-hidden rounded-lg border border-border">
                   {contents.data.files.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
+                    <p className="px-3 py-2.5 text-sm text-muted-foreground">
                       {t("marketplace.files_none")}
                     </p>
                   )}
                   {contents.data.files.map((file) => (
                     <details
                       key={file.path}
-                      className="rounded-lg border border-border bg-background"
+                      // Open by default: this is the trust boundary, and a
+                      // fold would put the content one click away again.
+                      open
+                      className="group/file border-b border-border bg-background last:border-b-0"
                     >
-                      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-foreground">
-                        {file.path}
-                        <span className="ml-2 tabular-nums text-muted-foreground">
+                      <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3 py-2 text-sm font-medium text-foreground hover:bg-secondary [&::-webkit-details-marker]:hidden">
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open/file:rotate-90" />
+                        <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                           {file.size < 1024
                             ? `${file.size} B`
                             : `${(file.size / 1024).toFixed(1)} kB`}
                         </span>
                       </summary>
-                      <pre className="max-h-64 overflow-auto border-t border-border px-3 py-2 text-micro text-muted-foreground">
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border-t border-border bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
                         {file.text}
                         {file.truncated ? `\n${t("marketplace.files_truncated")}` : ""}
                       </pre>
@@ -1087,34 +1460,101 @@ function EntryDrawer({
                   ))}
                 </div>
               )}
-            </div>
+            </SheetSection>
           </div>
         </ScrollArea>
-
-        <footer className="space-y-2 border-t border-border px-5 py-4">
-          {installError && (
-            <p className="flex items-start gap-2 text-xs text-destructive">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {installError}
-            </p>
-          )}
-          {entry.broken ? (
-            <p className="text-xs text-muted-foreground">
-              {entry.problem ?? t("marketplace.entry_unreadable")}
-            </p>
-          ) : entry.installed ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Check className="h-3.5 w-3.5 text-muted-foreground" />
-              {t("marketplace.already_installed")}
-            </p>
-          ) : (
-            <Button className="w-full" onClick={onInstall} disabled={installing}>
-              {installing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t("marketplace.install")}
-            </Button>
-          )}
-        </footer>
       </aside>
+    </div>
+  );
+}
+
+function SheetSection({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-foreground-strong">
+        {icon}
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** The one action an entry offers right now, at the top of its sheet. */
+function SheetAction({
+  entry,
+  onInstall,
+  onOpenHome,
+  installing,
+  installError,
+  t,
+}: {
+  entry: Entry;
+  onInstall: () => void;
+  onOpenHome: () => void;
+  installing: boolean;
+  installError: string | null;
+  t: Translate;
+}) {
+  const home = entry.kind === "plugin" ? t("marketplace.filter_plugins") : t("marketplace.filter_skills");
+  let action: React.ReactNode;
+  if (entry.broken) {
+    action = (
+      <p className="flex items-start gap-2 text-sm text-muted-foreground">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {entry.problem ?? t("marketplace.entry_unreadable")}
+      </p>
+    );
+  } else if (entry.installed && !entry.updateAvailable) {
+    action = (
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant="success">
+          <Check />
+          {t("marketplace.installed")}
+        </Badge>
+        <Button size="sm" variant="outline" onClick={onOpenHome}>
+          {fill(t("marketplace.open_in"), { section: home })}
+          <ArrowUpRight className="ml-1.5 h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  } else {
+    action = (
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={onInstall} disabled={installing} className="min-w-[120px]">
+          {installing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          {entry.updateAvailable
+            ? fill(t("marketplace.update_to"), { version: entry.version ?? "" })
+            : t("marketplace.install")}
+        </Button>
+        {entry.updateAvailable && entry.installedVersion && (
+          <span className="text-sm text-muted-foreground">
+            {fill(t("marketplace.installed_version"), { version: entry.installedVersion })}
+          </span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {action}
+      {installError && (
+        <p
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-destructive/20 bg-destructive/[0.08] px-3 py-2 text-sm text-destructive"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          {installError}
+        </p>
+      )}
     </div>
   );
 }
@@ -1124,7 +1564,7 @@ function EntryDrawer({
  *
  * A plugin is a door to somebody else's service: the hosted URL its requests
  * and access token go to, or the command it would run on this computer. The
- * plugin consent dialog has always said this verbatim, and now that the drawer
+ * plugin consent dialog has always said this verbatim, and now that the sheet
  * is a second way to install, it has to say it too — a file listing alone does
  * not tell anybody where their data ends up.
  */
@@ -1175,30 +1615,32 @@ function Destination({ entry, t }: { entry: Entry; t: Translate }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="space-y-2">
-      {entry.seedConflict && (
-        <p className="flex items-start gap-2 rounded-lg bg-secondary px-3 py-2 text-xs text-foreground">
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {t("marketplace.seed_conflict")}
-        </p>
-      )}
-      {rows.map((row) => (
-        <div key={row.label}>
-          <p className="mb-1 text-xs font-medium text-foreground">{row.label}</p>
-          {row.code && (
-            <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
-              {row.code}
-            </code>
-          )}
-          {row.value && <p className="text-xs text-muted-foreground">{row.value}</p>}
-          {row.text && (
-            <p className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-3 py-2 text-xs leading-relaxed text-foreground">
-              {row.text}
-            </p>
-          )}
-        </div>
-      ))}
-    </div>
+    <SheetSection
+      title={
+        entry.kind === "plugin" ? t("marketplace.section_data") : t("marketplace.section_runs")
+      }
+    >
+      <div className="space-y-3">
+        {entry.seedConflict && (
+          <p className="flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/[0.08] px-3 py-2 text-sm text-foreground">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+            {t("marketplace.seed_conflict")}
+          </p>
+        )}
+        {rows.map((row) => (
+          <div key={row.label}>
+            <p className="mb-1 text-sm text-muted-foreground">{row.label}</p>
+            {row.code && (
+              <code className="block break-all rounded-md border border-border bg-muted px-2.5 py-1.5 font-mono text-sm text-foreground">
+                {row.code}
+              </code>
+            )}
+            {row.text && <p className="max-h-56 overflow-auto whitespace-pre-wrap text-sm text-foreground">{row.text}</p>}
+            {row.value && <p className="text-sm font-medium text-foreground">{row.value}</p>}
+          </div>
+        ))}
+      </div>
+    </SheetSection>
   );
 }
 
@@ -1230,25 +1672,31 @@ function LandingToast({
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const target = HOME_SECTION[result.kind] ?? "skills";
   const ready = result.ready !== false;
+  // A plugin always lands unconnected — that is its next step, not a fault.
+  // Only a named problem (or a skill that is not usable) earns the warning.
+  const warn = Boolean(result.problem) || (!ready && result.kind !== "plugin");
   return (
-    <div className="pointer-events-none absolute -z-10 inset-x-0 bottom-0 z-50 flex justify-center p-5">
-      <div className="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-xl border border-border bg-card px-4 py-3">
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex justify-center p-5">
+      <div
+        role="status"
+        className="pointer-events-auto flex w-full max-w-lg items-start gap-3 rounded-xl border border-border-strong bg-popover px-4 py-3 shadow-float"
+      >
         <div
           className={cn(
             "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
-            ready ? "bg-secondary text-foreground-strong" : "bg-secondary text-foreground",
+            warn ? "bg-warning/[0.12] text-warning" : "bg-success/[0.12] text-success",
           )}
         >
-          {ready ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+          {warn ? <AlertTriangle className="h-4 w-4" /> : <Check className="h-4 w-4" />}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-foreground">
+          <p className="text-base font-medium text-foreground-strong">
             {fill(t("marketplace.landed_title"), { title: result.title ?? result.id ?? "" })}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {result.problem
               ? result.problem
-              : ready
+              : ready || result.kind === "plugin"
                 ? t(`marketplace.landed_${result.kind}`)
                 : t("marketplace.landed_needs_connect")}
           </p>

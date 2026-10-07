@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "amplitude",
+  "version": "1.0.0",
+  "description": "Product analytics charts, cohorts and events",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Amplitude",
+      "category": "Knowledge & Reading",
+      "logo_slug": "amplitude",
+      "logo_color": "1E61F0",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.amplitude.com/mcp",
+        "discovery_url": "https://mcp.amplitude.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.amplitude.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_amplitude_access_token}"
+      },
+      "post_install_hint_md": "Sign in with Amplitude (US data center). Projects follow your Amplitude permissions."
+    }
+  }
+}

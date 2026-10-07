@@ -918,25 +918,9 @@ def _behind_win_shim(spec: workspace_agents.WorkspaceAgent, shim: str) -> tuple[
 
     ``cmd /c <shim>`` works and stays the fallback, but it wedges a second
     process between the pane and the agent, which costs clean signal delivery
-    and a clean exit. When the entry declares where the real thing sits inside
-    the installed package we skip the shim entirely.
-
-    Two shapes exist and the entry says which: a Node script that needs
-    ``node.exe`` in front of it, and a native executable that is simply run.
-    ``None`` whenever the declared path is not actually there — an install
-    laid out differently than expected must fall back, never fail.
+    and a clean exit (:func:`jarvis.workspace.agents.behind_win_shim`).
     """
-    if spec.win_shim is None:
-        return None
-    target = Path(shim).resolve().parent.joinpath(*spec.win_shim.relative_path)
-    if not target.is_file():
-        return None
-    if spec.win_shim.kind == "exe":
-        return (str(target),)
-    from jarvis.core.path_augment import resolve_node_executable
-
-    node = resolve_node_executable()
-    return (node, str(target)) if node else None
+    return workspace_agents.behind_win_shim(spec, shim)
 
 
 @dataclass(slots=True)
@@ -6319,6 +6303,9 @@ class Registry:
             target.layout = layout_tree.evened(target.layout)
             self._renumber(target)
             await self._persist()
+            if not source.terminals:
+                await self._close_locked(source.id)
+                await self._persist()
             logger.info(
                 "Agentic IDE: moved terminal {} from workspace {} to {} as {}",
                 old_name,
@@ -6672,6 +6659,7 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         followup: dict[str, str] | None = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
@@ -6716,6 +6704,7 @@ class Registry:
                 expected_input=expected_input,
                 allow_question=allow_question,
                 pending_result=pending,
+                expected_location=expected_location,
             )
             from .delegation_wait import track_submission
 
@@ -6739,6 +6728,7 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         pending_result: Any = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6847,6 +6837,10 @@ class Registry:
             or term.status != "live"
         ):
             raise SessionError("The selected terminal changed while waiting; nothing was sent.")
+        if expected_location is not None and expected_location != (
+            term.cwd(owner.folder), term.computer_id, term.remote_folder,
+        ):
+            raise SessionError("The image destination changed while waiting; nothing was sent.")
         if expected_input and (
             self.input_token(term) != expected_input
             or term.reading().activity

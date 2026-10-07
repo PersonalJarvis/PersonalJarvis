@@ -1043,7 +1043,11 @@ def _polish_drift_reason(
     raw_words, out_words = _ratio_word_counts(raw, polished, commands)
     if raw_words:
         ratio = out_words / raw_words
-        if ratio < max_shrink:
+        short_precision = (
+            not preserve_rare_tokens and 0 < out_words < raw_words <= 4
+            and raw_words - out_words <= 2
+        )
+        if ratio < max_shrink and not short_precision:
             return "ratio_shrink"
         if ratio > max_growth:
             return "ratio_growth"

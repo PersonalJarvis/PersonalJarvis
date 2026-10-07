@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pipedream",
+  "version": "1.0.0",
+  "description": "Use the apps you connected in Pipedream",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Pipedream",
+      "category": "Developer",
+      "logo_slug": "pipedream",
+      "logo_color": "1A1A1A",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.pipedream.net/v2",
+        "discovery_url": "https://mcp.pipedream.net/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.pipedream.net/v2",
+        "auth_header_template": "Authorization: Bearer ${plugin_pipedream_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with Pipedream. Apps connected in your Pipedream account become available; each action asks for approval first."
+    }
+  }
+}

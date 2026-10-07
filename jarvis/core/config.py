@@ -2143,7 +2143,7 @@ class UIConfig(BaseModel):
     # value, so a voice command or the Control API can change it and the open UI
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
-    language: Literal["en", "de", "es"] = "en"
+    language: Literal["en", "de", "es", "zh"] = "en"
     # Colour theme of the whole desktop app: "dark" (the product default —
     # matte black + signal yellow), "light" (warm paper + dark gold), or
     # "system" (follow the OS appearance, re-evaluated live when the OS flips).
@@ -2703,6 +2703,9 @@ class AppshotConfig(BaseModel):
     #: collides with no app or OS shortcut.
     region_hotkey: str = "shift+shift"
 
+    #: One shortcut selects a recording area; pressing it again stops and saves.
+    recording_hotkey: str = "ctrl+shift+9"
+
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next
     #: message. ``voice``: only into a running voice call.
@@ -2713,6 +2716,82 @@ class AppshotConfig(BaseModel):
 
     #: Flash and thumbnail animation on the captured window.
     effect: bool = True
+
+    #: Seconds the appshot card rests in the screen corner before it slides
+    #: away (read by ``jarvis.appshot.card_actions``); ``0`` keeps it there
+    #: until the user closes it.
+    card_seconds: int = Field(default=6, ge=0, le=600)
+
+    #: Keep every appshot (and its saved edit) in the gallery on the Appshots
+    #: page, under ``<data dir>/appshots/`` (read by ``jarvis.appshot.service``
+    #: and ``jarvis.appshot.library``). Off: nothing new is written there.
+    library: bool = True
+
+    #: Delete old captures automatically: only the newest N screenshots and
+    #: the newest N screen recordings stay in the gallery (read by
+    #: ``jarvis.appshot.retention``). ``0`` keeps everything.
+    keep_newest: int = Field(default=0, ge=0, le=500)
+
+    #: Put every appshot taken by shortcut or button on the system clipboard
+    #: too, so Ctrl/Cmd+V pastes it into any app right away (read by
+    #: ``jarvis.appshot.service``). Looks the assistant takes never copy.
+    copy_to_clipboard: bool = True
+
+
+class JarvisXConfig(BaseModel):
+    """Top-level ``[jarvisx]`` config — the built-in screenshot and screen recorder.
+
+    Jarvis X is a plain capture tool (``jarvis/jarvisx/``): region, window and
+    full-screen screenshots plus region / full-screen recordings, each on its
+    own global shortcut, saved to a folder and kept in a local library. It
+    never involves the assistant: no Screen Context privacy pipeline, no
+    delivery into a conversation. Every key below is read by
+    ``jarvis.jarvisx`` (AP-31).
+    """
+
+    model_config = {"extra": "allow"}
+
+    #: Master switch: off disarms every shortcut and refuses new captures.
+    #: The library of earlier captures stays browsable.
+    enabled: bool = True
+
+    #: Global shortcuts in the shared hotkey syntax; an empty string turns
+    #: that one shortcut off. The Ctrl+Shift+digit row stays clear of the OS
+    #: screenshot keys (Win+Shift+S, Cmd+Shift+3/4/5) and every other
+    #: Jarvis default.
+    hotkey_region: str = "ctrl+shift+2"
+    hotkey_window: str = "ctrl+shift+3"
+    hotkey_fullscreen: str = "ctrl+shift+1"
+    hotkey_record_region: str = "ctrl+shift+5"
+    hotkey_record_fullscreen: str = "ctrl+shift+6"
+    #: Stops a running recording (pressing its record shortcut again does too).
+    hotkey_stop_recording: str = "ctrl+shift+4"
+
+    #: ``true``: the corner thumbnail stays until it is dismissed. ``false``:
+    #: it fades after ``thumbnail_dismiss_s`` seconds.
+    thumbnail_persist: bool = False
+    #: Clamped to 1..3600 where it is read, so a hand-edited value can never
+    #: make the config unloadable.
+    thumbnail_dismiss_s: int = 30
+
+    #: Folder new captures are saved to. Empty = the user's Pictures folder
+    #: (``Pictures/Jarvis X``), or the Jarvis data folder where there is none.
+    save_dir: str = ""
+
+    #: Also put each new screenshot on the system clipboard.
+    copy_to_clipboard: bool = True
+
+    #: Shutter sound on every capture (also gated by ``[ui].sound_effects``).
+    sound: bool = True
+
+    #: Flash plus the corner thumbnail card after every capture.
+    effect: bool = True
+
+    #: Delete old captures automatically: only the newest N screenshots and
+    #: the newest N recordings stay, files included (read by
+    #: ``jarvis.jarvisx.service``). ``0`` keeps everything. Clamped to
+    #: 0..1000 where it is read.
+    keep_newest: int = 0
 
 
 class ComputerUseConfig(BaseModel):
@@ -3294,6 +3373,27 @@ class VoiceConfig(BaseModel):
     # fraction of the no-first-frame ceiling. Any set value is clamped to <= the
     # ceiling so it can never invert and re-introduce guaranteed silence.
     no_first_frame_phrase_floor_s: float | None = None
+
+
+class BrowserVoiceConfig(BaseModel):
+    """``[browser_voice]`` — the browser-microphone voice bridge (``/ws/audio``).
+
+    On a host without its own microphone (a VPS, ``jarvis serve``) the browser
+    that presses Start holds the call: it streams the microphone to
+    ``/ws/audio`` and plays the reply. ``extra="allow"`` so an unknown future
+    key never blocks boot (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Serves the classic STT -> brain -> TTS bridge in PIPELINE mode. Realtime
+    # mode always serves the socket, because it carries the realtime call and
+    # that call's classic fallback, so this switch does not apply there. Read
+    # by ``jarvis.browser_voice.route.browser_voice_enabled`` at connect time.
+    # Default on: before 2026-07-08 a missing section meant enabled, the
+    # headless deployment guide documents it as on, and the socket is behind
+    # the same credential check as every other route (issue #399).
+    enabled: bool = True
 
 
 class CompletenessConfig(BaseModel):
@@ -4567,6 +4667,9 @@ class JarvisConfig(BaseModel):
     # Appshots: the front window as conversation context, on a shortcut or on
     # request (jarvis/appshot/). Captures through Screen Context above.
     appshot: AppshotConfig = Field(default_factory=AppshotConfig)
+    # Jarvis X: the built-in screenshot / screen-recording tool
+    # (jarvis/jarvisx/). Independent of Screen Context and the assistant.
+    jarvisx: JarvisXConfig = Field(default_factory=JarvisXConfig)
     # Phase 5/6 — Computer-Use-POAV-Harness (ADR-0008).
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     # Low-latency local-action gate. Hidden tools only; never exposed in the
@@ -4603,6 +4706,9 @@ class JarvisConfig(BaseModel):
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    # [browser_voice] — the browser-microphone bridge for hosts without a
+    # microphone of their own (see BrowserVoiceConfig).
+    browser_voice: BrowserVoiceConfig = Field(default_factory=BrowserVoiceConfig)
     # AI Pointer — deictic-gated "what is under the mouse cursor" context.
     # Spec: docs/plans/ai-pointer/DESIGN.md
     pointer: PointerConfig = Field(default_factory=PointerConfig)

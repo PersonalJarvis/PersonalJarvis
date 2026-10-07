@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -17,9 +18,9 @@ from jarvis.ui.web.provider_routes import router
 from jarvis.ui.web.provider_spec import get_spec
 
 
-def _only_openai_key(key: str, *_a, **_kw) -> str | None:
-    """Fake ``cfg_mod.get_secret``: only ``openai_api_key`` looks configured."""
-    return "sk-test" if key == "openai_api_key" else None
+def _only_vertex_key(key: str, *_a, **_kw) -> str | None:
+    """Fake ``cfg_mod.get_secret``: only ``vertex_api_key`` looks configured."""
+    return "vertex-test" if key == "vertex_api_key" else None
 
 
 def _only_gemini_key(key: str, *_a, **_kw) -> str | None:
@@ -31,11 +32,11 @@ def _only_gemini_key(key: str, *_a, **_kw) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def test_openai_realtime_spec_owns_a_dedicated_key():
-    spec = get_spec("openai-realtime")
+def test_vertex_realtime_spec_owns_a_dedicated_key():
+    spec = get_spec("vertex-live")
     assert spec is not None
     assert spec.tier == "realtime"
-    assert spec.secret_keys == ("realtime_openai_api_key",)
+    assert spec.secret_keys == ("realtime_vertex_api_key",)
 
 
 def test_gemini_live_spec_present():
@@ -65,16 +66,15 @@ def _app() -> FastAPI:
 
 
 def test_list_providers_includes_active_realtime_provider(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     client = TestClient(_app())
     resp = client.get("/api/providers")
     assert resp.status_code == 200
     by_id = {p["id"]: p for p in resp.json()["providers"]}
-    assert "openai-realtime" in by_id
-    realtime = by_id["openai-realtime"]
+    assert "vertex-live" in by_id
+    realtime = by_id["vertex-live"]
     assert realtime["tier"] == "realtime"
-    # No explicit brain.realtime.provider set -> defaults to the sole spec,
-    # so the only realtime card shows as active rather than "nothing selected".
+    # A single configured realtime family is selected on a fresh install.
     assert realtime["active"] is True
     assert realtime["configured"] is True
 
@@ -82,7 +82,7 @@ def test_list_providers_includes_active_realtime_provider(monkeypatch):
 def test_list_providers_omits_removed_codex_subscription_card(monkeypatch):
     """The codex-subscription-realtime card was removed 2026-08-10 together
     with its adapter; the catalog must not serve it."""
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     client = TestClient(_app())
 
     resp = client.get("/api/providers")
@@ -98,6 +98,16 @@ def test_removed_subscription_realtime_spec_is_gone():
     assert get_spec("codex-subscription-realtime") is None
 
 
+@pytest.mark.parametrize("provider", ["openai-realtime", "codex-subscription-realtime"])
+def test_retired_provider_cannot_reenter_the_realtime_picker(provider):
+    assert get_spec(provider) is None
+    client = TestClient(_app())
+    assert client.get(f"/api/providers/{provider}/realtime-options").status_code == 404
+    assert client.post(
+        f"/api/providers/{provider}/realtime-voice-preview", json={"voice": "alloy"},
+    ).status_code == 404
+
+
 def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", _only_gemini_key)
     client = TestClient(_app())
@@ -107,7 +117,7 @@ def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
     assert resp.status_code == 200
     by_id = {provider["id"]: provider for provider in resp.json()["providers"]}
     assert by_id["gemini-live"]["active"] is True
-    assert by_id["openai-realtime"]["active"] is False
+    assert by_id["vertex-live"]["active"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +126,7 @@ def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
 
 
 def test_realtime_switch_persists_with_key(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     writes: list[str] = []
     monkeypatch.setattr(
         config_writer, "set_realtime_provider", lambda name, **kw: writes.append(name)
@@ -124,22 +134,22 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     app = _app()
     client = TestClient(app)
     resp = client.post(
-        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+        "/api/realtime/switch", json={"provider": "vertex-live", "persist": True}
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["active"] == "openai-realtime"
+    assert body["active"] == "vertex-live"
     assert body["persisted"] is True
     assert body["restart_required"] is False
-    assert writes == ["openai-realtime"]
+    assert writes == ["vertex-live"]
     assert app.state.config.brain.realtime is not None
-    assert app.state.config.brain.realtime.provider == "openai-realtime"
+    assert app.state.config.brain.realtime.provider == "vertex-live"
 
 
 def test_realtime_switch_preserves_pipeline_mode(monkeypatch):
     """Provider selection configures Realtime without activating the engine."""
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
     voice_mode_writes: list[str] = []
     monkeypatch.setattr(
@@ -150,7 +160,7 @@ def test_realtime_switch_preserves_pipeline_mode(monkeypatch):
     app.state.config.voice.mode = "pipeline"
     client = TestClient(app)
     resp = client.post(
-        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+        "/api/realtime/switch", json={"provider": "vertex-live", "persist": True}
     )
     assert resp.status_code == 200
     assert voice_mode_writes == []
@@ -158,7 +168,7 @@ def test_realtime_switch_preserves_pipeline_mode(monkeypatch):
 
 
 def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     monkeypatch.setattr(config_writer, "set_realtime_provider", lambda _name: None)
     reasons: list[str] = []
 
@@ -174,19 +184,19 @@ def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
 
     response = client.post(
         "/api/realtime/switch",
-        json={"provider": "openai-realtime", "persist": True},
+        json={"provider": "vertex-live", "persist": True},
     )
 
     assert response.status_code == 200
     assert response.json()["session_restarted"] is True
-    assert reasons == ["realtime_provider:openai-realtime"]
+    assert reasons == ["realtime_provider:vertex-live"]
 
 
 def test_realtime_switch_without_key_is_409(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
     client = TestClient(_app())
     resp = client.post(
-        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+        "/api/realtime/switch", json={"provider": "vertex-live", "persist": True}
     )
     assert resp.status_code == 409
 
@@ -221,7 +231,7 @@ def test_section_health_includes_realtime_key(monkeypatch):
     from jarvis.brain import provider_health_ledger as ledger
 
     monkeypatch.setattr(_pt, "run_provider_test", _fake_run)
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     client = TestClient(_app())
     resp = client.get("/api/providers/section-health")
     assert resp.status_code == 200
@@ -263,10 +273,10 @@ def test_section_health_realtime_needs_setup_without_key(monkeypatch):
 def test_set_realtime_provider_writes_nested_table(tmp_path: Path):
     toml = tmp_path / "jarvis.toml"
     toml.write_text("", encoding="utf-8")
-    config_writer.set_realtime_provider("openai-realtime", path=toml)
+    config_writer.set_realtime_provider("vertex-live", path=toml)
     content = toml.read_text(encoding="utf-8")
     assert "[brain.realtime]" in content
-    assert 'provider = "openai-realtime"' in content
+    assert 'provider = "vertex-live"' in content
 
 
 def test_set_realtime_provider_preserves_sibling_worker_table(tmp_path: Path):
@@ -275,12 +285,12 @@ def test_set_realtime_provider_preserves_sibling_worker_table(tmp_path: Path):
         '[brain.worker]\nprovider = "claude-api"\n',
         encoding="utf-8",
     )
-    config_writer.set_realtime_provider("openai-realtime", path=toml)
+    config_writer.set_realtime_provider("vertex-live", path=toml)
     content = toml.read_text(encoding="utf-8")
     assert '[brain.worker]' in content
     assert 'provider = "claude-api"' in content
     assert '[brain.realtime]' in content
-    assert 'provider = "openai-realtime"' in content
+    assert 'provider = "vertex-live"' in content
 
 
 def test_set_realtime_fallback_provider_keeps_primary(tmp_path: Path):
@@ -302,19 +312,17 @@ def test_set_realtime_fallback_provider_keeps_primary(tmp_path: Path):
 
 
 def test_get_realtime_options_returns_curated_models_and_voices(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     client = TestClient(_app())
-    resp = client.get("/api/providers/openai-realtime/realtime-options")
+    resp = client.get("/api/providers/vertex-live/realtime-options")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["provider"] == "openai-realtime"
+    assert body["provider"] == "vertex-live"
     voice_ids = {v["id"] for v in body["voices"]}
-    assert voice_ids == {
-        "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
-        "marin", "cedar",
-    }
+    assert {"Puck", "Charon", "Kore"} <= voice_ids
+    assert len(voice_ids) == 30
     model_ids = [m["id"] for m in body["models"]]
-    assert model_ids[0] == "gpt-realtime"  # the hardcoded default leads
+    assert model_ids[0] == "gemini-live-2.5-flash-native-audio"  # the hardcoded default leads
     assert body["current_model"] == ""
     assert body["current_voice"] == ""
 
@@ -360,18 +368,18 @@ def test_get_realtime_options_removed_grok_is_unknown(monkeypatch) -> None:
 
 
 def test_get_realtime_options_reflects_pinned_selection(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     app = _app()
     from jarvis.core.config import BrainProviderConfig
 
-    app.state.config.brain.providers["openai-realtime"] = BrainProviderConfig(
-        model="gpt-realtime-2.1", voice="echo"
+    app.state.config.brain.providers["vertex-live"] = BrainProviderConfig(
+        model="gemini-live-2.5-flash-native-audio", voice="Charon"
     )
     client = TestClient(app)
-    resp = client.get("/api/providers/openai-realtime/realtime-options")
+    resp = client.get("/api/providers/vertex-live/realtime-options")
     body = resp.json()
-    assert body["current_model"] == "gpt-realtime-2.1"
-    assert body["current_voice"] == "echo"
+    assert body["current_model"] == "gemini-live-2.5-flash-native-audio"
+    assert body["current_voice"] == "Charon"
 
 
 def test_get_realtime_options_unknown_provider_404(monkeypatch):
@@ -388,7 +396,7 @@ def test_get_realtime_options_rejects_non_realtime_provider(monkeypatch):
 
 
 def test_put_realtime_options_persists_voice(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     writes: list[tuple[str, str | None, str | None]] = []
     monkeypatch.setattr(
         config_writer,
@@ -400,19 +408,19 @@ def test_put_realtime_options_persists_voice(monkeypatch):
     app = _app()
     client = TestClient(app)
     resp = client.put(
-        "/api/providers/openai-realtime/realtime-options", json={"voice": "echo"}
+        "/api/providers/vertex-live/realtime-options", json={"voice": "Charon"}
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
-    assert body["voice"] == "echo"
+    assert body["voice"] == "Charon"
     assert body["restart_required"] is False
-    assert ("openai-realtime", None, "echo") in writes
-    assert app.state.config.brain.providers["openai-realtime"].voice == "echo"
+    assert ("vertex-live", None, "Charon") in writes
+    assert app.state.config.brain.providers["vertex-live"].voice == "Charon"
 
 
 def test_put_realtime_options_persists_model_and_voice(monkeypatch):
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     writes: list[tuple[str, str | None, str | None]] = []
     monkeypatch.setattr(
         config_writer,
@@ -424,23 +432,23 @@ def test_put_realtime_options_persists_model_and_voice(monkeypatch):
     app = _app()
     client = TestClient(app)
     resp = client.put(
-        "/api/providers/openai-realtime/realtime-options",
-        json={"model": "gpt-realtime-2.1", "voice": "echo"},
+        "/api/providers/vertex-live/realtime-options",
+        json={"model": "gemini-live-2.5-flash-native-audio", "voice": "Charon"},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["model"] == "gpt-realtime-2.1"
-    assert body["voice"] == "echo"
-    assert ("openai-realtime", "gpt-realtime-2.1", "echo") in writes
-    pc = app.state.config.brain.providers["openai-realtime"]
-    assert pc.model == "gpt-realtime-2.1"
-    assert pc.voice == "echo"
+    assert body["model"] == "gemini-live-2.5-flash-native-audio"
+    assert body["voice"] == "Charon"
+    assert ("vertex-live", "gemini-live-2.5-flash-native-audio", "Charon") in writes
+    pc = app.state.config.brain.providers["vertex-live"]
+    assert pc.model == "gemini-live-2.5-flash-native-audio"
+    assert pc.voice == "Charon"
 
 
 def test_put_realtime_options_omitted_field_leaves_it_unwritten(monkeypatch):
     """Only the field actually present in the body is persisted — mirrors the
     model/cu_model endpoints' partial-update contract."""
-    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_vertex_key)
     writes: list[tuple[str, str | None, str | None]] = []
     monkeypatch.setattr(
         config_writer,
@@ -451,18 +459,18 @@ def test_put_realtime_options_omitted_field_leaves_it_unwritten(monkeypatch):
     )
     client = TestClient(_app())
     resp = client.put(
-        "/api/providers/openai-realtime/realtime-options",
-        json={"model": "gpt-realtime-2.1"},
+        "/api/providers/vertex-live/realtime-options",
+        json={"model": "gemini-live-2.5-flash-native-audio"},
     )
     assert resp.status_code == 200
-    assert ("openai-realtime", "gpt-realtime-2.1", None) in writes
+    assert ("vertex-live", "gemini-live-2.5-flash-native-audio", None) in writes
 
 
 def test_put_realtime_options_without_key_is_409(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
     client = TestClient(_app())
     resp = client.put(
-        "/api/providers/openai-realtime/realtime-options", json={"voice": "echo"}
+        "/api/providers/vertex-live/realtime-options", json={"voice": "Charon"}
     )
     assert resp.status_code == 409
 

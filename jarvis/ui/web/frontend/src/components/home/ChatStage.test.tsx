@@ -1,8 +1,13 @@
-import { act, cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatStage } from "@/components/home/ChatStage";
+
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
 import { EMPTY_TIMELINE, reduceEvents } from "@/components/agentchat/reduce";
 import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
@@ -202,8 +207,8 @@ describe("ChatStage (agent chat)", () => {
     expect(within(composer).getByTestId("composer-model").getAttribute("data-value")).toBe("claude-api\u0001");
     expect(within(composer).getByTestId("composer-effort").getAttribute("data-value")).toBe("high");
     expect(within(composer).getByTestId("composer-permission").getAttribute("data-value")).toBe("acceptEdits");
-    // Claude Code has a plan entry, so the Build | Plan switch is drawn.
-    expect(within(composer).getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+    // No Build | Plan switch on the front page, even for a ladder with a plan entry.
+    expect(within(composer).queryByTestId("composer-plan")).toBeNull();
     // No surface chip, no paperclip: "+" carries attaching.
     expect(within(composer).queryByTestId("composer-surface")).toBeNull();
     expect(within(composer).queryByTestId("composer-attach")).toBeNull();
@@ -496,20 +501,41 @@ describe("ChatStage (agent chat)", () => {
 
   it("draws a different glyph per permission mode in the pill and the list", async () => {
     render(<ChatStage />);
+    // The labelled pick row draws no glyph on the pill; the list carries them.
     const pill = screen.getByTestId("composer-permission");
-    // acceptEdits wears the pen, not the column's shield.
-    expect(pill.querySelector("svg.lucide-file-pen")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const glyphs = within(panel)
       .getAllByRole("option")
       .map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    // default → question shield, acceptEdits → pen, bypass → shield off; plan lives on the switch.
-    expect(glyphs.some((c) => c.includes("lucide-shield-question"))).toBe(true);
+    // default → hand, acceptEdits → pen, bypass → warning shield; plan lives on the switch.
+    expect(glyphs.some((c) => c.includes("lucide-hand"))).toBe(true);
     expect(glyphs.some((c) => c.includes("lucide-file-pen"))).toBe(true);
-    expect(glyphs.some((c) => c.includes("lucide-shield-off"))).toBe(true);
+    expect(glyphs.some((c) => c.includes("lucide-shield-alert"))).toBe(true);
     expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+
+  it("marks the provider's default effort and explains each stance in its menu", async () => {
+    useAgentChatStore.setState({
+      catalog: {
+        ...CATALOG,
+        providers: CATALOG.providers.map((p) => ({
+          ...p,
+          permission_modes: p.permission_modes.map((m) => ({ ...m, description: `What ${m.label} lets through.` })),
+        })),
+      },
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-effort"));
+    const effort = await screen.findByTestId("composer-effort-panel");
+    expect(effort.textContent).toContain("Reasoning");
+    const high = within(effort).getAllByRole("option").find((el) => el.getAttribute("data-value") === "high");
+    expect(high?.textContent).toContain("Default");
+    fireEvent.keyDown(effort, { key: "Escape" });
+
+    fireEvent.click(screen.getByTestId("composer-permission"));
+    const stances = await screen.findByTestId("composer-permission-panel");
+    expect(stances.textContent).toContain("What Auto-accept edits lets through.");
   });
 
   it("wears one glyph per stance on the unified ladder", async () => {
@@ -536,20 +562,31 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
     const pill = screen.getByTestId("composer-permission");
     expect(pill.getAttribute("data-value")).toBe("ask");
-    expect(pill.querySelector("svg.lucide-shield-question")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const rows = within(panel).getAllByRole("option");
     // Plan is the switch next door, so the list holds the other three.
     expect(rows.map((el) => el.getAttribute("data-value"))).toEqual(["ask", "accept-edits", "bypass"]);
     const glyphs = rows.map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    expect(glyphs[0]).toContain("lucide-shield-question");
+    expect(glyphs[0]).toContain("lucide-hand");
     expect(glyphs[1]).toContain("lucide-file-pen");
-    expect(glyphs[2]).toContain("lucide-shield-off");
+    expect(glyphs[2]).toContain("lucide-shield-alert");
     expect(new Set(glyphs).size).toBe(glyphs.length);
-    // The plan entry still powers the Build | Plan switch.
-    expect(screen.getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("draws Bypass in the row's plain grey, like every other stance", () => {
+    useAgentChatStore.setState((s) => ({ draft: { ...s.draft, permissionMode: "bypassPermissions" } }));
+    render(<ChatStage />);
+    const pill = screen.getByTestId("composer-permission");
+    expect(pill.getAttribute("data-value")).toBe("bypassPermissions");
+    expect(pill.className).not.toContain("text-warning");
+  });
+
+  it("brings a chat left in Plan back to its build stance, since the front page has no switch", async () => {
+    const setPlan = vi.fn(async () => {});
+    useAgentChatStore.setState((s) => ({ setPlan, draft: { ...s.draft, permissionMode: "plan" } }) as never);
+    render(<ChatStage />);
+    await waitFor(() => expect(setPlan).toHaveBeenCalledWith(false));
   });
 
   it("accepts a prompt through the current rich text composer", () => {
@@ -764,8 +801,8 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
 
     const trace = screen.getByTestId("work-trace");
-    // The finished turn folds behind "Worked for …"; one tap opens its timeline.
-    fireEvent.click(within(trace).getByRole("button", { name: /^Worked for 6\.0s/ }));
+    // The finished turn folds its work; one tap brings it back in order.
+    openWork();
     const text = trace.textContent!;
     expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
     expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
@@ -837,10 +874,10 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
-    const toggle = screen.getByRole("button", { name: /^Worked for 12s/ });
-    // The plugin the turn used shows on the folded line by its own logo.
-    expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
-    fireEvent.click(toggle);
+    openWork();
+    // The plugin the turn used shows on its line by its own logo.
+    const stretch = screen.getByRole("button", { name: /^Ran a command, used GitHub/ });
+    expect(stretch.querySelector("img, [data-logo]")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Ran a command, used GitHub/ }));
     const [shell, github] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
     expect(shell.textContent).toContain("Get-ChildItem -Path 'C:\\Users'");

@@ -79,6 +79,7 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     # Preserve coverage of the existing POSIX plain route. Windows degrades
     # honestly to paste_sent if its read-observation helper is unavailable.
     monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform="linux"))
     return clipboard, actuator
 
 

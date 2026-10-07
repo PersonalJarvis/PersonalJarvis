@@ -308,6 +308,7 @@ class PetRenderer:
         self._level = 0.0
         self._level_at = -math.inf
         self._smoothed = 0.0
+        self._greet_until = 0.0
         self.load(pet_id)
 
     # -- pack ------------------------------------------------------------
@@ -431,7 +432,22 @@ class PetRenderer:
     # -- state feed ------------------------------------------------------
 
     def on_mode(self, mode: str) -> None:
+        if mode != "listen":
+            self._greet_until = 0.0
         self._machine.on_mode(mode)
+
+    def greet(self) -> None:
+        """Briefly nod on activation, using the selected pet's listening row."""
+        if self.has_figure and self.state() == "listening":
+            self._greet_until = float(self._clock()) + 0.7
+
+    def _greet_inset(self) -> int:
+        remaining = self._greet_until - float(self._clock())
+        if remaining <= 0 or self.state() != "listening":
+            return 0
+        # A small squash and rise stays inside the existing window bounds.
+        phase = (0.7 - remaining) / 0.7
+        return max(0, round(self._size[1] * 0.10 * math.sin(math.pi * phase) ** 2))
 
     def on_outcome(self, kind: str) -> None:
         self._machine.on_outcome(kind)
@@ -542,12 +558,16 @@ class PetRenderer:
         if self._pack is None:
             return ("none", self._size)
         resolved, _spec, index, _elapsed, _driven = self._current()
-        return (self._pet_id, self._factor, resolved, index)
+        key = (self._pet_id, self._factor, resolved, index)
+        inset = self._greet_inset()
+        return (*key, inset) if inset else key
 
     def next_frame_delay_ms(self, t: float = 0.0) -> int:
         """How long the overlay may sleep before the next repaint is due."""
         _ = t
         waits: list[float] = []
+        if self._greet_until > float(self._clock()) and self.state() == "listening":
+            waits.append(1 / 30)
         change = self._machine.next_change_in()
         if change is not None:
             waits.append(max(0.0, float(change)))
@@ -588,4 +608,14 @@ class PetRenderer:
             if self._blank is None:
                 self._blank = Image.new("RGB", self._size, self._color_key)
             return self._blank
-        return sequence[min(index, len(sequence) - 1)]
+        frame = sequence[min(index, len(sequence) - 1)]
+        inset = self._greet_inset()
+        if not inset:
+            return frame
+        result = Image.new("RGB", self._size, self._color_key)
+        # Preserve pixel edges; never crop the sprite or change host geometry.
+        nodded = frame.resize(
+            (frame.width, max(1, frame.height - inset)), Image.Resampling.NEAREST
+        )
+        result.paste(nodded, (0, inset))
+        return result

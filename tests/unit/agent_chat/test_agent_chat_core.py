@@ -57,6 +57,37 @@ def test_normalize_effort_folds_onto_the_nearest_offered_level(provider, picked,
     assert effort.normalize_effort(provider, picked) == expected
 
 
+def test_effort_note_names_the_level_the_turn_runs_on():
+    assert "Reasoning effort for this turn: medium" in effort.effort_note("claude-api", "medium")
+    assert "provider's own default" in effort.effort_note("grok", "")
+    # A provider without an effort knob is told nothing.
+    assert effort.effort_note("kimi", "") == ""
+    # Nor is a model without one (Haiku 4.5, agy's Claude models).
+    assert effort.effort_note("claude-api", "", ()) == ""
+
+
+@pytest.mark.parametrize(
+    ("provider", "picked", "ladder", "expected"),
+    [
+        # Claude Code runs --effort xhigh as high on Opus 4.6: say high.
+        ("claude-api", "xhigh", ("low", "medium", "high", "max"), "high"),
+        ("claude-api", "medium", None, "medium"),
+        # No knob on the model: no level at all.
+        ("claude-api", "medium", (), ""),
+        # "Default" cannot be picked on Claude's ladder: its default level runs.
+        ("claude-api", "", None, "high"),
+        ("openai-codex", "ultra", ("low", "medium", "high", "xhigh", "max"), "max"),
+        ("antigravity", "medium", ("low", "high"), "low"),
+        # A level only the model's live list knows is kept.
+        ("openai-codex", "future", ("future",), "future"),
+        # A ladder with a "Default" entry keeps it.
+        ("grok", "", None, ""),
+    ],
+)
+def test_effort_for_model_is_the_level_the_turn_runs_on(provider, picked, ladder, expected):
+    assert effort.effort_for_model(provider, picked, ladder) == expected
+
+
 def test_catalog_rows_carry_ladders_and_curated_models_for_cli_runners():
     claude = provider_row("claude-api")
     assert claude is not None and claude.runner == "claude-cli"
@@ -635,3 +666,64 @@ def test_cli_seat_retirement_follows_the_surface_capability(tmp_path, monkeypatc
     # The IDE's chat is untouched.
     assert store.get_session(kept.session_id).provider == "claude-api"
     assert store.get_session(kept.session_id).model == "claude-opus-5"
+
+
+def test_claude_live_usage_follows_the_stream_and_the_message_end():
+    """The live counter tracks real output, not the start-of-message placeholder.
+
+    Claude Code reports a message's true ``output_tokens`` only in the
+    ``message_delta`` that ends it; every ``assistant`` snapshot before that
+    carries a placeholder. The counter read "Working 28s · 39 tokens" on a
+    turn that ended at 11k. Streamed text and tool input now count as they
+    arrive, and the message end sets the real number.
+    """
+    st = _ClaudeState(turn_id="t")
+    lines = [
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m1"}}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "content": [],
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+            },
+        },
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "x" * 400},
+            },
+        },
+        {
+            "type": "stream_event",
+            "event": {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 180}},
+        },
+        {"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m2"}}},
+        {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "y" * 200},
+            },
+        },
+    ]
+    events = [ev for obj in lines for ev in translate_claude_line(obj, st)]
+    usage = [ev["payload"]["usage"] for ev in events if ev["kind"] == "usage_delta"]
+    output = [u["output_tokens"] for u in usage]
+    # Placeholder, then the streamed tool input (400 chars ≈ 100 tokens), then
+    # the message's real count, then the next message streaming on top.
+    assert output == [2, 100, 180, 230]
+    # A few streamed characters do not send an update of their own.
+    quiet = _ClaudeState(turn_id="q")
+    tiny = {
+        "type": "stream_event",
+        "event": {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hi"},
+        },
+    }
+    assert [ev for ev in translate_claude_line(tiny, quiet) if ev["kind"] == "usage_delta"] == []

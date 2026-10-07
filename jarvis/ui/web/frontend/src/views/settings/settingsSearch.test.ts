@@ -11,8 +11,8 @@ describe("searchSettingsOptions", () => {
   });
 
   it("finds localized options in the selected UI language", () => {
-    const matches = searchSettingsOptions("de", "Denkpause", translate);
-    expect(matches.some((match) => match.id === "silence-window")).toBe(true);
+    const matches = searchSettingsOptions("de", "Lautstärke", translate); // i18n-allow
+    expect(matches.some((match) => match.id === "volume")).toBe(true);
   });
 
   it("finds a field in another Settings page", () => {

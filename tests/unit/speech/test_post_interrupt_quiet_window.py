@@ -39,6 +39,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -80,7 +81,7 @@ def _make_pipeline(
     """SpeechPipeline wired with fakes — no real audio I/O."""
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     pipeline._player = player  # type: ignore[assignment]
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 class _FakeClock:

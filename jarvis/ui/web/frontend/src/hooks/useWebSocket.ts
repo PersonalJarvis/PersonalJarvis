@@ -26,12 +26,13 @@ import {
 } from "@/store/commandActivity";
 import { isDictationStartFailure } from "@/lib/dictationRefusal";
 import { usePermissionToast } from "@/hooks/usePermissionToast";
-import { useAppshotEditor } from "@/store/appshotEditor";
+import { handleAppshotEditRequest } from "@/store/appshotEditor";
 import { useDeckStore } from "@/store/deck";
+import { MEMORY_WRITE_EVENT, useMemoryWrites } from "@/store/memoryWrites";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
-import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
+import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, isUiLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
 import { announceDictationSettings } from "@/hooks/usePromptMode";
 import { petKeys } from "@/hooks/usePets";
@@ -164,17 +165,11 @@ export function useWebSocket(): void {
           }
         }
 
-        // A click on the appshot card in the screen corner: open the editor on
-        // the Appshots page. A detached solo window leaves it to the main one.
-        if (env.event_name === "AppshotEditRequested" && !useEventStore.getState().solo) {
-          const id = (env.payload as { appshot_id?: unknown }).appshot_id;
-          if (typeof id === "string" && id) {
-            setActiveSection("appshots");
-            useAppshotEditor.getState().open(id);
-          } else {
-            setActiveSection("appshots");
-            pushToast("warning", translate("appshots.editor.gone"));
-          }
+        // A click on the appshot card in the screen corner: the editor opens
+        // over whatever is on screen (AppshotEditorHost) — no navigation.
+        if (env.event_name === "AppshotEditRequested") {
+          const outcome = handleAppshotEditRequest(env.payload, { solo: useEventStore.getState().solo });
+          if (outcome === "gone") pushToast("warning", translate("appshots.editor.gone"));
         }
 
         // Live reasoning trace: while the text chat is waiting on a reply,
@@ -366,10 +361,12 @@ export function useWebSocket(): void {
         // The assistant's voice was muted or unmuted somewhere else (the
         // pet's speaker disc, another window); in-app speaker toggles follow.
         if (env.event_name === "VoiceSpeakerMuteChanged") {
-          const p = env.payload as { muted?: unknown };
+          const p = env.payload as { muted?: unknown; revision?: number };
           if (typeof p.muted === "boolean") {
             window.dispatchEvent(
-              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: { muted: p.muted } }),
+              new CustomEvent(SPEAKER_MUTE_EVENT, { detail: {
+                muted: p.muted, ...(typeof p.revision === "number" ? { revision: p.revision } : {}),
+              } }),
             );
           }
         }
@@ -378,6 +375,12 @@ export function useWebSocket(): void {
         // another one, the shortcut): the My Pets page re-reads the list.
         if (env.event_name === "PetChanged") {
           void queryClient.invalidateQueries({ queryKey: petKeys.all });
+        }
+
+        // An agent's memory file is being written, or the write settled: the
+        // lead pet's thought bubble names the file (store/memoryWrites).
+        if (env.event_name === MEMORY_WRITE_EVENT) {
+          useMemoryWrites.getState().receive(env.payload);
         }
 
         if (env.event_name === "TranscriptionUpdate") {
@@ -654,7 +657,7 @@ export function useWebSocket(): void {
         // so receiving the broadcast does not echo a PUT back.
         if (env.event_name === "UiLanguageChanged") {
           const p = env.payload as { language?: string };
-          if (p.language === "en" || p.language === "de" || p.language === "es") {
+          if (isUiLanguage(p.language)) {
             useI18nStore.getState().setUi(p.language, { push: false });
           }
         }

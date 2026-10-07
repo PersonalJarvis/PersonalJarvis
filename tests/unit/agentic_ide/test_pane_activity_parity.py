@@ -71,4 +71,6 @@ def test_activity_expected_vocabulary() -> None:
         "asking",
         "failed",
         "exited",
+        "stopped",
+        "unknown",
     }

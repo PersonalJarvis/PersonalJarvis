@@ -160,6 +160,31 @@ describe("agent-chat store surfaces", () => {
     expect(draft.buildMode).toBe("ask");
     expect(draft.effort).toBe("high");
   });
+
+  it("paints the last catalog at once and keeps it across a new chat while it refreshes", async () => {
+    // The composer showed "Provider" for seconds on every start and every new
+    // chat: the catalog began empty and the route waits on CLI model lists.
+    const calls = stubFetch([]);
+    const first = createAgentChatStore("jarvis");
+    expect(first.getState().catalog).toBeNull();
+    await first.getState().loadCatalog();
+
+    const next = createAgentChatStore("jarvis");
+    expect(next.getState().catalog).toEqual(first.getState().catalog);
+    expect(next.getState().catalogStale).toBe(true);
+    await next.getState().loadCatalog();
+    expect(next.getState().catalogStale).toBe(false);
+
+    const before = calls.filter((c) => c.url.startsWith("/api/agent-chat/catalog")).length;
+    next.getState().newChat();
+    expect(next.getState().catalog).not.toBeNull();
+    expect(next.getState().catalogStale).toBe(true);
+    await vi.waitFor(() => expect(next.getState().catalogStale).toBe(false));
+    expect(calls.filter((c) => c.url.startsWith("/api/agent-chat/catalog")).length).toBeGreaterThan(before);
+    // Each surface keeps its own copy.
+    expect(createAgentChatStore("agent").getState().catalog).toBeNull();
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     vi.stubGlobal("WebSocket", FakeSocket);
@@ -357,4 +382,24 @@ it("opening a society catalog never runs paid provider health probes", async () 
   expect(calls.some((call) => call.url.includes("provider-health"))).toBe(false);
   await createAgentChatStore("jarvis").getState().loadCatalog();
   expect(calls.some((call) => call.url.includes("provider-health"))).toBe(true);
+});
+
+it("unchanged session refreshes preserve list identity, while title/account changes update it", async () => {
+  const supplied = [session("one", "jarvis"), session("two", "jarvis")];
+  stubFetch(supplied);
+  try {
+    const store = createAgentChatStore("jarvis");
+    await store.getState().loadSessions();
+    const original = store.getState().sessions;
+    await store.getState().loadSessions();
+    expect(store.getState().sessions).toBe(original);
+    supplied[0] = { ...supplied[0], title: "Renamed", account_id: "another-seat" };
+    await store.getState().loadSessions();
+    const updated = store.getState().sessions;
+    expect(updated).not.toBe(original);
+    expect(updated[0]).toMatchObject({ title: "Renamed", account_id: "another-seat" });
+    expect(updated[1]).toBe(original[1]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

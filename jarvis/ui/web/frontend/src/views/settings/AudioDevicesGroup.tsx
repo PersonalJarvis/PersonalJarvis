@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { Headphones, Mic, RefreshCw, Volume2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   useAudioDevices,
   type AudioDeviceEntry,
 } from "@/hooks/useAudioDevices";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
-import { BrandedSelect } from "@/components/ui/select";
+import { SettingsRow, SettingsSelect } from "@/views/settings/SettingsLayout";
 
 /**
  * "Audio devices" card inside the Settings view: one dropdown for the OUTPUT
@@ -49,75 +49,69 @@ export function AudioDevicesGroup() {
 
   const autoValue = config?.auto_value ?? "auto-headset";
 
+  const rescan = (
+    <button
+      type="button"
+      onClick={() => void refetch()}
+      disabled={loading}
+      title={t("settings_view.audio_devices.rescan")}
+      aria-label={t("settings_view.audio_devices.rescan")}
+      className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+    >
+      <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+    </button>
+  );
+
+  if (config && !config.available) {
+    return (
+      <SettingsRow
+        id="settings-audio-devices"
+        title={t("settings_view.audio_devices.title")}
+        description={t("settings_view.audio_devices.none_found")}
+        control={rescan}
+      >
+        {error && <p className="text-sm text-destructive">{error}</p>}
+      </SettingsRow>
+    );
+  }
+
+  // Both rows sit inside one boundary, so they draw their own hairline.
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Headphones className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-display text-sm font-semibold">
-              {t("settings_view.audio_devices.title")}
-            </h4>
-            <button
-              type="button"
-              onClick={() => void refetch()}
-              disabled={loading}
-              title={t("settings_view.audio_devices.rescan")}
-              aria-label={t("settings_view.audio_devices.rescan")}
-              className="text-muted-foreground hover:text-foreground disabled:opacity-50"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
-              />
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.audio_devices.description")}
-          </p>
-
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-
-          {config && !config.available ? (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {t("settings_view.audio_devices.none_found")}
-            </p>
-          ) : (
-            <>
-              <DevicePicker
-                icon={<Volume2 className="h-3.5 w-3.5 text-muted-foreground" />}
-                label={t("settings_view.audio_devices.output_label")}
-                testId="audio-output-select"
-                devices={config?.outputs ?? []}
-                selected={config?.selected_output ?? autoValue}
-                autoValue={autoValue}
-                autoLabel={t("settings_view.audio_devices.auto_option")}
-                defaultSuffix={t("settings_view.audio_devices.default_suffix")}
-                disabled={loading || saving !== null}
-                onSelect={(device) => void onSelect("output", device)}
-              />
-              <DevicePicker
-                icon={<Mic className="h-3.5 w-3.5 text-muted-foreground" />}
-                label={t("settings_view.audio_devices.input_label")}
-                testId="audio-input-select"
-                devices={config?.inputs ?? []}
-                selected={config?.selected_input ?? autoValue}
-                autoValue={autoValue}
-                autoLabel={t("settings_view.audio_devices.auto_option")}
-                defaultSuffix={t("settings_view.audio_devices.default_suffix")}
-                disabled={loading || saving !== null}
-                onSelect={(device) => void onSelect("input", device)}
-              />
-            </>
-          )}
-        </div>
-      </div>
+    <div className="divide-y divide-border">
+      <DevicePicker
+        id="settings-audio-devices"
+        label={t("settings_view.audio_devices.output_label")}
+        description={t("settings_view.audio_devices.description")}
+        testId="audio-output-select"
+        devices={config?.outputs ?? []}
+        selected={config?.selected_output ?? autoValue}
+        autoValue={autoValue}
+        autoLabel={t("settings_view.audio_devices.auto_option")}
+        defaultSuffix={t("settings_view.audio_devices.default_suffix")}
+        disabled={loading || saving !== null}
+        onSelect={(device) => void onSelect("output", device)}
+        trailing={rescan}
+        error={error}
+      />
+      <DevicePicker
+        label={t("settings_view.audio_devices.input_label")}
+        testId="audio-input-select"
+        devices={config?.inputs ?? []}
+        selected={config?.selected_input ?? autoValue}
+        autoValue={autoValue}
+        autoLabel={t("settings_view.audio_devices.auto_option")}
+        defaultSuffix={t("settings_view.audio_devices.default_suffix")}
+        disabled={loading || saving !== null}
+        onSelect={(device) => void onSelect("input", device)}
+      />
     </div>
   );
 }
 
 function DevicePicker({
-  icon,
+  id,
   label,
+  description,
   testId,
   devices,
   selected,
@@ -126,9 +120,12 @@ function DevicePicker({
   defaultSuffix,
   disabled,
   onSelect,
+  trailing,
+  error,
 }: {
-  icon: React.ReactNode;
+  id?: string;
   label: string;
+  description?: string;
   testId: string;
   devices: AudioDeviceEntry[];
   selected: string;
@@ -137,6 +134,8 @@ function DevicePicker({
   defaultSuffix: string;
   disabled: boolean;
   onSelect: (device: string) => void;
+  trailing?: React.ReactNode;
+  error?: string | null;
 }) {
   // A persisted name whose device is currently unplugged still shows as the
   // selected value (an extra option) so the UI never lies about the config;
@@ -145,29 +144,35 @@ function DevicePicker({
   const showOrphan = selected !== autoValue && !known;
 
   return (
-    <>
-      <label className="mt-4 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        {icon}
-        {label}
-      </label>
-      <BrandedSelect
-        testId={testId}
-        value={selected}
-        onValueChange={onSelect}
-        ariaLabel={label}
-        disabled={disabled}
-        className="mt-1"
-        options={[
-          { value: autoValue, label: autoLabel },
-          ...devices.map((device) => ({
-            value: device.name,
-            label: device.is_default
-              ? `${device.name} ${defaultSuffix}`
-              : device.name,
-          })),
-          ...(showOrphan ? [{ value: selected, label: selected }] : []),
-        ]}
-      />
-    </>
+    <SettingsRow
+      id={id}
+      title={label}
+      description={description}
+      control={
+        <>
+          <SettingsSelect
+            testId={testId}
+            value={selected}
+            onValueChange={onSelect}
+            ariaLabel={label}
+            disabled={disabled}
+            className="max-w-[18rem]"
+            options={[
+              { value: autoValue, label: autoLabel },
+              ...devices.map((device) => ({
+                value: device.name,
+                label: device.is_default
+                  ? `${device.name} ${defaultSuffix}`
+                  : device.name,
+              })),
+              ...(showOrphan ? [{ value: selected, label: selected }] : []),
+            ]}
+          />
+          {trailing}
+        </>
+      }
+    >
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </SettingsRow>
   );
 }

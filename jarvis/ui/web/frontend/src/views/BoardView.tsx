@@ -1,291 +1,114 @@
 import { useState } from "react";
-import { Download, Flame, Loader2, RefreshCw, Share2, Sparkles } from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
-import { BoardCard } from "@/components/board/BoardCard";
+import { Share2 } from "lucide-react";
+
+import { PageHeader } from "@/components/layout/PageHeader";
+import { TabBar } from "@/components/layout/SectionTabBar";
+import { BoardIcon } from "@/components/icons/sectionIcons";
 import { ShareDialog } from "@/components/board/ShareDialog";
-import { CategoryUsage } from "@/components/board/CategoryUsage";
-import { ActivityHeatmap, HeatmapScale } from "@/components/board/ActivityHeatmap";
-import {
-  WordsTrendChart,
-  TREND_JARVIS,
-  TREND_YOU,
-} from "@/components/board/WordsTrendChart";
-import {
-  useBoardCategories,
-  useBoardHeatmap,
-  useBoardRefresh,
-  useBoardSummary,
-} from "@/hooks/useBoard";
-import { boardCsv, boardCsvFilename } from "@/lib/boardCsv";
-import { cn } from "@/lib/utils";
+import { UsageTab } from "@/components/board/insights/UsageTab";
+import { AgentsTab } from "@/components/board/insights/AgentsTab";
+import { RhythmTab } from "@/components/board/insights/RhythmTab";
+import { InsightCard, SkeletonBlock } from "@/components/board/insights/primitives";
+import { useBoardInsights } from "@/hooks/useBoardInsights";
+import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 
+type Tab = "usage" | "agents" | "rhythm";
+
+const TAB_STORAGE_KEY = "jarvis.board.tab";
+
+function readStoredTab(): Tab {
+  try {
+    const value = window.localStorage.getItem(TAB_STORAGE_KEY);
+    if (value === "usage" || value === "agents" || value === "rhythm") return value;
+  } catch {
+    // Storage blocked (private window, previews): the default tab is fine.
+  }
+  return "usage";
+}
+
+/**
+ * The Board: how someone works with Jarvis, from the stores the app already
+ * keeps on this computer — dictation, voice sessions, chats and the coding
+ * agents. Three tabs, each sized to read at a glance.
+ */
 export function BoardView() {
   const t = useT();
-  const summary = useBoardSummary();
-  const heatmap = useBoardHeatmap(365);
-  const categories = useBoardCategories();
-  const refresh = useBoardRefresh();
+  const insights = useBoardInsights();
+  const [tab, setTabState] = useState<Tab>(readStoredTab);
   const [shareOpen, setShareOpen] = useState(false);
+  const data = insights.data;
 
-  // Export exactly what the view is holding — a section that has not loaded is
-  // left out of the file rather than written as zeros, because "not loaded" and
-  // "no activity" are different facts.
-  const canExport = Boolean(summary.data || heatmap.data || categories.data);
-
-  function handleExportCsv() {
-    const text = boardCsv({
-      summary: summary.data,
-      heatmap: heatmap.data,
-      categories: categories.data,
-    });
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = boardCsvFilename();
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  const s = summary.data;
-  const userWords = s?.totals.user_words ?? 0;
-  const jarvisWords = s?.totals.jarvis_words ?? 0;
-  const sessions = s?.totals.session_count ?? 0;
-  const convHours = s?.totals.conversation_hours ?? 0;
-  const streak = s?.streak_days ?? 0;
-  const longest = s?.longest_streak ?? 0;
-  const activeDays = s?.totals.active_days ?? 0;
-  const avgWords = sessions ? Math.round(userWords / sessions) : 0;
-  const ratio = userWords ? jarvisWords / userWords : 0;
-
-  const nf = (n: number) => n.toLocaleString();
-  const loading = summary.isLoading;
-
-  const metrics = [
-    {
-      label: t("board_view.hero.you_spoke"),
-      dot: TREND_YOU,
-      value: loading ? "—" : nf(userWords),
-      sub: t("board_view.hero.you_spoke_sub"),
-    },
-    {
-      label: t("board_view.hero.jarvis_spoke"),
-      dot: TREND_JARVIS,
-      value: loading ? "—" : nf(jarvisWords),
-      sub: t("board_view.hero.jarvis_spoke_sub"),
-    },
-    {
-      label: t("board_view.hero.streak"),
-      value: loading ? "—" : streak > 0 ? String(streak) : "—",
-      sub:
-        longest > 0
-          ? plural(t, "board_view.longest_streak", longest)
-          : plural(t, "board_view.hero.streak_sub", activeDays),
-    },
-    {
-      label: t("board_view.hero.talk_time"),
-      value: loading ? "—" : `${convHours.toFixed(1)} h`,
-      sub: plural(t, "board_view.hero.talk_time_sub", sessions),
-    },
-  ];
+  const setTab = (next: Tab) => {
+    setTabState(next);
+    try {
+      window.localStorage.setItem(TAB_STORAGE_KEY, next);
+    } catch {
+      // Remembering the tab is a convenience; losing it changes nothing else.
+    }
+  };
 
   return (
-    <div className="flex h-full flex-col">
-      <ViewHeader
-        icon={<Sparkles className="h-4 w-4 text-primary" />}
-        title={t("board_view.title")}
-        subtitle={t("board_view.subtitle")}
-        right={
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mx-auto w-full max-w-[1280px] px-6 lg:px-8">
+        <PageHeader
+          icon={<BoardIcon />}
+          title={t("board_view.title")}
+          description={t("board_insights.description")}
+          actions={
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setShareOpen(true)}
-              disabled={loading || !s}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
-                "hover:border-primary/40 hover:bg-primary/[0.06]",
-                (loading || !s) && "opacity-50",
-              )}
-              title={t("board_view.share.button_tooltip")}
+              disabled={!data}
               data-testid="board-share-button"
             >
-              <Share2 className="h-3.5 w-3.5" />
+              <Share2 className="h-4 w-4" />
               {t("board_view.share.button")}
-            </button>
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              disabled={!canExport}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
-                "hover:border-primary/40 hover:bg-primary/[0.06]",
-                !canExport && "opacity-50",
-              )}
-              title={
-                canExport
-                  ? t("board_view.export.button_tooltip")
-                  : t("board_view.export.empty")
-              }
-              data-testid="board-export-csv-button"
-            >
-              <Download className="h-3.5 w-3.5" />
-              {t("board_view.export.button")}
-            </button>
-            <button
-              type="button"
-              onClick={() => refresh.mutate()}
-              disabled={refresh.isPending}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-lg border border-sheen/[0.08] bg-sheen/[0.03] px-3 py-1.5 text-xs font-medium transition-colors",
-                "hover:border-primary/40 hover:bg-primary/[0.06]",
-                refresh.isPending && "opacity-60",
-              )}
-              title={t("board_view.refresh_tooltip")}
-            >
-              <RefreshCw className={cn("h-3.5 w-3.5", refresh.isPending && "animate-spin")} />
-              {t("board_view.refresh")}
-            </button>
-          </div>
-        }
-      />
+            </Button>
+          }
+          tabs={
+            <TabBar
+              tabs={[
+                { id: "usage", label: t("board_insights.tabs.usage") },
+                { id: "agents", label: t("board_insights.tabs.agents") },
+                { id: "rhythm", label: t("board_insights.tabs.rhythm") },
+              ]}
+              active={tab}
+              onChange={(id) => setTab(id as Tab)}
+            />
+          }
+        />
+      </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-jarvis">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-4 p-5 lg:gap-5 lg:p-6">
-          {summary.error && (
-            <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-              {t("board_view.load_error")}
-            </div>
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
+        <div className="mx-auto w-full max-w-[1280px] px-6 py-6 lg:px-8">
+          {insights.error && !data ? (
+            <InsightCard>
+              <p className="text-sm text-muted-foreground">{t("board_view.load_error")}</p>
+            </InsightCard>
+          ) : !data ? (
+            <BoardSkeleton />
+          ) : tab === "usage" ? (
+            <UsageTab data={data} />
+          ) : tab === "agents" ? (
+            <AgentsTab data={data} />
+          ) : (
+            <RhythmTab data={data} />
           )}
-
-          {/* ── Hero band: four key numbers, hairline dividers ───────── */}
-          <BoardCard glow>
-            <div className="grid grid-cols-2 lg:grid-cols-4">
-              {metrics.map((m, i) => (
-                <Metric
-                  key={i}
-                  label={m.label}
-                  value={m.value}
-                  sub={m.sub}
-                  dot={m.dot}
-                  className={DIVIDERS[i]}
-                />
-              ))}
-            </div>
-          </BoardCard>
-
-          {/* Slim caption line of secondary stats. */}
-          {!loading && s && (
-            <p className="-mt-1 px-1 text-xs text-muted-foreground">
-              {t("board_view.micro.avg_words").replace("{0}", nf(avgWords))}
-              <Dot />
-              {t("board_view.micro.ratio").replace("{0}", ratio.toFixed(1))}
-              {s.totals.first_day && (
-                <>
-                  <Dot />
-                  {t("board_view.micro.active_since").replace("{0}", formatDay(s.totals.first_day))}
-                </>
-              )}
-            </p>
-          )}
-
-          {/* ── Words-over-time chart + category usage ───────────────── */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.55fr_1fr] lg:gap-5">
-            <BoardCard className="flex flex-col p-5">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-sm font-semibold">
-                    {t("board_view.chart_title")}
-                  </h3>
-                  <p className="text-xs text-muted-foreground">
-                    {t("board_view.activity_subtitle")}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <LegendDot color={TREND_YOU} label={t("board_view.hero.you_spoke")} />
-                  <LegendDot color={TREND_JARVIS} label={t("board_view.hero.jarvis_spoke")} />
-                </div>
-              </div>
-              <div className="h-44 lg:h-52">
-                {heatmap.data ? (
-                  <WordsTrendChart cells={heatmap.data.cells} />
-                ) : (
-                  <Skeleton className="h-full" />
-                )}
-              </div>
-            </BoardCard>
-
-            <BoardCard className="flex flex-col p-5">
-              <div className="mb-3">
-                <h3 className="font-display text-sm font-semibold">
-                  {t("board_view.categories_title")}
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  {t("board_view.categories_subtitle")}
-                </p>
-              </div>
-              <div className="flex flex-1 flex-col justify-center">
-                {categories.data ? (
-                  <CategoryUsage data={categories.data} />
-                ) : (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {t("board_view.loading")}
-                  </div>
-                )}
-              </div>
-            </BoardCard>
-          </div>
-
-          {/* ── Activity calendar ────────────────────────────────────── */}
-          <BoardCard className="p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="font-display text-sm font-semibold">
-                  {t("board_view.activity_title")}
-                </h3>
-                <p className="text-xs text-muted-foreground">
-                  {t("board_view.activity_heatmap_hint")}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {streak > 0 && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/[0.08] px-2.5 py-1 text-xs font-medium text-primary">
-                    <Flame className="h-3 w-3" />
-                    {plural(t, "board_view.activity_streak_badge", streak)}
-                  </span>
-                )}
-                {longest > 0 && (
-                  <span className="rounded-full border border-sheen/[0.08] bg-sheen/[0.03] px-2.5 py-1 text-xs text-muted-foreground">
-                    {plural(t, "board_view.longest_streak", longest)}
-                  </span>
-                )}
-              </div>
-            </div>
-            {heatmap.data ? (
-              <div className="space-y-3">
-                <div className="overflow-x-auto pb-1">
-                  <ActivityHeatmap cells={heatmap.data.cells} />
-                </div>
-                <HeatmapScale />
-              </div>
-            ) : (
-              <Skeleton className="h-28" />
-            )}
-          </BoardCard>
         </div>
       </div>
 
-      {s && (
+      {data && (
         <ShareDialog
           open={shareOpen}
           onOpenChange={setShareOpen}
           stats={{
-            userWords,
-            jarvisWords,
-            conversationHours: convHours,
-            sessionCount: sessions,
-            longestStreak: longest,
+            userWords: data.dictation.words + data.voice.user_words,
+            jarvisWords: data.voice.jarvis_words,
+            conversationHours: data.voice.seconds / 3600,
+            sessionCount: data.voice.sessions,
+            longestStreak: data.streak.longest_days,
           }}
         />
       )}
@@ -293,75 +116,26 @@ export function BoardView() {
   );
 }
 
-// ----------------------------------------------------------------------
-// Building blocks
-// ----------------------------------------------------------------------
-
-// Per-index hairline dividers for a 2-col (mobile) / 4-col (desktop) grid.
-const DIVIDERS = [
-  "",
-  "border-l border-sheen/[0.06]",
-  "border-t border-sheen/[0.06] lg:border-t-0 lg:border-l",
-  "border-l border-t border-sheen/[0.06] lg:border-t-0",
-];
-
-function Metric({
-  label,
-  value,
-  sub,
-  dot,
-  className,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  dot?: string;
-  className?: string;
-}) {
+function BoardSkeleton() {
   return (
-    <div className={cn("flex flex-col gap-2.5 px-5 py-5 lg:px-6", className)}>
-      <div className="flex items-center gap-2 text-micro font-medium uppercase tracking-[0.14em] text-muted-foreground">
-        {dot && (
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} />
-        )}
-        <span className="truncate">{label}</span>
+    <div className="flex flex-col gap-4" data-testid="board-skeleton">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <InsightCard key={i} className="h-56">
+            <SkeletonBlock className="h-7 w-24" />
+            <SkeletonBlock className="mt-3 h-3 w-36" />
+            <SkeletonBlock className="mt-auto h-20 w-full" />
+          </InsightCard>
+        ))}
       </div>
-      <div className="font-display text-2xl font-semibold leading-none tracking-tight tabular-nums">
-        {value}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+        {[0, 1].map((i) => (
+          <InsightCard key={i} className="h-72">
+            <SkeletonBlock className="h-6 w-40" />
+            <SkeletonBlock className="mt-auto h-44 w-full" />
+          </InsightCard>
+        ))}
       </div>
-      {sub && <div className="truncate text-xs text-muted-foreground">{sub}</div>}
     </div>
   );
-}
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="h-2 w-2 rounded-full" style={{ background: color }} />
-      {label}
-    </span>
-  );
-}
-
-function Dot() {
-  return <span className="px-1.5 text-muted-foreground/40">·</span>;
-}
-
-function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("w-full animate-pulse rounded-lg bg-sheen/[0.04]", className)} />;
-}
-
-function plural(t: (k: string) => string, baseKey: string, n: number): string {
-  const key = n === 1 ? `${baseKey}_one` : baseKey;
-  return t(key).replace("{0}", n.toLocaleString());
-}
-
-function formatDay(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
 }

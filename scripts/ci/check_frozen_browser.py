@@ -1,10 +1,13 @@
-"""Exercise automatic provisioning and real frames in the shipped frozen app.
+"""Exercise requested browser provisioning and real frames in the frozen app.
 
 Run after packaging, with --executable pointing at the built launcher. Two
 headless boots share a fresh scratch profile; no source imports, account keys,
 desktop input, or existing user state are passed to the child application. On
 macOS each boot also asks the running app for its permission status, which is
 the only way to see whether its pyobjc frameworks loaded (BUG-222).
+
+Headless startup deliberately leaves the optional browser idle. The probe
+requests installation through the same authenticated API as the product UI.
 """
 
 from __future__ import annotations
@@ -109,10 +112,10 @@ class ProbeHTTPError(RuntimeError):
         super().__init__(f"Frozen probe request failed: HTTP {code}")
 
 
-def request_json(port: int, path: str, key: str) -> dict:
+def request_json(port: int, path: str, key: str, *, method: str = "GET") -> dict:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        connection.request("GET", path, headers={"Authorization": f"Bearer {key}"})
+        connection.request(method, path, headers={"Authorization": f"Bearer {key}"})
         response = connection.getresponse()
         if response.status != 200:
             raise ProbeHTTPError(response.status)
@@ -196,7 +199,7 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
         port = sock.getsockname()[1]
     env = isolated_env(profile, port, key)
     started = time.monotonic()
-    report: dict = {}
+    report: dict = {"browser_install_requested": False}
     with output.with_suffix(".log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             [str(executable), "serve"],
@@ -232,13 +235,26 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                 except (OSError, http.client.HTTPException):
                     time.sleep(1)
                     continue
+                if (
+                    "healthy_seconds" in report
+                    and not report["browser_install_requested"]
+                    and not status.get("installed")
+                    and not status.get("running")
+                    and status.get("phase") == "idle"
+                ):
+                    status = request_json(
+                        port, "/api/society/browser/install", key, method="POST"
+                    )
+                    if not any(status.get(field) for field in ("started", "running", "installed")):
+                        raise RuntimeError("Frozen app declined the requested browser setup")
+                    report["browser_install_requested"] = True
                 phase = status.get("phase")
                 if phase != last_phase:
                     print(f"{output.name}: browser phase={phase}", flush=True)
                     last_phase = phase
                 if status.get("error"):
                     raise RuntimeError(
-                        "Frozen app automatic browser provisioning failed; inspect its log"
+                        "Frozen app browser provisioning failed; inspect its log"
                     )
                 if status.get("installed") and "healthy_seconds" in report:
                     report["browser_ready_seconds"] = round(time.monotonic() - started, 3)
@@ -246,7 +262,7 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                     return report
                 time.sleep(1)
             raise TimeoutError(
-                "Frozen app did not automatically prepare its browser before the deadline"
+                "Frozen app did not prepare the requested browser before the deadline"
             )
         finally:
             stop_owned_tree(process)

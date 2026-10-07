@@ -26,7 +26,7 @@ def _bare_pipeline() -> tuple[SpeechPipeline, Any, Any]:
     old_provider = _Provider("groq-api")
     old_dictation = _Provider("faster-whisper")
     pipeline._config = SimpleNamespace(stt=STTConfig(provider="groq-api", fallback=""))
-    pipeline._dictation_cfg = SimpleNamespace(bias_prompt="")
+    pipeline._dictation_cfg = SimpleNamespace(bias_prompt="", local_engine=False)
     pipeline._stt = None
     pipeline._utterance_stt = old_provider
     pipeline._probe_stt = old_provider
@@ -42,12 +42,14 @@ def test_pipeline_switch_replaces_voice_and_next_dictation_provider(
     pipeline, old_provider, _old_dictation = _bare_pipeline()
     built: list[str] = []
 
-    def _build(cfg: Any) -> _Provider:
+    def _build(cfg: Any, *, dictionary_bias: bool = True) -> _Provider:
         built.append(str(cfg.provider))
+        assert dictionary_bias is (len(built) == 1)
         return _Provider(str(cfg.provider))
 
     monkeypatch.setattr("jarvis.plugins.stt.build_stt_from_config", _build)
     monkeypatch.setattr("jarvis.plugins.stt.provider_runs_on_device", lambda _provider: False)
+    monkeypatch.setattr("jarvis.speech.pipeline._resolve_stt_fallback_chain", lambda *_: ())
     monkeypatch.setattr(
         "jarvis.speech.stt_fallback.wrap_stt_with_fallback",
         lambda provider, _cfg: provider,
@@ -73,7 +75,9 @@ def test_pipeline_switch_replaces_voice_and_next_dictation_provider(
 
     # The dictation lane builds its own prompt-free instance lazily. Its first
     # use after the cut-over must read the new provider, not the stale cache.
-    assert pipeline._dictation_stt().name == "openrouter-stt"
+    dictation = pipeline._dictation_stt()
+    assert dictation.name == "openrouter-stt"
+    assert dictation is not pipeline._probe_stt
     assert built == ["openrouter-stt", "openrouter-stt"]
 
 

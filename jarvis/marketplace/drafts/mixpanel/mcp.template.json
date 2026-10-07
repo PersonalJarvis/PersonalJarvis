@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "mixpanel": {
+      "type": "streamable-http",
+      "url": "https://mcp.mixpanel.com/mcp"
+    }
+  }
+}

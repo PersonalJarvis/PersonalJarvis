@@ -24,6 +24,7 @@ import { DocsOverview } from "./DocsOverview";
 import { CodeBlock } from "./CodeBlock";
 import { Callout, parseCalloutTag, type CalloutType } from "./Callout";
 import { useT, useUiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { openExternalUrl } from "@/lib/openExternal";
 
 interface Props {
@@ -241,8 +242,7 @@ function formatReviewDate(value: string | null | undefined, locale: string): str
   if (!value) return "";
   const date = new Date(`${value}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return value;
-  const localeName = locale === "de" ? "de-DE" : locale === "es" ? "es-ES" : "en-US";
-  return new Intl.DateTimeFormat(localeName, {
+  return new Intl.DateTimeFormat(localeForUiLanguage(locale), {
     dateStyle: "medium",
     timeZone: "UTC",
   }).format(date);

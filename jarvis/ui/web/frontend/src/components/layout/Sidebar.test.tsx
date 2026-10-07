@@ -59,21 +59,20 @@ test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   expect(options.disabled).toBe(false);
   fireEvent.click(options);
   expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "w1" });
-  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
-  expect(useEventStore.getState().activeSection).toBe("chats");
   cleanup();
 });
 
-test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", async () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
-  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(await screen.findByTestId("ide-project-tree")).toBeDefined();
   // The agents list lives in the IDE's right-hand side panel now.
   expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
   expect(screen.queryByTestId("nav-row-agentic-ide")).toBeNull();
-  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
-  expect(useEventStore.getState().activeSection).toBe("chats");
+  // No "Back to Jarvis" row: the caption's back arrow leaves the IDE.
+  expect(screen.queryByTestId("ide-back-to-jarvis")).toBeNull();
+  act(() => useEventStore.setState({ activeSection: "chats" }));
   expect(screen.getByTestId("sidebar-new-chat")).toBeDefined();
   cleanup();
 });
@@ -306,7 +305,7 @@ describe("Sidebar settings-hub entry", () => {
   test("the profile button stays lit while any hub section is on screen", () => {
     // It IS the hub's entry point, so it carries "you are here" for all of
     // the hub's sections — including ones only reachable from inside the hub.
-    useEventStore.setState({ activeSection: "local-models" });
+    useEventStore.setState({ activeSection: "appshots" });
     renderSidebar();
 
     expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(

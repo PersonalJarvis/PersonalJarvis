@@ -24,8 +24,8 @@ vi.mock("@/store/events", () => ({
 vi.mock("@/lib/voiceApi", () => ({
   requestVoiceCall: vi.fn(async () => ({ armed: true })),
   requestVoiceHangup: vi.fn(async () => ({ stopped: true })),
-  fetchTtsVolume: vi.fn(async () => ({ volume: 0.8 })),
-  setTtsVolume: vi.fn(async () => undefined),
+  fetchSpeakerMute: vi.fn(async () => ({ muted: false, volume: 0.8, revision: 0 })),
+  toggleSpeakerMute: vi.fn(async () => ({ muted: true, volume: 0.8, revision: 1 })),
 }));
 
 vi.mock("@/lib/agenticIdeApi", () => ({
@@ -203,20 +203,36 @@ describe("voice bubble", () => {
     await waitFor(() => expect(api.requestVoiceCall).toHaveBeenCalled());
   });
 
-  it("the speaker mutes session-only and restores the previous volume", async () => {
+  it("the speaker toggles the authoritative output state without changing volume", async () => {
+    vi.mocked(api.toggleSpeakerMute)
+      .mockResolvedValueOnce({ muted: true, volume: 0.8, revision: 1 })
+      .mockResolvedValueOnce({ muted: false, volume: 0.8, revision: 2 });
     renderBubble();
     const speaker = screen.getByTestId("voice-bubble-speaker");
-    await waitFor(() => expect(api.fetchTtsVolume).toHaveBeenCalled());
+    await waitFor(() => expect(api.fetchSpeakerMute).toHaveBeenCalled());
 
     fireEvent.click(speaker);
-    await waitFor(() => expect(api.setTtsVolume).toHaveBeenCalledWith(0, false));
+    await waitFor(() => expect(api.toggleSpeakerMute).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(speaker.getAttribute("aria-pressed")).toBe("true"));
 
     fireEvent.click(speaker);
-    // persist=false both ways: a bubble mute must never survive into
-    // jarvis.toml as the boot default.
-    await waitFor(() => expect(api.setTtsVolume).toHaveBeenCalledWith(0.8, false));
+    await waitFor(() => expect(api.toggleSpeakerMute).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(speaker.getAttribute("aria-pressed")).toBe("false"));
+  });
+
+  it("serializes fast speaker clicks against backend state without hanging up", async () => {
+    vi.mocked(api.toggleSpeakerMute)
+      .mockResolvedValueOnce({ muted: true, volume: 0.8, revision: 1 })
+      .mockResolvedValueOnce({ muted: false, volume: 0.8, revision: 2 });
+    renderBubble();
+    await waitFor(() => expect(api.fetchSpeakerMute).toHaveBeenCalled());
+    const speaker = screen.getByTestId("voice-bubble-speaker");
+    fireEvent.click(speaker);
+    fireEvent.click(speaker);
+    await waitFor(() => expect(api.toggleSpeakerMute).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(speaker.getAttribute("aria-pressed")).toBe("false"));
+    expect(api.requestVoiceHangup).not.toHaveBeenCalled();
+    expect(api.requestVoiceCall).not.toHaveBeenCalled();
   });
 
   it("X hangs up a running conversation and puts the bubble away", async () => {

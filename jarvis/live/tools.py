@@ -14,6 +14,12 @@ from jarvis.control.cancel import CancelToken
 from jarvis.core.protocols import SupervisorToolGateway, SupervisorToolRequest
 from jarvis.live.state import LiveLedger
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+from jarvis.speech.hangup import (
+    HangupConfirmation,
+    confirms_hangup,
+    hangup_confirmation_question,
+    user_asked_to_hang_up,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +50,8 @@ _RECENT_SEGMENTS = 4
 _REQUEST_TEXT_CHARS = 1200
 # Declared before every other tool so the size budget never drops them.
 _PRIORITY_TOOLS = frozenset({"workspace-orchestrate", "find-app-action", "run-app-action"})
+# Declared under its canonical name in every mode (see ``declarations``).
+_DIRECT_TOOLS = frozenset({"computer", "take_appshot"})
 _APPROVAL_NEXT_STEP = (
     "Ask the user to approve this action. After an explicit yes, call confirm_action "
     "directly (not through call_tool) with this approval_id. A yes is never a hang-up."
@@ -104,6 +112,8 @@ class LiveTools:
         self.backend_model = backend_model
         # Recent user caption segments, newest last (see ``user_text``).
         self._recent_user: list[str] = []
+        self._hangup_confirmation = HangupConfirmation()
+        self.ask_hangup: Any = None
         self.model_selection = model_selection
         self.user_text = ""
         self.revision = 0
@@ -136,7 +146,9 @@ class LiveTools:
         definitions = [
             function(
                 "end_call",
-                "End voice when the user asks to hang up. Running agents keep their tasks.",
+                "Request voice hang-up. Jarvis asks for confirmation first; call again only "
+                "after a separate explicit yes to that question. Never end a call for task "
+                "completion or an action approval. Running agents keep their tasks.",
                 {},
                 [],
             ),
@@ -160,6 +172,22 @@ class LiveTools:
                 ["approval_id"],
             ),
         ]
+        # The screen is operated in many short rounds (ADR-0039): declare the
+        # computer tool under its own name instead of behind discover/call_tool.
+        # Keep capture available even with a deferred catalog. Otherwise a live
+        # model may reuse an old image or choose computer instead of the appshot
+        # path that owns privacy filtering, the shutter effect and the receipt.
+        for descriptor in self.catalog():
+            if descriptor.name not in _DIRECT_TOOLS:
+                continue
+            definitions.append(
+                {
+                    "type": "function",
+                    "name": descriptor.name,
+                    "description": descriptor.description,
+                    "parameters": descriptor.input_schema,
+                }
+            )
         if defer_catalog:
             definitions[1]["description"] = (
                 "Find tools by intent using a few English keywords, or an exact canonical name. "
@@ -181,6 +209,8 @@ class LiveTools:
         # or brief a coding agent (live 2026-10-01).
         ordered = sorted(self.catalog(), key=lambda d: (d.name not in _PRIORITY_TOOLS, d.name))
         for descriptor in ordered:
+            if descriptor.name in _DIRECT_TOOLS:
+                continue
             alias = "jarvis_" + hashlib.sha256(descriptor.name.encode()).hexdigest()[:20]
             definition = {
                 "type": "function",
@@ -198,6 +228,12 @@ class LiveTools:
 
     async def execute(self, call_id: str, name: str, args: dict, revision: int) -> dict:
         async with self._lock:
+            if (self._hangup_confirmation.pending_turn is not None
+                    and confirms_hangup(self.user_text) and name != "end_call"):
+                return {
+                    "success": False, "executed": False,
+                    "error": "This yes answers the hang-up question, not an action approval.",
+                }
             if not self.accepting:
                 return {"success": False, "status": "voice_closed_before_execution"}
             receipt = await asyncio.to_thread(
@@ -264,9 +300,20 @@ class LiveTools:
                 return {"success": False, "error": "Tool arguments must be an object."}
             name, args = str(args["name"]), inner
         if name == "end_call":
-            from jarvis.speech.hangup import user_asked_to_hang_up
-
-            if not user_asked_to_hang_up(self.user_text):
+            decision = self._hangup_confirmation.observe(self.user_text, revision)
+            if decision in {"request", "waiting"}:
+                question = hangup_confirmation_question(self.language)
+                if decision == "request" and callable(self.ask_hangup):
+                    await self.ask_hangup(question)
+                    self._hangup_confirmation.arm(revision)
+                return {
+                    "success": False, "executed": False,
+                    "confirmation_required": True,
+                    "question": question,
+                    "next_step": "Jarvis asks this question. Wait for a separate explicit yes "
+                    "and then call end_call again. Never confirm another action with this yes.",
+                }
+            if decision != "confirmed":
                 # Live 2026-10-01: after "Ja" to a pending approval the model
                 # called end_call instead of confirm_action and the call dropped.
                 refusal: dict = {
@@ -408,6 +455,10 @@ class LiveTools:
     @user_text.setter
     def user_text(self, text: str) -> None:
         text = text or ""
+        if (self._hangup_confirmation.pending_turn is not None
+                and text.strip() and not confirms_hangup(text)
+                and not user_asked_to_hang_up(text)):
+            self._hangup_confirmation.reset()
         last = self._recent_user[-1] if self._recent_user else None
         if last is not None and (text.startswith(last) or last.startswith(text)):
             self._recent_user[-1] = text  # the same segment, transcribed further
@@ -468,6 +519,7 @@ class LiveTools:
                 "live_backend_model": self.backend_model,
                 "live_session_id": self.session_id,
                 "task_revision": self.revision,
+                "workspace_user_utterance": self.user_text,
             },
         )
 
@@ -490,6 +542,9 @@ class LiveTools:
         return sanitized
 
     async def close(self) -> None:
+        from jarvis.core.image_references import get_store
+
+        get_store().clear_scope("live:" + self.session_id)
         self.accepting = False
         await self._cancel_confirmations("voice_session_closed")
 

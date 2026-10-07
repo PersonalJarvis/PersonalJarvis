@@ -1,45 +1,45 @@
-"""Pure rendering math + drawing for the whisper bar.
+"""Canonical Jarvis Bar: the Pet control strip in the native bar hosts.
 
-No tkinter, no I/O — every function is deterministic given its inputs, so the
-visual behaviour is unit-testable. ``JarvisBarRenderer.render`` returns a PIL
-image with a magenta color-key background that the Tk surface keys out.
-
-State → look:
-- ``idle``   → muted grey dots in a collapsed pill
-- ``listen`` → gold equalizer bars, height driven by the live mic level
-- ``speak``  → gold equalizer bars, height driven by the live TTS level
-- ``think``  → the SWEEP: the same row of strokes, with one soft highlight
-               travelling along it (synthetic, ignores level). It is the
-               mission deck header bar's "working" look, brought over here so
-               the two bars read as one product.
-- ``dictate``              → the equalizer, driven by the dictation mic level.
-- ``dictate_transcribing`` → the sweep: recording has stopped and the
-               transcription is running, so there IS something to represent.
-- ``notice``  → a breathing red cross in an opened pill: something the user
-               asked for did not happen. The bar carries no text, so this look
-               IS the message on this surface.
-
-Gold only appears during activity; idle dots stay muted.
+Geometry and painting come from ui.orb.controls. The platform hosts retain
+their lifecycle, saved placement and display scaling without another design.
 """
+
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image, ImageDraw
 
-# The coarse-mode vocabulary lives in ONE dependency-free module so the
-# numpy/PIL-free IPC proxy can import the same tuple instead of hand-copying it
-# (AP-4). ``MODES`` is re-exported here because every surface already validates
-# against ``renderer.MODES``.
-from jarvis.ui.jarvisbar.modes import (  # noqa: F401 — re-exported as renderer.MODES
-    DICTATION_MODES,
-    MODES,
-    NOTICE_MODES,
-)
+from jarvis.ui.jarvisbar.modes import DICTATION_MODES, MODES, NOTICE_MODES  # noqa: F401
+from ui.orb import controls
 
 COLOR_KEY_RGB = (255, 0, 255)
+REFERENCE_SCREEN_W = 1920
+REFERENCE_SCREEN_H = 1080
+MIN_DISPLAY_SCALE = 0.55
+BASE_DISPLAY_SCALE = 0.85
+MAX_DISPLAY_SCALE = 1.6
+REFERENCE_RAW_DPI = 154.0
+PHYSICAL_DPI_MIN = 60.0
+PHYSICAL_DPI_MAX = 350.0
+USER_SIZE_MIN = 0.5
+USER_SIZE_MAX = 2.0
+USER_SIZE_DEFAULT = 1.0
+USER_SIZE_SCALE = 1.0
+DISPLAY_SCALE = 1.0
+LEVEL_STALE_S = 0.35
+DROP_STATE_NONE = "none"
+DROP_STATE_ARMED = "armed"
+DROP_STATE_OK = "ok"
+DROP_STATE_REJECTED = "rejected"
+DROP_STATES = (DROP_STATE_NONE, DROP_STATE_ARMED, DROP_STATE_OK, DROP_STATE_REJECTED)
+DROP_CONFIRM_TOTAL_S = 1.4
+NOTICE_ALPHA_MIN = 0.55
+
+
+def notice_alpha(t: float) -> float:
+    return NOTICE_ALPHA_MIN + (1.0 - NOTICE_ALPHA_MIN) * (0.5 + 0.5 * math.sin(t * 3.4))
 
 
 def key_to_alpha(img: Image.Image) -> Image.Image:
@@ -51,225 +51,8 @@ def key_to_alpha(img: Image.Image) -> Image.Image:
     contract: only pure ``COLOR_KEY_RGB`` pixels vanish.
     """
     arr = np.asarray(img, dtype=np.uint8)
-    alpha = np.where(
-        (arr == COLOR_KEY_RGB).all(axis=-1), 0, 255
-    ).astype(np.uint8)
+    alpha = np.where((arr == COLOR_KEY_RGB).all(axis=-1), 0, 255).astype(np.uint8)
     return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
-
-
-PILL_BG = (14, 13, 12)
-# Bright gold rim: the only thing that reads when the pill is slim AND
-# semi-transparent (window -alpha). Dark fill + glowing gold edge = glass look.
-PILL_BORDER = (215, 182, 105)
-# Hover-to-hang-up close cross (soft red = "close").
-CLOSE_X = (228, 110, 96)
-# Muted-state rim + slashed-mic disc: a clear-but-soft red so the user can tell
-# at a glance they are muted (the pill border turns this colour whenever the
-# voice mic is muted FOR JARVIS, even at rest). Tune freely — purely cosmetic.
-MUTED_RED = (220, 80, 72)
-# Drop confirmation tick: a calm green that reads as "landed" against the dark
-# pill without competing with the gold activity accent.
-DROP_OK_GREEN = (126, 200, 133)
-
-# --- drag-drop feedback on the bar -------------------------------------------
-# Dropping a file onto the bar used to give NOTHING back: the window went from
-# 60% to 100% opacity while the drag hovered, and after the release there was
-# no signal at all — so a user could not tell an accepted drop from one the bar
-# silently discarded. These four states drive the visible answer, and every
-# dimension below is a FRACTION of the live pill size, so the feedback scales
-# with the monitor's DPI and the user's "Bar size" slider exactly like the mic
-# glyph does. Nothing here is measured in fixed pixels.
-DROP_STATE_NONE = "none"
-DROP_STATE_ARMED = "armed"        # a droppable payload hovers the bar
-DROP_STATE_OK = "ok"              # it landed and became context
-DROP_STATE_REJECTED = "rejected"  # nothing usable was in it
-DROP_STATES = (
-    DROP_STATE_NONE, DROP_STATE_ARMED, DROP_STATE_OK, DROP_STATE_REJECTED
-)
-
-# Confirmation timeline (seconds): the glyph strokes itself on, holds long
-# enough to be read without a second glance, then fades. Total is deliberately
-# short — this is an acknowledgement, not a notification the user must dismiss.
-DROP_CONFIRM_DRAW_S = 0.24
-DROP_CONFIRM_HOLD_S = 0.80
-DROP_CONFIRM_FADE_S = 0.36
-DROP_CONFIRM_TOTAL_S = DROP_CONFIRM_DRAW_S + DROP_CONFIRM_HOLD_S + DROP_CONFIRM_FADE_S
-# Rim pulse while a payload hovers: the drop zone is small and frameless, so
-# the rim breathing brightly is what tells the user WHERE to let go.
-DROP_ARM_PULSE_RAD_S = 5.0
-
-# Glyph geometry, all relative to the live pill height.
-_DROP_GLYPH_W = 0.13   # stroke thickness / pill height
-# The tick's three corner points (x, y) as pill-height fractions from centre.
-_DROP_TICK_POINTS = ((-0.34, 0.02), (-0.11, 0.24), (0.38, -0.26))
-_DROP_CROSS_R = 0.24   # half-diagonal of the "nothing usable" cross / pill height
-
-
-def drop_confirm_phase(elapsed_s: float) -> tuple[float, float]:
-    """``(stroke_fraction, alpha)`` of the post-drop glyph at ``elapsed_s``.
-
-    ``stroke_fraction`` runs 0 → 1 while the glyph draws itself on, then stays
-    at 1. ``alpha`` is 1 until the hold expires and eases to 0 over the fade.
-    Past ``DROP_CONFIRM_TOTAL_S`` both are 0, which is the surface's signal to
-    drop the confirmation state and let the bar settle back to normal.
-
-    Pure and monotonic in ``elapsed_s`` so the whole animation is unit-testable
-    without a display.
-    """
-    if elapsed_s < 0.0:
-        return (0.0, 0.0)
-    if elapsed_s < DROP_CONFIRM_DRAW_S:
-        # Ease-out so the stroke lands softly instead of snapping to its end.
-        u = elapsed_s / DROP_CONFIRM_DRAW_S
-        return (1.0 - (1.0 - u) ** 2, 1.0)
-    if elapsed_s < DROP_CONFIRM_DRAW_S + DROP_CONFIRM_HOLD_S:
-        return (1.0, 1.0)
-    if elapsed_s < DROP_CONFIRM_TOTAL_S:
-        held = elapsed_s - DROP_CONFIRM_DRAW_S - DROP_CONFIRM_HOLD_S
-        return (1.0, max(0.0, 1.0 - held / DROP_CONFIRM_FADE_S))
-    return (0.0, 0.0)
-
-
-def tick_polyline(
-    cx: float, cy: float, ph: float, fraction: float
-) -> list[tuple[float, float]]:
-    """The confirmation tick's points, revealed up to ``fraction`` of its length.
-
-    Returns absolute coordinates around ``(cx, cy)``, sized from the LIVE pill
-    height ``ph`` — so the tick is the same shape on a 4K monitor, a laptop
-    screen, and at any "Bar size" setting. ``fraction <= 0`` yields fewer than
-    two points (nothing to draw yet); ``fraction >= 1`` yields the whole tick.
-    """
-    pts = [(cx + dx * ph, cy + dy * ph) for dx, dy in _DROP_TICK_POINTS]
-    if fraction >= 1.0:
-        return pts
-    if fraction <= 0.0:
-        return pts[:1]
-    segments = [
-        math.dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1)
-    ]
-    total = sum(segments)
-    if total <= 0.0:
-        return pts[:1]
-    remaining = total * fraction
-    out = [pts[0]]
-    for i, seg in enumerate(segments):
-        if remaining >= seg:
-            out.append(pts[i + 1])
-            remaining -= seg
-            continue
-        u = remaining / seg if seg > 0 else 0.0
-        x0, y0 = pts[i]
-        x1, y1 = pts[i + 1]
-        out.append((x0 + (x1 - x0) * u, y0 + (y1 - y0) * u))
-        break
-    return out
-
-
-def drop_rim_color(
-    t: float, base: tuple[int, int, int], state: str
-) -> tuple[int, int, int]:
-    """Pill rim colour for the current drop state (pure).
-
-    ``armed`` breathes the rim toward white so the small frameless drop zone
-    announces itself; ``ok`` / ``rejected`` hold the verdict colour for as long
-    as the glyph is up; ``none`` returns ``base`` untouched, which keeps every
-    non-drop frame byte-identical to before this feature existed.
-    """
-    if state == DROP_STATE_ARMED:
-        pulse = 0.5 + 0.5 * math.sin(t * DROP_ARM_PULSE_RAD_S)
-        return _lerp_rgb(base, (255, 255, 255), 0.25 + 0.45 * pulse)
-    if state == DROP_STATE_OK:
-        return DROP_OK_GREEN
-    if state == DROP_STATE_REJECTED:
-        return MUTED_RED
-    return base
-
-
-# --- the `notice` look: "what you asked for did not happen" -------------------
-# The bar has no text, so a refusal has exactly one way to reach the user here:
-# a look distinct from every other one. It reuses the drop-verdict cross (same
-# glyph, same supersampled drawing, same red) because that mark already means
-# "no" on this surface — inventing a second negative symbol would only make two
-# things the user has to learn. The rim goes red for the same reason the muted
-# rim does: it is legible from the corner of the eye at the resting pill size.
-#
-# The pulse is what separates a notice from a frozen frame. A static cross on a
-# bar that is normally animated reads as "the bar has hung"; a slow breath reads
-# as a deliberate message. Amplitude is small on purpose — this is an answer to
-# a keypress, not an alarm.
-NOTICE_PULSE_RAD_S = 3.4
-NOTICE_ALPHA_MIN = 0.55
-
-
-def notice_alpha(t: float) -> float:
-    """Glyph alpha of the ``notice`` look at time ``t`` (pure, in [MIN, 1.0]).
-
-    Pure and bounded so the breath is unit-testable without a display, and so a
-    surface can never render the notice fully transparent (an invisible "your
-    key press did nothing" message is the bug this look exists to fix).
-    """
-    pulse = 0.5 + 0.5 * math.sin(t * NOTICE_PULSE_RAD_S)
-    return NOTICE_ALPHA_MIN + (1.0 - NOTICE_ALPHA_MIN) * pulse
-
-# Size factors. ``_SCALE`` is the overall shrink (1.0 was the original, far too
-# big). ``_W`` / ``_H`` then stretch width / height independently on top of it:
-# _W < 1 narrows, _H > 1 makes it taller. Tune these three numbers to resize.
-_SCALE = 0.30  # overall size (was 0.336; -10% per maintainer feedback)
-_W = 0.8       # 20% narrower than the uniform _SCALE
-_H = 1.2       # taller than the uniform _SCALE (was 1.5; -20% per feedback)
-_IDLE_W = 1.08  # standby pill length (was 1.2; -5% per side, maintainer 2026-07-21)
-_IDLE_H = 0.7  # standby pill is slimmer (less "fat") than the active height
-_SW = _SCALE * _W  # combined horizontal factor
-_SH = _SCALE * _H  # combined vertical factor
-
-# --- screen-adaptive display scale (screen-relative sizing) ------------------
-# The pill sizes below were tuned on a desktop monitor and are RAW pixels
-# (Tk points on macOS). On a small laptop screen (a 14" MacBook is ~1512 Tk
-# points wide) the same fixed size occupies nearly twice the relative width
-# and reads as clunky. ``DISPLAY_SCALE`` adapts the whole geometry to the
-# screen the bar actually lives on: BASE_DISPLAY_SCALE (the maintainer-
-# approved look) on anything at least REFERENCE_SCREEN_W x
-# REFERENCE_SCREEN_H, proportionally smaller below that, never under
-# MIN_DISPLAY_SCALE so the controls stay clickable. Scaling happens at
-# RENDER time — the frame is drawn crisply at the scaled size. This is NOT
-# the blurry DPI bitmap upscaling that was explicitly rejected (see
-# overlay.start()'s DPI notes); the DPI strategy there is untouched.
-REFERENCE_SCREEN_W = 1920
-REFERENCE_SCREEN_H = 1080
-MIN_DISPLAY_SCALE = 0.55
-# The signed-off size ceiling. The historical constants (scale 1.0) render
-# the idle pill 47 px long on the maintainer's 2560x1440 monitor — judged
-# "too big" against a 40 px good-example screenshot (2026-07-21), while a
-# physical-mm experiment at 0.595 (~29 px) was "too small". 40/47 = 0.85
-# lands exactly on the good example, and the 14" laptop's proportional
-# 0.79 (independently signed off) sits in the same zone — so 0.85 is the
-# approved look on every screen at least the reference size.
-BASE_DISPLAY_SCALE = 0.85
-DISPLAY_SCALE = 1.0
-
-# --- physical-size-consistent scaling (true per-monitor DPI) ------------------
-# The screen-adaptive scale above is RESOLUTION-relative, so two monitors of the
-# SAME resolution but DIFFERENT physical size render the bar at the same pixel
-# size — physically bigger on the bigger monitor. To make the bar look the SAME
-# PHYSICAL SIZE on the glass everywhere, ``compute_physical_scale`` scales by the
-# monitor's TRUE physical DPI instead (from EDID via GetDpiForMonitor(MDT_RAW_DPI)
-# on Windows / xrandr mm on X11 — NOT the OS scaling, and NOT Tk's winfo_screenmm
-# which returns a 96-DPI-derived FAKE on Windows). A physical-mm model was tried
-# and reverted once as "too small" (2026-07-21) because it anchored to a 14"
-# laptop; the fix is anchoring to the maintainer's monitor DPI below, so THAT
-# monitor keeps its exact current look and only physically different monitors
-# adjust. When the true DPI is unavailable/implausible (macOS, Wayland, headless,
-# missing EDID) the caller falls back to the resolution-relative scale.
-REFERENCE_RAW_DPI = 154.0  # calibrated reference physical DPI (~28in 4K desktop);
-# compute_physical_scale returns exactly BASE_DISPLAY_SCALE at this DPI, so the
-# reference monitor is unchanged. Measured live via GetDpiForMonitor(MDT_RAW_DPI).
-MAX_DISPLAY_SCALE = 1.6  # physical sizing may exceed 1.0 on dense (4K/Retina)
-# monitors; bounded so a very dense or MISREPORTED monitor can't produce an absurd
-# bar. The resolution path is separately capped at BASE_DISPLAY_SCALE, so raising
-# this ceiling only affects the physical path.
-PHYSICAL_DPI_MIN = 60.0   # plausibility gate: below → treat DPI as unknown
-PHYSICAL_DPI_MAX = 350.0  # (fail-closed to the resolution fallback)
 
 
 def compute_physical_scale(raw_dpi: float) -> float | None:
@@ -293,9 +76,7 @@ def compute_physical_scale(raw_dpi: float) -> float | None:
     return max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, round(raw, 4)))
 
 
-def resolve_screen_scale(
-    screen_w: int, screen_h: int, raw_dpi: float | None = None
-) -> float:
+def resolve_screen_scale(screen_w: int, screen_h: int, raw_dpi: float | None = None) -> float:
     """The bar's base screen scale: physical-size-consistent when the monitor's
     true DPI is known + plausible, else the resolution-relative fallback.
 
@@ -308,24 +89,6 @@ def resolve_screen_scale(
         if phys is not None:
             return phys
     return compute_display_scale(screen_w, screen_h)
-
-
-# --- user size preference (the "Bar size" slider) ----------------------------
-# A multiplier applied ON TOP of the screen-adaptive DISPLAY_SCALE, chosen by
-# the user in Settings → "Bar size". 1.0 reproduces the signed-off default
-# look byte-identically; below shrinks, above enlarges. Unlike DISPLAY_SCALE
-# (which never enlarges past the approved ceiling because the maintainer's look
-# is the ceiling), THIS axis is the user's explicit choice, so it may exceed
-# 1.0. The frame is still drawn CRISPLY at the larger geometry — every constant
-# is recomputed and the pill is redrawn at the scaled size, exactly like the
-# screen-adaptive path. This is NOT the blurry DPI bitmap upscaling that was
-# rejected (see overlay.start()'s DPI notes); the DPI strategy is untouched.
-# Width AND height scale together (the whole geometry multiplies by one factor),
-# so the pill's shape is preserved and only its size changes.
-USER_SIZE_MIN = 0.5
-USER_SIZE_MAX = 2.0
-USER_SIZE_DEFAULT = 1.0
-USER_SIZE_SCALE = USER_SIZE_DEFAULT
 
 
 def clamp_user_size(user_size: float) -> float:
@@ -361,117 +124,6 @@ def compute_display_scale(screen_w: int, screen_h: int) -> float:
     return max(MIN_DISPLAY_SCALE, round(s, 3))
 
 
-# Three pill sizes (width, height), eased between as the state changes:
-# - COLLAPSED: the slim idle standby pill (unchanged).
-# - OPEN:      the hover pill that reveals the X / dictation-square controls.
-# - ACTIVE:    the conversation pill — DOUBLE the open size, shown the whole
-#              time a voice session is live (listen/speak/think). This is the
-#              "make the bar much bigger while talking" feature.
-# Conversation pill: 2x the open pill, then trimmed so it doesn't read as bulky.
-# Width keeps 0.518 of 2x; height keeps 0.56 of 2x — the live pill stays slim
-# and only moderately longer than the hover pill. Calibrated in two maintainer
-# rounds (2026-07-21): the height trim killed the "way too big" 29 px
-# thickness (target example: 18 px); the width then still read "much too
-# wide" at 86 px on the 2560x1440 monitor, and the maintainer asked for 15%
-# off each side → 0.74 * 0.70 = 0.518 of 2x (~60 px there). The pill stays
-# centred, so the idle bar keeps its middle resting spot.
-_ACTIVE_SIDE_TRIM = 0.241  # fraction removed from each side of the 2x width
-_ACTIVE_VERT_TRIM = 0.22  # fraction removed from top and bottom of the 2x height
-
-# The pill is anchored by its BOTTOM edge this many px above the window bottom,
-# so the idle pill keeps its usual resting spot and the active pill grows
-# UPWARD (never down into the taskbar). Tune _BASE_BOTTOM_PAD to nudge the
-# resting height.
-_BASE_BOTTOM_PAD = 10
-
-
-def apply_display_scale(scale: float, user_size: float | None = None) -> None:
-    """Recompute every derived geometry constant for ``scale``.
-
-    Called once by ``overlay.start()`` (one bar per process) before any
-    window geometry or renderer state derives from these values; module load
-    applies 1.0, which reproduces the historical constants byte-identically.
-    ``overlay.py`` reads the module attributes dynamically, so the window
-    follows the recomputed sizes.
-
-    ``scale`` is the SCREEN-adaptive factor (clamped to ``[MIN_DISPLAY_SCALE,
-    1.0]``). ``user_size`` is the user's "Bar size" preference multiplied on
-    top; ``None`` keeps the current ``USER_SIZE_SCALE`` (so the old single-arg
-    call sites and the module-load call are byte-identical when the user has
-    not changed the size). The effective geometry factor is
-    ``DISPLAY_SCALE * USER_SIZE_SCALE`` — one number multiplies width, height,
-    padding and window alike, so the bar's SHAPE is preserved and only its
-    SIZE changes. The live "Bar size" slider re-invokes this with the same
-    screen scale and a new ``user_size`` (surfaces call it via
-    ``set_size_scale``).
-    """
-    global DISPLAY_SCALE, USER_SIZE_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
-    global ACTIVE_W, ACTIVE_H, _BOTTOM_PAD, WIN_W, WIN_H
-    # Upper clamp is MAX_DISPLAY_SCALE (not 1.0): the physical-size path may
-    # legitimately exceed 1.0 on a dense (4K/Retina) monitor. The resolution
-    # path is separately capped at BASE_DISPLAY_SCALE by compute_display_scale,
-    # so this wider ceiling only ever admits a physical scale.
-    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, float(scale)))
-    if user_size is not None:
-        USER_SIZE_SCALE = clamp_user_size(user_size)
-    g = s * USER_SIZE_SCALE  # effective geometry factor (screen × user size)
-    COLLAPSED_W = round(168 * _SW * _IDLE_W * g)  # standby pill (slightly longer)
-    COLLAPSED_H = round(30 * _SH * _IDLE_H * g)  # standby pill (slim)
-    OPEN_W = round(284 * _SW * g)  # hover/controls pill (the former "expanded")
-    OPEN_H = round(52 * _SH * g)
-    ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.518
-    ACTIVE_H = round(2 * OPEN_H * (1.0 - 2 * _ACTIVE_VERT_TRIM))  # 2x * 0.56
-    _BOTTOM_PAD = max(4, round(_BASE_BOTTOM_PAD * g))
-    # The fixed Tk window must contain the largest (ACTIVE) pill + its 2px
-    # outline and the flanking hover controls.
-    WIN_W = ACTIVE_W + 12
-    WIN_H = ACTIVE_H + _BOTTOM_PAD + 4
-
-
-apply_display_scale(1.0)
-
-N_BARS = 10  # slim strokes (was 15 = too many)
-# Inner animation geometry is expressed as fractions of the LIVE pill size, so
-# the equalizer bars / wave grow together with the pill instead of staying a
-# fixed size and looking lost in the big active bar.
-_BAR_MAX_FRAC = 0.66  # equalizer max height / pill height
-_BAR_MIN_FRAC = 0.10
-_BARS_SPAN_FRAC = 0.62  # equalizer span / pill width (wider → room for more bars)
-_BAR_HALF_W_FRAC = 0.008  # half bar thickness / pill width (slim strokes)
-_STROKE_W = max(2, round(3.0 * _SCALE))  # control stroke thickness (px)
-
-# Standby dots: when nothing is said the pill shows a quiet row of dots
-# instead of an empty pill. Muted so they read as "at rest".
-DOT_COLOR = (150, 140, 120)
-_N_DOTS = 7  # dots in the standby row
-_DOT_R_FRAC = 0.16  # dot radius / pill height (small round dots, not chunky)
-_DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
-
-# The Prompt Mode sparkle: where its centre sits (offset from the pill centre,
-# as a fraction of the pill WIDTH — the mirror of the mic's ``+0.33``) and how
-# big it is (fraction of the pill HEIGHT). PUBLIC because
-# ``interaction._on_prompt_sparkle`` must place its hit-box on the same spot,
-# and that module is deliberately dependency-free (no PIL/numpy) so it cannot
-# import this one — it restates the value the way ``_CLOSE_X_CENTRE_FRAC``
-# already does, and the parity is pinned by a test.
-SPARKLE_CENTRE_FRAC = 0.33
-SPARKLE_R_FRAC = 0.30
-#: Half-length of the paused state's slash, as a fraction of the pill height.
-#: Slightly longer than the star's radius so its ends clear the mark.
-SPARKLE_SLASH_FRAC = 0.30
-
-# MODES / DICTATION_MODES are imported at the top of this module — see the note
-# there. Nothing in this package may restate them (test_mode_parity.py).
-
-# A level sample is trusted only this long. The feeders (mic ~30-100 ms
-# cadence, TTS ~60 ms blocks) stream continuously while sound exists; when a
-# feed STOPS (bridge state gate, echo suppression, turn commit, mute) no zero
-# arrives and the last sample would otherwise animate the bars forever — the
-# "keeps showing I'm speaking for seconds after I stopped" defect. Comfortably
-# above the slowest healthy cadence so live sound can never flicker stale.
-LEVEL_STALE_S = 0.35
-
-
 def effective_ext_level(
     ext_level: float, seconds_since_level_rx: float, *, stale_s: float = LEVEL_STALE_S
 ) -> float:
@@ -479,110 +131,6 @@ def effective_ext_level(
     dead zero once the feed has stopped. Pure — shared by the Tk and Qt
     surfaces so both decay identically."""
     return float(ext_level) if seconds_since_level_rx <= stale_s else 0.0
-
-
-def pill_center_y(ph: float) -> float:
-    """Vertical centre that keeps the pill's BOTTOM edge anchored, so the pill
-    grows upward and the idle pill never moves."""
-    return WIN_H - _BOTTOM_PAD - ph / 2.0
-
-
-def bar_max_for(ph: float) -> float:
-    """Equalizer max bar height for the given live pill height."""
-    return ph * _BAR_MAX_FRAC
-
-
-def bar_min_for(ph: float) -> float:
-    return max(2.0, ph * _BAR_MIN_FRAC)
-
-
-def bars_span_for(pw: float) -> float:
-    """Total equalizer span for the given live pill width."""
-    return pw * _BARS_SPAN_FRAC
-
-
-def bar_half_w_for(pw: float) -> float:
-    return max(1.0, pw * _BAR_HALF_W_FRAC)
-
-
-def evenly_spaced(cx: float, span: float, n: int) -> list[float]:
-    """X-positions of ``n`` items centred on ``cx`` across ``span``.
-
-    Shared by the equalizer bars and the standby dots so both rows line up.
-    ``n == 1`` returns a single item exactly on ``cx``.
-    """
-    if n <= 1:
-        return [cx]
-    x0 = cx - span / 2.0
-    step = span / (n - 1)
-    return [x0 + i * step for i in range(n)]
-
-
-def target_pill_size(
-    mode: str,
-    hovered: bool,
-    muted: bool = False,
-    drop_open: bool = False,
-    prompt_mode: bool = False,
-) -> tuple[int, int]:
-    """Pick the pill's target (w, h): ACTIVE while a session is live, OPEN on
-    hover (to show controls), COLLAPSED at rest. Only a live session is 2x —
-    matching 'bigger only while in the conversation'.
-
-    Muted standby is the exception: instead of collapsing to the tiny empty
-    pill (where the red rim is a hairline and the mic glyph is hidden), the
-    muted bar stays at the OPEN size so the slashed-mic + red rim stay visible.
-    A muted user is otherwise trapped — they can't unmute by voice (Jarvis is
-    deaf while muted), so the click target must always be on screen.
-
-    ``drop_open`` opens the pill for the same reason during a drag-drop: the
-    resting pill is ~37x6 px on a 1440p monitor (and ~22x4 at the smallest "Bar
-    size"), which is both a punishing target to release a file on and far too
-    small to render a legible tick in. Opening on the first drag-enter turns
-    the sliver into a real landing zone and gives the confirmation room to
-    show.
-
-    The dictation modes are ACTIVE too. Callers pass either the EFFECTIVE mode
-    (``render``, where a dictation mode has already resolved to ``speak`` /
-    ``think``) or the COARSE mode (the Qt surface's hover-footprint probe) — so
-    listing them keeps the hit-box the user can hover in step with the pill the
-    renderer actually draws during a dictation.
-
-    ``notice`` opens the pill for the same reason a drop verdict does, and no
-    further: the resting pill is a ~37x6 px sliver with no room to draw a
-    legible mark in, while the 2x ACTIVE size would make a passing message look
-    like a live session. OPEN is the size at which the answer is readable and
-    still unmistakably not a conversation.
-
-    ``prompt_mode`` opens the resting pill the way muted does, and for the
-    same reason: the switch that rewrites every dictation is a state the user
-    must be able to see at a glance, and the sparkle that shows it (and turns
-    it off) needs the OPEN pill's room to be legible and clickable."""
-    if mode in ("listen", "speak", "think") or mode in DICTATION_MODES:
-        return ACTIVE_W, ACTIVE_H
-    if hovered or muted or drop_open or prompt_mode or mode in NOTICE_MODES:
-        return OPEN_W, OPEN_H
-    return COLLAPSED_W, COLLAPSED_H
-
-
-def _hex_to_rgb(s: str) -> tuple[int, int, int]:
-    s = s.lstrip("#")
-    return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
-
-
-def _lerp_rgb(
-    a: tuple[int, int, int], b: tuple[int, int, int], u: float
-) -> tuple[int, int, int]:
-    return (
-        round(a[0] + (b[0] - a[0]) * u),
-        round(a[1] + (b[1] - a[1]) * u),
-        round(a[2] + (b[2] - a[2]) * u),
-    )
-
-
-def ease(current: float, target: float, factor: float) -> float:
-    """Exponential ease of ``current`` toward ``target``. factor in (0, 1]."""
-    return current + (target - current) * factor
 
 
 def visual_mode(
@@ -655,587 +203,124 @@ def visual_mode(
     return "speak"
 
 
-#: Release time constant (seconds) while the voice is still sounding but got
-#: quieter. The level feeds arrive in steps — ~60 ms native TTS blocks, ~100 ms
-#: browser realtime snapshots — against a 25-60 fps frame loop, so a per-frame
-#: fall snapped the whole row down at every sample and held it flat until the
-#: next one: the equalizer stepped instead of moving. A short glide between
-#: samples keeps it fluid. Rises stay instant (onset sync) and a drop to
-#: silence keeps the fast fall + snap to zero, so neither the "reacts late"
-#: nor the "keeps moving after I stopped" defect can come back.
-LEVEL_RELEASE_TAU_S = 0.12
+def apply_display_scale(scale: float, user_size: float | None = None) -> None:
+    """Keep the existing size preference and monitor calibration."""
+    global DISPLAY_SCALE, USER_SIZE_SCALE, WIN_W, WIN_H
+    DISPLAY_SCALE = max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, float(scale)))
+    if user_size is not None:
+        USER_SIZE_SCALE = clamp_user_size(user_size)
+    WIN_W, WIN_H = controls.pet_strip_size(strip_scale())
 
 
-def smooth_level(current: float, target: float, dt: float) -> float:
-    """One frame of the equalizer's level envelope. Pure, frame-rate aware.
-
-    - ``target > current`` → rise almost instantly (0.8 per frame);
-    - ``target <= 0`` (silence) → fall fast (0.5 per frame) and snap to an
-      exact zero once sub-visible;
-    - otherwise (quieter, still sounding) → glide down with
-      ``LEVEL_RELEASE_TAU_S``, measured in seconds so 25 fps (Tk) and 60 fps
-      (Qt) surfaces move alike.
-    """
-    if target > current:
-        return ease(current, target, 0.8)
-    if target <= 0.0:
-        nxt = ease(current, 0.0, 0.5)
-        return 0.0 if nxt < 0.02 else nxt
-    dt = 0.0 if dt < 0.0 else 0.25 if dt > 0.25 else dt
-    return ease(current, target, 1.0 - math.exp(-dt / LEVEL_RELEASE_TAU_S))
+def strip_scale() -> float:
+    return DISPLAY_SCALE * USER_SIZE_SCALE
 
 
-def pixel_bar_box(
-    x: float, cy: float, half_w: float, h: float
-) -> tuple[int, int, int, int]:
-    """Whole-pixel box for one equalizer/sweep stroke.
-
-    Handing ImageDraw float edges let it round the top and the bottom edge
-    independently (and half-to-even), so as a level changed by a fraction of a
-    pixel a stroke grew on one side only, its centre hopped by a pixel, and
-    near the resting height it flipped between Pillow's circle and capsule
-    paths — a shimmer on top of the real motion. Here the width is fixed, the
-    stroke grows in whole pixel PAIRS around one fixed centre row, and it is
-    never shorter than its own width (a round dot at rest).
-    """
-    w = max(2, math.floor(2.0 * half_w + 0.5))
-    extra = max(0, math.floor((h - w) / 2.0 + 0.5))
-    hh = w + 2 * extra
-    x0 = math.floor(x - w / 2.0 + 0.5)
-    y0 = math.floor(cy - hh / 2.0 + 0.5)
-    return x0, y0, x0 + w, y0 + hh
+def target_pill_size(mode: str, **_kwargs) -> tuple[int, int]:
+    """The strip keeps all of its controls visible in every mode."""
+    return WIN_W, WIN_H
 
 
-def bar_heights(
-    t: float, level: float, n: int, *, max_h: float, min_h: float
-) -> list[float]:
-    """Equalizer bar heights, deterministic in (t, level).
-
-    ``level <= 0`` → all bars at ``min_h``. Height grows with level. Each bar
-    has a distinct phase so the row never moves in lockstep. Bounded by
-    ``[min_h, max_h]``.
-    """
-    level = 0.0 if level < 0.0 else 1.0 if level > 1.0 else level
-    out: list[float] = []
-    for i in range(n):
-        phase = i * 0.9
-        osc = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * 9.0 + phase))  # 0.55..1.0
-        out.append(min_h + (max_h - min_h) * level * osc)
-    return out
-
-
-# --- thinking: the travelling sweep ------------------------------------------
-# One soft highlight runs along the equalizer row, over and over: the strokes
-# under it rise and brighten, the rest stay low and dim, and the highlight
-# leaves on the right to re-enter on the left, so the motion never visibly
-# restarts.
-#
-# Why a sweep and not an indicator of its own. The bar has exactly ONE graphic
-# vocabulary — a row of strokes — and thinking is the one active state with no
-# measured signal behind it. A sweep promises MOTION and nothing else, which is
-# the honest claim here: work is in flight, and none of it is a microphone
-# reading. Everything measured (your voice, Jarvis's voice) drives the same row
-# by level instead, so the two can never be read as each other: level-driven
-# bars jitter in place, the sweep travels.
-#
-# This is the look the mission deck's header bar already uses for its "working"
-# phase (``frontend/src/components/overlay/voiceBars.ts::sweepGain``); the
-# numbers below are that surface's, converted to this pill's fractions, so the
-# two bars read as one product. Changing one means changing the other.
-#
-# It replaced the "orbital core" (a breathing sphere with counter-orbiting comet
-# sparks, 2026-06 → 2026-08): maintainer verdict — the deck's sweep reads better,
-# and the core was also the most expensive frame the bar drew (a 3x supersampled
-# RGBA layer + LANCZOS downscale, ~30 ms measured while hovered) in the one state
-# that runs for seconds at a time.
-
-THINK_SWEEP_PERIOD_S = 1.05  # seconds for one pass across the row
-THINK_SWEEP_WIDTH = 0.16     # gaussian half-width, in row fractions
-THINK_BASE_V = 0.21          # bar level away from the highlight (0..1)
-THINK_PEAK_V = 0.93          # bar level right under it
-THINK_DIM = 0.30             # bar brightness away from the highlight (0..1)
-# Bars in the narrow row drawn while the controls are up. More than the
-# equalizer's five, because a sweep needs samples to read as travelling rather
-# than hopping — and unlike the equalizer they carry no level, so a denser row
-# costs nothing in legibility.
-THINK_HOVER_BARS = 7
-
-
-def sweep_phase(t: float, period_s: float = THINK_SWEEP_PERIOD_S) -> float:
-    """Position of the highlight along the row, wrapped to ``[0, 1)``."""
-    if period_s <= 0.0:
-        return 0.0
-    return (t / period_s) % 1.0
-
-
-def sweep_gain(
-    index: int, count: int, phase: float, width: float = THINK_SWEEP_WIDTH
-) -> float:
-    """Brightness of bar ``index`` under a highlight sitting at ``phase``.
-
-    The distance is measured around a ring, so the highlight leaves on the
-    right and re-enters on the left without a visible jump. Direct mirror of
-    the web surface's ``sweepGain``.
-    """
-    if count <= 1:
-        return 1.0
-    pos = index / (count - 1)
-    wrapped = phase - math.floor(phase)
-    d = abs(pos - wrapped)
-    if d > 0.5:
-        d = 1.0 - d
-    return math.exp(-(d * d) / (2.0 * width * width))
-
-
-def sweep_gains(
-    t: float,
-    n: int,
-    *,
-    period_s: float = THINK_SWEEP_PERIOD_S,
-    width: float = THINK_SWEEP_WIDTH,
-) -> list[float]:
-    """The whole row's brightness at time ``t`` — one 0..1 value per bar."""
-    phase = sweep_phase(t, period_s)
-    return [sweep_gain(i, n, phase, width) for i in range(n)]
-
-
-def sweep_bar_heights(
-    gains: list[float], *, max_h: float, min_h: float
-) -> list[float]:
-    """Bar heights for a row of sweep gains, bounded by ``[min_h, max_h]``.
-
-    Deterministic in the gains alone, so the height curve is testable without
-    a clock. ``THINK_BASE_V`` keeps the unlit strokes visibly present — a row
-    that collapses to the resting height between passes reads as a bar that
-    died, not one that is working.
-    """
-    span = max_h - min_h
-    out: list[float] = []
-    for g in gains:
-        u = 0.0 if g < 0.0 else 1.0 if g > 1.0 else g
-        out.append(min_h + span * (THINK_BASE_V + (THINK_PEAK_V - THINK_BASE_V) * u))
-    return out
-
-
-@dataclass
-class _RenderState:
-    # default_factory (not a plain default): the collapsed size must be read
-    # at INSTANTIATION time, after apply_display_scale() may have rescaled
-    # the module geometry — a plain default would freeze the import-time value.
-    display_level: float = 0.0
-    # ``t`` of the previous frame, for the time-based level release.
-    last_t: float | None = None
-    # live pill width/height, eased toward the target
-    pw: float = field(default_factory=lambda: float(COLLAPSED_W))
-    ph: float = field(default_factory=lambda: float(COLLAPSED_H))
+def pill_center_y(_height: float) -> float:
+    return WIN_H / 2.0
 
 
 class JarvisBarRenderer:
     def __init__(self, accent: str = "#e7c46e") -> None:
-        self._accent = _hex_to_rgb(accent)
-        self._st = _RenderState()
+        # The Prompt Mode mark takes this colour; the indicator keeps its own sky.
+        try:
+            value = accent.lstrip("#")
+            if len(value) != 6:
+                raise ValueError("Expected an RGB color")
+            self.accent = tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
+        except (AttributeError, ValueError):  # An invalid optional accent retains the standard visible highlight.
+            self.accent = controls.PET_ORB_HIGHLIGHT
 
     def render(
         self,
         t: float,
         mode: str,
-        ext_level: float,
+        ext_level: float | None = None,
+        *,
         hovered: bool = False,
         muted: bool = False,
-        drop_state: str = DROP_STATE_NONE,
-        drop_elapsed: float = 0.0,
+        speaker_muted: bool = False,
+        hovered_action: str | None = None,
+        call_ring: int = 0,
         prompt_mode: bool = False,
         prompt_mode_paused: bool = False,
+        drop_state: str = DROP_STATE_NONE,
+        drop_elapsed: float = 0.0,
+        surface_mode: str | None = None,
     ) -> Image.Image:
-        active = mode in ("listen", "speak")
-        # "That did not happen" — see NOTICE_MODES. Held separately from the
-        # active/idle split because it is neither: nothing is running, but the
-        # pill is not at rest either.
-        notice = mode in NOTICE_MODES
-        # Drag-drop feedback. ``drop_state`` is what the surface currently sees
-        # (a hovering payload, or the verdict of one that landed) and
-        # ``drop_elapsed`` how long the verdict has been up; the glyph's own
-        # timeline lives in the pure ``drop_confirm_phase``.
-        confirming = drop_state in (DROP_STATE_OK, DROP_STATE_REJECTED)
-        tick_frac, tick_alpha = (
-            drop_confirm_phase(drop_elapsed) if confirming else (0.0, 0.0)
+        actual = surface_mode or mode
+        motion = (
+            "think"
+            if mode in ("think", "dictate_transcribing")
+            else "voice"
+            if mode in ("listen", "speak", "dictate")
+            else "rest"
         )
-        # A finished confirmation is treated as no drop at all, so a surface
-        # that is slow to clear the state can never pin the pill open.
-        if confirming and tick_alpha <= 0.0:
-            drop_state, confirming = DROP_STATE_NONE, False
-        drop_open = drop_state != DROP_STATE_NONE
-        # Ease the pill toward its target size: ACTIVE (2x) while a session is
-        # live, OPEN on hover (controls), while muted (keep the mute cue +
-        # unmute target visible) OR during a drop (landing zone + tick room),
-        # COLLAPSED at rest.
-        tw, th = target_pill_size(mode, hovered, muted, drop_open, prompt_mode)
-        # Snappy grow/shrink: 0.5 reaches the target in ~4 frames (~70 ms) so the
-        # bar pops to full size almost immediately on "Hey Jarvis" instead of
-        # crawling there over a third of a second.
-        self._st.pw = ease(self._st.pw, tw, 0.5)
-        self._st.ph = ease(self._st.ph, th, 0.5)
-        # Asymmetric level envelope (``smooth_level``): rise almost instantly so
-        # the bars move in sync with the voice, glide between quieter samples,
-        # and fall fast + snap to dead zero on silence — a lingering
-        # sub-visible tail otherwise keeps the equalizer wiggling in silence.
-        level_target = ext_level if active else 0.0
-        dt = 0.0 if self._st.last_t is None else t - self._st.last_t
-        self._st.last_t = t
-        self._st.display_level = smooth_level(self._st.display_level, level_target, dt)
-        pw, ph = self._st.pw, self._st.ph
-
-        frame = np.empty((WIN_H, WIN_W, 3), dtype=np.uint8)
-        frame[:, :] = COLOR_KEY_RGB
-        img = Image.fromarray(frame)  # uint8 (H,W,3) → mode "RGB"
-        d = ImageDraw.Draw(img)
-
-        cx = WIN_W / 2.0
-        cy = pill_center_y(ph)  # bottom-anchored: grows upward, idle stays put
-        # The rim turns red whenever the mic is muted FOR JARVIS — drawn on
-        # EVERY frame (even idle/standby, no hover) so the muted cue is visible
-        # at a glance without having to reveal the controls. A drop in flight
-        # takes the rim over for its duration: it is the one cue visible from
-        # the corner of the eye while the user's attention is on the file they
-        # are dragging.
-        outline_color = MUTED_RED if muted else PILL_BORDER
-        outline_color = drop_rim_color(t, outline_color, drop_state)
-        if notice and not confirming:
-            # A refusal outranks the resting/muted rim: it is transient and it
-            # is the reason the pill opened. A drop verdict in flight still
-            # wins, because the user is looking at the payload they just let go.
-            outline_color = MUTED_RED
-        d.rounded_rectangle(
-            [cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2],
-            radius=ph / 2,
-            fill=PILL_BG,
-            outline=outline_color,
-            width=2,
+        state = controls.PetStripState(
+            jarvis_bar=True,
+            mic_muted=muted,
+            speaker_muted=speaker_muted,
+            active=actual in ("listen", "think", "speak"),
+            level=controls.quantize_level(ext_level),
+            motion=motion,
+            phase=controls.indicator_phase(motion, t),
+            hovered=hovered_action,
+            call_ring=call_ring,
         )
+        # Cached frames belong to the shared component; never mutate them.
+        frame = controls.render_pet_strip(state, strip_scale()).copy()
+        layout = controls.pet_strip_layout(strip_scale())
+        _, x0, x1 = next(slot for slot in layout.slots if slot[0] == "orb")
+        cx, cy = (x0 + x1) / 2, WIN_H / 2
+        pill_h = layout.pill[3] - layout.pill[1]
+        r = max(2, pill_h * 0.16)
+        draw = ImageDraw.Draw(frame)
+        width = max(1, round(strip_scale() * 2))
+        backdrop = controls.PET_FILL_HOVER if hovered_action == "orb" else controls.PET_FILL
+        clear_r = pill_h * 0.40
 
-        # Hover splits the bar into controls: LEFT X (hang up, only while a
-        # session is live) + RIGHT mic (toggle voice mute for Jarvis).
-        x_right = cx + 0.33 * pw  # pulled in so the mic glyph never clips the rim
-        # The Prompt Mode sparkle mirrors the mic rather than sharing the
-        # close-X's slot. Measured on the OPEN pill (68x19 at 1x): the X sits
-        # 5.4 px from the rim and its own radius is 4.9, which just fits; the
-        # sparkle is bigger and at 0.42 its left tip crossed the rim and drew
-        # onto the colour key — a star floating OUTSIDE the pill, which is
-        # what the maintainer saw and could not read (2026-08-28).
-        x_sparkle = cx - SPARKLE_CENTRE_FRAC * pw
-        if confirming:
-            # The verdict owns the pill alone. Equalizer bars or the orbital
-            # core behind a tick would be mush at this pill height — and the
-            # whole point of the glyph is that it reads in one glance.
-            self._draw_drop_glyph(
-                img,
-                cx,
-                cy,
-                ph,
-                fraction=tick_frac,
-                alpha=tick_alpha,
-                ok=drop_state == DROP_STATE_OK,
+        def clear_indicator() -> None:
+            # A mark replaces the indicator; drawn over the strokes it is unreadable.
+            draw.ellipse((cx - clear_r, cy - clear_r, cx + clear_r, cy + clear_r), fill=backdrop)
+
+        if (
+            drop_state in (DROP_STATE_OK, DROP_STATE_REJECTED)
+            and drop_elapsed >= DROP_CONFIRM_TOTAL_S
+        ):
+            drop_state = DROP_STATE_NONE
+        if actual in NOTICE_MODES or drop_state == DROP_STATE_REJECTED:
+            clear_indicator()
+            red = tuple(round(c * notice_alpha(t)) for c in controls.PET_ICON_MUTED)
+            draw.line((cx - r, cy - r, cx + r, cy + r), fill=red, width=width)
+            draw.line((cx - r, cy + r, cx + r, cy - r), fill=red, width=width)
+        elif drop_state == DROP_STATE_OK:
+            clear_indicator()
+            draw.line(
+                [(cx - r, cy), (cx, cy + r), (cx + r, cy - r)], fill=(126, 200, 133), width=width
             )
-        elif notice:
-            # The message owns the pill alone — deliberately ABOVE the hover
-            # branch. Hovering must not swap a "that did not happen" answer for
-            # the mic/close-X controls: the user would be left with controls and
-            # no idea why they pressed a key and nothing occurred.
-            self._draw_drop_glyph(
-                img, cx, cy, ph, fraction=1.0, alpha=notice_alpha(t), ok=False
+        elif prompt_mode and motion == "rest":
+            # Prompt Mode marks the resting bar only; once a voice or a
+            # dictation runs, the moving strokes tell more than the mark.
+            clear_indicator()
+            draw.line(
+                [(cx - r, cy), (cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)],
+                fill=self.accent,
+                width=width,
             )
-        elif hovered:
-            x_left = cx - 0.42 * pw
-            active_sess = mode in ("listen", "speak", "think")
-            # Keep the speech indicator VISIBLE while interacting — narrow bars
-            # in the centre so you can see the voice is live, controls flanking.
-            if mode in ("listen", "speak"):
-                self._draw_bars(d, t, cx, cy, pw, ph, span=bars_span_for(pw) * 0.5, n=5)
-            elif mode == "think":
-                # Thinking keeps its indicator while the controls are up, for
-                # the same reason the equalizer does: reaching for the close-X
-                # must not make the bar look like nothing is running.
-                self._draw_thinking(
-                    d, t, cx, cy, pw, ph,
-                    span=bars_span_for(pw) * 0.5,
-                    n=THINK_HOVER_BARS,
+            if prompt_mode_paused:
+                draw.line(
+                    (cx - r, cy - r, cx + r, cy + r), fill=controls.PET_ICON_MUTED, width=width
                 )
-            if active_sess:
-                self._draw_close_x(d, x_left, cy, ph)
-            elif prompt_mode:
-                # The Prompt Mode switch, and ONLY while the SETTING is on:
-                # the maintainer asked for it to be shown in that mode and in
-                # no other (2026-08-28). Struck through while paused, which is
-                # the state the same click puts it in — so the mark is never
-                # an advert for a feature that is not switched on, and always
-                # the way back to one that is merely on hold.
-                self._draw_sparkle(img, x_sparkle, cy, ph, paused=prompt_mode_paused)
-            self._draw_mic(img, x_right, cy, ph, muted)
-        elif mode == "think":
-            self._draw_thinking(d, t, cx, cy, pw, ph)
-        elif mode in ("listen", "speak"):
-            self._draw_bars(d, t, cx, cy, pw, ph)
-        elif muted or prompt_mode:
-            # Standby with a state worth seeing (idle, not hovered). Muted:
-            # always show the slashed mic so the user sees at a glance they're
-            # muted AND where to click to unmute (they can't unmute by voice —
-            # Jarvis is deaf while muted). Prompt Mode on: the sparkle, so
-            # "every dictation comes out rewritten" is never a surprise and
-            # the switch that ends it is right there.
-            if muted:
-                self._draw_mic(img, x_right, cy, ph, muted=True)
-            if prompt_mode:
-                self._draw_sparkle(img, x_sparkle, cy, ph, paused=prompt_mode_paused)
-        # idle / standby (not hovered, not muted, Prompt Mode off): a clean
-        # EMPTY pill — no dots, no bars. "When nothing is happening, nothing is
-        # in the bar."
-        return img
+        if drop_state == DROP_STATE_ARMED:
+            draw.rounded_rectangle(
+                layout.pill, radius=WIN_H / 2, outline=controls.PET_ORB_HIGHLIGHT, width=width
+            )
+        return frame
 
-    def _draw_dots(
-        self, img: Image.Image, cx: float, cy: float, pw: float, ph: float
-    ) -> None:
-        # Supersample the dots: at this tiny resolution a 3 px circle drawn
-        # directly renders as a cross. Draw at 4x on a transparent layer, then
-        # downscale with antialiasing → clean round dots.
-        ss = 4
-        r = max(1.5, ph * _DOT_R_FRAC) * ss
-        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        for x in evenly_spaced(cx, _DOTS_SPAN_FRAC * pw, _N_DOTS):
-            px, py = x * ss, cy * ss
-            ld.ellipse([px - r, py - r, px + r, py + r], fill=(*DOT_COLOR, 255))
-        small = layer.resize(img.size, Image.Resampling.LANCZOS)
-        img.paste(small, (0, 0), small)
 
-    def _draw_close_x(self, d: ImageDraw.ImageDraw, cx: float, cy: float, ph: float) -> None:
-        r = max(3.0, ph * 0.26)  # half-diagonal of the cross
-        w = max(2, _STROKE_W)
-        d.line([(cx - r, cy - r), (cx + r, cy + r)], fill=CLOSE_X, width=w)
-        d.line([(cx - r, cy + r), (cx + r, cy - r)], fill=CLOSE_X, width=w)
-
-    def _draw_sparkle(
-        self, img: Image.Image, cx: float, cy: float, ph: float, paused: bool = False
-    ) -> None:
-        """Left-hand control on the resting pill: the Prompt Mode switch.
-
-        A four-point star with a smaller companion up and to the right — the
-        sparkle mark the app uses for the same switch on its front page, so
-        the two surfaces read as one control. Drawn only while the SETTING is
-        on, so it never advertises a feature nobody switched on.
-
-        ``paused`` gives it the muted mic's language: the same glyph in the
-        muted red with a diagonal slash through it. That is deliberate reuse —
-        the user already knows that mark means "this is off right now, click
-        to bring it back", which is exactly what a paused switch is.
-        Supersampled like the mic, because thin star tips alias at ~30 px.
-        """
-        ss = 4
-        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        # The STAR keeps the accent in both states — struck through means the
-        # mark unchanged with a line over it, and it is also what keeps the
-        # paused control recognisable as the same control. Colouring the star
-        # red too was measured and rejected: at this size a red star under a
-        # red slash is one blob, and a gap cut through the star to separate
-        # them left a red hash nobody would read as a sparkle (2026-08-28).
-        color = (*self._accent, 255)
-        x, y, p = cx * ss, cy * ss, ph * ss
-
-        def star(sx: float, sy: float, r: float) -> None:
-            pts = []
-            for k in range(8):
-                ang = math.radians(90 * (k // 2) + 45 * (k % 2))
-                rad = r if k % 2 == 0 else r * 0.36
-                pts.append((sx + rad * math.cos(ang), sy - rad * math.sin(ang)))
-            ld.polygon(pts, fill=color)
-
-        # Sized and tucked so the whole mark stays INSIDE the pill. The star
-        # has a tip pointing straight up, so the companion's reach above
-        # centre is (offset + its own radius) — kept to 1.08*r, i.e. well
-        # under the pill's half-height, because the 4x LANCZOS downscale rings
-        # a pixel or two past the source and a tip that grazed the rim drew a
-        # magenta fleck of colour key ABOVE the bar (measured 2026-08-28).
-        r = p * SPARKLE_R_FRAC
-        star(x - r * 0.15, y + r * 0.15, r)
-        star(x + r * 0.80, y - r * 0.72, r * 0.36)
-        if paused:
-            # The slash, in the muted mic's red and at the mic's angle. It
-            # reaches slightly past the star so it reads as a line ACROSS the
-            # mark, and a fill-coloured line laid down first leaves a thin gap
-            # so the stroke sits on top of the star instead of melting into
-            # it. Sized from the pill height, and short enough that neither
-            # the stroke nor the LANCZOS ringing reaches the rim.
-            s = p * SPARKLE_SLASH_FRAC
-            stroke = max(1, round(_STROKE_W * 0.85 * ss))
-            ends = [(x - s, y + s), (x + s, y - s)]
-            ld.line(ends, fill=(*PILL_BG, 255), width=round(stroke * 1.4))
-            ld.line(ends, fill=(*MUTED_RED, 255), width=stroke)
-        small = layer.resize(img.size, Image.Resampling.LANCZOS)
-        img.paste(small, (0, 0), small)
-
-    def _draw_mic(
-        self, img: Image.Image, cx: float, cy: float, ph: float, muted: bool
-    ) -> None:
-        """Right-hand control: the voice-mute toggle, drawn as a clean OUTLINE
-        microphone (capsule head + cradle bow + stand), in the spirit of the
-        reference glyph — line art, no enclosing box. Replaced the dictation
-        square (maintainer request 2026-06-28).
-
-        Supersampled (4x → LANCZOS) like the standby dots, because the thin
-        curves alias badly drawn directly at ~30 px. Gold while live; red with
-        a diagonal slash when muted (mirrors the red pill rim — the universal
-        "mic off" mark).
-        """
-        ss = 4
-        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        color = (*(MUTED_RED if muted else self._accent), 255)
-        w = max(1, round(_STROKE_W * 0.85 * ss))
-
-        x = cx * ss
-        y = cy * ss
-        p = ph * ss
-
-        # Capsule head (outline rounded rect), sitting in the upper half.
-        hw = p * 0.115
-        head_top = y - p * 0.34
-        head_bot = y + p * 0.02
-        ld.rounded_rectangle(
-            [x - hw, head_top, x + hw, head_bot], radius=hw, outline=color, width=w
-        )
-        # Cradle bow: a U-arc cupping the capsule from below (wider than it).
-        bw = p * 0.21
-        ld.arc(
-            [x - bw, y - p * 0.16, x + bw, y + p * 0.20],
-            start=15, end=165, fill=color, width=w,
-        )
-        # Stand: short stem from the bow down to a small foot.
-        stem_bot = y + p * 0.32
-        ld.line([(x, y + p * 0.18), (x, stem_bot)], fill=color, width=w)
-        foot_hw = p * 0.12
-        ld.line(
-            [(x - foot_hw, stem_bot), (x + foot_hw, stem_bot)], fill=color, width=w
-        )
-        # Muted: a diagonal slash across the whole glyph ("mic off"). Kept short
-        # enough that its top-right tip stays inside the rounded pill (else the
-        # color-key shows through as a pink fleck at the rim).
-        if muted:
-            s = p * 0.28
-            ld.line([(x - s, y + s), (x + s, y - s)], fill=color, width=w)
-
-        small = layer.resize(img.size, Image.Resampling.LANCZOS)
-        img.paste(small, (0, 0), small)
-
-    def _draw_drop_glyph(
-        self,
-        img: Image.Image,
-        cx: float,
-        cy: float,
-        ph: float,
-        *,
-        fraction: float,
-        alpha: float,
-        ok: bool,
-    ) -> None:
-        """The post-drop verdict: a tick that lands, or a cross that says no.
-
-        Supersampled (4x → LANCZOS) like the mic glyph — the pill is ~16 px
-        tall at the signed-off size, where a 2 px stroke drawn directly turns
-        into a staircase. Every dimension derives from ``ph`` (the LIVE, eased
-        pill height), so the glyph tracks the monitor's DPI, the user's "Bar
-        size" slider and the open/close easing without a single fixed pixel.
-
-        ``fraction`` reveals the tick progressively (it strokes itself on);
-        ``alpha`` fades the whole glyph out at the end of the confirmation.
-        """
-        if alpha <= 0.0:
-            return
-        ss = 4
-        layer = Image.new("RGBA", (img.width * ss, img.height * ss), (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer)
-        a = max(0, min(255, round(255 * alpha)))
-        color = (*(DROP_OK_GREEN if ok else MUTED_RED), a)
-        w = max(1, round(ph * _DROP_GLYPH_W * ss))
-
-        if ok:
-            points = tick_polyline(cx, cy, ph, fraction)
-            if len(points) >= 2:
-                ld.line(
-                    [(x * ss, y * ss) for x, y in points],
-                    fill=color,
-                    width=w,
-                    joint="curve",
-                )
-        else:
-            # "Nothing usable in that" — a plain cross, drawn whole (there is
-            # no progressive reveal to sell: the answer is immediate).
-            r = ph * _DROP_CROSS_R
-            for (x0, y0), (x1, y1) in (
-                ((cx - r, cy - r), (cx + r, cy + r)),
-                ((cx - r, cy + r), (cx + r, cy - r)),
-            ):
-                ld.line(
-                    [(x0 * ss, y0 * ss), (x1 * ss, y1 * ss)], fill=color, width=w
-                )
-
-        small = layer.resize(img.size, Image.Resampling.LANCZOS)
-        img.paste(small, (0, 0), small)
-
-    def _draw_bars(
-        self,
-        d: ImageDraw.ImageDraw,
-        t: float,
-        cx: float,
-        cy: float,
-        pw: float,
-        ph: float,
-        span: float | None = None,
-        n: int | None = None,
-    ) -> None:
-        n = n or N_BARS
-        span = bars_span_for(pw) if span is None else span
-        half_w = bar_half_w_for(pw)
-        hs = bar_heights(
-            t, self._st.display_level, n, max_h=bar_max_for(ph), min_h=bar_min_for(ph)
-        )
-        for x, h in zip(evenly_spaced(cx, span, n), hs, strict=True):
-            box = pixel_bar_box(x, cy, half_w, h)
-            d.rounded_rectangle(box, radius=(box[2] - box[0]) / 2.0, fill=self._accent)
-
-    def _draw_thinking(
-        self,
-        d: ImageDraw.ImageDraw,
-        t: float,
-        cx: float,
-        cy: float,
-        pw: float,
-        ph: float,
-        span: float | None = None,
-        n: int | None = None,
-    ) -> None:
-        """Render the travelling sweep (THINKING) onto the frame.
-
-        Drawn exactly like the equalizer — same row, same span, same stroke
-        width, same rounded caps — so the bar keeps one vocabulary and the
-        hand-off between thinking and speaking is a change of MOTION, not a
-        change of object. Only the heights and the brightness come from the
-        sweep instead of a level.
-
-        No supersampled layer here (unlike the standby dots or the drop glyph):
-        these are axis-aligned rounded rectangles, which ImageDraw renders
-        cleanly at this size — and thinking is the state that runs for seconds
-        at a stretch, so it has to be among the CHEAPEST frames the bar draws
-        rather than the dearest.
-        """
-        n = n or N_BARS
-        span = bars_span_for(pw) if span is None else span
-        half_w = bar_half_w_for(pw)
-        gains = sweep_gains(t, n)
-        hs = sweep_bar_heights(gains, max_h=bar_max_for(ph), min_h=bar_min_for(ph))
-        for x, h, g in zip(evenly_spaced(cx, span, n), hs, gains, strict=True):
-            # This frame is RGB (the color key needs it), so there is no alpha
-            # to fade with: mixing toward the pill's own background is what an
-            # opacity would look like over it anyway, and it costs one lerp.
-            color = _lerp_rgb(PILL_BG, self._accent, THINK_DIM + (1.0 - THINK_DIM) * g)
-            box = pixel_bar_box(x, cy, half_w, h)
-            d.rounded_rectangle(box, radius=(box[2] - box[0]) / 2.0, fill=color)
+apply_display_scale(1.0)

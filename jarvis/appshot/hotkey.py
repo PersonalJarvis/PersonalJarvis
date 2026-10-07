@@ -46,9 +46,13 @@ _GESTURE_ALIASES: dict[str, str] = {
 }
 
 #: Scope → the ``[appshot]`` key holding its shortcut.
-SCOPE_KEYS: dict[str, str] = {"window": "hotkey", "region": "region_hotkey"}
+SCOPE_KEYS: dict[str, str] = {
+    "window": "hotkey", "region": "region_hotkey", "recording": "recording_hotkey",
+}
 #: Scope → the binding name inside the shared ``HotkeyTrigger``.
-_BINDINGS: dict[str, str] = {"window": "appshot", "region": "appshot_region"}
+_BINDINGS: dict[str, str] = {
+    "window": "appshot", "region": "appshot_region", "recording": "appshot_recording",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +92,31 @@ def is_gesture(hotkey: str) -> bool:
     from jarvis.appshot.gesture import GESTURES  # noqa: PLC0415
 
     return hotkey in GESTURES
+
+
+def shortcuts_conflict(left: str, right: str) -> bool:
+    """Whether two appshot shortcuts would fire on the same press.
+
+    A both-keys gesture is not the single token ``alt``: both Alts must not
+    block every other Alt shortcut. Ordinary chords collide when one key set
+    is the other, or sits inside it — ``ctrl+b`` also fires while
+    ``ctrl+shift+b`` is held, so the area picker and the recorder would start
+    together.
+    """
+    if not left or not right:
+        return False
+    if is_gesture(left) or is_gesture(right):
+        return left == right
+    from jarvis.trigger.hotkey import combos_collide  # noqa: PLC0415
+
+    return combos_collide(left, right)
+
+
+def _pynput_present() -> bool:
+    """The Windows appshot listener is pynput, not the polled hotkey package."""
+    import importlib.util  # noqa: PLC0415
+
+    return importlib.util.find_spec("pynput") is not None
 
 
 def configured_hotkeys(block: Any) -> dict[str, str]:
@@ -133,6 +162,10 @@ class AppshotShortcut:
         self._trigger: Any | None = None
         self._combo_scopes: set[str] = set()
         self._busy = False
+        self._recording_busy = False
+        # One press that arrives while a toggle is still running. Dropping it
+        # made the next press start a second recording instead of stopping.
+        self._pending: dict[str, str] = {}
         not_started = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
         self._statuses: dict[str, ShortcutStatus] = dict.fromkeys(SCOPE_KEYS, not_started)
         self._subscribed = False
@@ -179,6 +212,7 @@ class AppshotShortcut:
             hotkeys = configured_hotkeys(config.appshot)
             owns = current_instance().owns_ambient_duties
             combos: dict[str, str] = {}
+            claimed: list[str] = []
             for scope, hotkey in hotkeys.items():
                 if not hotkey:
                     self._statuses[scope] = ShortcutStatus("", False, "No shortcut set.")
@@ -192,9 +226,9 @@ class AppshotShortcut:
                         False,
                         "The main app owns global shortcuts; this instance does not arm them.",
                     )
-                elif scope == "region" and hotkey == hotkeys["window"]:
+                elif any(shortcuts_conflict(hotkey, previous) for previous in claimed):
                     self._statuses[scope] = ShortcutStatus(
-                        hotkey, False, "This is already the shortcut for the front window."
+                        hotkey, False, "This shortcut is already used by another AppShot action."
                     )
                 elif is_gesture(hotkey):
                     self._statuses[scope] = await self._arm_gesture(scope, hotkey)
@@ -205,6 +239,8 @@ class AppshotShortcut:
                         self._statuses[scope] = ShortcutStatus(
                             hotkey, False, "The global shortcut listener is starting.",
                         )
+                if hotkey:
+                    claimed.append(hotkey)
             if combos:
                 self._combo_scopes = set(combos)
                 self._trigger_task = asyncio.get_running_loop().create_task(
@@ -268,7 +304,11 @@ class AppshotShortcut:
 
     @staticmethod
     def _check_combo(hotkey: str) -> ShortcutStatus:
-        from jarvis.platform.probes import has_hotkey  # noqa: PLC0415
+        from jarvis.platform import detect_platform  # noqa: PLC0415
+        from jarvis.platform.probes import (  # noqa: PLC0415
+            has_hotkey,
+            hotkey_unavailable_reason,
+        )
         from jarvis.trigger.hotkey import validate_hotkey  # noqa: PLC0415
 
         verdict = validate_hotkey(hotkey)
@@ -276,15 +316,23 @@ class AppshotShortcut:
             return ShortcutStatus(
                 hotkey=hotkey, armed=False, detail=str(getattr(verdict, "reason", "") or "")
             )
-        if not has_hotkey():
+        # Voice hotkeys poll ``global_hotkeys`` on Windows. AppShot chords use
+        # pynput, so a machine with only that package can still arm them.
+        ready = has_hotkey() or (detect_platform() == "win32" and _pynput_present())
+        if not ready:
             return ShortcutStatus(
                 hotkey=hotkey,
                 armed=False,
-                detail="Global shortcuts are not available on this desktop.",
+                detail=hotkey_unavailable_reason(),
             )
         return ShortcutStatus(hotkey=hotkey, armed=True)
 
     async def _run_combos(self, combos: dict[str, str]) -> None:
+        from jarvis.platform import detect_platform
+
+        if detect_platform() == "win32":
+            await self._run_key_events(combos)
+            return
         from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
         scopes = {_BINDINGS[scope]: scope for scope in combos}
@@ -307,6 +355,51 @@ class AppshotShortcut:
                     hotkey, False, "The global shortcut listener is not running.",
                 )
 
+    async def _run_key_events(self, combos: dict[str, str]) -> None:
+        from jarvis.appshot.key_events import AppshotKeyEvents
+        from jarvis.trigger.backends.global_hotkeys import _normalize_combo
+
+        listener = AppshotKeyEvents()
+        rows = [
+            [_normalize_combo(combo), None, lambda scope=scope: self._fire_threadsafe(scope)]
+            for scope, combo in combos.items()
+        ]
+        try:
+            listener.register(rows)
+            starting = asyncio.create_task(asyncio.to_thread(listener.start))
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                # Finish acquiring the listener before teardown, even if a
+                # setting changes while its native hook is being created.
+                await starting
+                raise
+            if not listener.ready:
+                for scope, combo in combos.items():
+                    self._statuses[scope] = ShortcutStatus(
+                        combo, False, "The keyboard event listener could not start."
+                    )
+                return
+            for scope, combo in combos.items():
+                self._statuses[scope] = ShortcutStatus(combo, True)
+            await asyncio.Future()  # Cancellation owns the listener's complete lifecycle.
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("appshot: keyboard event listener failed")
+            for scope, combo in combos.items():
+                self._statuses[scope] = ShortcutStatus(
+                    combo, False, "The keyboard event listener stopped."
+                )
+        finally:
+            await asyncio.to_thread(listener.stop)
+            listener.unregister()
+            for scope, combo in combos.items():
+                if self._statuses[scope].armed:
+                    self._statuses[scope] = ShortcutStatus(
+                        combo, False, "The keyboard event listener stopped."
+                    )
+
     def _fire_threadsafe(self, scope: str) -> None:
         loop = self._loop
         if loop is None or loop.is_closed():
@@ -315,13 +408,33 @@ class AppshotShortcut:
             loop.call_soon_threadsafe(self._fire, scope)
 
     def _fire(self, scope: str = "window") -> None:
-        if self._busy:
+        busy_field = "_recording_busy" if scope == "recording" else "_busy"
+        if getattr(self, busy_field):
+            self._pending[busy_field] = scope
             return
-        self._busy = True
+        self._begin_take(scope, busy_field)
+
+    def _begin_take(self, scope: str, busy_field: str) -> None:
+        setattr(self, busy_field, True)
+
+        def _finished(_task: asyncio.Task[None]) -> None:
+            setattr(self, busy_field, False)
+            pending = self._pending.pop(busy_field, None)
+            if pending is not None:
+                self._begin_take(pending, busy_field)
+
         task = asyncio.get_running_loop().create_task(self._take(scope), name="appshot-take")
-        task.add_done_callback(lambda _t: setattr(self, "_busy", False))
+        task.add_done_callback(_finished)
 
     async def _take(self, scope: str) -> None:
+        if scope == "recording":
+            from jarvis.appshot.recording import get_recording_service
+
+            try:
+                await get_recording_service().toggle()
+            except ValueError as exc:
+                await self._publish_refusal(str(exc))
+            return
         from jarvis.appshot.service import take_appshot  # noqa: PLC0415
 
         result = await take_appshot(
@@ -389,5 +502,6 @@ __all__ = [
     "is_gesture",
     "get_shortcut",
     "normalize_hotkey",
+    "shortcuts_conflict",
     "start_appshot_shortcut",
 ]

@@ -7,8 +7,9 @@ real ScreenCaptureKit path does. Nothing here ran on a real Mac.
 * With a request still open (macOS may be showing its dialog) the capture is refused
   with the "may be showing a dialog" text, takes NO rect grab of the wallpaper and
   asks for nothing new.
-* With a live grant the rect grab is the safe fallback and carries on.
-* A plain timeout that the state does not explain refuses with the state's text.
+* With a live grant the capture is still refused: a window handle means "this
+  window alone", so a desktop-rectangle grab is never the fallback on any OS.
+* A failure that is not a timeout never looks at the permission.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from __future__ import annotations
 import sys
 import types
 from contextlib import nullcontext
-from types import SimpleNamespace
 
 import pytest
 
@@ -63,9 +63,6 @@ def _native_fails_with(monkeypatch: pytest.MonkeyPatch, reason: str) -> None:
         return None
 
     monkeypatch.setattr(window_capture, "grab_window", native)
-    # The rect fallback is refused on Windows by design (ports.py branches on os.name):
-    # these tests model a Mac, so they must not depend on the host OS.
-    monkeypatch.setattr(ports, "os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(ports, "_is_wayland", lambda: False)
     monkeypatch.setattr(ports, "_input_space", nullcontext)
     monkeypatch.setattr("jarvis.cu.indicator.capture_guard.indicator_suppressed", nullcontext)
@@ -94,16 +91,17 @@ def test_a_timeout_while_a_request_is_open_is_pending_not_denied(monkeypatch):
     assert len(tcc.requests()) == 1  # nothing new was asked
 
 
-def test_a_timeout_with_a_live_grant_falls_through_to_the_rect_grab(monkeypatch):
+def test_a_timeout_with_a_live_grant_never_falls_back_to_a_rect_grab(monkeypatch):
     tcc = _darwin(monkeypatch, granted=[TccService.SCREEN_RECORDING])
     grabs: list[dict[str, int]] = []
     _install_mss(monkeypatch, grabs)
     _native_fails_with(monkeypatch, "pending_confirmation")
 
-    (width, height), rgb = ports.NativeSurfaceCapturer().grab(_BBOX, window_handle=9)
+    with pytest.raises(ports.CaptureUnavailable) as refused:
+        ports.NativeSurfaceCapturer().grab(_BBOX, window_handle=9)
 
-    assert (width, height) == (80, 60) and rgb
-    assert grabs == [{"left": 0, "top": 0, "width": 80, "height": 60}]
+    assert "fallback was refused" in str(refused.value)
+    assert grabs == []  # the overlapping window is never photographed
     tcc.assert_no_prompts()
 
 
@@ -113,7 +111,8 @@ def test_a_failure_that_is_not_a_timeout_never_looks_at_the_permission(monkeypat
     _install_mss(monkeypatch, grabs)
     _native_fails_with(monkeypatch, "")
 
-    ports.NativeSurfaceCapturer().grab(_BBOX, window_handle=9)
+    with pytest.raises(ports.CaptureUnavailable):
+        ports.NativeSurfaceCapturer().grab(_BBOX, window_handle=9)
 
-    assert len(grabs) == 1
+    assert grabs == []
     tcc.assert_no_prompts()

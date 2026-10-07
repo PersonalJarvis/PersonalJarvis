@@ -102,10 +102,10 @@ async def test_mission_finished_opens_browser_and_speaks(store: TaskStore) -> No
     assert announcements[0].text == "Your mission is ready — I opened /outputs/report.md."
     assert announcements[0].kind == "subagent"
 
-    # The task itself completed.
+    # An unlimited standing event rule re-arms after delivering this result.
     task_row = await store.get(str(rule.id))
     assert task_row is not None
-    assert task_row["state"] == "completed"
+    assert task_row["state"] == "scheduled"
 
 
 async def test_failed_mission_does_not_fire_an_approved_rule(store: TaskStore) -> None:

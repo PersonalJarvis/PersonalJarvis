@@ -1,0 +1,26 @@
+/* Gutter markers against the last commit (see lineDiff.ts), in theme colours. */
+.monaco-editor .jarvis-gutter-added,
+.monaco-editor .jarvis-gutter-modified {
+  margin-left: 3px;
+  width: 3px !important;
+}
+.monaco-editor .jarvis-gutter-added {
+  background: hsl(var(--success));
+}
+.monaco-editor .jarvis-gutter-modified {
+  background: hsl(var(--info));
+}
+.monaco-editor .jarvis-gutter-deleted::before,
+.monaco-editor .jarvis-gutter-deleted-below::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  border: 4px solid transparent;
+  border-left-color: hsl(var(--destructive));
+}
+.monaco-editor .jarvis-gutter-deleted::before {
+  top: -4px;
+}
+.monaco-editor .jarvis-gutter-deleted-below::before {
+  bottom: -4px;
+}

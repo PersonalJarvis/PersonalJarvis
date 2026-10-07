@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "vimeo",
+  "version": "1.0.0",
+  "description": "Your Vimeo videos, folders and stats",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Vimeo",
+      "category": "Media & Creativity",
+      "logo_slug": "vimeo",
+      "logo_color": "1AB7EA",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.vimeo.com/mcp",
+        "discovery_url": "https://mcp.vimeo.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.vimeo.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_vimeo_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with your Vimeo account. Uploads and edits ask for approval first."
+    }
+  }
+}

@@ -237,6 +237,12 @@ class TestRenderForPrompt:
         # Header is still included
         assert "About the User" in out
 
+    def test_render_includes_the_self_description(self, profile: UserProfile) -> None:
+        profile.set("identity", "name", "Ruben")
+        profile.set("identity", "about", "Builds in public. Short answers.")
+        out = profile.render_for_prompt()
+        assert "In their own words:** Builds in public. Short answers." in out
+
     def test_render_stays_within_budget(self, profile: UserProfile) -> None:
         """Even with a lot of content, rendering must not exceed the budget cap."""
         profile.set("identity", "name", "Ruben")

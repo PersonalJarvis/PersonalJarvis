@@ -19,6 +19,7 @@ import { BREAK_RENDERERS } from "./BreakLounge";
 import { WARDROBE_RENDERERS } from "./WardrobeRoom";
 import { LOBBY_RENDERERS } from "./LobbyDecor";
 import { SPAWN_RENDERERS } from "./SpawnPoint";
+import { LEVEL_HALL_RENDERERS } from "./LevelHall";
 import { ARCADE_RENDERERS } from "../arcade/ArcadeHallProps";
 import { MeetingChair } from "./OfficeChairs";
 import { Bookshelf, Box, Couch, GEO, MAT, matte, Plant, Rounded, Rug } from "./OfficeFurniture";
@@ -565,6 +566,7 @@ export const PROP_RENDERERS: Record<FurnitureKind, (props: { item: Furniture }) 
   ...WARDROBE_RENDERERS,
   ...LOBBY_RENDERERS,
   ...SPAWN_RENDERERS,
+  ...LEVEL_HALL_RENDERERS,
   ...ARCADE_RENDERERS,
 };
 

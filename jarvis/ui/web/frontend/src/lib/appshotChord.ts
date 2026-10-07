@@ -14,7 +14,9 @@ import {
   isModifierToken,
 } from "@/hooks/useHotkey";
 
-export type ChordResult = { combo: string } | { problem: "modifier_only" | "empty" };
+export type ChordResult =
+  | { combo: string }
+  | { problem: "modifier_only" | "empty" | "unmapped" };
 
 const GESTURES: ReadonlyArray<[string, string, string]> = [
   ["AltLeft", "AltRight", "alt+alt"],
@@ -23,9 +25,15 @@ const GESTURES: ReadonlyArray<[string, string, string]> = [
 ];
 
 /** Every key that was down during the gesture → the shortcut it means. */
-export function chordFromCodes(codes: Iterable<string>): ChordResult {
+export function chordFromCodes(
+  codes: Iterable<string>,
+  characterTokens: ReadonlyMap<string, string> = new Map(),
+): ChordResult {
   const set = new Set(codes);
   set.delete("Escape");
+  // Some browsers name the right Alt key AltGraph. The both-Alt gesture and
+  // the right_alt token both look for AltRight.
+  if (set.delete("AltGraph")) set.add("AltRight");
   if (set.size === 0) return { problem: "empty" };
   // Windows AltGr can emit an extra ControlLeft key event. The backend's
   // both-Alt gesture watches the two Alt keys, so accept that exact sequence
@@ -39,11 +47,18 @@ export function chordFromCodes(codes: Iterable<string>): ChordResult {
     }
   }
   const tokens = new Set<string>();
+  let unmapped = false;
   for (const code of set) {
-    const token = codeToModifierToken(code) ?? codeToKeyToken(code);
+    const token = codeToModifierToken(code) ?? characterTokens.get(code) ?? codeToKeyToken(code);
     if (token) tokens.add(token);
+    else unmapped = true;
   }
-  if (![...tokens].some((token) => !isModifierToken(token))) return { problem: "modifier_only" };
+  // A key this shortcut vocabulary cannot name (Print Screen, a media key)
+  // must not be reported as "you only pressed Shift". That sentence sent
+  // people looking for a modifier they never touched.
+  if (![...tokens].some((token) => !isModifierToken(token))) {
+    return { problem: unmapped ? "unmapped" : "modifier_only" };
+  }
   return { combo: composeCombo(tokens) };
 }
 

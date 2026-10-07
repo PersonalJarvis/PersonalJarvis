@@ -54,6 +54,8 @@ WIKI_NOTE_TOOL_NAME: Final[str] = "society_wiki_note"
 SHELL_TOOL_NAME: Final[str] = "society_shell"
 MEMORY_RECALL_TOOL_NAME: Final[str] = "society_memory_recall"
 PROPOSE_TOOL_NAME: Final[str] = "society_propose_change"
+#: The longest role description a fresh agent may apply without a card.
+FRESH_IDENTITY_MAX_CHARS: Final[int] = 1_500
 _KINDS: Final[dict[str, MsgType]] = {
     "say": MsgType.SAY,
     "query": MsgType.QUERY,
@@ -248,6 +250,10 @@ class MessageAgentTool:
             # Which of the caller's chats wrote it: the person's chat with the
             # agent shows only its own outgoing messages, never a conversation's.
             payload["from_session"] = turn.session_id
+        if caller.agent_id == rt.lead_id and parent is None:
+            from jarvis.core.delegation import origin_metadata
+            config = getattr(ctx, "config", None) or {}
+            payload.update(origin_metadata(language=str(config.get("output_language") or "")))
         env = await rt.say(
             from_agent=caller.agent_id,
             to_agent=target.agent_id,
@@ -277,6 +283,26 @@ class MessageAgentTool:
 
 
 _FRONTMATTER_SAFE = re.compile(r"[\r\n\"]")
+
+
+def _explicit_memory_request(ctx: Any, agent_id: str) -> bool:
+    """Whether this write carries the person's own explicit "remember" request.
+
+    Decided from trusted provenance only: the executor's ``user_utterance``
+    (the person's message, or the verbatim user quote a review grounded its
+    write in) and, inside a chat turn, that the turn is the person's own in
+    this agent's chat. A model argument never decides it.
+    """
+    from jarvis.core.protocols import current_chat_turn
+
+    from .memory_intent import requested_memory
+    from .surface import agent_id_of
+
+    turn = current_chat_turn.get()
+    if turn is not None and (not turn.direct_user or agent_id_of(turn.session_id) != agent_id):
+        return False
+    utterance = str(getattr(ctx, "user_utterance", "") or "")
+    return bool(utterance) and requested_memory(utterance) is not None
 
 
 class WikiNoteTool:
@@ -356,6 +382,7 @@ class WikiNoteTool:
         title = str(args.get("title") or "")
         try:
             if kind == "memory":
+                explicit = _explicit_memory_request(ctx, caller.agent_id)
                 receipt = await rt.memory.remember_receipt(
                     caller,
                     text,
@@ -367,6 +394,7 @@ class WikiNoteTool:
                     entry_id=str(args.get("entry_id") or ""),
                     old_text=str(args.get("old_text") or ""),
                     importance=int(args.get("importance", 8)),
+                    explicit_request=explicit,
                 )
                 return ToolResult(success=True, output={**receipt, "reviewed": False})
             if kind == "shared":
@@ -479,7 +507,12 @@ class ProposeChangeTool:
         "update also requires title, prompt and schedule. "
         "'approval_rule' changes what needs the user's approval ({require_approval[], "
         "always_allow[]} of capability ids like plugin:gmail:send); 'focus' changes which "
-        "tools you reach for first ({focus[]}, the full ordered list). Say why in 'reason'. "
+        "tools you reach for first ({focus[]}, the full ordered list); 'identity' sets "
+        "your own name, title and role description ({name?, title?, description?}). While "
+        "you are still new (no title and no description), your first identity applies at "
+        "once from the "
+        "user's message, so propose it as soon as the user has told you what you are for. "
+        "Say why in 'reason'. "
         "Use it when the user states a lasting preference, asks you to remember a way of "
         "working, to save a procedure, or to run something regularly. Never propose the "
         "same thing twice in one turn."
@@ -498,7 +531,9 @@ class ProposeChangeTool:
             },
             "kind": {
                 "type": "string",
-                "enum": ["rule", "skill", "routine", "approval_rule", "focus"],
+                "enum": [
+                    "rule", "skill", "routine", "approval_rule", "focus", "identity",
+                ],
                 "description": "What kind of change you propose.",
             },
             "payload": {
@@ -522,6 +557,7 @@ class ProposeChangeTool:
         from jarvis.core.protocols import current_chat_turn
 
         from .proposals import ProposalRefused, propose, resolve
+        from .roster import is_fresh
         from .surface import agent_id_of
 
         rt = self._runtime
@@ -531,14 +567,28 @@ class ProposeChangeTool:
         if caller is None or caller.state is not AgentState.ACTIVE:
             return _failure(FailureReason.BLOCKED_BY_POLICY, "caller is not an active agent")
         kind = str(args.get("kind") or "").strip().lower()
-        apply_now = args.get("mode") == "apply"
-        if apply_now:
-            turn = current_chat_turn.get()
+        turn = current_chat_turn.get()
+        own_user_turn = (
+            turn is not None
+            and turn.direct_user
+            and agent_id_of(turn.session_id) == caller.agent_id
+        )
+        # A fresh agent takes its first identity from its person's turn in its
+        # own chat without a card; the outcome card offers undo.
+        payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+        fresh_apply = (
+            kind == "identity"
+            and is_fresh(caller)
+            and own_user_turn
+            # A long role text is a card, not an automatic change.
+            and len(str(payload.get("description") or "")) <= FRESH_IDENTITY_MAX_CHARS
+        )
+        apply_now = fresh_apply or args.get("mode") == "apply"
+        if apply_now and not fresh_apply:
             quote = str(args.get("request_quote") or "").strip()
             if (
                 turn is None
-                or not turn.direct_user
-                or agent_id_of(turn.session_id) != caller.agent_id
+                or not own_user_turn
                 or not quote
                 or (len(quote) < 4 and quote != turn.user_text.strip())
                 or quote not in turn.user_text
@@ -582,7 +632,10 @@ class ProposeChangeTool:
         )
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str:
-        return "monitor" if args.get("mode") == "apply" else "safe"
+        # An identity rewrites the standing instructions: never a silent "safe".
+        if args.get("mode") == "apply" or str(args.get("kind") or "") == "identity":
+            return "monitor"
+        return "safe"
 
 
 class ShellTool:

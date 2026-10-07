@@ -87,3 +87,22 @@ async def test_auto_close_preserves_other_closed_workspace_restore_points(
     assert stored is not None
     assert [space.session_id for space in stored.workspaces] == [remembered.id]
     assert registry.session is None
+
+
+async def test_transferring_the_last_pane_closes_only_the_source_workspace(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    source = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Source")
+    target = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Target")
+    moved = source.terminals[0]
+    await registry.activate(source.id)
+
+    await registry.transfer_terminal("T1", workspace_id=source.id, target_workspace_id=target.id)
+
+    assert registry.get(source.id) is None
+    assert registry.session is target
+    assert moved in target.terminals
+    assert not moved.stopping
+    stored = resume_store.load()
+    assert stored is not None
+    assert [space.session_id for space in stored.workspaces] == [target.id]

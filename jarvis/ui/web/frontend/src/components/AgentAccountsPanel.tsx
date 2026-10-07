@@ -615,7 +615,7 @@ function AccountRow({
  * field replaces pasting into a TUI, which on Windows rendered late or not at
  * all and burned the single-use code.
  */
-function LoginFlowBox({
+export function LoginFlowBox({
   flow,
   onFlow,
   onClose,

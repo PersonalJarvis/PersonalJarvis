@@ -223,6 +223,8 @@ class UserProfile:
             parts.append(f"- **Languages:** {', '.join(langs)} (Primary: {primary})")
         if ident.get("timezone"):
             parts.append(f"- **Timezone:** {ident['timezone']}")
+        if ident.get("about"):
+            parts.append(f"- **In their own words:** {ident['about']}")
 
         # 2. Communication style — directly drives tone
         comm = self._meta.get("communication", {}) or {}

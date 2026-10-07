@@ -326,6 +326,7 @@ const FURNITURE_PAINT: Partial<Record<FurnitureKind, string>> = {
   spawnPad: "#d8c08c", spawnTerminal: "#2b2f33",
   retroCabinet: "#7c5cff", prizeCounter: "#d6457f", tokenMachine: "#e0b23a", clawMachine: "#ff5fa2", airHockey: "#3d8bff",
   pinball: "#9b5cff", snackCounter: "#c47a3a",
+  levelWall: "#1d2b52", studioStage: "#e9c46a", rewardPedestal: "#f0e6cf", levelRoad: "#3a4f8f", levelGuide: "#1d2b52",
 };
 
 export const STATE_RING: Record<MinimapAgentState, string> = {
@@ -333,8 +334,9 @@ export const STATE_RING: Record<MinimapAgentState, string> = {
 };
 
 /** Checkpoint icon per checkpoint kind; the same pictures as the 3D tokens (CheckpointMarker). */
-export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator" | "target"> = {
+export const CHECKPOINT_ICON_KEYS: Record<CheckpointKind, "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "elevator" | "target" | "sparkle" | "trophy"> = {
   spawn: "spawn", launch: "spawn", create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "elevator", mission: "target",
+  studio: "sparkle", levels: "trophy",
 };
 
 /** Stroke-only icons in a 24 × 24 box; kept in sync with CheckpointMarker's paths. */
@@ -348,6 +350,8 @@ const ICON_PATHS: Record<(typeof CHECKPOINT_ICON_KEYS)[CheckpointKind], string> 
   coffee: "M4 9h12v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5c0 1 1 1 1 2M12 3.5c0 1 1 1 1 2",
   elevator: "M5 3h14v18H5zM9 10l3-3 3 3M9 14l3 3 3-3",
   target: "M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8zM12 1v4M12 19v4M1 12h4M19 12h4",
+  sparkle: "M10 3l1.6 5.4L17 10l-5.4 1.6L10 17l-1.6-5.4L3 10l5.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z",
+  trophy: "M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.6M17 6h2.5a2.5 2.5 0 0 1-2.6 3.6M12 14v3M8 20h8M9.5 17h5",
 };
 
 // ------------------------------------------------------------------ drawing

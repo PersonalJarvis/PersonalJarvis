@@ -1,0 +1,4 @@
+[
+  {"type":"audio_timed","epoch":2,"audio":"AAAA","sample_rate":24000,"start_ms":600,"end_ms":800},
+  {"type":"speech_timing","epoch":2,"line_id":"live:test:segment","text":"One two","char_start":3,"char_end":7,"start_ms":1200,"end_ms":1400}
+]

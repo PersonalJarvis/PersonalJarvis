@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
+from jarvis.core.path_safety import contained_path
 from jarvis.sessions.formatter import format_session_markdown, format_session_plain
 from jarvis.sessions.models import (
     SessionDetail,
@@ -67,7 +68,7 @@ def _require_store(request: Request) -> SessionStore:
 
 
 @router.get("", response_model=list[SessionListItem])
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
     include_empty: bool = Query(
@@ -87,7 +88,7 @@ async def list_sessions(
 
 
 @router.get("/latest-turn", response_model=VoiceTurnRow)
-async def get_latest_user_turn(
+def get_latest_user_turn(
     request: Request,
     session_id: str | None = Query(default=None),
 ) -> VoiceTurnRow:
@@ -100,7 +101,7 @@ async def get_latest_user_turn(
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
-async def get_session_detail(session_id: str, request: Request) -> SessionDetail:
+def get_session_detail(session_id: str, request: Request) -> SessionDetail:
     """Full session: header + turns + raw events for replay."""
     store = _require_store(request)
     session = store.get_session(session_id)
@@ -112,7 +113,7 @@ async def get_session_detail(session_id: str, request: Request) -> SessionDetail
 
 
 @router.get("/{session_id}/export")
-async def export_session(
+def export_session(
     session_id: str,
     request: Request,
     export_format: Literal["markdown", "plain", "json"] = Query(
@@ -213,7 +214,9 @@ async def save_session_to_downloads(
     # Target path: %USERPROFILE%\Downloads\.
     downloads = Path.home() / "Downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    target = _avoid_collision(downloads / filename)
+    # contained_path refuses a name that would leave Downloads (defence in depth:
+    # the name is already built from a slug or the session id).
+    target = _avoid_collision(contained_path(downloads, filename))
 
     # Write — UTF-8 with a BOM only for plain text so Notepad detects it
     # correctly; Markdown + JSON stay pure UTF-8.

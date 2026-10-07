@@ -106,6 +106,28 @@ binding; changing one means editing this section first.
    badge, and voice ("Scout wartet auf deine Freigabe") are projections of that queue. Expiry
    NEVER silently drops work — the task parks as `blocked` and re-surfaces on the next app focus
    or voice turn.
+10. **Agents v2 (maintainer decision 2026-10-05): one click, one endless chat, learns by itself.**
+    - *Creation is one click.* "New agent" creates a row with a placeholder name, a random
+      appearance and the lead chat's current seat, then opens its chat. No form comes first;
+      the old creator becomes the "Edit details" sheet. `agent_id` is a random stable id, never
+      a slug of the (changeable) name.
+    - *The agent finds its role in conversation.* A fresh agent (no description yet) introduces
+      itself, asks what it is for and proposes an `identity` (name, title, description). The
+      first identity of a fresh agent applies at once with an undo chip; later identity changes
+      are confirmation cards like every other proposal. Focus is re-derived on apply.
+    - *One endless chat per created agent.* `society:<id>` is the only session. Work from Jarvis,
+      teammates and routines lands in that chat as a folded delegation card (sender, task,
+      outcome), never in a side chat. Old `:with:` / `:routine:` chats stay readable in the
+      archive. A message sent while the agent is busy is queued for the next round boundary
+      instead of being refused. Jarvis (the lead) keeps its multi-chat history.
+    - *Self-learning loop.* One review path (no second learning trigger), run on a cadence
+      (memory every few user turns or at once on a clear correction; skills after enough tool
+      work since the last skill write) on the agent's own seat. Background writes may only touch
+      skills the agent created and must read a skill before patching it; background memory
+      removals are proposals, never silent. Skills carry usage counts and age out
+      deterministically (active -> stale -> archived, never deleted). Every learned item shows
+      as one "Learned: ..." line in the chat with undo. Consolidation runs inside a review,
+      never on an idle timer (decision 8 stands).
 
 ## 3. Architecture
 
@@ -225,8 +247,9 @@ gate — is [`character-pipeline.md`](character-pipeline.md). Right: the spec sh
 effort default; tools & plugins (per-agent allowlist *under* the global tiers); permission badge;
 memory scope; routines with next-fire times; lifetime stats (runs, cost, last active). Actions:
 Chat, Assign task, Edit, Change avatar (preset parts + palettes / texture upload / AI-generate),
-Pause. Creation = **three fields (name, role, description) + an Advanced disclosure**; the agent
-introduces itself as its first chat message (Hermes' lesson: no wizard). One rig + one per-agent
+Pause. Creation = **one click** (§2.10): a placeholder name, a random look and the lead's seat;
+the agent introduces itself as its first chat message and proposes its own identity from the
+conversation. The former three-field creator is the "Edit details" sheet. One rig + one per-agent
 texture/part set drives world walker AND card figure; a rendered face crop feeds chat avatars.
 
 ### 4.3 World branding (maintainer directive, 2026-09-01)
@@ -322,13 +345,14 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   = Ledger + model cards (declared equivalent); no strobe/flash effects.
 - **Notifications:** finished/blocked agents surface via the existing Jarvis bar + badge counts +
   voice announcements; an expired approval re-asks on next focus (§2.9).
-- **Own implementation, no Hermes code (maintainer decision 2026-09-01, supersedes the earlier
-  "port Hermes" idea):** Hermes Bot Mode and Grok Bot are REFERENCES for behavior and product
-  shape only. No Hermes source is copied or adapted, no Hermes UI (JSX/CSS/components) is
-  transcribed, no `third_party/hermes-agent` attribution tree is needed because nothing is taken.
-  Rules and constants we adopted as ideas (bounded rooms 2–6 / ≤3 rounds / ≤10 messages, the
-  one-canonical-chat invariant, three-field creation, avatar-as-status) are re-implemented from
-  their described behavior in our own code. skinview3d MIT (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
+- **Third-party code with attribution (maintainer decision 2026-10-05, supersedes the
+  2026-09-01 "no Hermes code" rule):** well-separated code from NousResearch/hermes-agent (MIT)
+  may be adapted. Every adapted block carries a header naming the upstream repository, the
+  pinned commit, the MIT License and "Copyright (c) 2025 Nous Research"; the full license text
+  lives in `third_party/hermes-agent/LICENSE` and the component is listed in
+  `docs/licensing.md` and `NOTICE`. Tightly coupled engine code (agent loop, context
+  compressor, skill manager) is not vendored. Product copy never presents another product as a
+  design reference. skinview3d MIT (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
   precedent; the character pipeline is first-party in meshes, textures and runtime, on a CC0
   skeleton with CC0 clips (KayKit Character Pack: Adventurers, recorded with sha256 and license
   in `scripts/figures/sources/` and `src/assets/society/figures/SOURCES.md` — decision 2026-09-02;
@@ -403,8 +427,8 @@ Decided 2026-09-01:
 6. **Model card:** near-full-screen overlay above the world, three columns Specs | 3D | Chat;
    the chat is the ordinary agent chat (Claude Code / Codex-style timeline); one open chat at a
    time (§4.2).
-7. **No Hermes code or UI is copied.** Hermes and Grok Bot are orientation only; the whole
-   society — backend and UI — is built in-house (§7).
+7. ~~No Hermes code or UI is copied.~~ Superseded 2026-10-05: well-separated MIT code may be
+   adapted with attribution (§7).
 8. **Build start:** frontend card work may proceed on clearly-labeled sample data while M1 lands
    (`components/society/data.ts` is the single swap point).
 10. **World layout & art direction (2026-09-01/02):** colourful pixel island, solarpunk village in

@@ -19,6 +19,7 @@ builder returns nothing and the turn runs as a plain Jarvis chat.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections.abc import Callable
@@ -47,7 +48,7 @@ from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id
+from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
 from .share_tool import ShareTemplateTool
@@ -824,8 +825,12 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     rt.checkpoints.note_turn_started(agent.agent_id, str(getattr(session, "session_id", "")))
     catalog = rt.catalog()
     roster = await rt.roster.list()
-    browser = rt.browser.status_for(agent)
-    learned = rt.skills_for(agent.agent_id).summaries()
+    browser = await asyncio.to_thread(rt.browser.status_for, agent)
+    # The live runner provisions on demand, including in unattended routine chats.
+    browser["auto_start"] = (
+        browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
+    )
+    learned = rt.skills_for(agent.agent_id).for_briefing()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
     except Exception:  # noqa: BLE001 — a vault that cannot be read costs the head, not the turn
@@ -852,6 +857,19 @@ def _kind_label(kind: CapabilityKind) -> str:
         CapabilityKind.SKILL: "skills",
         CapabilityKind.CORE: "built-in",
     }[kind]
+
+
+#: The introduction frame of a fresh agent (one-click creation): it has a
+#: placeholder name and no role until its person says what it is for.
+FRESH_AGENT_GUIDANCE = (
+    "You were just created and have no role yet; your current name is a placeholder. "
+    "If the person has not said what you are for, greet them in one or two sentences, say "
+    "you are new, and ask what you should take care of. As soon as they tell you, call "
+    "society_propose_change with kind 'identity': a short fitting name, a one-line title, "
+    "and a description written as your standing instructions (goal, responsibilities, "
+    "working style), in the person's language. Then start on the task they gave you. "
+    "Never invent a role the person did not describe."
+)
 
 
 def build_briefing(
@@ -895,6 +913,8 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    if is_fresh(agent):
+        parts.append("## You are new\n" + FRESH_AGENT_GUIDANCE)
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
     parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
@@ -956,24 +976,27 @@ def build_briefing(
 
 def _browser_line(browser: dict[str, Any] | None) -> str:
     """One byte-stable line about the agent's browser (agent-definition §3)."""
-    if not browser or not browser.get("installed"):
+    if not browser or not (browser.get("installed") or browser.get("auto_start")):
         return (
             "## Your browser\nNot set up on this machine yet — the user can install it from your "
             "card. Until then use plugins, CLIs and search-web for the web."
         )
-    if browser.get("mode") == "attach":
+    if browser.get("error"):
+        return "## Your browser\n" + str(browser["error"]) + ". Ask the user to choose a profile."
+    if browser.get("mode") in {"attach", "chrome"}:
         return (
-            "## Your browser\nsociety_browser drives the user's own running Chrome (attached), "
-            "with their logins. One task per call, capped steps."
+            "## Your browser\nsociety_browser uses your assigned Chrome profile. "
+            "Website authentication must be checked on the actual page. "
+            "If disconnected, ask the user to connect that profile in the Jarvis extension. "
+            "Never switch to another browser or account. One task per call, capped steps."
         )
-    logged = (
-        "signed-in profile present"
-        if browser.get("logged_in_profile")
-        else ("no logins yet — ask the user for a login session when a site needs one")
-    )
+    logged = "website authentication unverified; ask for manual login when a site requires it"
     return (
         "## Your browser\nsociety_browser runs in your own persistent browser profile "
-        f"({logged}). One task per call, capped steps; sending, buying, deleting or "
+        f"({logged}). Call society_browser whenever a task or routine needs it, even when "
+        "the browser or its panel is closed. It prepares and starts the browser automatically; "
+        "do not ask the user to open or install it first. "
+        "One task per call, capped steps; sending, buying, deleting or "
         "publishing asks the user first."
     )
 

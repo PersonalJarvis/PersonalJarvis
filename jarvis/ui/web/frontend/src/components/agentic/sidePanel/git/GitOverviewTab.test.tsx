@@ -92,6 +92,33 @@ let status = 200;
 let gate: Promise<void> | null = null;
 const calls: string[] = [];
 const puts: string[] = [];
+const opens: string[] = [];
+const diffs: string[] = [];
+const CONTENTS = {
+  available: true,
+  branch: "feature/wip",
+  base: "origin/main",
+  commits: [
+    { sha: "aaaaaaaaaaaa", subject: "Add the widget", author: "Ada", committed_at: 1_790_000_000, on_github: false },
+    { sha: "bbbbbbbbbbbb", subject: "Start the widget", author: "Ada", committed_at: 1_789_000_000, on_github: true },
+  ],
+  commits_truncated: false,
+  files: [
+    { path: "src/widget.ts", status: "added", added: 12, removed: 0 },
+    { path: "README.md", status: "modified", added: 2, removed: 1 },
+  ],
+  files_truncated: false,
+  reason: "",
+};
+const FILE_DIFF = {
+  path: "src/widget.ts",
+  status: "added",
+  binary: false,
+  added: 1,
+  removed: 0,
+  truncated: false,
+  hunks: [{ header: "@@ -0,0 +1 @@", lines: [{ kind: "add", text: "export const widget = 1;", old_no: null, new_no: 1 }] }],
+};
 const REPOS = {
   connected: true,
   source: "app",
@@ -109,6 +136,8 @@ beforeEach(() => {
   gate = null;
   calls.length = 0;
   puts.length = 0;
+  opens.length = 0;
+  diffs.length = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -117,6 +146,16 @@ beforeEach(() => {
       const json = (body: unknown, code = 200) =>
         new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
       if (url.includes("/github/repos")) return json(REPOS);
+      if (url.includes("/branch/contents")) return json(CONTENTS);
+      if (url.includes("/branch/diff")) {
+        diffs.push(url);
+        return json(FILE_DIFF);
+      }
+      if (url.includes("/branch/editors")) return json({ file_manager: true, editors: [{ id: "code", label: "VS Code" }] });
+      if (url.includes("/branch/open")) {
+        opens.push(String(init?.body));
+        return json({ opened: true, path: "/code/app" });
+      }
       if (url.includes("/github/binding")) {
         puts.push(String(init?.body));
         answer = OVERVIEW;
@@ -149,6 +188,7 @@ describe("GitOverviewTab", () => {
       "feature/queued",
       "feature/draft",
       "feature/dropped",
+      "only-remote",
     ]);
     expect(row("feature/wip").dataset.current).toBe("true");
     expect(row("main").dataset.current).toBeUndefined();
@@ -199,12 +239,12 @@ describe("GitOverviewTab", () => {
     expect(tip.textContent).toContain("lint");
   });
 
-  it("folds GitHub-only branches away until asked, and forces a GitHub read on refresh", async () => {
+  it("lists GitHub-only branches, folds them on request, and forces a GitHub read on refresh", async () => {
     render(<GitOverviewTab />);
     await screen.findAllByTestId("git-branch-row");
-    expect(screen.queryAllByTestId("git-branch-row").some((el) => el.dataset.branch === "only-remote")).toBe(false);
-    fireEvent.click(screen.getByTestId("git-remote-toggle"));
     expect(row("only-remote")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("git-remote-toggle"));
+    expect(screen.queryAllByTestId("git-branch-row").some((el) => el.dataset.branch === "only-remote")).toBe(false);
     fireEvent.click(screen.getByTestId("git-refresh"));
     await vi.waitFor(() => expect(calls.some((url) => url.includes("refresh=true"))).toBe(true));
   });
@@ -226,7 +266,7 @@ describe("GitOverviewTab", () => {
     expect(screen.getByTestId("git-repo-picker").textContent).toContain("Connect a GitHub repository");
     fireEvent.click(choices[0]);
     await vi.waitFor(() => expect(puts).toEqual([JSON.stringify({ workspace_id: "w1", repo: "o/r" })]));
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
     expect(screen.queryByTestId("git-repo-picker")).toBeNull();
   });
 
@@ -240,7 +280,7 @@ describe("GitOverviewTab", () => {
     });
     fireEvent.click(screen.getAllByTestId("git-repo-choice")[0]);
     // The local branches and the choice show before GitHub has answered.
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
     expect(screen.queryByTestId("git-repo-picker")).toBeNull();
     const state = screen.getByTestId("git-github-state");
     expect(state.textContent).toContain("o/r");
@@ -254,16 +294,133 @@ describe("GitOverviewTab", () => {
     fireEvent.click(await screen.findByTestId("git-bound-repo"));
     await vi.waitFor(() => expect(screen.getAllByTestId("git-repo-choice")).toHaveLength(2));
     fireEvent.click(screen.getByLabelText("Keep the current repository"));
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
   });
 
   it("offers to connect GitHub and still lists the local branches", async () => {
     answer = { ...OVERVIEW, github: { ...OVERVIEW.github, available: false, code: "not_connected", repo: "" } };
     render(<GitOverviewTab />);
     expect(await screen.findByTestId("git-connect-github")).toBeTruthy();
-    expect(screen.getAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(screen.getAllByTestId("git-branch-row")).toHaveLength(7);
     fireEvent.click(screen.getByText("Connect GitHub"));
     expect(useEventStore.getState().activeSection).toBe("plugins");
+  });
+
+  it("opens a branch on GitHub from its icon, and leaves unpushed branches inert", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(within(row("feature/done")).getByTestId("git-branch-link"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/tree/feature/done");
+    expect(within(row("wip/local")).getByTestId("git-branch-link").tagName).toBe("SPAN");
+  });
+
+  it("marks every branch as local only, local and on GitHub, or GitHub only", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    const location = (name: string) => within(row(name)).getByTestId("git-location");
+    expect(location("wip/local").dataset.location).toBe("local");
+    expect(location("wip/local").textContent).toBe("local only");
+    expect(location("main").dataset.location).toBe("both");
+    expect(location("main").textContent).toBe("local + GitHub");
+    expect(location("only-remote").dataset.location).toBe("github_only");
+  });
+
+  it("shows when each branch last changed", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    answer = {
+      ...OVERVIEW,
+      branches: [
+        branch("fresh", { committed_at: now - 2 * 3600 }),
+        branch("old", { committed_at: Date.UTC(2024, 2, 3, 12) / 1000 }),
+        branch("undated"),
+      ],
+    };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    const date = (name: string) => within(row(name)).queryByTestId("git-commit-date")?.textContent;
+    expect(date("fresh")).toBe("2 hr. ago");
+    expect(date("old")).toBe("Mar 3, 2024");
+    expect(date("undated")).toBeUndefined();
+  });
+
+  it("folds a clicked branch open with its local folder and its GitHub page", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    expect(screen.queryByTestId("git-branch-details")).toBeNull();
+
+    fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));
+    const details = within(row("feature/wip")).getByTestId("git-branch-details");
+    await within(details).findByTestId("git-branch-commits");
+    fireEvent.click(await within(details).findByTestId("git-open-folder"));
+    await vi.waitFor(() => expect(opens).toHaveLength(1));
+    expect(JSON.parse(opens[0])).toEqual({ workspace_id: "w1", branch: "feature/wip", target: "folder" });
+    fireEvent.click(within(details).getByTestId("git-open-code"));
+    await vi.waitFor(() => expect(JSON.parse(opens[1]).target).toBe("code"));
+    fireEvent.click(within(details).getByTestId("git-open-github"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/tree/feature/wip");
+    fireEvent.click(within(details).getByTestId("git-open-pr"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/pull/7");
+
+    // Not checked out anywhere: nothing local to open, the switch command instead; not on GitHub either.
+    fireEvent.click(within(row("wip/local")).getByTestId("git-branch-toggle"));
+    const local = within(row("wip/local")).getByTestId("git-branch-details");
+    await within(local).findByTestId("git-branch-commits");
+    expect(within(local).queryByTestId("git-open-folder")).toBeNull();
+    expect(within(local).getByTestId("git-copy-switch")).toBeTruthy();
+    expect(within(local).queryByTestId("git-open-github")).toBeNull();
+
+    // The branch is readable in place: its commits and files, each file's diff one click away.
+    // A commit only on this computer gets no GitHub link (that page would be a 404).
+    const commit = (sha: string) => within(details).getAllByTestId("git-branch-commit").find((el) => el.dataset.sha === sha)!;
+    expect(within(commit("aaaaaaaaaaaa")).queryByTestId("git-commit-link")).toBeNull();
+    expect(within(commit("aaaaaaaaaaaa")).getByTestId("git-commit-local")).toBeTruthy();
+    fireEvent.click(within(commit("bbbbbbbbbbbb")).getByTestId("git-commit-link"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/commit/bbbbbbbbbbbb");
+    expect(within(details).getByTestId("git-branch-commits").textContent).toContain("Add the widget");
+    expect(within(details).getByTestId("git-branch-commits").textContent).toContain("2 commits not in origin/main");
+    const file = within(details).getAllByTestId("git-branch-file").find((el) => el.dataset.path === "src/widget.ts")!;
+    fireEvent.click(within(file).getByRole("button"));
+    expect(await within(file).findByTestId("explorer-diff")).toBeTruthy();
+    expect(within(file).getByTestId("explorer-diff").textContent).toContain("export const widget = 1;");
+    expect(diffs[0]).toContain("path=src%2Fwidget.ts");
+    expect(diffs[0]).toContain("base=main");
+
+    // A second click folds it away again.
+    fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));
+    expect(within(row("feature/wip")).queryByTestId("git-branch-details")).toBeNull();
+  });
+
+  it("offers GitHub pages and copies from a branch's menu", async () => {
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(within(row("feature/queued")).getByTestId("git-branch-more"));
+    const menu = await screen.findByTestId("git-branch-menu");
+    expect(within(menu).getByTestId("git-menu-pr").textContent).toContain("#8");
+    // A live pull request exists, so there is nothing new to create.
+    expect(within(menu).queryByTestId("git-menu-create-pr")).toBeNull();
+    fireEvent.click(within(menu).getByTestId("git-menu-compare"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/compare/main...feature/queued");
+    expect(screen.queryByTestId("git-branch-menu")).toBeNull();
+
+    fireEvent.contextMenu(row("feature/done"));
+    const second = await screen.findByTestId("git-branch-menu");
+    fireEvent.click(within(second).getByTestId("git-menu-create-pr"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/compare/main...feature/done?expand=1");
+  });
+
+  it("narrows the list by search and by filter", async () => {
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(screen.getByTestId("git-filter-failing"));
+    expect(screen.getAllByTestId("git-branch-row").map((el) => el.dataset.branch)).toEqual(["feature/dropped"]);
+    fireEvent.click(screen.getByTestId("git-filter-all"));
+    fireEvent.change(screen.getByTestId("git-search"), { target: { value: "#9" } });
+    expect(screen.getAllByTestId("git-branch-row").map((el) => el.dataset.branch)).toEqual(["feature/draft"]);
+    fireEvent.change(screen.getByTestId("git-search"), { target: { value: "nothing-like-this" } });
+    expect(screen.getByTestId("git-filter-empty")).toBeTruthy();
   });
 
   it("asks for one restart when the running backend does not know the route yet", async () => {

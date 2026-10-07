@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -182,7 +183,7 @@ def _session_config(session: dict) -> dict:
 
 
 class OpenAISubscriptionLiveConnection:
-    """One private control socket; RTP audio belongs solely to the browser."""
+    """One subscription sideband with timed audio and host-owned controls."""
 
     requires_close_ack = False
     usage_billed = False
@@ -230,12 +231,18 @@ class OpenAISubscriptionLiveConnection:
         text = payload.get("transcript" if done else "text", "")
         if not isinstance(text, str):
             raise SubscriptionLiveError("invalid_response")
+        timing = payload if done else event
+        start, end = timing.get("start_ms"), timing.get("end_ms")
+        timed = (
+            type(start) in (int, float) and type(end) in (int, float)
+            and math.isfinite(start) and math.isfinite(end) and 0 <= start < end
+        )
         turn = self._turns.setdefault(
             role,
             {
                 "id": str(uuid4()),
                 "text": "",
-                "start_ms": now,
+                "start_ms": start if timed else now,
             },
         )
         turn["text"] = text if done else turn["text"] + text
@@ -253,8 +260,9 @@ class OpenAISubscriptionLiveConnection:
             "snapshot": True,
             "is_final": done,
             "start_ms": turn["start_ms"],
-            "end_ms": now,
-            "timestamp_source": "local_receive_clock",
+            "end_ms": end if timed else now,
+            "timestamp_source": "source_audio" if timed else "local_receive_clock",
+            **({"fragment_start_ms": start, "fragment_end_ms": end} if timed else {}),
         }
         if done:
             del self._turns[role]
@@ -264,6 +272,16 @@ class OpenAISubscriptionLiveConnection:
         if self._already_seen(event):
             return {"type": "subscription.ignored"}
         kind = event.get("type")
+        if kind in {"session.output_audio.delta", "output_audio.delta"}:
+            audio = event.get("delta" if kind.startswith("session.") else "audio")
+            if not isinstance(audio, str) or len(audio) > _MAX_FRAME_BYTES:
+                raise SubscriptionLiveError("invalid_response")
+            # Playback is explicitly negotiated as PCM by the host. RTP is
+            # still the input transport but must not also drive the speaker.
+            return {
+                "type": "session.output_audio.delta", "delta": audio,
+                "start_ms": event.get("start_ms"), "end_ms": event.get("end_ms"),
+            }
         if kind in {"input_transcript.added", "output_transcript.added"}:
             return self._transcript(
                 event,
@@ -341,7 +359,6 @@ class OpenAISubscriptionLiveConnection:
                     "message": str(SubscriptionLiveError(code)),
                 },
             }
-        # In particular, never mirror output_audio.delta onto browser playback.
         return {"type": "subscription.ignored"}
 
     async def receive(self) -> dict:
@@ -434,6 +451,7 @@ class OpenAISubscriptionLiveProvider:
     """Additive subscription adapter; never searches for or falls back to a key."""
 
     name = "openai-live-subscription"
+    source_timed_audio = True
     credential_family = "openai-codex"
     credential_candidates: tuple = ()
     supports_realtime = True
@@ -468,6 +486,17 @@ class OpenAISubscriptionLiveProvider:
     async def can_open_duplex_session(self) -> bool:
         return callable(self._credentials)
 
+    @staticmethod
+    async def warm_transport(cfg: Any = None) -> None:
+        """Prepare local imports/trust stores after the host's voice warm gate.
+
+        No credential read or refresh, microphone, DNS or remote session is
+        needed. Every explicit call still reads its selected account afresh.
+        """
+        from ._live_transport import warm_transport
+
+        await warm_transport()
+
     async def _headers(self, *, force_refresh: bool = False) -> dict[str, str]:
         credential = await self._credentials(force_refresh=force_refresh)
         token = getattr(credential, "access_token", "")
@@ -485,6 +514,8 @@ class OpenAISubscriptionLiveProvider:
         """
         if not call_id or self._connection_permit is None:
             return False
+        from ._live_transport import websocket_options
+
         socket = None
         try:
             async with asyncio.timeout(8):
@@ -497,6 +528,7 @@ class OpenAISubscriptionLiveProvider:
                     close_timeout=2,
                     max_size=_MAX_FRAME_BYTES,
                     max_queue=4,
+                    **await websocket_options(),
                 )
                 await socket.send(json.dumps({"type": "session.close"}))
             return True
@@ -522,6 +554,8 @@ class OpenAISubscriptionLiveProvider:
         """
         from websockets.asyncio.client import connect
 
+        from ._live_transport import websocket_options
+
         if previous.provider_closed or previous._close_sent:
             return None
         if self._connection_permit is None:
@@ -543,6 +577,7 @@ class OpenAISubscriptionLiveProvider:
                     close_timeout=3,
                     max_size=_MAX_FRAME_BYTES,
                     max_queue=32,
+                    **await websocket_options(),
                 )
             except Exception as error:
                 status = getattr(getattr(error, "response", None), "status_code", None)
@@ -576,8 +611,9 @@ class OpenAISubscriptionLiveProvider:
 
     async def open_session(self, cfg: Any) -> OpenAISubscriptionLiveConnection:
         # Optional dependencies are loaded only for an explicitly started call.
-        import httpx
         from websockets.asyncio.client import connect
+
+        from ._live_transport import preparing_http_client, websocket_options
 
         offer = str(cfg.offer_sdp or "")
         if not _audio_only_sdp(offer) or len(offer.encode("utf-8")) > _MAX_SDP_BYTES:
@@ -589,14 +625,24 @@ class OpenAISubscriptionLiveProvider:
             "thread-id": str(uuid4()),
             "x-session-id": str(uuid4()),
         }
-        headers = {**await self._headers(), **request_headers}
-        client_factory = self._http_client_factory or httpx.AsyncClient
+        headers = dict(request_headers)
         connector = self._websocket_connect or connect
         call_id, answer = "", ""
         allocated = False
+        credentials_ready = False
         started_at = time.monotonic()
+        mark = getattr(cfg, "on_startup_phase", None) or (lambda _phase: None)
         try:
-            async with client_factory(timeout=25, follow_redirects=False) as client:
+            # Local TLS/client construction and selected-account loading are
+            # independent. Neither operation can allocate a remote voice call.
+            async with preparing_http_client(
+                self._http_client_factory, timeout=25, follow_redirects=False,
+            ) as preparation:
+                headers = {**await self._headers(), **request_headers}
+                credentials_ready = True
+                mark("credentials_ready")
+                client = await asyncio.shield(preparation)
+                mark("http_client_ready")
                 for attempt in range(2):
                     async with client.stream(
                         "POST",
@@ -621,7 +667,13 @@ class OpenAISubscriptionLiveProvider:
                         answer = content.decode("utf-8")
                         if not _audio_only_sdp(answer):
                             raise SubscriptionLiveError("invalid_response")
+                        mark("session_response")
                         break
+            on_transport_ready = getattr(cfg, "on_transport_ready", None)
+            if on_transport_ready is not None:
+                # Negotiate browser media while the trusted sideband attaches.
+                # The host keeps microphone output gated until both are ready.
+                await on_transport_ready(answer)
         except asyncio.CancelledError:
             if allocated:
                 await self._retire_allocation(call_id, headers, connector)
@@ -632,6 +684,10 @@ class OpenAISubscriptionLiveProvider:
                 error.allocation_unconfirmed = True
             raise
         except Exception:
+            if not credentials_ready:
+                # Preserve the auth layer's actionable, sanitized errors just
+                # as before preparation was overlapped with credential work.
+                raise
             if allocated:
                 await self._retire_allocation(call_id, headers, connector)
             raise SubscriptionLiveError(
@@ -644,6 +700,9 @@ class OpenAISubscriptionLiveProvider:
         # retry pays the host's shared connection permit and includes jitter.
         for attempt in range(3):
             try:
+                options = await websocket_options()
+                mark("control_tls_ready")
+                attach_started_at = time.monotonic()
                 socket = await connector(
                     SIDEBAND_BASE + call_id,
                     additional_headers=headers,
@@ -651,6 +710,11 @@ class OpenAISubscriptionLiveProvider:
                     close_timeout=3,
                     max_size=_MAX_FRAME_BYTES,
                     max_queue=32,
+                    **options,
+                )
+                log.info(
+                    "Subscription Live control attached in %.0f ms.",
+                    (time.monotonic() - attach_started_at) * 1000,
                 )
                 return OpenAISubscriptionLiveConnection(
                     socket,
@@ -664,8 +728,12 @@ class OpenAISubscriptionLiveProvider:
             except Exception as error:
                 status = getattr(getattr(error, "response", None), "status_code", None)
                 if status == 404 and attempt < 2 and self._connection_permit is not None:
-                    await asyncio.sleep(_jitter.uniform(0.15, 0.35) * (2**attempt))
-                    await self._connection_permit()
+                    try:
+                        await asyncio.sleep(_jitter.uniform(0.15, 0.35) * (2**attempt))
+                        await self._connection_permit()
+                    except asyncio.CancelledError:
+                        await self._retire_allocation(call_id, headers, connector)
+                        raise
                     continue
                 # No verified HTTP hangup exists for this private route. Try
                 # the same control channel for cleanup, never another call.

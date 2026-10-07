@@ -25,6 +25,8 @@ const SPLASH_EXIT_FALLBACK_MS = 1000;
 
 interface AuthGateProps {
   children: ReactNode;
+  /** No boot splash while checking (the appshot editor window). */
+  quiet?: boolean;
 }
 
 async function createSession(body: { control_key: string } | { session_token: string }) {
@@ -57,7 +59,7 @@ function waitForInjectedToken(): Promise<string> {
   });
 }
 
-export function AuthGate({ children }: AuthGateProps) {
+export function AuthGate({ children, quiet = false }: AuthGateProps) {
   const t = useT();
   const started = useRef(false);
   // The HTML splash starts the reveal before React loads. Continue that same
@@ -222,8 +224,10 @@ export function AuthGate({ children }: AuthGateProps) {
   // treats a bare splash in #root as "bundle still loading" and reloads it
   // after its grace period. A held cold boot can legitimately outlast that,
   // so the gate's splash must count as the app being up.
+  // A quiet gate (the appshot editor window) shows nothing while it checks:
+  // a start-up screen there would stand in front of the picture.
   const splashLayer =
-    splash === "gone" ? null : (
+    quiet || splash === "gone" ? null : (
       <main id="jarvis-auth-splash">
         <BootSplash
           name={readCachedAssistantName("")}

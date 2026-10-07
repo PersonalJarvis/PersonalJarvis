@@ -24,6 +24,7 @@ from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
 from jarvis.voice import instant_ack as instant_ack_module
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -101,7 +102,7 @@ def _make_pipeline(
     pipeline._brain = SimpleNamespace(_readback_composer=composer)  # type: ignore[attr-defined]
     pipeline._turn_state = TurnTakingState.PROCESSING
     pipeline._brain_first_frame_played = False
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 def _instant_acks(published: list[AnnouncementRequested]) -> list[AnnouncementRequested]:

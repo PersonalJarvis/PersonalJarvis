@@ -1370,6 +1370,11 @@ def _agent_alternation() -> str:
     return "|".join(sorted(parts, key=len, reverse=True))
 
 
+#: The patterns below are built from the LIVE registry, which changes while the
+#: app runs: a CLI the user adds in the workspace dialog has to be openable by
+#: name ("open five Cursor terminals") in the same session, not after a
+#: restart. :func:`refresh_agent_patterns` rebuilds them; the registry calls it
+#: whenever its entries change.
 _AGENT_ALTERNATION = _agent_alternation()
 
 _AGENT_RE = re.compile(rf"\b(?P<agent>{_AGENT_ALTERNATION})\b", re.IGNORECASE)
@@ -1581,12 +1586,14 @@ def _spoken_count(text: str) -> int:
 #: "three terminals of Codex" as often as "three Codex terminals") plus the
 #: usual qualifiers. Bounded at two words so the count and the agent cannot
 #: drift into different clauses of the sentence.
-_COUNT_AGENT_RE = re.compile(
+_COUNT_AGENT_PREFIX = (
     r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
     r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|"  # i18n-allow: input vocab
     r"additional|de|del|"
     r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
-    rf"(?P<agent>{_AGENT_ALTERNATION})\b",
+)
+_COUNT_AGENT_RE = re.compile(
+    rf"{_COUNT_AGENT_PREFIX}(?P<agent>{_AGENT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 
@@ -1635,6 +1642,34 @@ _ARTICLE_SIZES_RE = re.compile(
     rf"(?:{_PANE_NOUN_RE.pattern}|{_AGENT_RE.pattern})",
     re.IGNORECASE,
 )
+
+
+def _compile_agent_patterns(alternation: str) -> None:
+    """Rebind every module pattern that spells out the registered CLI names."""
+    global _AGENT_ALTERNATION, _AGENT_RE, _COUNT_AGENT_RE, _ARTICLE_SIZES_RE
+    _AGENT_ALTERNATION = alternation
+    _AGENT_RE = re.compile(rf"\b(?P<agent>{alternation})\b", re.IGNORECASE)
+    _COUNT_AGENT_RE = re.compile(
+        rf"{_COUNT_AGENT_PREFIX}(?P<agent>{alternation})\b",
+        re.IGNORECASE,
+    )
+    _ARTICLE_SIZES_RE = re.compile(
+        rf"\s*(?:[^\W\d_]+\s+){{0,{_ARTICLE_FILLER_WORDS}}}"
+        rf"(?:{_PANE_NOUN_RE.pattern}|{_AGENT_RE.pattern})",
+        re.IGNORECASE,
+    )
+
+
+def refresh_agent_patterns() -> None:
+    """Re-read the registry's spoken names into this parser's patterns.
+
+    Called by :mod:`jarvis.workspace.agents` whenever an entry is added,
+    edited or removed. Cheap when nothing changed — the alternation is
+    compared before anything is recompiled.
+    """
+    alternation = _agent_alternation()
+    if alternation != _AGENT_ALTERNATION:
+        _compile_agent_patterns(alternation)
 
 
 def _article_sizes_something(text: str, end: int) -> bool:

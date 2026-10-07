@@ -1,12 +1,7 @@
 /**
- * Geometry and smoothing math for the voice visualizer pill — pure, so both
- * the static style preview and the live visualizer draw the SAME graphic and
- * the animation math can be unit-tested without a DOM or an audio device.
- *
- * The numbers mirror the desktop JarvisBar renderer (``jarvis/ui/jarvisbar/
- * renderer.py``) so the web surface and the on-screen overlay read as one
- * product: a dark pill with a gold rim and a slim row of rounded strokes.
- * Only the palette differs — see ``OverlayStylePreviews`` for why.
+ * Geometry and smoothing math for the in-app voice waveform. Its animation
+ * math can be tested without a DOM or an audio device. The desktop Jarvis Bar
+ * uses the shared Pet control strip and has its own geometry.
  */
 
 /** Preview/visualizer viewBox. Everything below is in these units. */

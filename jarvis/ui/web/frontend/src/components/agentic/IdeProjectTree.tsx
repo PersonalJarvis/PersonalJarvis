@@ -7,6 +7,8 @@ import { useComputerChoices } from "@/hooks/useComputers";
 import { addTerminal, fetchWorkspacePanes, interruptTerminal, placeWorkspace, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import cursorLogo from "@/assets/editors/cursor.svg?url";
+import vscodeLogo from "@/assets/editors/vscode.svg?url";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
@@ -56,6 +58,32 @@ function removalErrorMessage(error: unknown): string {
     return REORDER_NEEDS_RESTART;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+const NO_LAUNCHERS: ProjectLaunchers = { file_manager: false, editors: [], remote_url: null, remote_label: null };
+
+// Launchers outlive the tree, so a menu opened after switching views is
+// complete at once instead of growing its editor rows a moment later.
+const launcherCache = new Map<string, ProjectLaunchers>();
+const launcherRequests = new Map<string, Promise<ProjectLaunchers>>();
+
+/** One launcher request per project at a time; settles into `launcherCache`. */
+function loadLaunchers(projectId: string): Promise<ProjectLaunchers> {
+  const pending = launcherRequests.get(projectId);
+  if (pending) return pending;
+  const request = fetchProjectLaunchers(projectId)
+    // A headless or older backend has no launchers; the menu simply omits them.
+    .catch(() => NO_LAUNCHERS)
+    .then((found) => { launcherCache.set(projectId, found); return found; })
+    .finally(() => { launcherRequests.delete(projectId); });
+  launcherRequests.set(projectId, request);
+  return request;
+}
+
+/** Test hook: forget every cached launcher set. */
+export function resetLauncherCacheForTests(): void {
+  launcherCache.clear();
+  launcherRequests.clear();
 }
 
 /**
@@ -123,7 +151,7 @@ export function IdeProjectTree() {
   // What the open menu can offer beyond the row itself: the project's editors
   // and remote, and the panes of the workspace. Fetched when a menu opens, so
   // an item is only shown when it can actually run.
-  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>({});
+  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>(() => Object.fromEntries(launcherCache));
   const [menuPanes, setMenuPanes] = useState<WorkspacePaneRow[] | null>(null);
   const [confirmProject, setConfirmProject] = useState<string | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -260,13 +288,27 @@ export function IdeProjectTree() {
 
   const menuProjectId = contextMenu?.projectId ?? null;
   const menuWorkspaceId = contextMenu?.kind === "workspace" ? contextMenu.workspaceId : null;
+  // Fetched ahead, one project after another, so the menu is complete the
+  // moment it opens; opening it refreshes that project in the background.
+  const visibleProjectKey = visible.map((project) => project.id).join("\u0000");
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      for (const id of visibleProjectKey ? visibleProjectKey.split("\u0000") : []) {
+        if (!live) return;
+        if (launcherCache.has(id)) continue;
+        const found = await loadLaunchers(id);
+        if (live) setLaunchers((previous) => ({ ...previous, [id]: found }));
+      }
+    })();
+    return () => { live = false; };
+  }, [visibleProjectKey]);
+
   useEffect(() => {
     if (!menuProjectId) return;
     let live = true;
-    fetchProjectLaunchers(menuProjectId)
-      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); })
-      // A headless or older backend has no launchers; the menu simply omits them.
-      .catch(() => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: { file_manager: false, editors: [], remote_url: null, remote_label: null } })); });
+    loadLaunchers(menuProjectId)
+      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); });
     return () => { live = false; };
   }, [menuProjectId]);
 
@@ -280,9 +322,13 @@ export function IdeProjectTree() {
     return () => { live = false; };
   }, [menuWorkspaceId]);
 
-  const openIn = async (projectId: string, target: string) => {
-    try { await openProjectIn(projectId, target); }
-    catch (error) { pushToast("error", revealErrorMessage(error)); }
+  const openIn = async (projectId: string, target: string, label: string) => {
+    // A cold editor can take seconds to draw its first window; say at once
+    // that the click landed instead of leaving the user guessing.
+    pushToast("info", `Opening ${label}…`);
+    try {
+      if (!(await openProjectIn(projectId, target))) pushToast("error", `${label} could not be started`);
+    } catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
   /** One more pane of the workspace's own agent, then bring the workspace to the front. */
@@ -668,19 +714,23 @@ export function IdeProjectTree() {
 
   const run = (action: () => void) => () => { setContextMenu(null); action(); };
 
-  /** Up to two installed editors and the hosted remote, as menu items. */
+  /** VS Code, Cursor (greyed when not installed) and the hosted remote, as menu items. */
   const launcherItems = (project: IdeProject, scope: "project" | "workspace"): TreeMenuItem[] => {
     const found = launchers[project.id];
     if (!found) return [];
-    const items: TreeMenuItem[] = found.editors.slice(0, 2).map((editor) => ({
-      id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, testId: `ide-${scope}-menu-editor-${editor.id}`,
-      onSelect: run(() => void openIn(project.id, editor.id)),
-    }));
+    const items: TreeMenuItem[] = found.editors.map((editor) => {
+      const installed = editor.installed !== false;
+      return {
+        id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, image: EDITOR_LOGOS[editor.id],
+        testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : "Not installed",
+        onSelect: run(() => void openIn(project.id, editor.id, editor.label)),
+      };
+    });
     if (scope === "project" && found.file_manager) {
       items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
     }
     if (scope === "project" && found.remote_url) {
-      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote")) });
+      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote", found.remote_label ?? "the web page")) });
     }
     return items;
   };
@@ -855,12 +905,16 @@ const FILE_MANAGER_LABEL = (() => {
   return "Show in file manager";
 })();
 const TREE_MENU_MARGIN = 8;
+/** Each featured editor's own app icon, in its real colours. */
+const EDITOR_LOGOS: Record<string, string> = { code: vscodeLogo, cursor: cursorLogo };
 
 /** One row of the sidebar's action menu. */
 interface TreeMenuItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  /** A brand mark drawn instead of `icon`; greyed out with the item when disabled. */
+  image?: string;
   testId: string;
   onSelect: () => void;
   disabled?: boolean;
@@ -981,7 +1035,10 @@ function TreeContextMenu({
                     : "text-foreground hover:bg-muted focus-visible:bg-muted"
                 }`}
               >
-                <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />
+                {item.image
+                  ? <img src={item.image} alt="" aria-hidden draggable={false} data-testid={`${item.testId}-logo`}
+                      className={`h-4 w-4 shrink-0 object-contain ${item.disabled ? "grayscale" : ""}`} />
+                  : <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />}
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{item.label}</span>
                   {item.hint && <span className="truncate text-[11px] text-muted-foreground">{item.hint}</span>}
