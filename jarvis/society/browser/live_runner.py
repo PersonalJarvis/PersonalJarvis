@@ -222,8 +222,12 @@ class Worker:
 
         if self.owns_context:
             await self.context.route("**/*", route_request)
-            # Chromium can return its first page before publishing the CDP port file.
-            async with asyncio.timeout(15):
+            # Chromium can return its first page before publishing the CDP port
+            # file. A cold first launch (fresh profile, antivirus scanning the
+            # binary, a loaded ARM machine) has taken longer than 15 s, which
+            # failed the start long before the caller's 90 s start budget
+            # (``_START_TIMEOUT_S`` in live.py). Stay inside that budget.
+            async with asyncio.timeout(60):
                 while True:
                     try:
                         port = int((profile / "DevToolsActivePort").read_text().splitlines()[0])
