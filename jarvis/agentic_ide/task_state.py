@@ -82,6 +82,11 @@ def transition(agent: str, row: dict) -> tuple[str, float] | None:
         if kind not in {"user", "assistant"} or not isinstance(message, dict):
             return None
         content = message.get("content")
+        if kind == "user" and row.get("queueTranscriptOnly"):
+            # Claude Code records a queued notice (e.g. "background command did
+            # not finish before the previous session ended") without starting a
+            # turn. Reading it as work left an idle pane "working" for good.
+            return None
         if kind == "user":
             texts = [content] if isinstance(content, str) else [
                 b.get("text", "") for b in content or [] if isinstance(b, dict)
@@ -132,7 +137,7 @@ def _read(key: tuple, now: float) -> Evidence:
             for raw in handle:
                 try:
                     row = json.loads(raw)
-                except (ValueError, UnicodeDecodeError):  # The writer may still be completing its final JSON line.
+                except (ValueError, UnicodeDecodeError):
                     result = Evidence(checked_at=now)
                     continue  # The writer may not have completed its last JSON line.
                 if not isinstance(row, dict):

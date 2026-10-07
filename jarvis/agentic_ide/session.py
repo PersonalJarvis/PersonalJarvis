@@ -6687,13 +6687,21 @@ class Registry:
             ):
                 raise SessionError("The input request changed; nothing was sent.")
             if require_idle:
-                activity = term.reading().activity
+                # Judge on fresh lifecycle evidence, never the sweep's stamp.
+                from .activity import send_reading
+                from .task_state import probe
+
+                await probe(term)
+                activity = send_reading(term)
                 has_submission = (
                     term.last_submit_at is not None
                     and term.submit_generation == term.process_generation
                 )
+                # An interrupted turn ("stopped") sits at its prompt like a
+                # finished one; only a pane that is still starting with a
+                # task already handed over waits.
                 if activity in ("working", "asking", "failed", "exited") or (
-                    has_submission and activity != "waiting"
+                    has_submission and activity not in ("waiting", "stopped")
                 ):
                     raise SessionError("The selected coding agent is busy; nothing was sent.")
             pending = None

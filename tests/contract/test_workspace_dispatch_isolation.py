@@ -463,3 +463,131 @@ async def test_new_request_still_cannot_reopen_or_show_existing_workspaces(rig, 
         {"action": action, "workspace": "Personal Jarvis"}, context(OPEN_TEXT)
     )
     assert result.output["status"] == "new_agent_required"
+
+
+MIXED_TEXT = (
+    "First send the approved brief to Alex in Personal Jarvis, then start a new Codex "
+    "session to fix audio mute."
+)
+
+
+def named_pane(rig, workspace="Personal Jarvis"):
+    owner = next(w for w in rig[1].sessions if w.name == workspace)
+    return owner, owner.terminals[0]
+
+
+@pytest.mark.parametrize(
+    "create_first", [False, True], ids=["update-then-create", "create-then-update"]
+)
+async def test_mixed_request_updates_the_named_pane_and_creates_a_new_one(
+    rig, runnable, create_first
+):
+    # Live 2026-10-07: "first update the PR #430 session, then create a new
+    # bug-fix session" refused the update (and a retry) as pane reuse.
+    orchestrator, registry, sessions = rig
+    tool = WorkspaceOrchestrationTool(orchestrator)
+    assert dispatch_context(MIXED_TEXT, {}, "turn")["_requires_new"]
+    owner, old = named_pane(rig)
+    old_id = "pane:" + old.history_id
+
+    async def update():
+        resolved = await tool.execute(
+            {"action": "resolve", "workspace": "Personal Jarvis", "agent": "Alex"},
+            context(MIXED_TEXT),
+        )
+        assert resolved.output["status"] == "resolved", resolved.output
+        assert resolved.output["target"]["terminal_id"] == old_id
+        sent = await tool.execute(
+            {"action": "send", **{k: resolved.output["target"][k] for k in (
+                "project_id", "workspace_id", "terminal_id")},
+             "request_id": resolved.output["request_id"], "prompt": "Apply the approved plan"},
+            context(MIXED_TEXT),
+        )
+        assert sent.success, sent.output
+        return sent
+
+    async def create():
+        made = await tool.execute(create_args(), context(MIXED_TEXT))
+        assert made.success, made.output
+        return made.output["agents"][0]["terminal_id"]
+
+    if create_first:
+        new_id = await create()
+        await update()
+    else:
+        await update()
+        new_id = await create()
+    assert new_id != old_id
+    assert sorted(c["terminal_id"] for c in sessions.calls) == sorted([old_id, new_id])
+    briefs = {c["terminal_id"]: c["prompt"] for c in sessions.calls}
+    assert briefs == {old_id: "Apply the approved plan", new_id: "Fix output mute"}
+
+
+@pytest.mark.parametrize("agent", ["", "Codex", "codex"])
+async def test_new_request_never_picks_an_idle_or_cli_kind_pane(rig, agent):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    args = {"action": "resolve", "workspace": "Personal Jarvis"}
+    if agent:
+        args["agent"] = agent
+    result = await tool.execute(args, context(MIXED_TEXT))
+    assert result.output["status"] == "new_agent_required"
+    # The refusal still hands over the IDs a following create needs.
+    owner, _ = named_pane(rig)
+    assert result.output["workspace_id"] == owner.id
+    assert result.output["project_id"] == owner.project_id
+    assert not rig[2].calls
+
+
+async def test_new_panes_brief_cannot_also_go_to_a_named_old_pane(rig, runnable):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    made = await tool.execute(create_args(), context(MIXED_TEXT))
+    assert made.success
+    resolved = await tool.execute(
+        {"action": "resolve", "workspace": "Personal Jarvis", "agent": "Alex"},
+        context(MIXED_TEXT),
+    )
+    duplicate = await tool.execute(
+        {"action": "send", **{k: resolved.output["target"][k] for k in (
+            "project_id", "workspace_id", "terminal_id")},
+         "request_id": resolved.output["request_id"], "prompt": "Fix output mute"},
+        context(MIXED_TEXT),
+    )
+    assert duplicate.output["status"] == "delivery_already_owned"
+    assert [c["terminal_id"] for c in rig[2].calls] == [made.output["agents"][0]["terminal_id"]]
+
+
+async def test_named_update_refused_as_busy_retries_with_the_same_request_id(rig, runnable):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    resolved = await tool.execute(
+        {"action": "resolve", "workspace": "Personal Jarvis", "agent": "Alex"},
+        context(MIXED_TEXT),
+    )
+    args = {"action": "send", **{k: resolved.output["target"][k] for k in (
+        "project_id", "workspace_id", "terminal_id")},
+        "request_id": resolved.output["request_id"], "prompt": "Apply the approved plan"}
+    rig[2].refused = True
+    busy = await tool.execute(args, context(MIXED_TEXT))
+    assert busy.output["status"] == "not_accepted"
+    rig[2].refused = False
+    # Proven non-delivery: the same request may go once the pane is idle.
+    retry = await tool.execute(args, context(MIXED_TEXT))
+    assert retry.success and retry.output["status"] == "accepted"
+    assert (await tool.execute(args, context(MIXED_TEXT))).output["status"] == "accepted"
+    assert len(rig[2].calls) == 2
+
+
+async def test_named_pane_actions_stay_available_in_a_new_request(rig):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    owner, old = named_pane(rig)
+    blind = await tool.execute(
+        {"action": "interrupt", "workspace_id": owner.id,
+         "terminal_id": "pane:" + old.history_id},
+        context(MIXED_TEXT),
+    )
+    assert blind.output["status"] == "new_agent_required"
+    pressed = await tool.execute(
+        {"action": "interrupt", "workspace": "Personal Jarvis", "agent": "Alex"},
+        context(MIXED_TEXT),
+    )
+    assert pressed.output["status"] != "new_agent_required"
+    assert pressed.output["target"]["terminal_id"] == "pane:" + old.history_id

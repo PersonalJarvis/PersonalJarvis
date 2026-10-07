@@ -147,6 +147,9 @@ async def test_unchanged_file_is_not_parsed_again(pane, monkeypatch):
     ({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "AskUserQuestion"}]}}, "asking"),
     ({"type": "user", "message": {"content": "[Request interrupted by user]"}}, "stopped"),
+    ({"type": "user", "message": {"content": "<task-notification>"}}, "working"),
+    ({"type": "user", "queueTranscriptOnly": True,
+      "message": {"content": "<task-notification>"}}, None),
     ({"type": "system", "subtype": "turn_duration"}, "completed"),
     ({"type": "assistant", "isSidechain": True,
       "message": {"stop_reason": "end_turn"}}, None),

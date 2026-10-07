@@ -451,6 +451,25 @@ def observed(term: Any, *, now: float | None = None) -> Reading:
     return reading
 
 
+def send_reading(term: Any, *, now: float | None = None) -> Activity | Literal[""]:
+    """May a new instruction be typed into ``term`` right now?
+
+    For the delivery gate, after the caller refreshed lifecycle evidence
+    (``task_state.probe``): never the sweep's stamp, which can be seconds old
+    or left behind by a sweep that stalled. ``unknown`` means no record proves
+    a running turn AND the screen is not moving, which is a pane sitting at its
+    prompt: an Enter that started no task, a CLI without a readable record, or
+    a remote pane. Refusing it left finished agents "busy" until their next
+    turn (live 2026-10-07: an idle Claude pane refused an approved brief). The
+    submit grace still covers the seconds before a fresh turn shows.
+    """
+    moment = time.time() if now is None else now
+    word = read_activity(term, now=moment)
+    if word == "unknown":
+        word = "waiting"
+    return _submit_graced(term, Reading(word, 0.0), moment).activity
+
+
 def has_work_behind_it(term: Any) -> bool:
     """Is this pane's stillness a FINISHED job, or an untouched terminal?
 
@@ -519,6 +538,7 @@ __all__ = [
     "observed",
     "read_activity",
     "screen_digest",
+    "send_reading",
     "shows_question",
     "stamp",
     "visible_rows",

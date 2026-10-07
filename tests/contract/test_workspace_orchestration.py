@@ -255,13 +255,39 @@ def test_send_runs_without_a_spoken_question_and_reads_remain_safe(rig):
 
 
 async def test_prewrite_refusal_is_recorded_without_claiming_uncertainty(rig):
+    # Live 2026-10-07: an approved brief refused as "busy" kept echoing that
+    # receipt for its request_id after the pane was idle; nothing ever went.
     resolved = await target(rig)
     rig[2].refused = True
     args = {"action": "send", **resolved, "request_id": uuid4().hex, "prompt": "Task"}
     first = await rig[0].run(args)
     assert first["status"] == "not_accepted"
-    assert await rig[0].run(args) == first
-    assert len(rig[2].calls) == 1
+    again = await rig[0].run(args)
+    assert again["status"] == "not_accepted"
+    assert again["request_id"] == first["request_id"]
+    assert len(rig[2].calls) == 2
+    rig[2].refused = False
+    delivered = await rig[0].run(args)
+    assert delivered["status"] == "accepted"
+    assert delivered["request_id"] == first["request_id"]
+    # Once typed, the same request is a receipt read, never a second write.
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 3
+    # A refused request ID still cannot carry a different assignment.
+    assert (await rig[0].run({**args, "prompt": "Correction"}))["success"] is False
+    assert len(rig[2].calls) == 3
+
+
+async def test_retry_after_uncertain_write_is_never_retyped(rig):
+    resolved = await target(rig)
+    args = {"action": "send", **resolved, "request_id": uuid4().hex, "prompt": "Task"}
+    rig[2].refused = True
+    assert (await rig[0].run(args))["status"] == "not_accepted"
+    rig[2].refused, rig[2].fail = False, True
+    assert (await rig[0].run(args))["status"] == "uncertain"
+    rig[2].fail = False
+    assert (await rig[0].run(args))["status"] == "uncertain"
+    assert len(rig[2].calls) == 2
 
 
 async def test_later_same_task_has_an_app_minted_distinct_request(rig):
