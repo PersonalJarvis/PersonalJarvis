@@ -385,7 +385,7 @@ This preserves the Wave 2 architecture unchanged:
   follow-up.
 
 Rotating the key is: generate a fresh keypair, `gh secret set
-WAVE2_OFFLINE_KEY_B64`, swap the public key + its inlined verifier block
+WAVE2_OFFLINE_KEY_B64 --env release-signing`, swap the public key + its inlined verifier block
 + the pinned fingerprint, and append a row to the rotation-history table
 in `install/TRUST_ROOT.md`.
 

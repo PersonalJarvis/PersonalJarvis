@@ -196,6 +196,8 @@ tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
 asked — an ordinary push is not a release. A release is ONE command:
 `gh workflow run release-cut.yml -f bump=patch|minor|major` (pick the bump from
 the commits since the last tag), then watch the run and report the Release URL.
+The PyPI and signing jobs then wait for the maintainer's approval in the
+Actions tab (environments `pypi`, `release-signing`); tell them, never bypass.
 That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
 never bump, tag or `gh release create` by hand.
 
