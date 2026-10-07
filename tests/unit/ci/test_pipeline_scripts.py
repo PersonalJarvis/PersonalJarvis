@@ -636,6 +636,46 @@ def test_train_resolver_runs_between_merge_and_finish(tmp_path, repo, monkeypatc
     assert any(call[:2] == ("pr", "comment") for call in fake.calls)
 
 
+def test_push_rejections_are_told_apart():
+    github = (
+        "! [remote rejected] abc -> claude/x (refusing to allow a GitHub App to create or "
+        "update workflow `.github/workflows/ci.yml` without `workflows` permission)"
+    )
+    assert agent_integrate.push_rejection(github) == "workflows"
+    assert agent_integrate.push_rejection("! [rejected] abc -> x (non-fast-forward)") == "moved"
+
+
+def test_a_workflow_permission_refusal_is_reported_once(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path,
+        repo,
+        {"CHANGELOG.md": "# Changelog\n\n- main entry\n- base\n"},
+        {"CHANGELOG.md": "# Changelog\n\n- branch entry\n- base\n"},
+    )
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow "
+        "`.github/workflows/ci.yml` without `workflows` permission' >&2\nexit 1\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    hook.chmod(0o755)
+    work = tmp_path / "train"
+    agent_integrate.integrate_merge(work, plan, integrate)
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    outcome = agent_integrate.apply_update(work, plan, plan["entries"][0], False, applier)
+    assert "workflows" in outcome, outcome
+    assert any(c[:2] == ("pr", "comment") for c in fake.calls)
+    told = {**plan["entries"][0], "labels": ["needs-rebase"]}
+    quiet = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", quiet)
+    agent_integrate.apply_update(work, plan, told, False, applier)
+    assert not quiet.calls  # already labelled: no comment on every tick
+
+
 def test_train_reports_a_conflict_without_a_resolver(tmp_path, repo, monkeypatch):
     origin, integrate, applier, plan = _origin_with_feature(
         tmp_path, repo, {"app.py": "VALUE = 2\n"}, {"app.py": "VALUE = 3\n"}
