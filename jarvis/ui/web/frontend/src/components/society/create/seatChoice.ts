@@ -85,6 +85,9 @@ function optionsFor(
   blocked: Record<string, string> = {},
 ): AccessOption[] {
   const single: AccessOption = { kind: seat.kind, seat, accountId: "", extraUsage: Boolean(seat.extraUsage) };
+  // A single-access seat the runtime cannot use yet (the Grok subscription
+  // before its agents' login, Gemini's CLI login): listed with its reason.
+  if (!named && blocked[seat.kind] && !seat.extraUsage) return [{ ...single, blocked: blocked[seat.kind] }];
   const refused = Object.keys(blocked).filter((way) => !named?.includes(way));
   if (!named && !refused.length) return [single];
   const ways = [...(named ?? []), ...refused];
@@ -111,7 +114,9 @@ function optionsFor(
 }
 
 /** Refusal codes with their own explanation (`provider_errors.py`). */
-const BLOCKED_REASONS = new Set(["extra_usage_off", "extra_usage_spent"]);
+const BLOCKED_REASONS = new Set([
+  "extra_usage_off", "extra_usage_spent", "xai_login_needed", "vendor_forbids_subscription",
+]);
 
 /** The i18n key that explains a blocked access in plain words. */
 export function blockedReasonKey(code: string): string {

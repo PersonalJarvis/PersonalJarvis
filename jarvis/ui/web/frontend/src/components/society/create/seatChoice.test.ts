@@ -150,3 +150,33 @@ describe("defaultModel", () => {
     expect(defaultModel(null)).toBe("");
   });
 });
+
+describe("every switched-on provider is listed for Hermes / OpenClaw", () => {
+  const grokSub = seat({ id: "grok-build", label: "Grok Build", family: "xai", runner: "grok-cli", curated_models: models("grok-4.7") }, "subscription");
+  const grokKey = seat({ id: "grok", label: "xAI Grok", family: "xai", curated_models: models("grok-4.3") });
+  const gemini = seat({ id: "antigravity", label: "Antigravity", family: "antigravity", runner: "agy-cli" }, "subscription");
+  const blocked = {
+    "grok-build": { subscription: "xai_login_needed" },
+    antigravity: { subscription: "vendor_forbids_subscription" },
+  };
+
+  it("keeps a subscription the runtime cannot use yet, with its reason", () => {
+    const seats = runtimeSeats([grokSub, grokKey, gemini], ["grok"], ["openai-codex", "grok-build"], [], blocked);
+    expect(seats.map((s) => `${s.provider.id}:${s.kind}`)).toEqual(["grok-build:subscription", "grok:api", "antigravity:subscription"]);
+    const choices = providerChoices(seats, {}, true, blocked);
+    const xai = choices.find((choice) => choice.id === "xai")!;
+    expect(xai.options.map((o) => [o.kind, o.blocked ?? ""])).toEqual([["subscription", "xai_login_needed"], ["api", ""]]);
+    expect(pickableOption(xai)?.kind).toBe("api");
+    const google = choices.find((choice) => choice.id === "gemini")!;
+    expect(google.options).toEqual([expect.objectContaining({ kind: "subscription", blocked: "vendor_forbids_subscription", extraUsage: false })]);
+    expect(pickableOption(google)).toBeNull();
+    expect(blockedReasonKey("xai_login_needed")).toBe("society.create_agent.access_blocked_xai_login_needed");
+  });
+
+  it("offers the Grok subscription once its agents' login is connected", () => {
+    const seats = runtimeSeats([grokSub], ["grok-build"], ["openai-codex", "grok-build"], [], {});
+    const [xai] = providerChoices(seats, {}, true, {});
+    expect(pickableOption(xai)).toMatchObject({ kind: "subscription", accountId: "" });
+    expect(accessModels(pickableOption(xai)).map((m) => m.id)).toEqual(["grok-4.7"]);
+  });
+});

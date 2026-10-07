@@ -76,8 +76,9 @@ function CreateAgentDialog() {
   const choices = useMemo(() => {
     const all = modelSeats(menu.options, Array.isArray(menu.providers) ? menu.providers : [], menu.live, defaultModelLabel);
     const split = (key: string) => key.split(",").filter(Boolean);
-    const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey)) : all;
-    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external, JSON.parse(blockedKey) as AccessBlocked);
+    const blocked = JSON.parse(blockedKey) as AccessBlocked;
+    const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey), blocked) : all;
+    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external, blocked);
   }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey, blockedKey]);
 
   // The person's picks stay while they are offered; a pick that disappears (a

@@ -51,6 +51,9 @@ class _Endpoint:
     #: May authenticate without a key: Google Cloud Application Default
     #: Credentials for a configured project (Vertex AI).
     cloud_project: bool = False
+    #: The person's SuperGrok / X Premium+ subscription, through Jarvis' own
+    #: xAI login for agents (``xai_login``); served as Chat Completions.
+    xai_login: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
@@ -65,6 +68,7 @@ _ENDPOINTS: Final[dict[str, _Endpoint]] = {
     "ollama": _Endpoint(None, keyless=True, local_server=True),
     "local-openai": _Endpoint(None, keyless=True, local_server=True),
     "openai-codex": _Endpoint(None, subscription=True),
+    "grok-build": _Endpoint("https://api.x.ai/v1", xai_login=True),
 }
 
 
@@ -97,7 +101,9 @@ def supported_providers() -> frozenset[str]:
 
 def subscription_providers() -> frozenset[str]:
     """Providers served by Jarvis' model gateway on the person's subscription."""
-    return frozenset(name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription)
+    return frozenset(
+        name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription or endpoint.xai_login
+    )
 
 
 def claude_login_token() -> str | None:
@@ -194,6 +200,14 @@ def access_blocked() -> dict[str, dict[str, str]]:
         refusal = login_blocked(token, "") if token else None
         if refusal is not None:
             blocked[name] = {"subscription": refusal.code}
+    from jarvis.agent_runtimes import xai_login
+
+    if not xai_login.connected():
+        # The Grok CLI's own login stays the CLI's; agents need Jarvis' own.
+        blocked["grok-build"] = {"subscription": "xai_login_needed"}
+    # Google forbids third-party tools on the Gemini CLI / Antigravity login
+    # (account suspension); Gemini reaches these agents on an API key only.
+    blocked["antigravity"] = {"subscription": "vendor_forbids_subscription"}
     return blocked
 
 
@@ -213,7 +227,8 @@ def usable_providers(config: Any) -> list[str]:
     first: it spends no API key). Blocking (keyring): call it in a thread.
     """
     usable: list[str] = []
-    for provider in sorted(_ENDPOINTS, key=lambda name: (not _ENDPOINTS[name].subscription, name)):
+    paid = subscription_providers()
+    for provider in sorted(_ENDPOINTS, key=lambda name: (name not in paid, name)):
         try:
             _checked_model(config, provider, "probe")
         except RouteUnavailable:  # not connected: the provider is simply not offered
@@ -274,6 +289,17 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
         if not chosen:
             raise RouteUnavailable("Choose a ChatGPT model for this agent first.")
         return chosen
+    if endpoint.xai_login:
+        from jarvis.agent_runtimes import xai_login
+
+        if not xai_login.connected():
+            raise RouteUnavailable(
+                "Grok's subscription is not connected for agents yet. Connect it in the "
+                "New agent dialog, or use an xAI API key."
+            )
+        from jarvis.plugins.brain.grok import DEFAULT_MODEL as GROK_DEFAULT
+
+        return model.strip() or _default_model(config, "grok") or GROK_DEFAULT
     from jarvis.core.config import resolve_provider_endpoint
 
     resolved = resolve_provider_endpoint(

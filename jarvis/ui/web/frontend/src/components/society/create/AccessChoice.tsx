@@ -9,6 +9,7 @@ import { useId, useRef, type KeyboardEvent } from "react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { blockedReasonKey, type AccessOption } from "./seatChoice";
+import { XaiConnect } from "./XaiConnect";
 
 export function AccessChoice({ options, value, hint, disabled, onChange }: {
   options: AccessOption[];
@@ -75,10 +76,14 @@ export function AccessChoice({ options, value, hint, disabled, onChange }: {
       </div>
       {hint ? <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p> : null}
       {options.filter((entry) => entry.blocked).map((entry) => (
-        <p key={entry.kind} id={`${id}-blocked-${entry.kind}`} role="note" className="text-xs text-warning"
-          data-testid={`create-agent-access-blocked-${entry.kind}`}>
-          {t(blockedReasonKey(entry.blocked ?? ""))}
-        </p>
+        <div key={entry.kind} className="flex flex-col gap-1.5">
+          <p id={`${id}-blocked-${entry.kind}`} role="note" className="text-xs text-warning"
+            data-testid={`create-agent-access-blocked-${entry.kind}`}>
+            {t(blockedReasonKey(entry.blocked ?? ""))}
+          </p>
+          {/* The one refusal the person can lift right here: connect Grok for agents. */}
+          {entry.blocked === "xai_login_needed" ? <XaiConnect disabled={disabled} /> : null}
+        </div>
       ))}
     </div>
   );

@@ -191,6 +191,25 @@ call with its own provider plugins (`gateway.py`,
   a refusal that still arrives is reported as 402 with the same reason. The
   gateway sends Anthropic the agent's own request; it never presents itself
   as Claude Code.
+- **Grok subscription (SuperGrok / X Premium+).** xAI serves its
+  subscription to third-party agents through its OAuth device login
+  (`auth.x.ai`). Jarvis holds ONE such login for all its agents
+  (`agent_runtimes/xai_login.py`, tokens in the credential store, refreshed
+  by Jarvis), separate from the Grok CLI's own login so its refresh token is
+  never rotated away. The `grok-build` seat then answers on `/chat/completions`
+  with the access token where an xAI API key would go. Until the login is
+  connected the "New agent" dialog lists the seat with the reason
+  `xai_login_needed` and a "Connect Grok subscription" button
+  (`POST /api/agent-runtimes/xai-login` starts it, `GET` reports it).
+- **Gemini subscription: refused by Google.** Google's terms forbid
+  third-party tools from using the Gemini CLI / Antigravity login and may
+  suspend the account, so that seat is listed with the reason
+  `vendor_forbids_subscription`; Gemini reaches these agents on an AI Studio
+  or Vertex key only.
+
+Every provider switched on under Settings → API keys appears in the dialog:
+the ones a runtime can use now are pickable, the others are listed with the
+reason and the way to fix it (`access_blocked` from `/api/agent-runtimes`).
 
 `scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
 runs two real turns through the gateway (route built by `route_for`, the real

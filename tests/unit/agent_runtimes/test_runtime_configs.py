@@ -291,7 +291,8 @@ def _cfg(**providers) -> SimpleNamespace:
 def test_every_provider_runs_through_jarvis_gateway(gateway_up, monkeypatch):
     gateway = gateway_up
     assert supports("openai") and supports("claude-api") and supports("ollama")
-    assert supports("openai-codex") and not supports("grok-build")
+    # The Grok subscription runs through Jarvis' own xAI login for agents (xai_login.py).
+    assert supports("openai-codex") and supports("grok-build") and not supports("kimi")
     with override_provider_secrets({"openai": _SECRET}):
         route = route_for(_cfg(), "openai", "gpt-5.2", agent_id="agent-1")
     # The runtime gets Jarvis' address and a token for this agent, never the key.

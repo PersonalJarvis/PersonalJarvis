@@ -82,3 +82,34 @@ export async function ensureAgentRuntime(runtime: ExternalRuntime): Promise<Agen
   );
   return body.job;
 }
+
+/** A Grok login waiting for approval in the browser (`/api/agent-runtimes/xai-login`). */
+export interface XaiLoginPending {
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** The SuperGrok / X Premium+ login Hermes and OpenClaw agents run on. */
+export interface XaiLoginStatus {
+  connected: boolean;
+  since: number | null;
+  pending: XaiLoginPending | null;
+  /** Why the last login ended without connecting (`declined`, `expired`, `tier_denied`, …). */
+  error: string;
+}
+
+export function fetchXaiLogin(): Promise<XaiLoginStatus> {
+  return json<XaiLoginStatus>("/api/agent-runtimes/xai-login");
+}
+
+/** Start the device login; the person approves the returned code in the browser. */
+export async function startXaiLogin(): Promise<XaiLoginPending> {
+  const body = await json<{ pending: XaiLoginPending }>("/api/agent-runtimes/xai-login", { method: "POST" });
+  return body.pending;
+}
+
+export async function disconnectXaiLogin(): Promise<void> {
+  await json<unknown>("/api/agent-runtimes/xai-login", { method: "DELETE" });
+}
