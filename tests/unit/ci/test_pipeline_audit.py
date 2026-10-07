@@ -553,6 +553,40 @@ def test_normal_full_run_does_not_require_release_only_evidence():
     assert required_results.evaluate(needs, pipeline=True, strict=True)["ok"]
 
 
+def test_signpath_signing_is_dormant_gated_and_verified_before_shipping():
+    windows = workflows()["desktop-installers.yml"]["jobs"]["windows"]
+    gate = windows["env"]["HAS_SIGNPATH_SIGNING"]
+    for needed in (
+        "github.ref_type == 'tag'",
+        "secrets.SIGNPATH_API_TOKEN",
+        "vars.SIGNPATH_ORGANIZATION_ID",
+        "vars.SIGNPATH_PROJECT_SLUG",
+        "vars.SIGNPATH_SIGNING_POLICY_SLUG",
+    ):
+        assert needed in gate
+    assert "SIGNPATH_API_TOKEN" not in str(windows["env"]).replace(
+        "secrets.SIGNPATH_API_TOKEN != ''", ""
+    )
+    steps = windows["steps"]
+    names = [s.get("name", "") for s in steps]
+    stage = steps[names.index("Stage the unsigned installer for SignPath")]
+    sign = steps[names.index("Sign the installer (SignPath Foundation)")]
+    verify = next(s for s in steps if "Get-AuthenticodeSignature" in s.get("run", ""))
+    upload = steps[names.index("Upload the installer")]
+    for step in (stage, sign, verify):
+        assert step["if"] == "env.HAS_SIGNPATH_SIGNING == 'true'"
+    # The unsigned file must never match the release job's download pattern.
+    assert not stage["with"]["name"].startswith("installer-")
+    artifact_id = "${{ steps.signpath-unsigned.outputs.artifact-id }}"
+    assert sign["with"]["github-artifact-id"] == artifact_id
+    order = [steps.index(s) for s in (stage, sign, verify, upload)]
+    assert order == sorted(order)
+    assert "SignPath Foundation" in verify["run"] and "'Valid'" in verify["run"]
+    azure = steps[names.index("Sign the installer (Azure Trusted Signing)")]
+    assert "env.HAS_SIGNPATH_SIGNING != 'true'" in azure["if"]
+    assert windows["permissions"] == {"contents": "read", "actions": "read"}
+
+
 def test_native_signing_keys_are_imported_only_on_admitted_tags_and_always_removed():
     desktop = workflows()["desktop-installers.yml"]["jobs"]
     mac = desktop["macos"]

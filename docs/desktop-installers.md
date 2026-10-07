@@ -204,7 +204,8 @@ working installer and says, in one line, that it is unsigned.
 
 | Platform | Mechanism                    | Secrets                                                                                                     |
 | -------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Windows  | Azure Trusted Signing        | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERTIFICATE_PROFILE` |
+| Windows  | SignPath Foundation (preferred) | secret `SIGNPATH_API_TOKEN`; variables `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, `SIGNPATH_SIGNING_POLICY_SLUG` (optional `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`) |
+| Windows  | Azure Trusted Signing (alternative) | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERTIFICATE_PROFILE` |
 | macOS    | Developer ID + notarization  | `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD` (and optionally `APPLE_SIGNING_IDENTITY`; `build.sh` reads it from the imported certificate) |
 | Linux    | none (AppImage is unsigned)  | -                                                                                                             |
 
@@ -223,6 +224,14 @@ command, but not yet against a real keychain or with an Apple account.
 A run started by hand from a branch (`workflow_dispatch`) builds the installers
 without publishing a release, which is the way to try the macOS job, its
 certificate import and the app probe before tagging.
+
+The Windows SignPath path and its team roles are described in
+[`code-signing-policy.md`](code-signing-policy.md). The workflow uploads the
+unsigned setup as a workflow artifact, waits up to an hour for the manual
+approval in SignPath, then refuses the signed file unless
+`Get-AuthenticodeSignature` reports a valid, timestamped signature issued to
+SignPath Foundation. When both SignPath and Azure are configured, SignPath
+is used.
 
 On Windows the workflow signs the **setup executable**. That is the file the
 browser marks with Mark-of-the-Web, so it is the signature SmartScreen weighs;

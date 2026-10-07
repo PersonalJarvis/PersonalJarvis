@@ -18,7 +18,8 @@
 # Signing is optional and secret-gated. GitHub forbids secrets in a job-level
 # `if:`, so the credentials are exported as job-level `env` and the steps test
 # the environment variable instead. Without the secrets the build still
-# produces a working, unsigned installer and says so.
+# produces a working, unsigned installer and says so. Windows can sign through
+# SignPath Foundation (docs/code-signing-policy.md) or Azure Trusted Signing.
 #
 # Action SHAs are pinned to 40-char commits (CVE-2025-30066 hardening), matching
 # the rest of this repo's workflows.
@@ -83,10 +84,18 @@ jobs:
     name: Windows installer (x64)
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: read
+      # SignPath reads this job's metadata and downloads the unsigned artifact
+      # with the job token.
+      actions: read
     env:
       # Exported here (not per step) so the `if:` guards below can read them.
       # An empty value means "this fork has no signing secrets" - not an error.
       HAS_AZURE_SIGNING: ${{ github.ref_type == 'tag' && secrets.AZURE_CLIENT_ID != '' }}
+      # SignPath Foundation (free OSS certificate). Needs the API token secret
+      # plus three repository variables; any one missing leaves the path dormant.
+      HAS_SIGNPATH_SIGNING: ${{ github.ref_type == 'tag' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' && vars.SIGNPATH_PROJECT_SLUG != '' && vars.SIGNPATH_SIGNING_POLICY_SLUG != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -149,8 +158,75 @@ jobs:
       # Signs the SETUP executable. Windows attaches Mark-of-the-Web to the
       # downloaded installer, so this signature is the one SmartScreen weighs;
       # files the installer then writes inherit no MOTW.
+      #
+      # Two interchangeable paths; SignPath wins when both are configured so a
+      # file never carries two publishers' signatures.
+      #
+      # SignPath (docs/code-signing-policy.md): the unsigned setup is uploaded as
+      # a workflow artifact, SignPath fetches it from GitHub, checks it came from
+      # this workflow on a GitHub-hosted runner, waits for a human approval in
+      # SignPath, and hands back the signed file. The signature is verified
+      # before the signed file replaces the unsigned one.
+      - name: Stage the unsigned installer for SignPath
+        id: signpath-unsigned
+        if: env.HAS_SIGNPATH_SIGNING == 'true'
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          # Deliberately outside the `installer-*` pattern the release job
+          # downloads: only the verified, signed file may ship.
+          name: signpath-unsigned-windows-x64
+          path: dist/installers/PersonalJarvis-Setup-x64.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign the installer (SignPath Foundation)
+        if: env.HAS_SIGNPATH_SIGNING == 'true'
+        # pin: signpath/github-action-submit-signing-request@v3.0 - pinned by commit SHA.
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          # Empty means the project's default artifact configuration.
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.signpath-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # Every SignPath Foundation release needs a manual approval; give the
+          # approver an hour before the job gives up.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: ${{ runner.temp }}/signpath-signed
+
+      - name: Verify the SignPath signature before it replaces the unsigned file
+        if: env.HAS_SIGNPATH_SIGNING == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signed = Join-Path $env:RUNNER_TEMP 'signpath-signed/PersonalJarvis-Setup-x64.exe'
+          if (-not (Test-Path -LiteralPath $signed)) {
+            Write-Host "::error::SignPath returned no PersonalJarvis-Setup-x64.exe"
+            Get-ChildItem -Recurse (Split-Path $signed) | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $signed
+          Write-Host "status=$($signature.Status) signer=$($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne 'Valid') {
+            Write-Host "::error::Authenticode signature is not valid: $($signature.StatusMessage)"
+            exit 1
+          }
+          if ($signature.SignerCertificate.Subject -notmatch 'SignPath Foundation') {
+            Write-Host "::error::Unexpected signer: $($signature.SignerCertificate.Subject)"
+            exit 1
+          }
+          if ($null -eq $signature.TimeStamperCertificate) {
+            Write-Host "::error::The signature carries no timestamp and would expire with the certificate"
+            exit 1
+          }
+          Copy-Item -LiteralPath $signed -Destination dist/installers/PersonalJarvis-Setup-x64.exe -Force
+          Write-Host "::notice::Installer signed by SignPath Foundation and verified."
+
       - name: Sign the installer (Azure Trusted Signing)
-        if: env.HAS_AZURE_SIGNING == 'true'
+        if: env.HAS_AZURE_SIGNING == 'true' && env.HAS_SIGNPATH_SIGNING != 'true'
         # pin: azure/trusted-signing-action@v2.0.0 - pinned by commit SHA.
         uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
         with:
@@ -167,10 +243,10 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Report the signing state honestly
-        if: env.HAS_AZURE_SIGNING != 'true'
+        if: env.HAS_AZURE_SIGNING != 'true' && env.HAS_SIGNPATH_SIGNING != 'true'
         shell: bash
         run: |
-          echo "::notice::AZURE_* signing secrets are not configured - the installer is UNSIGNED."
+          echo "::notice::Neither SignPath (SIGNPATH_API_TOKEN + SIGNPATH_ORGANIZATION_ID/PROJECT_SLUG/SIGNING_POLICY_SLUG) nor AZURE_* signing is configured - the installer is UNSIGNED."
 
       - name: Upload the installer
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
