@@ -538,7 +538,7 @@ def _quitting_grace_remaining(meta: Any, pid: int) -> float:
         return 0.0
     try:
         age = time.time() - float(meta["quitting_at"])
-    except (KeyError, TypeError, ValueError, OverflowError):
+    except (KeyError, TypeError, ValueError, OverflowError):  # Invalid quit metadata grants no wait.
         return 0.0
     grace = _SHUTDOWN_FORCE_EXIT_MIN_S + 5.0
     # The chained comparison also rejects NaN and either infinity.
