@@ -86,6 +86,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           branch="ci/agent-runtime-pins-${GITHUB_RUN_ID}"
           git config user.name "github-actions[bot]"
@@ -95,7 +96,7 @@ jobs:
           git commit -m "chore(agent-runtimes): raise the tested runtime versions" \
             -m "The weekly canary passed both model-gateway protocols on Linux, Windows and macOS: $RUN_URL"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
-          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "${{ github.event.repository.default_branch }}" \
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$DEFAULT_BRANCH" \
             --title "chore(agent-runtimes): raise the tested runtime versions" \
             --body "The weekly canary drove the latest Hermes / OpenClaw through Jarvis' model gateway on every OS: $RUN_URL. Merging raises the version the app installs (see docs/agent-runtimes.md)."
 
