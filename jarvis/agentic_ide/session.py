@@ -217,6 +217,22 @@ def accepts_prompts(agent: str) -> bool:
     return spec is not None and spec.is_coding_agent and spec.accepts_typed_prompts
 
 
+def steers_mid_turn(agent: str) -> bool:
+    """Does a line submitted while this agent works reach its running turn?"""
+    spec = workspace_agents.get_agent(agent)
+    return accepts_prompts(agent) and spec is not None and spec.steers_mid_turn
+
+
+#: How a delivery treats a pane that is in a turn (``Registry.send_prompt``).
+WHEN_BUSY = ("refuse", "steer", "interrupt")
+#: How long an interrupt-and-resume waits for the turn to end after Stop.
+INTERRUPT_SETTLE_S = 15.0
+_INTERRUPT_POLL_S = 0.5
+#: Stop for a running turn: the key every coding CLI's own hint names
+#: ("esc to interrupt"). Ctrl+C is not used: pressed twice it quits some CLIs.
+_INTERRUPT_KEY = "\x1b"
+
+
 def _unavailable(agent: str) -> str:
     """Why this pane cannot open, said in the terms of what it would have run.
 
@@ -1154,6 +1170,9 @@ class Terminal:
     last_submit_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
+    # Was the last prompt Jarvis sent typed into a RUNNING turn (native
+    # steering) rather than at an idle prompt? Read by the delivery receipt.
+    last_send_mid_turn: bool = False
     # A hand-pressed Enter on an injected prompt is being checked against the
     # screen. Kept explicit so another Enter stays on the verified path rather
     # than being mistaken for a brand-new manual instruction.
@@ -1934,6 +1953,22 @@ class SessionNotReady(SessionError):
     stops trying for good. Every caller that can wait must be able to tell the
     two apart — see the PTY socket's close codes.
     """
+
+
+class AgentBusyError(SessionError):
+    """The pane is in a turn and the caller did not choose how to reach it.
+
+    Raised BEFORE any text is typed, like every ``SessionError`` (an interrupt
+    may have pressed Stop, which ``interrupted`` reports). Its own type
+    because "busy" is the one refusal a caller can act on with a different
+    delivery (steer, interrupt-and-resume or a queue), while every other
+    refusal means the pane cannot be typed into at all. ``interrupted`` is
+    True when Stop was pressed and the turn had not ended in time.
+    """
+
+    def __init__(self, message: str, *, interrupted: bool = False) -> None:
+        super().__init__(message)
+        self.interrupted = interrupted
 
 
 class PlacementError(SessionError):
@@ -6666,12 +6701,29 @@ class Registry:
         allow_question: bool = False,
         followup: dict[str, str] | None = None,
         expected_location: tuple[str, str, str] | None = None,
+        when_busy: str = "refuse",
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
         Explicit Jarvis voice requests retain a result receipt. Direct pane input
         and work supervised by another agent keep their existing reporting owner.
+
+        ``require_idle`` gates on a pane in a turn, and ``when_busy`` says what
+        a busy pane gets. ``refuse`` (the default) raises ``AgentBusyError`` —
+        an ordinary message never reaches into running work. The other two are
+        for a correction the USER directed at that work:
+
+        * ``steer`` types it into the running turn, on a CLI whose own mid-turn
+          input reaches that turn (``steers_mid_turn``). Nothing is stopped.
+        * ``interrupt`` presses Stop, waits for the turn to end, then types it
+          at the prompt. The process, its conversation and its files stay; only
+          the step in flight is cut short, as the pane's own Stop does.
+
+        Neither types into an open question or permission prompt, which would
+        answer it.
         """
+        if when_busy not in WHEN_BUSY:
+            raise SessionError(f"Unknown busy delivery {when_busy!r}; nothing was sent.")
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
             raise self._unknown_terminal(wanted)
@@ -6686,24 +6738,36 @@ class Registry:
                 or self.input_token(term) != expected_input
             ):
                 raise SessionError("The input request changed; nothing was sent.")
+            mid_turn = False
             if require_idle:
-                # Judge on fresh lifecycle evidence, never the sweep's stamp.
-                from .activity import send_reading
-                from .task_state import probe
-
-                await probe(term)
-                activity = send_reading(term)
-                has_submission = (
-                    term.last_submit_at is not None
-                    and term.submit_generation == term.process_generation
-                )
-                # An interrupted turn ("stopped") sits at its prompt like a
-                # finished one; only a pane that is still starting with a
-                # task already handed over waits.
-                if activity in ("working", "asking", "failed", "exited") or (
-                    has_submission and activity not in ("waiting", "stopped")
-                ):
-                    raise SessionError("The selected coding agent is busy; nothing was sent.")
+                busy = await self.turn_in_progress(term)
+                if busy == "working" and when_busy == "interrupt":
+                    busy = await self._interrupt_turn(owner, term)
+                    if busy == "working":
+                        raise AgentBusyError(
+                            f"Stop was pressed, but {term.name} had not ended its turn after "
+                            f"{INTERRUPT_SETTLE_S:.0f} s; nothing was typed.",
+                            interrupted=True,
+                        )
+                if busy in ("failed", "exited"):
+                    raise SessionError(
+                        f"{term.name} is not running ({busy}); nothing was sent."
+                    )
+                if busy == "asking" and when_busy != "refuse":
+                    raise SessionError(
+                        f"{term.name} is asking a question; answer it with respond "
+                        "(the correction can be the answer). Nothing was sent."
+                    )
+                if busy and when_busy == "steer":
+                    if not steers_mid_turn(term.agent):
+                        raise AgentBusyError(
+                            f"{agent_display(term.agent)} does not take a message in the middle "
+                            "of a turn; nothing was sent. Interrupt it first or queue the "
+                            "message for when the turn ends."
+                        )
+                    mid_turn = True
+                elif busy:
+                    raise AgentBusyError("The selected coding agent is busy; nothing was sent.")
             pending = None
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
                 from .followthrough import prepare
@@ -6720,10 +6784,56 @@ class Registry:
                 pending_result=pending,
                 expected_location=expected_location,
             )
+            result.last_send_mid_turn = mid_turn
             from .delegation_wait import track_submission
 
             track_submission(self, owner, result)
             return result
+
+    @staticmethod
+    async def turn_in_progress(term: Terminal) -> str:
+        """What keeps ``term`` from taking a prompt now, or "" when nothing does.
+
+        Judged on fresh lifecycle evidence, never the sweep's stamp.
+        """
+        from .activity import send_reading
+        from .task_state import probe
+
+        await probe(term)
+        activity = send_reading(term)
+        has_submission = (
+            term.last_submit_at is not None
+            and term.submit_generation == term.process_generation
+        )
+        if activity in ("working", "asking", "failed", "exited"):
+            return activity
+        # An interrupted turn ("stopped") sits at its prompt like a finished
+        # one; only a pane that is still starting with a task already handed
+        # over waits — it is about to work.
+        if has_submission and activity not in ("waiting", "stopped"):
+            return "working"
+        return ""
+
+    async def _interrupt_turn(self, owner: Session, term: Terminal) -> str:
+        """Press Stop once and wait for the turn to end; the busy word left, if any.
+
+        Re-read right before the key: a turn that ended meanwhile is not
+        stopped again, because Escape at an idle prompt opens some CLIs'
+        history views. One key, never a kill — the process and its
+        conversation stay, and an unsaved edit in the step in flight is the
+        CLI's own Stop semantics.
+        """
+        busy = await self.turn_in_progress(term)
+        if busy != "working":
+            return busy
+        if not self.write("pane:" + term.history_id, _INTERRUPT_KEY, owner.id):
+            raise SessionError(f"{term.name} is not running; nothing was sent.")
+        logger.info("Agentic IDE: pressed Stop on {} to deliver a correction", term.name)
+        deadline = time.monotonic() + INTERRUPT_SETTLE_S
+        while busy == "working" and time.monotonic() < deadline:
+            await asyncio.sleep(_INTERRUPT_POLL_S)
+            busy = await self.turn_in_progress(term)
+        return busy
 
     @staticmethod
     def input_token(term: Terminal) -> str:

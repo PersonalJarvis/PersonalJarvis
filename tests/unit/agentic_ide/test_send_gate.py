@@ -16,7 +16,14 @@ from uuid import uuid4
 import pytest
 
 from jarvis.agentic_ide import activity, delegation_wait, task_state
-from jarvis.agentic_ide.session import Registry, Session, SessionError, Terminal
+from jarvis.agentic_ide import session as session_module
+from jarvis.agentic_ide.session import (
+    AgentBusyError,
+    Registry,
+    Session,
+    SessionError,
+    Terminal,
+)
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -175,4 +182,151 @@ async def test_fresh_submission_is_busy_before_its_record_appears(pane):
     submitted(term, now - 1)  # just sent; the CLI has not written its row yet
     with pytest.raises(SessionError, match="busy"):
         await send(registry, workspace, term)
+    assert sent == []
+
+
+# --- A correction the user directs at a running turn ---------------------------
+#
+# Live 2026-10-07: a scope correction to a Claude pane that was still working
+# came back "The selected coding agent is busy; nothing was sent." Every send
+# demanded an idle pane, so a correction could never reach running work.
+
+
+def working(record, now: float) -> None:
+    write(record, user(now - 299), assistant(now - 5, stop="tool_use"))
+
+
+def keys_pressed(registry, monkeypatch, *, on_stop=None) -> list[str]:
+    pressed: list[str] = []
+
+    def press(key, data, workspace_id=None):
+        pressed.append(data)
+        if on_stop is not None and data == "\x1b":
+            on_stop()
+        return True
+
+    monkeypatch.setattr(registry, "write", press)
+    return pressed
+
+
+async def correct(registry, workspace, term, when_busy: str):
+    return await registry.send_prompt(
+        "pane:" + term.history_id, "Narrow the review to the save flow",
+        workspace_id=workspace.id, require_idle=True, when_busy=when_busy,
+    )
+
+
+async def test_an_ordinary_send_never_reaches_into_a_running_turn(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    pressed = keys_pressed(registry, monkeypatch)
+    now = time.time()
+    submitted(term, now - 300)
+    working(record, now)
+    with pytest.raises(AgentBusyError) as refused:
+        await send(registry, workspace, term)
+    assert not refused.value.interrupted
+    assert sent == [] and pressed == []
+
+
+async def test_steer_types_into_a_running_claude_turn_without_stopping_it(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    pressed = keys_pressed(registry, monkeypatch)
+    now = time.time()
+    submitted(term, now - 300)
+    working(record, now)
+    result = await correct(registry, workspace, term, "steer")
+    assert sent == ["Narrow the review to the save flow"]
+    assert pressed == []
+    assert result.last_send_mid_turn is True
+
+
+async def test_steer_reaches_a_busy_codex_pane(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    term.agent = "codex"
+    term.resume = None  # no readable record: the fresh submit itself proves the turn
+    pressed = keys_pressed(registry, monkeypatch)
+    submitted(term, time.time() - 1)
+    result = await correct(registry, workspace, term, "steer")
+    assert sent == ["Narrow the review to the save flow"] and pressed == []
+    assert result.last_send_mid_turn is True
+
+
+async def test_steer_at_an_idle_prompt_is_an_ordinary_send(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    now = time.time()
+    submitted(term, now - 1200)
+    write(record, user(now - 1199), assistant(now - 60), *footer(now - 60))
+    result = await correct(registry, workspace, term, "steer")
+    assert sent == ["Narrow the review to the save flow"]
+    assert result.last_send_mid_turn is False
+
+
+async def test_steer_is_refused_where_the_cli_has_no_mid_turn_input(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    term.agent = "cursor"
+    term.resume = None
+    pressed = keys_pressed(registry, monkeypatch)
+    submitted(term, time.time() - 1)
+    with pytest.raises(AgentBusyError, match="Interrupt it first or queue"):
+        await correct(registry, workspace, term, "steer")
+    assert sent == [] and pressed == []
+
+
+@pytest.mark.parametrize("when_busy", ["steer", "interrupt"])
+async def test_a_correction_never_answers_an_open_question(pane, monkeypatch, when_busy):
+    registry, workspace, term, record, sent = pane
+    pressed = keys_pressed(registry, monkeypatch)
+    now = time.time()
+    submitted(term, now - 300)
+    write(record, user(now - 299), {"timestamp": at(now - 5), "type": "assistant",
+                                    "message": {"role": "assistant", "content": [
+                                        {"type": "tool_use", "name": "AskUserQuestion"}]}})
+    with pytest.raises(SessionError, match="respond") as refused:
+        await correct(registry, workspace, term, when_busy)
+    assert not isinstance(refused.value, AgentBusyError)
+    assert sent == [] and pressed == []
+
+
+async def test_interrupt_stops_the_turn_once_then_delivers(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    monkeypatch.setattr(session_module, "_INTERRUPT_POLL_S", 0.01)
+    now = time.time()
+    submitted(term, now - 300)
+    working(record, now)
+    pressed = keys_pressed(registry, monkeypatch, on_stop=lambda: write(
+        record, user(time.time(), "[Request interrupted by user for tool use]")))
+    result = await correct(registry, workspace, term, "interrupt")
+    assert pressed == ["\x1b"]
+    assert sent == ["Narrow the review to the save flow"]
+    assert result.last_send_mid_turn is False
+
+
+async def test_interrupt_of_a_finished_turn_presses_nothing(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    pressed = keys_pressed(registry, monkeypatch)
+    now = time.time()
+    submitted(term, now - 1200)
+    write(record, user(now - 1199), assistant(now - 60), *footer(now - 60))
+    await correct(registry, workspace, term, "interrupt")
+    assert pressed == [] and sent == ["Narrow the review to the save flow"]
+
+
+async def test_interrupt_that_does_not_settle_types_nothing(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    monkeypatch.setattr(session_module, "_INTERRUPT_POLL_S", 0.01)
+    monkeypatch.setattr(session_module, "INTERRUPT_SETTLE_S", 0.05)
+    pressed = keys_pressed(registry, monkeypatch)
+    now = time.time()
+    submitted(term, now - 300)
+    working(record, now)
+    with pytest.raises(AgentBusyError) as refused:
+        await correct(registry, workspace, term, "interrupt")
+    assert refused.value.interrupted is True
+    assert pressed == ["\x1b"] and sent == []
+
+
+async def test_unknown_busy_delivery_is_refused(pane):
+    registry, workspace, term, record, sent = pane
+    with pytest.raises(SessionError, match="Unknown busy delivery"):
+        await correct(registry, workspace, term, "kill")
     assert sent == []

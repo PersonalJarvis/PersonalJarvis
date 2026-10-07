@@ -71,6 +71,31 @@ neither voice reconnection nor a new tool-call ID replays that request. Receipts
 include the immutable target and execution trace. Requests to a closed, moved,
 archived or non-coding session fail without falling back to another terminal.
 
+### Agents that are in a turn
+
+A plain `send` never reaches into running work: a session in a turn returns
+`not_accepted` with `busy: true`, types nothing, and lists how the message could
+still get there. Only a correction the user directs at that running work uses
+`while_busy`:
+
+- `steer` types it into the running turn. Only for a CLI whose own mid-turn
+  input reaches that turn (`WorkspaceAgent.steers_mid_turn`: Claude Code, GLM,
+  Codex). Nothing is stopped. Other CLIs refuse it before typing.
+- `interrupt` presses Stop once (Escape), waits up to 15 s for the turn to end,
+  then types the correction at the prompt. The process, conversation and files
+  stay. A turn that has not ended by then is handed to the queue.
+- `queue` holds the message in the app and types it once the turn ends, for up
+  to 30 minutes. Its receipt reads `queued` until then and becomes the delivery
+  result. An app restart before delivery leaves nothing typed; the receipt then
+  reads `expired`.
+
+None of them types into an open question or permission prompt; that is
+`respond`. A busy refusal, an expired queue or any other receipt that proves
+nothing was typed may be retried with the same `request_id` and prompt (also
+with a different `while_busy`); an accepted, queued or uncertain receipt is
+returned instead of a second delivery. Claude Code records a mid-turn message as
+a human `queued_command`; `context` shows it as a user message.
+
 ## Boundaries and verification
 
 This is a T3 shared contract change. No new OS adapter, credential or model
