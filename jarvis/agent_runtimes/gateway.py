@@ -576,12 +576,22 @@ _SUBSCRIPTION_CODES: Final[dict[str, str]] = {
 }
 
 
+def _subscription_message(exc: Exception) -> str:
+    """Fixed wording for a failed subscription call; no exception text leaves."""
+    from jarvis.live.subscription_auth import SubscriptionAuthError
+
+    if isinstance(exc, SubscriptionAuthError) or getattr(exc, "code", "") == "login":
+        return "The ChatGPT subscription needs a new sign-in in Jarvis."
+    return "The ChatGPT subscription could not answer this turn."
+
+
 def _subscription_failure(grant: Grant, exc: Exception) -> GatewayError:
     """A subscription failure as a status and code the runtime can act on.
 
-    The subscription client already words its errors without provider text,
-    so its message is kept; the code decides whether the turn ends (a
-    terminal code) or the runtime handles it (overflow: compress).
+    Only fixed wording chosen by the failure's kind leaves the gateway, never
+    exception text (CodeQL py/stack-trace-exposure); the code decides whether
+    the turn ends (a terminal code) or the runtime handles it (overflow:
+    compress). The details go to the log.
     """
     from jarvis.live.subscription_auth import SubscriptionAuthError
 
@@ -590,26 +600,36 @@ def _subscription_failure(grant: Grant, exc: Exception) -> GatewayError:
     log.warning(
         "runtime gateway: %s subscription call failed: %s", grant.agent_id, _describe(exc)
     )
+    sign_in = "The ChatGPT subscription needs a new sign-in in Jarvis."
     if isinstance(exc, SubscriptionAuthError):
-        return GatewayError(str(exc), status=401, code="provider_auth")
+        return GatewayError(sign_in, status=401, code="provider_auth")
     status = getattr(exc, "status", 0)
     code = str(getattr(exc, "code", "") or "")
     if code == "context_length_exceeded":
         return GatewayError(
-            f"Context length exceeded: {exc} Compress or shorten the conversation and "
-            "send it again.",
+            "Context length exceeded: this request is longer than the selected ChatGPT "
+            "model's context. Compress or shorten the conversation and send it again.",
             status=400,
             code="context_length_exceeded",
         )
     if status in (401, 403):
-        return GatewayError(str(exc), status=401, code="provider_auth")
+        return GatewayError(sign_in, status=401, code="provider_auth")
     if status == 404 or code == "model_not_found":
-        return GatewayError(str(exc), status=404, code="model_not_found")
-    if status in (400, 413, 422):
         return GatewayError(
-            str(exc), status=400, code=_SUBSCRIPTION_CODES.get(code, "invalid_request")
+            "The selected model is unavailable on this ChatGPT subscription.",
+            status=404,
+            code="model_not_found",
         )
-    return GatewayError(str(exc), status=502, code="subscription_unavailable")
+    if status in (400, 413, 422):
+        mapped = _SUBSCRIPTION_CODES.get(code, "invalid_request")
+        text = (
+            "ChatGPT rejected a tool schema in this request."
+            if mapped == "invalid_tool_schema"
+            else "ChatGPT rejected this request."
+        )
+        text = f"{text[:-1]} (HTTP {int(status)})."
+        return GatewayError(text, status=400, code=mapped)
+    return GatewayError(_subscription_message(exc), status=502, code="subscription_unavailable")
 
 
 def _describe(exc: BaseException) -> str:
@@ -642,7 +662,10 @@ async def list_models(grant: Grant) -> list[dict[str, Any]]:
     try:
         rows = await _client(grant.account_id).list_models()
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
-        raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
+        log.info("runtime gateway: %s call failed (%s)", grant.agent_id, type(exc).__name__)
+        raise GatewayError(
+            _subscription_message(exc), status=502, code="subscription_unavailable"
+        ) from exc
     from types import SimpleNamespace
 
     result = []

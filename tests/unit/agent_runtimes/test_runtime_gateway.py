@@ -137,7 +137,10 @@ def test_a_failure_mid_stream_arrives_as_response_failed(fake, guarded) -> None:
     answer = _post(guarded, token, {"model": "gpt-5.6-sol", "input": "Hi", "stream": True})
     frames = [json.loads(line[5:]) for line in answer.text.splitlines() if line.startswith("data:")]
     assert frames[-1]["type"] == "response.failed"
-    assert "login expired" in frames[-1]["response"]["error"]["message"]
+    # Fixed wording only: no exception text leaves the gateway (CodeQL 769).
+    assert frames[-1]["response"]["error"]["message"] == (
+        "The ChatGPT subscription needs a new sign-in in Jarvis."
+    )
 
 
 def test_models_are_listed_in_the_openai_shape(fake, guarded) -> None:
