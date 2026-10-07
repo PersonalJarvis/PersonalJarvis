@@ -52,6 +52,25 @@ def audit(workflows: dict[str, dict]) -> list[str]:
     provenance = signing["jobs"]["provenance"]["with"]
     if provenance.get("upload-assets") is not False or "draft-release" in provenance:
         findings.append("sign-installer.yml: provenance must only produce a workflow artifact")
+    findings += _release_bot_findings(workflows)
+    return findings
+
+
+def _release_bot_findings(workflows: dict[str, dict]) -> list[str]:
+    """Only release-cut's main-only job may hold the key that creates v* tags."""
+    findings = []
+    for filename, workflow in workflows.items():
+        for name, job in workflow.get("jobs", {}).items():
+            if filename == "release-cut.yml" and name == "cut":
+                continue
+            if "RELEASE_APP_PRIVATE_KEY" in yaml.safe_dump(job):
+                findings.append(f"{filename}/{name}: only release-cut may use the release bot key")
+    cut = workflows["release-cut.yml"]["jobs"]["cut"]
+    if cut.get("environment") != "release-cut":
+        findings.append("release-cut.yml: the cut job must run in the release-cut environment")
+    tag = next((s for s in cut["steps"] if s.get("name") == "Tag the admitted release"), {})
+    if "steps.tag-token.outputs.token" not in str(tag.get("env", {}).get("GH_TOKEN", "")):
+        findings.append("release-cut.yml: push the release tag with the release bot token")
     return findings
 
 
