@@ -29,6 +29,12 @@ def _spoken_budget_does_not_clip_hedge_tests(monkeypatch: pytest.MonkeyPatch) ->
 BRIEF = "## Task\nMake the wake path faster.\n\n## Done when\n- It is faster."
 HEDGE_BRIEF = "## Task\nMake the wake path quick.\n\n## Done when\n- It is quick."
 
+# How long a fake writer takes when a test measures its wall clock. A writer
+# that returns instantly measures 0.0 s on Windows, whose ``time.monotonic``
+# ticks every 15.6 ms (GetTickCount64), and the composer rightly refuses to
+# learn a zero duration. Several ticks long, so the measured figure is > 0.
+_MEASURABLE_WRITE_S = 0.05
+
 
 @dataclass
 class _Profile:
@@ -465,6 +471,7 @@ async def test_a_delivered_brief_teaches_the_writers_threshold(
     leaves one measured duration behind under exactly that source."""
 
     async def _compose(**_kwargs: object) -> str:
+        await asyncio.sleep(_MEASURABLE_WRITE_S)
         return BRIEF
 
     monkeypatch.setattr(
@@ -492,6 +499,7 @@ async def test_a_defective_brief_teaches_nothing(
     async def _compose(*, brain: object, **_kwargs: object) -> str:
         if getattr(brain, "name", "") == "broken":
             return "ok"  # far too short to be a brief — a defect, not a brief
+        await asyncio.sleep(_MEASURABLE_WRITE_S)
         return BRIEF
 
     monkeypatch.setattr(
