@@ -123,8 +123,25 @@ async def test_usage_limit_midstream_is_safe_and_terminal():
     with pytest.raises(SubscriptionReasoningError, match="usage limit") as caught:
         await _collect(reasoning)
     assert caught.value.code == "usage_limit_reached"
+    assert caught.value.status == 429
     assert "sensitive-provider-body" not in str(caught.value)
     assert credentials.calls == [False]
+    await reasoning.aclose()
+
+
+async def test_http_rate_limit_keeps_retry_after_without_retrying_or_refreshing():
+    requests = []
+
+    def limited(request):
+        requests.append(request)
+        return httpx.Response(429, headers={"Retry-After": "3600"}, text="sensitive-body")
+
+    reasoning, credentials = _reasoning(limited)
+    with pytest.raises(SubscriptionReasoningError) as caught:
+        await _collect(reasoning)
+    assert caught.value.status == 429 and caught.value.retry_after == "3600"
+    assert "sensitive-body" not in str(caught.value)
+    assert credentials.calls == [False] and len(requests) == 1
     await reasoning.aclose()
 
 

@@ -109,6 +109,32 @@ async def test_rejected_message_cannot_replace_a_newer_control_status() -> None:
     assert controls.state(sid).last_status == "failed"
 
 
+async def test_continue_preserves_a_rate_limited_question_and_its_approval_mode():
+    svc = FakeService()
+    sid = seat(svc)
+    question = "Was ist deine Aufgabe"
+    svc.store.append_event(sid, make_event("user_message", {"text": question}))
+    svc.store.append_event(
+        sid,
+        make_event(
+            "turn_finished",
+            {
+                "turn_id": "limited",
+                "status": "error",
+                "error": "HTTP 429; use /continue later",
+            },
+        ),
+    )
+    controls = ChatControls(svc, adapters=[])
+    result = await controls.execute(sid, request("continue"))
+    assert result.status == "started"
+    await svc.wait_turn(sid)
+    assert question in svc.sent[-1][0]
+    assert svc.store.list_events(sid)[0]["payload"]["text"] == question
+    session = svc.store.get_session(sid)
+    assert session.permission_mode == "ask" and session.provider == "openai"
+
+
 def test_plan_build_and_review_preserve_original_permissions_and_history() -> None:
     async def scenario() -> None:
         svc = FakeService()

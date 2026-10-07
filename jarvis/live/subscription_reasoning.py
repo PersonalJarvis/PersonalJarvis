@@ -31,14 +31,25 @@ _LIGHTEST_FIRST = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 class SubscriptionReasoningError(RuntimeError):
     def __init__(
-        self, message: str, *, code: str = "subscription_unavailable", status: int = 0
+        self,
+        message: str,
+        *,
+        code: str = "subscription_unavailable",
+        status: int = 0,
+        retry_after: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        self.retry_after = retry_after
 
 
-def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError:
+def _failure(
+    status: int = 0,
+    payload: Any = None,
+    *,
+    retry_after: str | None = None,
+) -> SubscriptionReasoningError:
     error = payload.get("error", {}) if isinstance(payload, dict) else {}
     if not isinstance(error, dict):
         error = {}
@@ -50,6 +61,7 @@ def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError
         "rate_limit_exceeded",
         "subscription_sharing_usage_limit_exceeded",
     }:
+        status = 429
         message = (
             "The selected ChatGPT subscription reached a usage limit. "
             "Try again after its allowance resets."
@@ -64,7 +76,7 @@ def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError
             "ChatGPT subscription reasoning failed. "
             "Try again later; no API billing fallback was used."
         )
-    return SubscriptionReasoningError(message, code=code, status=status)
+    return SubscriptionReasoningError(message, code=code, status=status, retry_after=retry_after)
 
 
 class SubscriptionReasoning:
@@ -221,7 +233,10 @@ class SubscriptionReasoning:
                     if response.status_code == 401 and attempt == 0:
                         continue
                     if response.status_code != 200:
-                        raise _failure(response.status_code)
+                        raise _failure(
+                            response.status_code,
+                            retry_after=response.headers.get("retry-after"),
+                        )
                     async for event in self._events(response):
                         yield event
                     return
