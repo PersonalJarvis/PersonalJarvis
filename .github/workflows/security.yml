@@ -51,6 +51,7 @@ jobs:
           # Low/informational hints (self-repository syntax, ad-hoc pip in the
           # merge train) stay local-only instead of filling the Security tab.
           min-severity: medium
+          config: .github/zizmor.yml
 
   osv-scanner:
     name: osv-scanner (lockfiles)

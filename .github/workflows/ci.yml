@@ -269,6 +269,9 @@ jobs:
           min-severity: medium
           advanced-security: false
           annotations: true
+          # Explicit: auto-discovery did not apply every ignore in a local
+          # `zizmor .` run, and a blocking audit must read the same rules.
+          config: .github/zizmor.yml
 
   # Fails when the diff ADDS a dependency with a known high or critical
   # advisory. Only a pull request has a dependency diff; on every other
