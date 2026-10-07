@@ -65,6 +65,23 @@ python scripts/ci/ratchet_tests.py prune --baseline scripts/ci/test-baseline-lin
 A missing list means no failures have been approved for that OS; new failures
 block immediately. Missing, empty or malformed reports also block.
 
+### Flaky tests
+
+A file that fails inside its batch and passes when re-run alone is reported
+as flaky. That almost always means test-order dependence, and the ratchet does
+not block on it, so it is tracked instead. `test report + floor` lists flaky
+files and new versus known failures in its step summary on every run. After
+each push, nightly and manual CI run on main, `.github/workflows/flaky-tests.yml`
+does the same for every OS and keeps one issue, "Flaky tests on main", updated
+with a rolling table (test file, OS, number of runs it was flaky in, last seen
+run). Rows age out after 30 days without a sighting. That workflow is the only
+place with `issues: write`; it never runs for pull requests and refuses any CI
+run that is not a finished run of this repository's main branch. Record an
+older run by hand with
+`gh workflow run flaky-tests.yml -f run_id=<ci-run-id>`; a run already
+recorded is never counted twice. Logic and tests: `scripts/ci/flaky_report.py`,
+`tests/unit/ci/test_flaky_report.py`.
+
 Static gates include repository workflow policy (immutable action pins, the
 complete aggregate dependency graph, tag-only PyPI publication and draft-only
 asset producers). CI additionally runs pinned Actionlint for workflow syntax,
