@@ -1340,6 +1340,7 @@ def _phase2_full_brain(
             try:
                 from jarvis.brain.wiki_context import WikiContextInjector
                 from jarvis.memory.wiki.search import VaultSearch
+                from jarvis.memory.wiki.semantic_search import SemanticVaultSearch
 
                 # Resolve the vault from [wiki_integration].vault_root — the
                 # single source of truth shared with wiki-recall / wiki-page-read
@@ -1347,6 +1348,7 @@ def _phase2_full_brain(
                 # fallback only (see _resolve_wiki_vault_root).
                 vault_path = _resolve_wiki_vault_root(config)
                 search = VaultSearch(vault_path)
+                semantic_search = SemanticVaultSearch(vault_path)
                 # Warm the lazy SQLite connection off the critical path
                 # (AP-26): the first per-turn search otherwise pays the
                 # open+schema check against its own latency budget.
@@ -1357,8 +1359,14 @@ def _phase2_full_brain(
                     name="wiki-vault-warmup",
                     daemon=True,
                 ).start()
+                threading.Thread(
+                    target=semantic_search.warm_up,
+                    name="wiki-semantic-warmup",
+                    daemon=True,
+                ).start()
                 manager._wiki_injector = WikiContextInjector(
                     search=search,
+                    semantic_search=semantic_search,
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
                     latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 150),
                     min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 3),

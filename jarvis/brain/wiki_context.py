@@ -153,6 +153,7 @@ class WikiContextInjector:
         self,
         *,
         search: VaultSearch | None,
+        semantic_search=None,
         max_chars: int = 12_000,
         latency_budget_ms: int = 150,
         min_keyword_length: int = 4,
@@ -168,6 +169,7 @@ class WikiContextInjector:
         # wider budget covers the cold path when that race is lost, and is
         # far below anything audible next to a multi-second brain call.
         self._search = search
+        self._semantic_search = semantic_search
         self._max_chars = max_chars
         self._latency_budget_ms = latency_budget_ms
         self._min_keyword_length = min_keyword_length
@@ -256,11 +258,19 @@ class WikiContextInjector:
         # Run search with a strict latency budget
         budget_ms = self._latency_budget_ms
         try:
-            retrieval = _run_search(self._search, query)
-            hits = await asyncio.wait_for(
-                retrieval,
-                timeout=budget_ms / 1000.0,
-            )
+            lexical_task = _run_search(self._search, query)
+            if self._semantic_search is not None:
+                semantic_task = _run_search(self._semantic_search, user_text)
+                hits, semantic_hits = await asyncio.wait_for(
+                    asyncio.gather(lexical_task, semantic_task),
+                    timeout=budget_ms / 1000.0,
+                )
+            else:
+                hits = await asyncio.wait_for(
+                    lexical_task,
+                    timeout=budget_ms / 1000.0,
+                )
+                semantic_hits = []
         except TimeoutError:
             log.warning(
                 "WikiContextInjector timed out after %dms (budget=%dms) — "
@@ -279,13 +289,7 @@ class WikiContextInjector:
             self._miss(t0, "search_error")
             return system_prompt
 
-        if not hits:
-            self._miss(t0, "no_hits")
-            return system_prompt
-
-        # Gate 2 (post-retrieval): the index matches on ANY query term, so a
-        # page sharing one common word arrives looking just like one that is
-        # on topic. Coverage + a within-call relative floor separate them.
+        # Gate 2: lexical hits keep the existing coverage filter.
         if self._relevance_gate:
             hits = relevant_hits(
                 hits,
@@ -295,12 +299,34 @@ class WikiContextInjector:
                 else self._min_coverage,
                 min_relative_score=self._min_relative_score,
             )
-            if not hits:
-                self._miss(
-                    t0,
-                    "no_relevant_hits_strict" if strict else "no_relevant_hits",
-                )
-                return system_prompt
+
+        # Semantic hits are judged by cosine similarity, not lexical coverage.
+        semantic_threshold = 0.55 if strict else 0.45
+        semantic_hits = [
+            hit for hit in semantic_hits
+            if getattr(hit, "score", 0.0) >= semantic_threshold
+        ]
+
+        # Merge and deduplicate, preferring the highest-scoring copy.
+        merged = {}
+        for hit in [*hits, *semantic_hits]:
+            key = (
+                str(getattr(hit, "path", "")),
+                getattr(hit, "title", ""),
+                getattr(hit, "snippet", ""),
+            )
+            previous = merged.get(key)
+            if previous is None or hit.score > previous.score:
+                merged[key] = hit
+
+        hits = sorted(merged.values(), key=lambda hit: hit.score, reverse=True)
+
+        if not hits:
+            self._miss(
+                t0,
+                "no_relevant_hits_strict" if strict else "no_relevant_hits",
+            )
+            return system_prompt
 
         latency_ms = int((time.monotonic() - t0) * 1000)
 

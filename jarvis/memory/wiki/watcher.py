@@ -105,6 +105,7 @@ class WikiWatcher:
         self._observer: Any | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._index_lock = threading.Lock()
+        self._semantic_embedder: Any | None = None
 
         # Per-path debounce: {absolute_path: (Timer, latest_kind)}.
         self._timers_lock = threading.Lock()
@@ -411,6 +412,31 @@ class WikiWatcher:
                         fts_index.remove_page(conn, self.vault_root, abs_path)
                     else:
                         fts_index.upsert_page(conn, self.vault_root, abs_path)
+
+                    try:
+                        from jarvis.memory.wiki import semantic_index
+
+                        semantic_index.ensure_schema(conn)
+                        if operation == "remove":
+                            semantic_index.remove_page(conn, self.vault_root, abs_path)
+                        else:
+                            if self._semantic_embedder is None:
+                                from fastembed import TextEmbedding
+
+                                self._semantic_embedder = TextEmbedding(
+                                    "BAAI/bge-small-en-v1.5"
+                                )
+                            semantic_index.upsert_page(
+                                conn,
+                                self.vault_root,
+                                abs_path,
+                                embedder=self._semantic_embedder,
+                            )
+                    except Exception:
+                        log.debug(
+                            "wiki_watcher: semantic index unavailable",
+                            exc_info=True,
+                        )
                 finally:
                     conn.close()
             health.record_index(
