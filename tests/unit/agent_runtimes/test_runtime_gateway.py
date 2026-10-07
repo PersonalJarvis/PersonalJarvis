@@ -279,7 +279,12 @@ def test_chat_streams_text_and_tool_calls_in_the_openai_shape(brain, guarded) ->
     calls = [call for d in deltas for call in d.get("tool_calls") or []]
     assert calls[0]["function"] == {"name": "read_file", "arguments": '{"path": "a.txt"}'}
     assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
-    assert chunks[-1]["usage"] == {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+    assert chunks[-1]["usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": 0},
+    }
     grant, model, _request = brain["requests"][0]
     assert grant.provider == "openai" and model == "gpt-5.2"
 
@@ -629,3 +634,31 @@ async def test_a_request_the_subscription_client_refuses_is_a_400_not_a_retry():
             pass
     failure = gateway._subscription_failure(gateway.Grant("a", "openai-codex"), caught.value)
     assert (failure.status, failure.code) == (400, "invalid_request")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_the_prompt_size_includes_cached_tokens(brain, guarded, monkeypatch, stream) -> None:
+    """Hermes compresses from ``prompt_tokens``; the plugins report only the
+    uncached share as ``input_tokens``. A long tool loop is mostly cache."""
+    from jarvis.core.protocols import BrainDelta
+
+    async def deltas(grant, model, request):
+        yield BrainDelta(content="ok", finish_reason="stop")
+        yield BrainDelta(usage={"input_tokens": 1_200, "output_tokens": 40,
+                                "cache_hit_tokens": 98_000, "cache_write_tokens": 500})
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    if stream:
+        lines = [line[5:].strip() for line in answer.text.splitlines()
+                 if line.startswith("data:")]
+        usage = json.loads(lines[-2])["usage"]
+    else:
+        usage = answer.json()["usage"]
+    assert usage == {
+        "prompt_tokens": 99_700,
+        "completion_tokens": 40,
+        "total_tokens": 99_740,
+        "prompt_tokens_details": {"cached_tokens": 98_000, "cache_write_tokens": 500},
+    }

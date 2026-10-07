@@ -796,13 +796,38 @@ def _chunk(chat_id: str, model: str, delta: dict[str, Any], **extra: Any) -> byt
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n".encode()
 
 
-def _openai_usage(usage: dict[str, int]) -> dict[str, int]:
-    prompt = int(usage.get("input_tokens", 0))
+def _merge_usage(total: dict[str, int], usage: dict[str, Any]) -> None:
+    """Fold one usage block in. A plugin reports a call once, but a split or
+    cumulative report must not count the same tokens twice: keep the highest
+    figure per key."""
+    for key, value in usage.items():
+        try:
+            total[key] = max(total.get(key, 0), int(value or 0))
+        except (TypeError, ValueError):
+            log.debug("runtime gateway: non-numeric usage %r ignored", key)
+
+
+def _openai_usage(usage: dict[str, int]) -> dict[str, Any]:
+    """The plugin's usage in the Chat Completions shape.
+
+    The plugins report ``input_tokens`` as the UNCACHED share
+    (``jarvis.brain.usage_meter``); Chat Completions' ``prompt_tokens``
+    counts the whole prompt, cache reads and writes included. Hermes and
+    OpenClaw size the conversation from it and compress when it nears the
+    context window, so the cached share must be in it.
+    """
+    cached = int(usage.get("cache_hit_tokens", 0))
+    written = int(usage.get("cache_write_tokens", 0))
+    prompt = int(usage.get("input_tokens", 0)) + cached + written
     completion = int(usage.get("output_tokens", 0))
+    details: dict[str, int] = {"cached_tokens": cached}
+    if written:
+        details["cache_write_tokens"] = written
     return {
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": prompt + completion,
+        "prompt_tokens_details": details,
     }
 
 
@@ -864,8 +889,7 @@ async def _chat_chunks(
                 yield _chunk(chat_id, model, {"tool_calls": [_tool_call(calls, delta.tool_call)]})
                 calls += 1
             if delta.usage:
-                for key, value in delta.usage.items():
-                    usage[key] = usage.get(key, 0) + int(value or 0)
+                _merge_usage(usage, delta.usage)
             if delta.finish_reason:
                 finish = _FINISH.get(delta.finish_reason, "stop")
             delta = await anext(stream, None)
@@ -918,8 +942,7 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
             if delta.tool_call:
                 calls.append(_tool_call(len(calls), delta.tool_call))
             if delta.usage:
-                for key, value in delta.usage.items():
-                    usage[key] = usage.get(key, 0) + int(value or 0)
+                _merge_usage(usage, delta.usage)
             if delta.finish_reason:
                 finish = _FINISH.get(delta.finish_reason, "stop")
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
