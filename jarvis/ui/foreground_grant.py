@@ -36,7 +36,7 @@ def allow_foreground(pid: int | None = None) -> bool:
     if pid is not None:
         try:
             target = int(pid)
-        except (TypeError, ValueError):  # no usable pid: grant any process
+        except (TypeError, ValueError):  # no usable pid: grant foreground to any process
             target = _ASFW_ANY
         if target <= 0:
             target = _ASFW_ANY

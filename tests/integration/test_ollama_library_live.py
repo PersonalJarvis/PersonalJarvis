@@ -6,18 +6,30 @@ the real search and tags pages and asserts the parsers still read them. The
 moment the markup drifts past what the anchors tolerate, this fails loudly at
 CI time instead of a user finding an inexplicably empty library panel.
 
-Network-dependent, so it is marked ``integration`` and self-skips when
-ollama.com cannot be reached. Run explicitly with ``pytest -m integration``.
+Opt-in: it runs only with ``JARVIS_LIVE_NETWORK_TESTS=1``. A third-party
+site redesign is not caused by the change under review, so it must not block
+every pull request at once (the 2026-10 redesign did exactly that). Run it
+when touching the parser, or from a scheduled job that sets the variable:
+``JARVIS_LIVE_NETWORK_TESTS=1 pytest -m integration tests/integration/test_ollama_library_live.py``.
+It also self-skips when ollama.com cannot be reached.
 """
 
 from __future__ import annotations
+
+import os
 
 import httpx
 import pytest
 
 from jarvis.brain.ollama_library import _tags_path, parse_search_html, parse_tags_html
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("JARVIS_LIVE_NETWORK_TESTS") != "1",
+        reason="live ollama.com check; opt in with JARVIS_LIVE_NETWORK_TESTS=1",
+    ),
+]
 
 _TIMEOUT = 15.0
 
@@ -57,13 +69,18 @@ def test_the_live_tags_page_still_parses() -> None:
 
 
 def test_the_live_newest_sort_is_honoured() -> None:
-    """``?o=newest`` must change the ORDER: the first rows are days or weeks
-    old, never the years-old names that top the popular listing."""
+    """``?o=newest`` must change the ordered results from the popular listing.
+
+    Search cards no longer publish ages, so sorting cannot be inferred from
+    timestamps. Compare the two real listings instead of inventing an age.
+    """
     models = parse_search_html(_fetch("https://ollama.com/search?o=newest"))
     assert len(models) >= 5, "The live newest listing parsed almost empty."
-    head = [m["updated"] for m in models[:5]]
-    assert all(u and "year" not in u for u in head), head
-    assert any(("day" in u or "week" in u or u == "yesterday") for u in head), head
+    popular = parse_search_html(_fetch("https://ollama.com/search"))
+    assert len(popular) >= 5, "The live popular listing parsed almost empty."
+    newest_names = [model["name"] for model in models]
+    popular_names = [model["name"] for model in popular]
+    assert newest_names != popular_names, "The newest sort returned the default ordering."
 
 
 def test_the_live_capability_filter_is_honoured() -> None:

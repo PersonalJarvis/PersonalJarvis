@@ -224,14 +224,24 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 description = text
                 break
 
-        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", block)]
+        # Since 2026-10 a badge puts an icon before its label ("<svg>…</svg>Vision")
+        # and capitalises it; dropping the icons reads both layouts as text spans.
+        plain = re.sub(r"<svg\b.*?</svg>", "", block, flags=re.DOTALL)
+        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", plain)]
         spans = [s for s in spans if s]
-        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in spans]
+        # Every text node, not only whole spans: "Cloud" now sits beside a tooltip.
+        texts = (_text(m.group(1)) for m in re.finditer(r">([^<>]+)<", plain))
+        lowered = {t.lower() for t in texts if t}
+        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in lowered]
         sizes = [s for s in spans if re.fullmatch(r"\d+(?:\.\d+)?[bm]", s)]
 
         pulls_match = re.search(
-            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", block
+            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", plain
+        ) or re.search(
+            r'<span\b[^>]*title="[^"]*downloads"[^>]*>\s*<span\b[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
+            plain,
         )
+        # The current search page prints no update time any more; "" then.
         updated = next((s for s in spans if s.endswith(" ago") or s == "yesterday"), "")
 
         entries.append(
@@ -239,7 +249,7 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 "name": name,
                 "description": description,
                 "capabilities": capabilities,
-                "cloud": "cloud" in spans,
+                "cloud": "cloud" in lowered,
                 "sizes": sizes,
                 "pulls": pulls_match.group(1) if pulls_match else "",
                 "updated": updated,

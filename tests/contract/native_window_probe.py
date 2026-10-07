@@ -19,8 +19,9 @@ async def main() -> None:
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
-            sys.argv[2], executable_path=sys.argv[1], headless=False,
-            viewport={"width": 1280, "height": 800},
+            # No emulated viewport: the page then fills the real widget, whose
+            # size follows the window that park() fits to the work area.
+            sys.argv[2], executable_path=sys.argv[1], headless=False, no_viewport=True,
         )
         native = None
         try:
@@ -57,8 +58,14 @@ async def main() -> None:
                 u.EnumChildWindows(native.hwnd, child, 0)
             assert children
             x, y, width = children[-1]
-            scale = width / 1280
-            native.input("click", {"x": x + 100 * scale, "y": y + 70 * scale})
+            # Widget pixels per CSS pixel, measured instead of assuming a width.
+            scale = width / await page.evaluate("window.innerWidth")
+            box = await page.get_by_label("Name").bounding_box()
+            assert box is not None
+            native.input("click", {
+                "x": x + (box["x"] + box["width"] / 2) * scale,
+                "y": y + (box["y"] + box["height"] / 2) * scale,
+            })
             native.input("text", {"text": "Typed through the preview"})
             await asyncio.sleep(0.3)
             value = await page.get_by_label("Name").input_value()

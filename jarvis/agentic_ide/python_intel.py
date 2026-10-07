@@ -180,7 +180,7 @@ def definitions(
             continue  # a library outside the workspace: nothing to open here
         try:
             _resolve(root, relative)
-        except EditError:  # a target the editor cannot open is not offered
+        except EditError:  # a path outside the workspace cannot be opened
             continue
         results.append({"path": relative, "line": name.line, "column": (name.column or 0) + 1})
     return results

@@ -409,7 +409,7 @@ class CodingThreadTool:
                 return ToolResult(False, {}, f"Unknown action {action!r}.")
             output = await handler(service, agent, args)
             return ToolResult(True, output)
-        except ValueError as exc:  # a bad request: the message goes back to the agent
+        except ValueError as exc:  # the agent gets the reason in the tool result
             return ToolResult(False, {}, str(exc))
         except Exception as exc:  # noqa: BLE001 — reported to the agent, details in the log
             log.warning("coding thread action %s failed", action, exc_info=True)
@@ -956,7 +956,7 @@ class CodingThreads:
             return
         try:
             running = asyncio.get_running_loop()
-        except RuntimeError:  # called off the loop: signal it thread-safely below
+        except RuntimeError:  # not on a loop thread: schedule on the given loop
             running = None
         if running is loop:
             changed.set()
@@ -993,7 +993,7 @@ class CodingThreads:
                 delay = RETRY_S + random.uniform(0, RETRY_S / 2)  # noqa: S311
                 try:
                     await asyncio.wait_for(self._changed.wait(), timeout=delay)
-                except TimeoutError:  # the retry delay passed: run the next round
+                except TimeoutError:  # the retry interval elapsed: try the busy chats again
                     continue
 
     async def _process(self, thread_id: str) -> bool:
@@ -1154,7 +1154,7 @@ class CodingThreads:
         token = incoming_context.set(incoming)
         try:
             await service.send(owner_session, incoming.prompt, incoming=incoming, direct_user=False)
-        except SessionBusy:  # the owner is mid-turn: delivered on a later round
+        except SessionBusy:  # the owner is mid-turn: the report waits for the retry
             return True
         except NoSuchSession:
             log.info("coding threads: owner chat of %s is gone", thread_id)

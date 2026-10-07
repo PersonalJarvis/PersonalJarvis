@@ -99,7 +99,7 @@ def _ms(value: Any) -> int:
     text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError:  # an unparseable timestamp reads as unknown (0)
+    except ValueError:  # an unparsable timestamp sorts as the oldest
         return 0
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -137,7 +137,7 @@ def _first_line(path: Path) -> dict[str, Any] | None:
         return None
     try:
         obj = json.loads(line)
-    except ValueError:  # a first line that is not JSON is not a Codex rollout
+    except ValueError:  # a non-JSON first line is not a session header
         return None
     return obj if isinstance(obj, dict) and obj.get("type") == "session_meta" else None
 
@@ -161,7 +161,7 @@ def _arguments(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
-        except ValueError:  # free-text arguments are kept as the raw input
+        except ValueError:  # plain-text tool input is kept as text
             return {"input": raw}
         return parsed if isinstance(parsed, dict) else {"input": parsed}
     return {}
@@ -262,7 +262,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
     )
     try:
         start = int(payload.get("subagent_history_start_ordinal") or 0)
-    except (TypeError, ValueError):  # no usable ordinal: read from the start
+    except (TypeError, ValueError):  # a missing or bad ordinal means read from the start
         start = 0
     seen: set[str] = set()
     last_text = ""
@@ -278,7 +278,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
                 continue
             try:
                 obj = json.loads(line)
-            except ValueError:  # a torn or partial rollout line is skipped, the rest is read
+            except ValueError:  # a torn or partial transcript line is skipped
                 continue
             if not isinstance(obj, dict):
                 continue

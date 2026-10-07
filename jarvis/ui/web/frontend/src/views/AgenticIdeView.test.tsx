@@ -22,7 +22,13 @@ const git = vi.hoisted(() => ({ inspectGit: vi.fn(), prepareGit: vi.fn() }));
 vi.mock("@/lib/gitApi", async (importOriginal) => ({ ...(await importOriginal<object>()), ...git }));
 vi.mock("@/lib/agenticIdeApi", () => api);
 vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
-vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }) }));
+vi.mock("@/store/events", () => ({
+  // The code editor's shortcuts read the store imperatively via getState().
+  useEventStore: Object.assign(
+    (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }),
+    { getState: () => ({ pushToast: api.pushToast }) },
+  ),
+}));
 vi.mock("@/components/agentic/FolderPicker", () => ({ FolderPicker: ({ onSelect }: { onSelect: (path: string) => void }) => <button onClick={() => onSelect("/code/app")}>Pick folder</button> }));
 vi.mock("@/components/agentic/VoiceBubble", () => ({ VoiceBubble: () => null, storedVoiceBubbleOpen: () => false, storeVoiceBubbleOpen: vi.fn() }));
 vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session, onAdd }: { session: { id: string }; onAdd: () => void }) => <><div data-testid="live-grid">{session.id}</div><button onClick={onAdd}>Pane add</button></> }));

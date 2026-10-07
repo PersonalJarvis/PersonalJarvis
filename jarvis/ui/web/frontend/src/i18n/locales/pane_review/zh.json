@@ -40,7 +40,7 @@
     },
     "committed": "已提交",
     "pending": "未提交",
-    "generated_hidden": "+ {count} 个生成的文件（构建产物），未列出",
-    "editor_badge": "{pane} 所做的更改"
+    "editor_badge": "{pane} 的更改",
+    "generated_hidden": "+ {count} 个生成的文件（构建输出），未列出"
   }
 }
