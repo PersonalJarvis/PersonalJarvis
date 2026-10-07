@@ -54,6 +54,12 @@ These cost real bugs. Nothing catches them but you.
   machine can connect for two minutes. Frontend goes through
   `lib/connectBudget.ts`; a poll reuses a client from `jarvis/core/http_pool.py`.
   (AP-33)
+- **No invisible browsers.** UI checks, screenshots and scraping run in a tab of
+  the user's real Chrome: never a headless/private Chrome, Playwright, Puppeteer
+  or Selenium launch. Hidden Chromes once pinned the CPU at 100 % for hours. If
+  the real browser is unreachable, report the visual check as unverified. Only
+  a render job whose output is a file (video, HTML→PNG) may run headless: one
+  at a time, and kill its whole process tree when it ends.
 - **No Windows Service** — SYSTEM has no microphone. (AP-17)
 - **Never gate a CI check on `isinstance` against an unpinned library.** Green
   locally, red in CI on the next release. Discriminate by capability. (AP-28)
