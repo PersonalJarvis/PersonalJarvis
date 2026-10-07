@@ -1,14 +1,19 @@
 """Build the companion accessory meshes from the shared accessory catalog.
 
 Input: jarvis/ui/web/frontend/src/components/society/companion/accessories.json
-(written by companion_accessories.py) and source/outlines.json.
+(written by companion_accessories.py) and source/outlines.json. The bodies are
+rebuilt with companion_bodies.py, exactly as in companions.glb.
 Run inside Blender with --background --factory-startup --python this_file.
 
 Output nodes in accessories.glb:
-  acc_<id>          free parts in symbol units around the slot anchor; the
-                    runtime places and scales them per shape.
-  acc_<id>__<shape> clothing patches of the body surface, already in the
-                    shape's 1 m unit-master space (same frame as companions.glb).
+  acc_<id>               free parts in symbol units around the slot anchor; the
+                         runtime places and scales them per shape.
+  acc_<id>__<shape>      clothing patches cut from the body surface itself, already
+                         in the shape's 1 m unit-master space (same frame as
+                         companions.glb).
+  acc_<id>__<shape>__fit the free parts of items worn on the body (outfit, neck,
+                         face), placed on that shape and bent onto its surface;
+                         the runtime uses it instead of placing acc_<id>.
 Materials are named acc:<fill>[:glow]; fills body/bodyDark/bodyLight are tinted
 from the agent colour at runtime.
 """
@@ -16,20 +21,24 @@ from the agent colour at runtime.
 import json
 import math
 import shutil
+import sys
 from pathlib import Path
 
 import bmesh
 import bpy
 from mathutils import Matrix, Vector
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from companion_bodies import FACETED, Surface, build_body  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 STUDY = ROOT / "art/studies/agent-symbol-companions"
 CATALOG = ROOT / "jarvis/ui/web/frontend/src/components/society/companion/accessories.json"
 RUNTIME_COPY = ROOT / "jarvis/ui/web/frontend/src/assets/society/companions/accessories.glb"
 
-FRONT_M = 0.25
-BODY_BEVEL_M = 0.065
 SLOT_LIFT_M = {"outfit": 0.0, "neck": 0.006, "head": 0.006}
+# Items worn on the body surface get per-shape fitted free parts.
+FITTED_SLOTS = {"outfit", "neck", "face"}
 
 
 # --- small geometry helpers ------------------------------------------------------
@@ -71,54 +80,6 @@ def signed_area(poly):
     return (
         sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1], strict=True)) / 2
     )
-
-
-def offset_polygon(poly, distance):
-    """Move each vertex along its averaged outward edge normal (positive = grow)."""
-    sign = 1 if signed_area(poly) > 0 else -1
-    n = len(poly)
-    out = []
-    for i in range(n):
-        prev, cur, nxt = poly[i - 1], poly[i], poly[(i + 1) % n]
-        normals = []
-        for a, b in ((prev, cur), (cur, nxt)):
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            length = math.hypot(dx, dy) or 1
-            normals.append((dy / length * sign, -dx / length * sign))
-        nx, ny = normals[0][0] + normals[1][0], normals[0][1] + normals[1][1]
-        length = math.hypot(nx, ny) or 1
-        out.append((cur[0] + nx / length * distance, cur[1] + ny / length * distance))
-    return out
-
-
-def clip_polygon(subject, clip):
-    """Sutherland-Hodgman: subject may be concave, clip must be convex."""
-    orient = 1 if signed_area(clip) > 0 else -1
-
-    def inside(p, a, b):
-        return orient * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) >= 0
-
-    def cross_point(p, q, a, b):
-        x1, y1, x2, y2 = p[0], p[1], q[0], q[1]
-        x3, y3, x4, y4 = a[0], a[1], b[0], b[1]
-        den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4) or 1e-9
-        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den
-        return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
-
-    output = list(subject)
-    for a, b in zip(clip, clip[1:] + clip[:1], strict=True):
-        source, output = output, []
-        for i, cur in enumerate(source):
-            prev = source[i - 1]
-            if inside(cur, a, b):
-                if not inside(prev, a, b):
-                    output.append(cross_point(prev, cur, a, b))
-                output.append(cur)
-            elif inside(prev, a, b):
-                output.append(cross_point(prev, cur, a, b))
-        if not output:
-            return []
-    return output
 
 
 def svg_to_blender(x, y, z):
@@ -359,88 +320,119 @@ def assemble(name, pieces):
     return obj
 
 
-def rim_piece(part, meta, anchor, outline):
-    """A hood: one closed shell around the head, above maxY (symbol y).
+def master_point(meta, sx, sy):
+    """Symbol (x, y) on the shape's 1 m master: Blender (x, z)."""
+    scale = 1 / (meta["bottom"] - meta["top"])
+    return Vector(((sx - 20) * scale, 0, (meta["bottom"] - sy) * scale))
 
-    The grown silhouette is extruded from just behind the face to past the
-    back of the body. Inside the outline the body hides it; beyond it, it is
-    the hood's edge, and its back face covers the back of the head. A closed
-    solid has no open cut ends and no faces that vanish from behind.
-    """
-    top, bottom = meta["top"], meta["bottom"]
-    scale = 1 / (bottom - top)
-    _, ay, k = anchor
-    limit = ay + part["maxY"] * k if "maxY" in part else 1e6
-    above = [(-1e3, -1e3), (1e3, -1e3), (1e3, limit), (-1e3, limit)]
-    area = clip_polygon(offset_polygon(outline, part["w"]), above)
-    if len(area) < 3:
-        return bmesh.new()
-    flat = [((x - 20) * scale, (bottom - y) * scale) for x, y in area]
-    bm = extrude_outline(flat, -0.12, FRONT_M + 0.05)
-    bmesh.ops.bevel(
-        bm,
-        geom=bm.edges[:],
-        offset=0.03,
-        segments=2,
-        affect="EDGES",
-        profile=0.5,
-        clamp_overlap=True,
-    )
+
+def cut_to_prism(bm, meta, clip):
+    """Keep the body inside the convex clip polygon, extended through the depth axis."""
+    corners = [master_point(meta, x, y) for x, y in clip]
+    centre = sum(corners, Vector()) / len(corners)
+    for a, b in zip(corners, corners[1:] + corners[:1], strict=True):
+        edge = b - a
+        if edge.length < 1e-6:
+            continue
+        normal = Vector((edge.z, 0, -edge.x)).normalized()
+        if normal.dot(centre - a) > 0:
+            normal = -normal
+        geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+        bmesh.ops.bisect_plane(bm, geom=geom, plane_co=a, plane_no=normal, clear_outer=True)
+    bm.normal_update()
+
+
+def shell(bm, lift, thickness=0.008):
+    """Float a surface patch above the body and give it a little thickness."""
+    bm.normal_update()
+    normals = {vert: vert.normal.copy() for vert in bm.verts}
+    for vert, normal in normals.items():
+        vert.co += normal * (lift + thickness)
+    bmesh.ops.solidify(bm, geom=bm.faces[:], thickness=thickness)
     for face in bm.faces:
-        face.smooth = abs(face.normal.y) < 0.99
+        face.smooth = True
     return bm
 
 
-def region_pieces(item, shape, meta, outline):
-    top, bottom = meta["top"], meta["bottom"]
-    scale = 1 / (bottom - top)
+def rim_piece(part, meta, anchor, body):
+    """A hood: the body grown by w symbol units above maxY, open toward the face.
+
+    A vertical cut through the front half leaves a clean opening on every
+    body, where a cut by surface normal would fray on an irregular mesh.
+    """
+    scale = 1 / (meta["bottom"] - meta["top"])
+    _, ay, k = anchor
+    bm = body.copy()
+    bm.normal_update()
+    for vert in bm.verts:
+        vert.co += vert.normal * part["w"] * scale
+    if "maxY" in part:
+        limit = master_point(meta, 20, ay + part["maxY"] * k)
+        geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+        bmesh.ops.bisect_plane(
+            bm, geom=geom, plane_co=limit, plane_no=Vector((0, 0, -1)), clear_outer=True
+        )
+    front = -min(vert.co.y for vert in bm.verts)
+    geom = bm.verts[:] + bm.edges[:] + bm.faces[:]
+    bmesh.ops.bisect_plane(
+        bm,
+        geom=geom,
+        plane_co=Vector((0, -0.45 * front, 0)),
+        plane_no=Vector((0, -1, 0)),
+        clear_outer=True,
+    )
+    return shell(bm, 0.0, thickness=0.02)
+
+
+def region_pieces(item, shape, meta, body):
+    """Clothing as patches of the actual body surface, layered in authoring order."""
     ax, ay, k = meta["anchors"][item["slot"]]
     lift = SLOT_LIFT_M.get(item["slot"], 0.006)
-    body_inset = offset_polygon(outline, -(BODY_BEVEL_M + 0.006) / scale)
     pieces = []
     order = 0
     for part in item["parts"]:
         if part.get("only") == "2d":
             continue
         if part["t"] == "rim":
-            pieces.append(
-                (
-                    rim_piece(part, meta, meta["anchors"][item["slot"]], outline),
-                    material(part["fill"], False),
-                )
-            )
+            piece = rim_piece(part, meta, meta["anchors"][item["slot"]], body)
+            pieces.append((piece, material(part["fill"], False)))
             continue
         if part["t"] != "region":
             continue
-        clip = [(ax + x * k, ay + y * k) for x, y in part["pts"]]
-        if part["mode"] == "wrap":
-            area = clip_polygon(outline, clip)
-            grow = 0.008 + lift + 0.003 * order
-            if len(area) < 3:
-                continue
-            area = offset_polygon(area, (grow + 0.012) / scale)
-            depth = (-(FRONT_M + grow), FRONT_M + grow)
-        else:
-            area = clip_polygon(body_inset, clip)
-            if len(area) < 3:
-                continue
-            depth = (-(FRONT_M + 0.02 + lift + 0.003 * order), -(FRONT_M - 0.01))
+        bm = body.copy()
+        cut_to_prism(bm, meta, [(ax + x * k, ay + y * k) for x, y in part["pts"]])
+        if part["mode"] == "front":
+            facing_away = [f for f in bm.faces if f.normal.y > -0.25]
+            bmesh.ops.delete(bm, geom=facing_away, context="FACES")
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        if not bm.faces:
+            bm.free()
+            continue
+        base = 0.008 if part["mode"] == "wrap" else 0.016
+        patch = shell(bm, base + lift + 0.004 * order)
+        pieces.append((patch, material(part["fill"], part.get("glow", False))))
         order += 1
-        flat = [((x - 20) * scale, (bottom - y) * scale) for x, y in area]
-        bm = extrude_outline(flat, depth[0], depth[1])
-        if part["mode"] == "wrap":
-            bmesh.ops.bevel(
-                bm,
-                geom=[e for e in bm.edges if not all(abs(v.co.y) < FRONT_M for v in e.verts)],
-                offset=0.045,
-                segments=2,
-                affect="EDGES",
-                profile=0.5,
-                clamp_overlap=True,
-            )
-            for face in bm.faces:
-                face.smooth = abs(face.normal.y) < 0.99
-        pieces.append((bm, material(part["fill"], part.get("glow", False))))
+    return pieces
+
+
+def fitted_pieces(item, meta, depths, surface):
+    """Free parts placed on one shape and bent onto its surface, in master metres."""
+    ax, ay, k = meta["anchors"][item["slot"]]
+    scale = 1 / (meta["bottom"] - meta["top"])
+    size = k * item.get("scale", 1) * scale
+    anchor_depth = depths[item["slot"]]
+    origin = master_point(meta, ax, ay) + Vector((0, -anchor_depth, 0))
+    place = Matrix.Translation(origin) @ Matrix.Scale(size, 4)
+    pieces = []
+    for part in item["parts"]:
+        if part["t"] in ("region", "rim", "smoke") or part.get("only") == "2d":
+            continue
+        bm = BUILDERS[part["t"]](part)
+        bmesh.ops.transform(bm, matrix=place, verts=bm.verts)
+        for vert in bm.verts:
+            vert.co.y -= surface.depth_near(vert.co.x, vert.co.z) - anchor_depth
+        finish = (part.get("glow", False), part.get("metal", False), part.get("gloss", False))
+        pieces.append((bm, material(part["fill"], *finish)))
     return pieces
 
 
@@ -449,6 +441,8 @@ def main():
     bpy.ops.object.delete(use_global=False)
     catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
     outlines = json.loads((STUDY / "source/outlines.json").read_text(encoding="utf-8"))
+    bodies = {shape: build_body(shape, outlines[shape], light=True) for shape in catalog["shapes"]}
+    surfaces = {shape: Surface(body) for shape, body in bodies.items()}
     count = 0
     for item in catalog["items"]:
         pieces = [
@@ -464,14 +458,23 @@ def main():
         if pieces:
             assemble(f"acc_{item['id']}", pieces)
             count += 1
-        if item["regions"]:
-            for shape, meta in catalog["shapes"].items():
-                # Every second outline sample keeps the silhouette and halves clothing size.
-                outline = [tuple(p) for p in outlines[shape][::2]]
-                pieces = region_pieces(item, shape, meta, outline)
+        for shape, meta in catalog["shapes"].items():
+            made = []
+            if item["regions"]:
+                pieces = region_pieces(item, shape, meta, bodies[shape])
                 if pieces:
-                    assemble(f"acc_{item['id']}__{shape}", pieces)
-                    count += 1
+                    made.append(assemble(f"acc_{item['id']}__{shape}", pieces))
+            if item["slot"] in FITTED_SLOTS:
+                pieces = fitted_pieces(item, meta, meta["depth"], surfaces[shape])
+                if pieces:
+                    made.append(assemble(f"acc_{item['id']}__{shape}__fit", pieces))
+            for obj in made:
+                count += 1
+                if shape in FACETED:
+                    # Clothing on flat facets stays flat, like the body under it.
+                    obj.modifiers.new("Surface normals", "WEIGHTED_NORMAL").keep_sharp = True
+    for body in bodies.values():
+        body.free()
     bpy.context.preferences.filepaths.save_version = 0
     bpy.ops.wm.save_as_mainfile(
         filepath=str(STUDY / "source/accessories.blend"), check_existing=False
@@ -482,6 +485,9 @@ def main():
         export_format="GLB",
         export_animations=False,
         export_materials="EXPORT",
+        export_apply=True,
+        # Flat colours only: no texture coordinates to ship.
+        export_texcoords=False,
     )
     shutil.copyfile(export, RUNTIME_COPY)
     print("ACCESSORY_GEOMETRY_EXPORTED", count, export.stat().st_size)

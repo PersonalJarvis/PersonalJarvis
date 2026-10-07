@@ -198,10 +198,10 @@ async def _jarvis_completed(session: Any, completion: ChatCompletion) -> None:
 
 
 def _society_history_start(session: Any) -> int:
-    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_chat.service import session_runner
     from jarvis.society.runtime import current_runtime
 
-    if resolve_runner(session.provider, surface=session.surface) != "brain":
+    if session_runner(session) != "brain":
         return 0  # Subscription seats retain their vendor's history/compaction contract.
     runtime = current_runtime()
     return runtime.conversations.checkpoint(session.session_id)[0] if runtime is not None else 0

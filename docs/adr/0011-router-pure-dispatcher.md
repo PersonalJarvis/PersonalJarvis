@@ -1359,13 +1359,15 @@ Router membership and the prohibition on recursive worker spawning are
 unchanged. Stable workspace/pane IDs and durable request receipts preserve
 project and delivery identity across asynchronous work and retries.
 
-Supervision extends that authorized assignment without introducing a worker
-spawn tool. A durable owner-bound record consumes IDE activity notifications
-and starts an internal turn in the same chat via its existing message receipt
-path. All terminal actions still pass ToolExecutor. Normal owned text follow-ups
-may inherit monitor-tier; approval dialogs retain ask-tier and stale replies are
-refused under the pane lock. Budget, kill-switch, grant and no-progress gates
-apply before automatic turns. No terminal output is treated as user authorization.
+Since 2026-10-06 the capability opens coding threads (agent-chat sessions on
+the IDE's `agent` surface) instead of driving terminal panes; the per-pane
+supervisor was removed. A coordinator observes the stored events of threads an
+agent started and wakes that agent's own chat through the internal message
+receipt path when a turn it started finishes, asks, presents a plan or waits
+for an approval. It is not a worker spawn tool: the thread runs the vendor CLI
+under the person's subscription, every action still passes ToolExecutor, wake-
+ups are capped per thread and held by the kill switch, and thread output is
+never treated as user authorization.
 
 Receiving turns inherit conversation provenance through task-local context;
 new conversations receive fresh traces. Replies retain the trace and parent
@@ -1392,7 +1394,8 @@ ASGI transport as `app-command`.
 ### Pure-Dispatcher spirit is preserved
 
 - Each call's tier comes from `risk_tier_for_args`: the person's per-action
-  mode from Settings > Jarvis actions (`allow` → monitor, `ask`, `block`),
+  mode from the stored action policy (`allow` → monitor, `ask`, `block`;
+  set through `/api/app-actions` since the settings page was retired),
   else the action default (read → safe, change → monitor, dangerous route →
   ask). `ToolExecutor.execute()` still evaluates and confirms (AP-3); a
   blocked action is refused by the evaluator. The same policy applies to the

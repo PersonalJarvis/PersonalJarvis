@@ -559,3 +559,135 @@ async def test_the_host_closes_stdin_after_the_result_when_no_app_is_attached(
         assert host._turns[cli.host_id].exit_code == 0
     finally:
         await _stop(host, task)
+
+
+def test_concurrent_first_requests_build_only_one_chat_service() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from types import SimpleNamespace
+
+    from jarvis.ui.web.agent_chat_routes import _service_from_state
+
+    entrants = Barrier(3)
+    built = []
+
+    def factory():
+        service = object()
+        built.append(service)
+        time.sleep(0.1)  # SQLite initialization releases the GIL in production.
+        return service
+
+    state = SimpleNamespace(agent_chat=None, agent_chat_factory=factory)
+
+    def first_request():
+        entrants.wait(timeout=3)
+        return _service_from_state(state)
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        services = list(pool.map(lambda _: first_request(), range(3)))
+    assert len(built) == 1
+    assert all(svc is state.agent_chat for svc in services)
+
+
+async def test_reattaching_twice_hands_over_the_old_reader_without_killing_the_cli(tmp_path):
+    host, task, port = await _start_host(tmp_path)
+    client = await _client(port)
+    try:
+        spawned = await client.spawn(
+            [sys.executable, "-c", _CHILD],
+            cwd=str(tmp_path),
+            env=None,
+            stdin="hi\n",
+            keep_stdin=True,
+            meta={"turn_id": "duplicate", "keep_stdin": True},
+        )
+        client.detach()
+        client = await _client(port)
+        first = await client.attach(spawned.host_id)
+        assert first is not None
+        assert await first.stdout.readline() == b"got hi\n"
+        second = await client.attach(first.host_id)
+        assert second is not None
+        assert first.handed_over and first.detached
+        assert await asyncio.wait_for(first.wait(), 1) == turn_host_client.HOST_LOST_CODE
+        first.kill()
+        first.release()  # a stale owner must not release the current reader
+        assert client.live() == [second]
+        assert second.stdin is not None
+        second.stdin.write(b"go\n")
+        assert [await second.stdout.readline() for _ in range(4)] == [
+            b"got hi\n",
+            b"two\n",
+            b"three\n",
+            b"",
+        ]
+        assert await asyncio.wait_for(second.wait(), 3) == 3
+        second.release()
+    finally:
+        client.detach()
+        await _stop(host, task)
+
+
+async def test_duplicate_recovery_publishes_one_success_and_no_late_timeout(tmp_path):
+    from jarvis.agent_chat.turn_host_client import TurnHandedOver
+
+    host, task, port = await _start_host(tmp_path)
+    client = await _client(port)
+    store = AgentChatStore(":memory:")
+    session = store.create_session(
+        provider="claude-api", model="fake", effort="", cwd=str(tmp_path)
+    )
+    events = []
+    readers = []
+
+    async def emit(event):
+        events.append(event)
+
+    async def approve(*_args):
+        pytest.fail("No approval expected")
+
+    try:
+        source = "import sys, json\nsys.stdin.readline()\nsys.stdin.readline()\n" + "\n".join(
+            f"print({json.dumps(line)!r}, flush=True)" for line in _CLAUDE_LINES
+        )
+        spawned = await client.spawn(
+            [sys.executable, "-u", "-c", source],
+            cwd=str(tmp_path),
+            env=None,
+            stdin="prompt\n",
+            keep_stdin=True,
+            meta={
+                "turn_id": "duplicate",
+                "runner": "claude-cli",
+                "shape": "claude",
+                "keep_stdin": True,
+                "started_at": time.time(),
+            },
+        )
+        client.detach()
+        client = await _client(port)
+        for _ in range(3):
+            proc = await client.attach(spawned.host_id)
+            assert proc is not None
+            handle = runner_api.TurnHandle(session, "duplicate", emit, approve, asyncio.Event())
+            readers.append(asyncio.create_task(resume_hosted_cli_turn(handle, proc)))
+            await asyncio.sleep(0)
+        for reader in readers[:-1]:
+            with pytest.raises(TurnHandedOver):
+                await asyncio.wait_for(reader, 2)
+        assert proc.stdin is not None
+        proc.stdin.write(b"go\n")
+        await asyncio.wait_for(readers[-1], 3)
+        finishes = [e["payload"] for e in events if e["kind"] == "turn_finished"]
+        assert len(finishes) == 1
+        assert finishes[0]["status"] == "done"
+        assert finishes[0]["usage"]["output_tokens"] == 5
+        assert proc.returncode == 0
+    finally:
+        for reader in readers:
+            if not reader.done():
+                reader.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)
+        client.detach()
+        await _stop(host, task)
+        store.close()

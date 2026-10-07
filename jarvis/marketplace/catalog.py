@@ -103,6 +103,8 @@ class OAuthPkceLoopbackAuth(_BaseAuth):
     mode: Literal["oauth_pkce_loopback"]
     authorization_url: str
     token_url: str
+    # Figma refreshes at its own endpoint (/v1/oauth/refresh), not token_url.
+    refresh_url: str | None = None
     revocation_url: str | None = None
     client_id: str
     client_secret: str | None = Field(default=None, exclude=True)

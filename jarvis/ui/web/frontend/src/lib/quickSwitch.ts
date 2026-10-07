@@ -86,7 +86,6 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   docs: ["documentation", "help", "manual"],
   feedback: ["bug", "report", "issue"],
   appshots: ["screenshot", "capture"],
-  "jarvis-actions": ["permissions", "allow", "block", "actions"],
   dictation: ["voice", "speech", "microphone", "mic", "whisper"],
   shortcuts: ["hotkeys", "keybinds", "keyboard", "quick switcher"],
   "voice-shortcuts": ["dictation hotkeys", "dictation keys"],

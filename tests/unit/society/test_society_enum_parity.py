@@ -28,6 +28,7 @@ _PINS = [
     (events.PermissionCeiling, "permission_ceiling", "PERMISSION_CEILINGS"),
     (events.GrantMode, "grant_mode", "GRANT_MODES"),
     (events.BrowserMode, "browser_mode", "BROWSER_MODES"),
+    (events.AgentRuntime, "runtime", "AGENT_RUNTIMES"),
     (events.KnowledgeScope, "knowledge_scope", "KNOWLEDGE_SCOPES"),
     (events.KnowledgeOrigin, "origin", "KNOWLEDGE_ORIGINS"),
     (events.RoomState, None, "ROOM_STATES"),

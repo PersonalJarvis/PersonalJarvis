@@ -81,6 +81,9 @@ class PkceLoopbackConfig:
     # has one, the browser redirect to its https callback) instead of
     # ``token_url``, with no secret. ``None`` means the provider directly.
     token_broker: str | None = None
+    # Provider endpoint for the refresh_token grant when it is not
+    # ``token_url`` (Figma). ``None`` refreshes at ``token_url``.
+    refresh_url: str | None = None
 
     def token_auth_method(self, secret: str | None) -> str:
         """Honor X's endpoint contract, including legacy installed catalogs."""
@@ -463,7 +466,7 @@ class PkceLoopbackHandler:
             client_secret = None
             auth_method = "none"
         else:
-            token_url = self._config.token_url
+            token_url = self._config.refresh_url or self._config.token_url
             auth_method = current.extra.get(
                 "token_endpoint_auth_method"
             ) or self._config.token_auth_method(client_secret)

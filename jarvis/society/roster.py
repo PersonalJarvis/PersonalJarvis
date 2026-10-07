@@ -31,6 +31,7 @@ from pydantic import ValidationError
 from .companion import random_companion, validate_avatar_companion
 from .events import (
     AgentApprovalMode,
+    AgentRuntime,
     AgentState,
     BrowserMode,
     Checkpoint,
@@ -183,6 +184,9 @@ class AgentRecord:
     #: Where the agent's work executes: ``None`` = this computer, else the id
     #: of a connected machine (``jarvis.computers``) reached over SSH.
     computer_id: str | None = None
+    #: The agent loop that executes turns (``AgentRuntime``); ``jarvis`` for
+    #: every agent created before runtimes existed.
+    runtime: AgentRuntime = AgentRuntime.JARVIS
 
     @property
     def session_id(self) -> str:
@@ -226,6 +230,7 @@ class AgentRecord:
             "browser_mode": str(self.browser_mode),
             "browser_allowed_domains": list(self.browser_allowed_domains),
             "computer_id": self.computer_id,
+            "runtime": str(self.runtime),
             "session_id": self.session_id,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -276,6 +281,7 @@ class AgentRecord:
                 str(x) for x in _loads(row.get("browser_allowed_domains_json"), [])
             ],
             computer_id=str(row["computer_id"]) if row.get("computer_id") else None,
+            runtime=AgentRuntime(str(row.get("runtime") or "jarvis")),
             created_ms=int(row.get("created_ms") or 0),
             updated_ms=int(row.get("updated_ms") or 0),
         )
@@ -311,6 +317,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "browser_mode",
         "browser_allowed_domains",
         "computer_id",
+        "runtime",
     }
 )
 
@@ -375,6 +382,15 @@ def _validate_computer(value: Any) -> str | None:
     return computer_id
 
 
+def _check_runtime_placement(runtime: Any, computer_id: Any) -> None:
+    """An external runtime (Hermes, OpenClaw) runs on this computer only, for now."""
+    if str(runtime or "jarvis") != "jarvis" and computer_id:
+        raise RosterError(
+            FailureReason.BLOCKED_BY_POLICY,
+            "Hermes and OpenClaw agents run on this computer; clear the connected computer first",
+        )
+
+
 def _coerce(field_name: str, value: Any) -> Any:
     """Validate one editable field and return its column value."""
     if field_name == "name":
@@ -399,6 +415,8 @@ def _coerce(field_name: str, value: Any) -> Any:
         return _enum(AgentApprovalMode, value, field_name)
     if field_name == "browser_mode":
         return _enum(BrowserMode, value, field_name)
+    if field_name == "runtime":
+        return _enum(AgentRuntime, value, field_name)
     if field_name == "browser_allowed_domains":
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise RosterError(
@@ -514,6 +532,22 @@ class Roster:
             if await self._store.get_agent_row(candidate) is None:
                 return candidate
 
+    async def _release_archived_name(self, name: str) -> dict[str, Any] | None:
+        """Free ``name`` when only a deleted (archived) agent still holds it.
+
+        Deleting an agent archives its row, and ``name`` is UNIQUE, so the old
+        row would otherwise block the name forever. The archived row keeps its
+        id, history and workspace under a suffixed name. Returns the row that
+        still holds ``name`` (a live agent), or ``None`` once the name is free.
+        """
+        existing = await self._store.get_agent_row_by_name(name)
+        if existing is None or existing.get("state") != str(AgentState.ARCHIVED):
+            return existing
+        await self._store.update_agent(
+            existing["agent_id"], {"name": f"{existing['name']} (deleted {existing['agent_id']})"}
+        )
+        return None
+
     async def create(
         self,
         *,
@@ -526,7 +560,8 @@ class Roster:
         """Create an agent; returns ``(record, created)``.
 
         An existing name adopts the row (``created=False``) and leaves it
-        untouched — the caller decides whether to PATCH. Without a name the
+        untouched — the caller decides whether to PATCH. A deleted (archived)
+        agent never blocks its name: a new agent is created. Without a name the
         agent is created fresh: placeholder name, random id (see module doc).
         """
         async with self._create_lock:
@@ -552,10 +587,15 @@ class Roster:
             agent_id = await self._fresh_agent_id()
         else:
             clean_name = _validate_name(str(name))
-            existing = await self._store.get_agent_row_by_name(clean_name)
+            existing = await self._release_archived_name(clean_name)
             if existing is not None:
                 return await self._hydrate(existing), False
             agent_id = slugify(clean_name)
+            held = await self._store.get_agent_row(agent_id)
+            if held is not None and held.get("state") == str(AgentState.ARCHIVED):
+                # A deleted agent keeps its slug (and its workspace folder);
+                # the new one starts clean under its own id.
+                agent_id = await self._fresh_agent_id()
         if tier_value is Tier.LEAD and agent_id != LEAD_AGENT_ID:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
@@ -564,6 +604,9 @@ class Roster:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
             )
+        if tier_value is Tier.LEAD and str(fields.get("runtime") or "jarvis") != "jarvis":
+            raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead always runs on Jarvis")
+        _check_runtime_placement(fields.get("runtime"), fields.get("computer_id"))
         if tier_value is Tier.LEAD and "approval_mode" in fields:
             raise RosterError(
                 FailureReason.BLOCKED_BY_POLICY,
@@ -639,6 +682,8 @@ class Roster:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "Jarvis keeps the lead name")
             existing = await self._store.get_agent_row_by_name(clean_name)
             if existing is not None and existing["agent_id"] != agent_id:
+                existing = await self._release_archived_name(clean_name)
+            if existing is not None and existing["agent_id"] != agent_id:
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, "agent name already exists")
         columns: dict[str, Any] = {}
         for key, value in fields.items():
@@ -655,6 +700,13 @@ class Roster:
                 raise RosterError(
                     FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
                 )
+            if key == "runtime" and str(value) != str(current.get("runtime") or "jarvis"):
+                # Chosen once, at creation: the agent's sessions, memory folder
+                # and tools all belong to that runtime.
+                raise RosterError(
+                    FailureReason.BLOCKED_BY_POLICY,
+                    "an agent's runtime is chosen when it is created and cannot change",
+                )
             if key == "tier" and str(value) == str(Tier.LEAD) and agent_id != LEAD_AGENT_ID:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "only Jarvis is the lead")
             if key == "parent_agent_id" and value:
@@ -665,6 +717,11 @@ class Roster:
                 if await self._store.get_agent_row(str(value)) is None:
                     raise RosterError(FailureReason.TARGET_UNKNOWN, f"parent {value!r} not found")
             columns[_JSON_FIELDS.get(key, key)] = _coerce(key, value)
+        if "runtime" in columns or "computer_id" in columns:
+            _check_runtime_placement(
+                columns.get("runtime", current.get("runtime")),
+                columns.get("computer_id", current.get("computer_id")),
+            )
         try:
             await self._store.update_agent(agent_id, columns)
         except sqlite3.IntegrityError as exc:

@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "./TopBar";
 import { useEventStore } from "@/store/events";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { useThreadTerminalsStore } from "@/store/threadTerminals";
+import { useWorkspacePanesStore } from "@/store/workspacePanes";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -19,18 +23,71 @@ beforeEach(() => {
     solo: false,
     detachedViews: [],
   });
+  // The shut side panel's toggle counts waiting agents; no poll leaves the test.
+  useWorkspacePanesStore.setState({ panes: [], load: async () => {} });
 });
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar caption buttons", () => {
-  it("carries no theme, restart, own-window or panel toggles", () => {
+  it("carries no theme, restart or own-window toggles", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
     render(<TopBar />);
     expect(screen.queryByTestId("theme-toggle")).toBeNull();
     expect(screen.queryByTestId("detach-view-button")).toBeNull();
-    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
     expect(screen.queryByTestId("section-nav-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /restart/i })).toBeNull();
+  });
+});
+
+describe("TopBar side panel toggle", () => {
+  it("opens and closes the IDE side panel from the caption", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeSidePanelStore.setState({ open: false, maximized: false });
+    render(<TopBar />);
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(useIdeSidePanelStore.getState().open).toBe(true);
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(useIdeSidePanelStore.getState().open).toBe(false);
+  });
+
+  it("stays out of every other section", () => {
+    render(<TopBar />);
+    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+  });
+});
+
+describe("TopBar terminal drawer toggle", () => {
+  beforeEach(() => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeSidePanelStore.setState({ open: false, maximized: false });
+    useThreadTerminalsStore.setState({ folder: "/code/app", open: false, shells: [], active: {} });
+  });
+  afterEach(() => useIdeThreadsStore.setState({ layout: "grid" }));
+
+  it("sits before the side panel toggle in the thread layout and starts a shell", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    render(<TopBar />);
+    const terminal = screen.getByTestId("thread-terminal-toggle");
+    const panel = screen.getByTestId("ide-side-panel-toggle");
+    expect(terminal.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(terminal);
+    expect(useThreadTerminalsStore.getState()).toMatchObject({ open: true });
+    expect(useThreadTerminalsStore.getState().shells).toHaveLength(1);
+  });
+
+  it("is not offered in the terminal grid", () => {
+    useIdeThreadsStore.setState({ layout: "grid" });
+    render(<TopBar />);
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+    expect(screen.getByTestId("ide-side-panel-toggle")).toBeTruthy();
+  });
+
+  it("steps aside while a maximized side panel covers the thread", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    useIdeSidePanelStore.setState({ open: true, maximized: true });
+    render(<TopBar />);
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
   });
 });
 

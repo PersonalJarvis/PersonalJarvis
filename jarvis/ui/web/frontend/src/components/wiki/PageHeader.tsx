@@ -1,19 +1,17 @@
 /**
- * Wiki page header: breadcrumb + title + frontmatter pills + Obsidian button.
- *
- * The Obsidian button itself is owned by Agent D; this header attempts to
- * import that component lazily and falls back to a disabled placeholder
- * when it does not yet exist (parallel-build contract).
+ * Wiki page header: where the page lives, its title, the one line of facts
+ * that matter (kind, last change, length), the frontmatter worth showing, and
+ * the hand-off to Obsidian.
  */
 import { lazy, Suspense } from "react";
 
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import type { WikiKind } from "@/lib/wikiApi";
+import { GROUP_LABEL_KEY, groupOfKind, relativeAge } from "@/lib/wikiModel";
 import { cn } from "@/lib/utils";
+import { KindGlyph } from "@/components/wiki/KindGlyph";
 
-// Lazy import — Agent D owns the real "Open in Obsidian" button. A
-// placeholder file ships in this branch; Agent D's real implementation
-// replaces it during Wave 2.
+// Lazy so the page body paints before the Obsidian hand-off code arrives.
 const ObsidianButton = lazy(() =>
   import("./ObsidianButton").then((mod) => ({
     default: mod.ObsidianButton,
@@ -22,11 +20,14 @@ const ObsidianButton = lazy(() =>
 
 interface PageHeaderProps {
   slug: string;
-  kind: WikiKind;
+  kind: WikiKind | string;
   title: string;
   frontmatter: Record<string, string | string[]>;
   vaultRoot: string;
   vaultRelPath: string;
+  /** Seconds since the epoch of the file's last change, when known. */
+  mtime?: number;
+  words?: number;
 }
 
 const FRIENDLY_LABELS: Record<string, string> = {
@@ -48,58 +49,83 @@ export function PageHeader({
   frontmatter,
   vaultRoot,
   vaultRelPath,
+  mtime,
+  words,
 }: PageHeaderProps) {
+  const t = useT();
+  const language = useUiLanguage();
   const pills = buildPills(frontmatter);
   const breadcrumb = breadcrumbFromPath(vaultRelPath);
+  const group = groupOfKind(kind);
+  const changed = mtime ? relativeAge(mtime, language) : "";
 
   return (
-    <header
-      className="flex flex-col gap-3 border-b border-border px-7 py-5 md:flex-row md:items-start md:justify-between"
-      data-testid="wiki-page-header"
-      data-slug={slug}
-    >
-      <div className="min-w-0 flex-1">
-        <div className="mb-1.5 text-meta text-muted-foreground" data-testid="wiki-page-crumb">
+    <header className="flex flex-col" data-testid="wiki-page-header" data-slug={slug}>
+      <div className="flex items-center justify-between gap-4">
+        <nav
+          className="flex min-w-0 items-center gap-1.5 text-sm text-foreground-faint"
+          data-testid="wiki-page-crumb"
+          aria-label={t("wiki_ui.crumb_label")}
+        >
           {breadcrumb.map((part, idx) => (
-            <span key={idx}>
-              {idx > 0 && <span className="mx-1.5">/</span>}
-              {part}
+            <span key={idx} className="flex min-w-0 items-center gap-1.5">
+              {idx > 0 && <span aria-hidden>/</span>}
+              <span className={cn("truncate", idx === breadcrumb.length - 1 && "text-muted-foreground")}>
+                {part}
+              </span>
             </span>
           ))}
-        </div>
-        <h1
-          className="text-display font-semibold text-foreground-strong"
-          data-testid="wiki-page-title"
-        >
-          {title}
-        </h1>
-        {/* The page kind used to be painted in one of four hardcoded hues.
-            Hue belongs to life, fault and identity only — a page's kind is
-            none of those, so it is now simply the first neutral chip. */}
-        {(pills.length > 0 || kind) && (
-          <div className="mt-2.5 flex flex-wrap gap-2 text-meta" data-testid="wiki-page-pills">
-            <span className="rounded-full bg-secondary px-2.5 py-0.5 text-foreground">{kind}</span>
-            {pills.map((p) => (
-              <span
-                key={p.key}
-                className="rounded-full bg-secondary px-2.5 py-0.5 text-muted-foreground"
-                data-pill-key={p.key}
-              >
-                <span className="mr-1.5">{p.label}:</span>
-                <span className="text-foreground">{p.value}</span>
-              </span>
-            ))}
-          </div>
+        </nav>
+        <Suspense fallback={<ObsidianButtonPlaceholder />}>
+          <ObsidianButton vaultRoot={vaultRoot} vaultRelPath={vaultRelPath} size="sm" />
+        </Suspense>
+      </div>
+
+      <h1
+        className="mt-5 text-display font-semibold text-foreground-strong"
+        data-testid="wiki-page-title"
+      >
+        {title}
+      </h1>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 text-foreground-secondary">
+          <KindGlyph group={group} className="h-2.5 w-2.5" />
+          {t(GROUP_LABEL_KEY[group])}
+        </span>
+        {changed && (
+          <>
+            <span aria-hidden className="text-foreground-faint">·</span>
+            <span>{t("wiki_ui.page_changed").replace("{0}", changed)}</span>
+          </>
+        )}
+        {words !== undefined && words > 0 && (
+          <>
+            <span aria-hidden className="text-foreground-faint">·</span>
+            <span>
+              {t("wiki_ui.page_words").replace("{0}", new Intl.NumberFormat(language).format(words))}
+            </span>
+          </>
         )}
       </div>
 
-      <Suspense
-        fallback={
-          <ObsidianButtonPlaceholder vaultRelPath={vaultRelPath} />
-        }
-      >
-        <ObsidianButton vaultRoot={vaultRoot} vaultRelPath={vaultRelPath} />
-      </Suspense>
+      {/* The page kind used to be painted in one of four hardcoded hues. Hue
+          belongs to status and selection only, so the frontmatter facts are
+          neutral tags and the kind is told by its shape above. */}
+      {pills.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-1.5 text-xs" data-testid="wiki-page-pills">
+          {pills.map((p) => (
+            <span
+              key={p.key}
+              className="inline-flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-muted-foreground"
+              data-pill-key={p.key}
+            >
+              <span>{p.label}</span>
+              <span className="text-foreground">{p.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </header>
   );
 }
@@ -129,23 +155,6 @@ function breadcrumbFromPath(relPath: string): string[] {
   return parts.length > 0 ? parts : [relPath];
 }
 
-function ObsidianButtonPlaceholder({ vaultRelPath: _vaultRelPath }: { vaultRelPath: string }) {
-  const t = useT();
-  return (
-    <button
-      type="button"
-      disabled
-      className={cn(
-        "inline-flex shrink-0 items-center gap-2 rounded-md bg-secondary",
-        "px-3.5 py-2 text-body text-faint-foreground",
-      )}
-      data-testid="obsidian-button-placeholder"
-      title={t("page_header.placeholder_title")}
-    >
-      <span className="grid h-4 w-4 place-items-center rounded-sm bg-faint-foreground text-micro font-semibold text-background">
-        O
-      </span>
-      {t("page_header.open_in_obsidian")}
-    </button>
-  );
+function ObsidianButtonPlaceholder() {
+  return <span className="h-8 w-36 shrink-0" data-testid="obsidian-button-placeholder" aria-hidden />;
 }

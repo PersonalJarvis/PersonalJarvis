@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
+import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
@@ -9,6 +9,8 @@ import { useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { buildThreadRows, isFailed, thoughtGist, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
+import { SubagentCard } from "./ThreadSubagents";
+import { listSubagents } from "./subagents";
 
 /**
  * A thread's conversation: the person's messages on the right, the agent's
@@ -377,7 +379,12 @@ function clock(ms: number): string {
 }
 
 function UserBubble({ item }: { item: UserItem }) {
+  const t = useT();
   return <div className="group flex flex-col items-end gap-1" data-testid="thread-user-message">
+    {item.author && <div className="flex items-center gap-1.5 pr-1 text-xs text-muted-foreground" data-testid="thread-message-author">
+      <Bot aria-hidden className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{t("society.chat.coding_thread_author").replace("{0}", item.author.name)}</span>
+    </div>}
     <div className="max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-foreground">
       {item.attachments.length > 0 && <div className="mb-2 flex flex-wrap justify-end gap-2">
         {item.attachments.map((file) => file.url && file.kind === "image"
@@ -558,6 +565,9 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
   const [workOpen, setWorkOpen] = useState(false);
   // Finished: every step and thought folds behind one "Worked for …" line; the answer stays.
   const { work, answer: tail } = useMemo(() => (running ? { work: rows, answer: [] } : foldFinished(rows)), [rows, running]);
+  // The sub-agents it spawned stay in view under the fold: each opens its own conversation.
+  const agents = useMemo(() => work.filter((row) => row.kind === "agent"), [work]);
+  const agentsWorking = useMemo(() => running ? listSubagents([turn]).filter((entry) => entry.status === "running").length : 0, [turn, running]);
   const folded = !running && work.length > 0;
   const duration = turn.durationMs != null ? traceDuration(turn.durationMs) : "";
   const foldLabel = turn.status === "cancelled" ? `Stopped${duration ? ` after ${duration}` : ""}`
@@ -567,6 +577,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
     if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
     if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
     if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
+    if (row.kind === "agent") return <SubagentCard key={row.id} block={row.block} turn={turn} />;
     const pending = pendingLabel(row.block);
     return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
   };
@@ -577,13 +588,15 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
         <span className="tabular-nums">{foldLabel}</span>
         <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 transition-transform duration-150", workOpen && "rotate-90")} />
       </button>
-      {workOpen && <div className="space-y-1.5 pb-2 pt-1" data-testid="thread-worked-steps">{work.map(renderRow)}</div>}
+      {workOpen && <div className="space-y-1.5 pb-2 pt-1" data-testid="thread-worked-steps">{work.filter((row) => row.kind !== "agent").map(renderRow)}</div>}
       <div aria-hidden className="mt-1 border-b border-border/70" />
     </div>}
+    {folded && agents.length > 0 && <div className="space-y-1.5 pt-1" data-testid="thread-turn-subagents">{agents.map(renderRow)}</div>}
     {(folded ? tail : rows).map(renderRow)}
     {running
       ? <div className="flex h-6 min-w-0 items-center px-1 text-sm leading-relaxed text-muted-foreground" data-testid="thread-working">
-        <span className="whitespace-nowrap">Working for <Elapsed since={turn.startedMs} /></span>
+        <span className="whitespace-nowrap">Working for <Elapsed since={turn.startedMs} />
+          {agentsWorking > 0 && <> · {agentsWorking} {agentsWorking === 1 ? "sub-agent" : "sub-agents"} working</>}</span>
       </div>
       : <>
         {turn.status === "error" && turn.error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{turn.error}</p>}
@@ -623,10 +636,12 @@ function ItemView({ item }: { item: TimelineItem }) {
  * the bottom and stays put once they scroll up to read; a button brings them
  * back down.
  */
-export function ThreadTimeline({ items, sessionId, bottomInset, folder = "" }: {
+export function ThreadTimeline({ items, sessionId, bottomInset, folder = "", lead }: {
   items: TimelineItem[]; sessionId: string | null; bottomInset: number;
   /** The thread's project folder; changed files list relative to it. */
   folder?: string;
+  /** What reads above the conversation — an opened sub-agent's header and task. */
+  lead?: ReactNode;
 }) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
@@ -665,6 +680,7 @@ export function ThreadTimeline({ items, sessionId, bottomInset, folder = "" }: {
       }}
       className="h-full overflow-y-auto scrollbar-jarvis">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 px-5 pt-6" style={{ paddingBottom: bottomInset + 24 }}>
+        {lead}
         {items.map((item) => <ItemView key={item.id} item={item} />)}
       </div>
     </div>

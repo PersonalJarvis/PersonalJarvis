@@ -2397,8 +2397,15 @@ _WRITTEN_CHAT_STYLE = (
     "with plain-text headers and no emoji column."
 )
 
+# The written-only rules, for a prompt that already carries the shared policy
+# (a society agent's briefing has it under "How to reply to the person").
+_WRITTEN_CHAT_RULES = _WRITTEN_CHAT_STYLE
+
 # Keep the API chat and the main brain's written delivery equally conversational.
 _WRITTEN_CHAT_STYLE += "\n" + CONVERSATIONAL_RESPONSE_STYLE
+
+#: Upper bound for the legacy core-memory block in the system prompt.
+_CORE_MEMORY_MAX_CHARS = 20_000
 
 
 def _is_written_turn() -> bool:
@@ -4225,7 +4232,11 @@ class BrainManager:
                 _TOOL_ROUTING_RULES,
                 self._render_live_tool_block(),
                 getattr(self, "_evidence_directive", ""),
-                _WRITTEN_CHAT_STYLE,
+                # The briefing already carries the shared reply policy; sending
+                # it twice costs ~2.3k characters on every society API turn.
+                _WRITTEN_CHAT_RULES
+                if CONVERSATIONAL_RESPONSE_STYLE in (private.system_extra or "")
+                else _WRITTEN_CHAT_STYLE,
             ]
             identity = getattr(self, "_active_turn_identity", None)
             if identity:
@@ -4374,11 +4385,10 @@ class BrainManager:
             except Exception:  # noqa: BLE001
                 pass
             cm = self._core_memory.render_system_prompt_block()
-            # Cap substantially larger than the old 400 characters — otherwise
-            # even 5-10 facts get cut off mid-block and the LLM claims it knows
-            # nothing. 2500 corresponds to ~600 tokens, stays prompt-cache-friendly.
-            if len(cm) > 2500:
-                cm = cm[:20_000] + "…"
+            # A safety cap only (the 2500-character cost cap was retired): cut,
+            # and mark the cut, only when the block really is longer.
+            if len(cm) > _CORE_MEMORY_MAX_CHARS:
+                cm = cm[:_CORE_MEMORY_MAX_CHARS] + "…"
             parts.append(cm)
 
         # Skills-Brain-Integration (Track B): surface the installed, active

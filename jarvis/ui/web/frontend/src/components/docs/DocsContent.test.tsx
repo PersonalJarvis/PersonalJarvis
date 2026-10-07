@@ -76,4 +76,51 @@ describe("DocsContent", () => {
 
     expect(openSpy).toHaveBeenCalledWith("https://personaljarvis.ai/docs/");
   });
+  it("labels callouts and shows the reading time from tokens, not raw colours", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/docs/grouped")) {
+          return new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            title: "Keys",
+            slug: "keys",
+            diataxis: "howto",
+            summary: "Keep keys safe.",
+            section: "Privacy",
+            section_order: 1,
+            order: 1,
+            tags: [],
+            related: [],
+            last_reviewed: null,
+            path: "docs/product/keys.md",
+            body: "> [!warning] Never say a key out loud.",
+            headings: [],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+
+    render(
+      <QueryClientProvider client={client}>
+        <DocsContent slug="keys" onSelect={() => {}} onShowOverview={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    const label = await waitFor(() => screen.getByText("Warning"));
+    const callout = label.closest("aside");
+    expect(callout?.textContent).toContain("Never say a key out loud.");
+    expect(callout?.className).toContain("border-warning");
+    expect(screen.getByText("1 min read")).toBeTruthy();
+  });
 });

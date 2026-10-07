@@ -1,11 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Components } from "react-markdown";
 import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Copy,
+  ExternalLink,
   FileWarning,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Link2,
   RefreshCw,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -23,19 +24,22 @@ import type { DocNavSummary } from "@/hooks/useDocs";
 import { DocsOverview } from "./DocsOverview";
 import { CodeBlock } from "./CodeBlock";
 import { Callout, parseCalloutTag, type CalloutType } from "./Callout";
+import { docSourceUrl, readingMinutes } from "./docsShared";
 import { useT, useUiLanguage } from "@/i18n";
 import { localeForUiLanguage } from "@/components/runs/format";
 import { openExternalUrl } from "@/lib/openExternal";
+import { robustCopy } from "@/lib/clipboard";
 
 interface Props {
   slug: string | null;
   onSelect: (slug: string) => void;
   onShowOverview: () => void;
+  onOpenSearch?: () => void;
 }
 
-export function DocsContent({ slug, onSelect, onShowOverview }: Props) {
+export function DocsContent({ slug, onSelect, onShowOverview, onOpenSearch }: Props) {
   if (!slug) {
-    return <DocsOverview onSelect={onSelect} />;
+    return <DocsOverview onSelect={onSelect} onOpenSearch={onOpenSearch} />;
   }
   return (
     <DocsContentInner
@@ -45,6 +49,26 @@ export function DocsContent({ slug, onSelect, onShowOverview }: Props) {
     />
   );
 }
+
+/*
+ * Reading typography for a guide. The typography plugin's colour variables
+ * are pointed at theme tokens (identical for its normal and inverted
+ * palettes), so one class list reads correctly in light and dark, and the
+ * heading sizes are pinned to the app's own type scale.
+ */
+const ARTICLE_PROSE = [
+  "docs-prose prose max-w-none",
+  "prose-p:text-pretty prose-li:my-1 prose-li:marker:text-foreground-faint",
+  "prose-headings:scroll-mt-8 prose-headings:text-pretty prose-headings:font-semibold prose-headings:text-foreground-strong",
+  "prose-h2:mb-4 prose-h2:mt-12 prose-h2:text-xl",
+  "prose-h3:mb-3 prose-h3:mt-8 prose-h3:text-lg",
+  "prose-h4:text-base",
+  "prose-a:font-normal prose-a:text-accent prose-a:underline prose-a:decoration-accent/30 prose-a:underline-offset-4 hover:prose-a:decoration-accent",
+  "prose-strong:font-semibold prose-strong:text-foreground-strong",
+  "prose-code:rounded-sm prose-code:bg-secondary prose-code:px-1.5 prose-code:py-0.5 prose-code:font-mono prose-code:text-sm prose-code:font-normal prose-code:text-foreground-strong prose-code:before:hidden prose-code:after:hidden",
+  "prose-hr:my-10 prose-hr:border-border",
+  "prose-img:rounded-lg prose-img:border prose-img:border-border",
+].join(" ");
 
 function DocsContentInner({
   slug,
@@ -84,109 +108,170 @@ function DocsContentInner({
     () => formatReviewDate(data?.last_reviewed, uiLanguage),
     [data?.last_reviewed, uiLanguage],
   );
+  const minutes = useMemo(() => readingMinutes(data?.body ?? ""), [data?.body]);
+  const markdownComponents = useMemo(
+    () => makeMarkdownComponents({ knownSlugs, onInternalNavigate: onSelect }),
+    [knownSlugs, onSelect],
+  );
 
   if (isLoading) {
     return <DocPageSkeleton />;
   }
   if (error || !data) {
     return (
-      <div className="flex min-h-full items-center justify-center px-8 text-center">
-        <div className="max-w-sm rounded-xl border border-destructive/30 bg-destructive/5 p-6">
+      <div className="flex min-h-full items-center justify-center px-8 py-20 text-center">
+        <div className="max-w-sm">
           <FileWarning className="mx-auto h-6 w-6 text-destructive" aria-hidden="true" />
-          <p className="mt-3 text-sm font-medium text-foreground">
+          <p className="mt-3 text-lg font-semibold text-foreground-strong">
             {t("docs.could_not_load")}
           </p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="mt-4 inline-flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium transition hover:bg-muted"
-          >
-            <RefreshCw
-              className={
-                isFetching
-                  ? "h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                  : "h-3.5 w-3.5"
-              }
-              aria-hidden="true"
-            />
-            {t("docs_overview.retry")}
-          </button>
+          <div className="mt-5 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-border-strong px-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RefreshCw
+                className={
+                  isFetching
+                    ? "h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                    : "h-3.5 w-3.5"
+                }
+                aria-hidden="true"
+              />
+              {t("docs_overview.retry")}
+            </button>
+            <button
+              type="button"
+              onClick={onShowOverview}
+              className="inline-flex h-8 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {t("docs_sidebar.overview")}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  const markdownPage = `# ${data.title}\n\n${data.body}`;
+
   return (
-    <article className="prose prose-neutral dark:prose-invert prose-base mx-auto max-w-3xl px-8 py-10 prose-headings:scroll-mt-20 prose-headings:text-pretty prose-p:text-pretty prose-code:before:hidden prose-code:after:hidden prose-a:text-accent prose-a:no-underline hover:prose-a:underline lg:px-10">
-      <header className="not-prose mb-9 border-b border-border pb-6">
-        <nav
-          aria-label="Breadcrumb"
-          className="mb-4 flex items-center gap-1.5 text-xs text-muted-foreground"
-        >
+    <article className="mx-auto w-full max-w-reading pb-20 pt-12">
+      <header className="mb-10 border-b border-border pb-8">
+        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
           <button
             type="button"
             onClick={onShowOverview}
-            className="rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {t("docs_content.breadcrumb")}
           </button>
-          <ChevronRight className="h-3 w-3" aria-hidden="true" />
-          <span className="text-foreground/80" aria-current="page">
+          <span className="text-foreground-faint" aria-hidden="true">/</span>
+          <span className="font-medium text-accent" aria-current="page">
             {data.section}
           </span>
         </nav>
-        <h1 className="m-0 text-pretty text-3xl tracking-tight">
+        <h1 className="mt-3 text-pretty font-display text-2xl text-foreground-strong">
           {data.title}
         </h1>
-        <p className="mt-3 max-w-2xl text-pretty text-base leading-7 text-muted-foreground">
-          {data.summary}
-        </p>
+        {data.summary && (
+          <p className="mt-3 text-pretty text-lg text-muted-foreground">
+            {data.summary}
+          </p>
+        )}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            <span>{t("docs_content.reading_time").replace("{0}", String(minutes))}</span>
+            {data.last_reviewed && (
+              <>
+                <span className="text-foreground-faint" aria-hidden="true">·</span>
+                <span>{t("docs_content.reviewed").replace("{0}", reviewedDate)}</span>
+              </>
+            )}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <CopyPageButton markdown={markdownPage} />
+            {data.path && (
+              <a
+                href={docSourceUrl(data.path)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openExternalUrl(docSourceUrl(data.path));
+                }}
+                rel="noopener noreferrer"
+                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {t("docs_content.view_source")}
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        </div>
       </header>
 
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[
-          rehypeSlug,
-          [rehypeAutolinkHeadings, { behavior: "wrap" }],
-        ]}
-        components={makeMarkdownComponents({
-          knownSlugs,
-          onInternalNavigate: onSelect,
-        })}
-      >
-        {data.body}
-      </ReactMarkdown>
+      <div className={ARTICLE_PROSE}>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[
+            rehypeSlug,
+            [rehypeAutolinkHeadings, { behavior: "wrap" }],
+          ]}
+          components={markdownComponents}
+        >
+          {data.body}
+        </ReactMarkdown>
+      </div>
 
       {relatedDocs.length > 0 && (
         <RelatedGuides docs={relatedDocs} onSelect={onSelect} />
       )}
 
-      <footer className="not-prose mt-12 border-t border-border pt-6">
-        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <Clock className="h-3 w-3" aria-hidden="true" />
-            {data.last_reviewed ? (
-              <>{t("docs_content.last_reviewed")} {reviewedDate}</>
-            ) : (
-              <>{t("docs_content.review_unavailable")}</>
-            )}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <NavCard
-            doc={neighbors.prev}
-            direction="prev"
-            onSelect={onSelect}
-          />
-          <NavCard
-            doc={neighbors.next}
-            direction="next"
-            onSelect={onSelect}
-          />
-        </div>
-      </footer>
+      {(neighbors.prev || neighbors.next) && (
+        <nav
+          aria-label={t("docs_content.pagination")}
+          className="mt-14 grid grid-cols-1 gap-3 border-t border-border pt-8 sm:grid-cols-2"
+        >
+          <NavCard doc={neighbors.prev} direction="prev" onSelect={onSelect} />
+          <NavCard doc={neighbors.next} direction="next" onSelect={onSelect} />
+        </nav>
+      )}
     </article>
+  );
+}
+
+function CopyPageButton({ markdown }: { markdown: string }) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void robustCopy(markdown).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          if (timer.current !== null) window.clearTimeout(timer.current);
+          timer.current = window.setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {copied ? (
+        <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+      )}
+      <span aria-live="polite">
+        {copied ? t("docs_content.page_copied") : t("docs_content.copy_page")}
+      </span>
+    </button>
   );
 }
 
@@ -218,22 +303,32 @@ function NavCard({
   onSelect: (slug: string) => void;
 }) {
   const t = useT();
-  if (!doc) return <div />;
-  const Icon = direction === "prev" ? ChevronLeft : ChevronRight;
-  const align = direction === "next" ? "text-right items-end" : "items-start";
+  if (!doc) return <div className="hidden sm:block" />;
+  const next = direction === "next";
   return (
     <button
       type="button"
       onClick={() => onSelect(doc.slug)}
-      className={`flex flex-col gap-1 rounded-md border border-border bg-card/40 p-3 text-left transition hover:bg-muted/40 ${align}`}
+      className={`group flex flex-col gap-1 rounded-lg border border-border px-5 py-4 transition-colors hover:border-border-strong hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        next ? "items-end text-right sm:col-start-2" : "items-start text-left"
+      }`}
     >
-      <span className="flex items-center gap-1 text-micro uppercase tracking-wider text-muted-foreground">
-        {direction === "prev" ? <Icon className="h-3 w-3" aria-hidden="true" /> : null}
-        {direction === "prev" ? t("docs_content.prev") : t("docs_content.next")}
-        {direction === "next" ? <Icon className="h-3 w-3" aria-hidden="true" /> : null}
+      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        {!next && (
+          <ArrowLeft
+            className="h-3.5 w-3.5 transition-transform motion-safe:group-hover:-translate-x-0.5"
+            aria-hidden="true"
+          />
+        )}
+        {next ? t("docs_content.next") : t("docs_content.prev")}
+        {next && (
+          <ArrowRight
+            className="h-3.5 w-3.5 transition-transform motion-safe:group-hover:translate-x-0.5"
+            aria-hidden="true"
+          />
+        )}
       </span>
-      <span className="text-sm font-medium">{doc.title}</span>
-      <span className="text-xs leading-5 text-muted-foreground">{doc.summary}</span>
+      <span className="text-lg font-medium text-foreground-strong">{doc.title}</span>
     </button>
   );
 }
@@ -257,26 +352,29 @@ function RelatedGuides({
 }) {
   const t = useT();
   return (
-    <section
-      className="not-prose mt-12 border-t border-border pt-8"
-      aria-labelledby="related-guides-title"
-    >
-      <div className="mb-4 flex items-center gap-2">
-        <Link2 className="h-4 w-4 text-primary" aria-hidden="true" />
-        <h2 id="related-guides-title" className="text-lg font-semibold">
-          {t("docs_content.related_guides")}
-        </h2>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+    <section className="mt-14" aria-labelledby="related-guides-title">
+      <h2
+        id="related-guides-title"
+        className="text-sm font-semibold text-foreground-strong"
+      >
+        {t("docs_content.related_guides")}
+      </h2>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {docs.map((doc) => (
           <button
             key={doc.slug}
             type="button"
             onClick={() => onSelect(doc.slug)}
-            className="rounded-lg border border-border bg-card/30 p-4 text-left transition-colors hover:border-primary/30 hover:bg-card/60"
+            className="group rounded-lg border border-border px-4 py-3.5 text-left transition-colors hover:border-border-strong hover:bg-secondary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <span className="text-sm font-semibold text-foreground">{doc.title}</span>
-            <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+            <span className="flex items-center justify-between gap-3 text-base font-medium text-foreground">
+              {doc.title}
+              <ArrowRight
+                className="h-3.5 w-3.5 shrink-0 text-foreground-faint transition-colors group-hover:text-foreground"
+                aria-hidden="true"
+              />
+            </span>
+            <span className="mt-1 line-clamp-2 text-sm text-muted-foreground">
               {doc.summary}
             </span>
           </button>
@@ -289,29 +387,24 @@ function RelatedGuides({
 function DocPageSkeleton() {
   const t = useT();
   return (
-    <div className="mx-auto min-h-full w-full max-w-3xl px-8 py-10" role="status">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <RefreshCw
-          className="h-3.5 w-3.5 animate-spin text-primary motion-reduce:animate-none"
-          aria-hidden="true"
-        />
-        {t("docs_overview.loading_page")}
-      </div>
-      <div className="mt-6 animate-pulse motion-reduce:animate-none">
-        <div className="h-3 w-24 rounded-full bg-muted" />
-        <div className="mt-4 h-8 w-3/5 rounded-md bg-muted" />
-        <div className="mt-4 h-px bg-border" />
-        <div className="mt-8 space-y-3">
-          <div className="h-3 w-full rounded-full bg-muted/80" />
-          <div className="h-3 w-11/12 rounded-full bg-muted/80" />
-          <div className="h-3 w-4/5 rounded-full bg-muted/80" />
+    <div className="mx-auto w-full max-w-reading pb-20 pt-12" role="status">
+      <span className="sr-only">{t("docs_overview.loading_page")}</span>
+      <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
+        <div className="h-3 w-40 rounded-full bg-muted" />
+        <div className="mt-5 h-7 w-3/5 rounded-md bg-muted" />
+        <div className="mt-4 h-3.5 w-4/5 rounded-full bg-muted/70" />
+        <div className="mt-8 h-px bg-border" />
+        <div className="mt-10 space-y-3.5">
+          <div className="h-3 w-full rounded-full bg-muted/70" />
+          <div className="h-3 w-11/12 rounded-full bg-muted/70" />
+          <div className="h-3 w-4/5 rounded-full bg-muted/70" />
         </div>
-        <div className="mt-10 h-5 w-2/5 rounded-full bg-muted" />
-        <div className="mt-5 space-y-3">
-          <div className="h-3 w-full rounded-full bg-muted/80" />
-          <div className="h-3 w-5/6 rounded-full bg-muted/80" />
-          <div className="h-28 rounded-lg border border-border bg-card/40" />
+        <div className="mt-12 h-4 w-2/5 rounded-full bg-muted" />
+        <div className="mt-5 space-y-3.5">
+          <div className="h-3 w-full rounded-full bg-muted/70" />
+          <div className="h-3 w-5/6 rounded-full bg-muted/70" />
         </div>
+        <div className="mt-6 h-28 rounded-lg border border-border bg-card" />
       </div>
     </div>
   );
@@ -400,7 +493,7 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
         return <Callout type={tagged.type}>{tagged.children}</Callout>;
       }
       return (
-        <blockquote className="border-l-2 border-border pl-4 italic text-muted-foreground">
+        <blockquote className="border-l-2 border-border-strong pl-4 not-italic text-foreground-secondary [&_p:before]:content-none [&_p:after]:content-none">
           {children}
         </blockquote>
       );
@@ -447,12 +540,36 @@ function makeMarkdownComponents(ctx: MarkdownContext): Components {
       );
     },
 
-    // Tables with a bit more padding for better readability.
+    // Tables sit in their own framed, horizontally scrollable box; cells are
+    // styled here because the frame opts out of the prose rules.
     table({ children }) {
       return (
-        <div className="not-prose my-4 overflow-x-auto rounded-md border border-border">
-          <table className="w-full text-sm">{children}</table>
+        <div className="not-prose my-6 overflow-x-auto rounded-lg border border-border">
+          <table className="w-full border-collapse text-left text-base">{children}</table>
         </div>
+      );
+    },
+    thead({ children }) {
+      return <thead className="bg-secondary/50">{children}</thead>;
+    },
+    th({ children, style }) {
+      return (
+        <th
+          style={style}
+          className="border-b border-border px-4 py-2.5 text-sm font-semibold text-foreground-strong"
+        >
+          {children}
+        </th>
+      );
+    },
+    td({ children, style }) {
+      return (
+        <td
+          style={style}
+          className="border-t border-border px-4 py-2.5 align-top text-foreground-secondary first:font-medium first:text-foreground [&_code]:rounded-sm [&_code]:bg-secondary [&_code]:px-1 [&_code]:font-mono [&_code]:text-sm"
+        >
+          {children}
+        </td>
       );
     },
   };

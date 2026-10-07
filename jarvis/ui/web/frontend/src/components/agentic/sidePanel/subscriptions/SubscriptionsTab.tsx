@@ -198,7 +198,8 @@ function SubscriptionLine({ row, now }: { row: SubscriptionRow; now: number }) {
   const { account } = row;
   const title = account.email || account.label;
   const plan = planName(row);
-  const subtitle = [account.email ? account.label : "", plan].filter(Boolean).join(" · ");
+  const seats = account.email ? row.seats.map((seat) => seat.label).join(", ") : "";
+  const subtitle = [seats, plan].filter(Boolean).join(" · ");
   const tightest = tightestWindow(row.usage);
   return (
     <li data-testid="subscription-row" data-account={account.id} data-active={row.active || undefined}>
