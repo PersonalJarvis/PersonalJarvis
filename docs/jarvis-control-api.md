@@ -92,9 +92,13 @@ experience; `auto` only affects replies.
 
 ### SAFE vs ASK
 
-`brain.reply_language`, `tts.speed`, `ui.theme` are **SAFE** — they apply
-immediately. Language hot-reloads into the next turn (a `ConfigReloaded`
-subscriber calls `BrainManager.set_reply_language`) with **no restart**.
+`brain.reply_language`, `brain.proactivity`, `tts.speed`, `ui.theme` are
+**SAFE** — they apply immediately. Language hot-reloads into the next turn (a
+`ConfigReloaded` subscriber calls `BrainManager.set_reply_language`) with **no
+restart**. `brain.proactivity` (off/balanced/high, how much initiative the
+assistant takes) reloads the same way through
+`jarvis.brain.proactivity.apply_level`; the assistant page sets it with
+`PUT /api/soul/initiative`.
 `brain.primary`, `tts.provider`, `stt.*` are **ASK** — `PUT /config` returns
 `needs_confirmation=true` + a `pending_id`; confirm to apply. `requires_restart`
 is reported honestly (e.g. STT re-init).

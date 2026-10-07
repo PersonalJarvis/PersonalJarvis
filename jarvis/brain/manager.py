@@ -101,6 +101,7 @@ from jarvis.voice.action_phrases import (
 )
 from jarvis.voice.contextual_readback import render_readback
 
+from . import proactivity as _proactivity
 from .action_honesty import has_unbacked_action_claim, replace_unbacked_action_claim
 from .assistant_name import resolve_assistant_name
 from .dispatcher import BrainDispatcher
@@ -4520,6 +4521,19 @@ class BrainManager:
         if tool_list_block:
             parts.append(tool_list_block)
 
+        # Initiative (2026-10-07): every other rule about the end of a reply
+        # pulls towards "say nothing more", so without this the assistant never
+        # brought a grounded idea. The level ([brain] proactivity) is static
+        # between settings changes, so the rule stays in the cached prefix; the
+        # dated plans it may draw on are per-turn and ride with the date below.
+        parts.append(
+            _proactivity.directive(_proactivity.current_level(getattr(self, "_config", None)))
+        )
+        if not self._cache_optimized():
+            upcoming = self._upcoming_block()
+            if upcoming:
+                parts.append(upcoming)
+
         # B5 Agent C: per-turn wiki context suffix.  Set by generate() via
         # maybe_inject() just before the first provider call, consumed here,
         # and reset to "" in the finally-block of generate().  Empty string
@@ -4665,10 +4679,27 @@ class BrainManager:
             return "\n\n".join(parts)
         if self._wiki_context_suffix:
             parts.append(self._wiki_context_suffix)
+        upcoming = self._upcoming_block()
+        if upcoming:
+            parts.append(upcoming)
         agentic_block = self._agentic_focus_block()
         if agentic_block:
             parts.append(agentic_block)
         return "\n\n".join(p for p in parts if p)
+
+    def _upcoming_block(self) -> str:
+        """Dated plans from the notebooks for the next two weeks (initiative grounding).
+
+        Pure cached read of the notebook files; ``""`` when initiative is off,
+        nothing is dated, or anything fails, so it can never break a turn.
+        """
+        try:
+            return _proactivity.upcoming_block(
+                _proactivity.current_level(getattr(self, "_config", None))
+            )
+        except Exception:  # noqa: BLE001 — grounding is a convenience, never a turn breaker
+            log.debug("initiative: upcoming block skipped", exc_info=True)
+            return ""
 
     def _agentic_focus_block(self) -> str:
         """Workspace-awareness block while the Agentic IDE's focus mode is on.
@@ -13416,6 +13447,25 @@ class BrainManager:
                 log.warning("reply-language hot-reload failed", exc_info=True)
 
         target_bus.subscribe(ConfigReloaded, _on_config_reloaded)
+
+        async def _on_proactivity_reloaded(ev: ConfigReloaded) -> None:
+            # A voice "be less proactive" goes through Self-Mod (SAFE, no
+            # restart): re-read the persisted level and make it live for every
+            # surface on the next turn. Never raise into the bus (AP-18).
+            if "brain.proactivity" not in ev.changed_keys:
+                return
+            try:
+                import asyncio as _asyncio
+
+                from jarvis.core.config import load_config
+
+                cfg = await _asyncio.to_thread(load_config)
+                level = _proactivity.apply_level(getattr(cfg.brain, "proactivity", None))
+                self._config.brain.proactivity = level
+            except Exception:  # noqa: BLE001 — survive without a live switch
+                log.warning("initiative hot-reload failed", exc_info=True)
+
+        target_bus.subscribe(ConfigReloaded, _on_proactivity_reloaded)
 
     # ------------------------------------------------------------------
     # Back-compat aliases (for existing tests)

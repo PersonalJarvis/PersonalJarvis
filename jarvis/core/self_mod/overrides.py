@@ -64,6 +64,15 @@ OVERRIDES: dict[str, SpecOverride] = {
             "language setting; applies to the next turn (no restart)."
         ),
     ),
+    "brain.proactivity": SpecOverride(
+        risk_tier="safe", needs_restart=False,
+        description=(
+            "How much initiative the assistant takes (off/balanced/high): off "
+            "answers only what was asked, balanced adds at most one grounded "
+            "idea, high up to two plus heads-ups on close deadlines. Applies "
+            "to the next turn (no restart)."
+        ),
+    ),
     "stt.language": SpecOverride(
         risk_tier="ask", needs_restart=True,
         description=(
