@@ -82,6 +82,11 @@ function RuntimeSetupNote({ status, onRetry, error }: {
 }) {
   const t = useT();
   const state = setupState(status);
+  if (state === "ready" && status?.untested) {
+    return <p className="text-xs text-muted-foreground" data-testid="runtime-untested">
+      {fill(t("society.runtime.untested_hint"), t(`society.runtime.${status.runtime}`))}
+    </p>;
+  }
   if (state === "ready" || !status) return null;
   const label = t(`society.runtime.${status.runtime}`);
   const failure = error ?? (state === "failed" ? status.job?.message || status.job?.log_tail.at(-1) || status.problem : null);
@@ -148,6 +153,7 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
         {AGENT_RUNTIMES.map((runtime) => {
           const label = t(`society.runtime.${runtime}`);
           const state = runtime === "jarvis" ? null : setupState(byName.get(runtime));
+          const untested = state === "ready" && Boolean(byName.get(runtime)?.untested);
           return (
             <button
               key={runtime}
@@ -179,7 +185,7 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
                   state === null
                     ? "society.runtime.built_in"
                     : state === "ready"
-                      ? "society.runtime.ready"
+                      ? untested ? "society.runtime.ready_untested" : "society.runtime.ready"
                       : state === "setting_up"
                         ? "society.runtime.setting_up"
                         : "society.runtime.auto_setup",

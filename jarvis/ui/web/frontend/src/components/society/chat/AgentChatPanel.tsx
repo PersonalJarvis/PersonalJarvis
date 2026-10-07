@@ -767,7 +767,7 @@ function TimeStamp({ ms }: { ms: number }) {
  * summary underneath, muted — it is the society reporting, not Jarvis
  * speaking, so it never wears an assistant bubble.
  */
-function NoticeLine({ item }: { item: NoticeItem }) {
+export function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "proposal_resolved" && item.data.proposal_kind === "identity") {
@@ -790,6 +790,14 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     const runtime = String(item.data.runtime ?? "");
     return <p className="py-1 text-center text-[11px] text-muted-foreground" data-testid="runtime-setup-notice">
       {runtime ? t("society.runtime.setting_up_chat").replace("{0}", t(`society.runtime.${runtime}`)) : item.text}
+    </p>;
+  }
+  if (item.kind === "stop_reason") {
+    // A runtime turn that ended early: the answer above stands, but is cut off.
+    const reason = String(item.data.stop_reason ?? "");
+    const known = ["max_tokens", "max_turn_requests", "cancelled"].includes(reason);
+    return <p role="note" className="py-1 text-xs italic text-muted-foreground" data-testid="stop-reason-notice">
+      {known ? t(`society.chat.stop_reason_${reason}`) : item.text}
     </p>;
   }
   if (item.kind === "routine_runtime_fallback") {

@@ -5643,6 +5643,9 @@
       "coding_thread_author": "Written by {0}",
       "message_not_sent": "Not sent: {0}",
       "context_rollover": "Fresh working context — memory and recent messages carried over",
+      "stop_reason_max_tokens": "The answer stopped at the model's output limit; it may be incomplete.",
+      "stop_reason_max_turn_requests": "The agent reached its step limit for one turn; the work may be unfinished.",
+      "stop_reason_cancelled": "The turn was cancelled before it finished.",
       "allow_always": "Always allow",
       "history_chats": "Chats",
       "history_voice": "Voice",
@@ -5826,6 +5829,8 @@
       "provider_unsupported": "Hermes and OpenClaw run on an API key, a local model server or the ChatGPT subscription. Pick one of those for this agent.",
       "setting_up_chat": "Setting up {0} on this computer. The first time takes a few minutes; your message is answered as soon as it is ready.",
       "routine_fallback": "This run uses Jarvis' own runtime, not {0}: the model chosen for the routine is one {0} cannot drive.",
+      "ready_untested": "Ready · newer than tested",
+      "untested_hint": "{0} is newer than the version Jarvis has tested. It still runs.",
       "retry": "Try again"
     },
     "approval_mode": {

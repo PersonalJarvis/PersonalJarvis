@@ -5645,6 +5645,9 @@
       "coding_thread_author": "由 {0} 撰写",
       "message_not_sent": "未发送：{0}",
       "context_rollover": "已换用新的工作上下文——记忆和最近的消息已带过来",
+      "stop_reason_max_tokens": "回答在模型的输出上限处停止，可能不完整。",
+      "stop_reason_max_turn_requests": "智能体已达到单轮的步骤上限，工作可能尚未完成。",
+      "stop_reason_cancelled": "本轮在完成前被取消。",
       "allow_always": "始终允许",
       "history_chats": "对话",
       "history_voice": "语音",
@@ -5828,6 +5831,8 @@
       "provider_unsupported": "Hermes 和 OpenClaw 需要使用 API 密钥、本地模型服务器或 ChatGPT 订阅运行。请为此智能体选择其中一种。",
       "setting_up_chat": "正在这台电脑上安装 {0}。第一次需要几分钟，准备好后会立即回复你的消息。",
       "routine_fallback": "本次运行使用 Jarvis 自己的运行时，而不是 {0}：为此例行任务选择的模型无法由 {0} 驱动。",
+      "ready_untested": "就绪 · 比已测试版本更新",
+      "untested_hint": "{0} 比 Jarvis 测试过的版本更新，仍可运行。",
       "retry": "重试"
     },
     "approval_mode": {

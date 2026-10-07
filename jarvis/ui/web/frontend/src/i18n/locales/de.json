@@ -5643,6 +5643,9 @@
       "coding_thread_author": "Geschrieben von {0}",
       "message_not_sent": "Nicht gesendet: {0}",
       "context_rollover": "Frischer Arbeitskontext – Gedächtnis und letzte Nachrichten übernommen",
+      "stop_reason_max_tokens": "Die Antwort endete am Ausgabelimit des Modells und ist vielleicht unvollständig.",
+      "stop_reason_max_turn_requests": "Der Agent hat sein Schrittlimit für einen Durchgang erreicht; die Arbeit ist vielleicht nicht fertig.",
+      "stop_reason_cancelled": "Der Durchgang wurde abgebrochen, bevor er fertig war.",
       "allow_always": "Immer erlauben",
       "history_chats": "Chats",
       "history_voice": "Sprache",
@@ -5826,6 +5829,8 @@
       "provider_unsupported": "Hermes und OpenClaw laufen mit einem API-Schlüssel, einem lokalen Modellserver oder dem ChatGPT-Abo. Wähle eines davon für diesen Agenten.",
       "setting_up_chat": "{0} wird auf diesem Computer eingerichtet. Beim ersten Mal dauert das ein paar Minuten; deine Nachricht wird beantwortet, sobald alles bereit ist.",
       "routine_fallback": "Dieser Lauf nutzt Jarvis' eigene Laufzeit, nicht {0}: Das für die Routine gewählte Modell kann {0} nicht ansteuern.",
+      "ready_untested": "Bereit · neuer als getestet",
+      "untested_hint": "{0} ist neuer als die Version, die Jarvis getestet hat. Es läuft trotzdem.",
       "retry": "Erneut versuchen"
     },
     "approval_mode": {

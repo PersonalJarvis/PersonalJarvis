@@ -73,6 +73,14 @@ describe("RuntimeChoice", () => {
     expect(onChange).toHaveBeenLastCalledWith("jarvis");
   });
 
+  test("a ready runtime newer than the tested release says so, without a version number", async () => {
+    const newer = { ...status("hermes", true), untested: true };
+    withData(data(newer, status("openclaw", true)), <RuntimeChoice value="hermes" onChange={vi.fn()} />);
+    expect(await screen.findByText("society.runtime.ready_untested")).toBeTruthy();
+    expect(screen.getByTestId("runtime-untested").textContent).toBe("society.runtime.untested_hint");
+    expect(screen.queryByText(/1\.2\.3/)).toBeNull();
+  });
+
   test("never shows a version number", async () => {
     withData(data(status("hermes", true), status("openclaw", true)), <RuntimeChoice value="hermes" onChange={vi.fn()} />);
     expect(await screen.findAllByText("society.runtime.ready")).toHaveLength(2);
