@@ -361,3 +361,25 @@ async def test_interrupt_on_a_pane_that_never_starts_working_presses_nothing(pan
         await correct(registry, workspace, term, "interrupt")
     assert refused.value.interrupted is False
     assert pressed == [] and sent == []
+
+
+async def test_a_busy_refusal_records_what_it_was_based_on(pane):
+    from loguru import logger
+
+    registry, workspace, term, record, sent = pane
+    now = time.time()
+    submitted(term, now - 300)
+    write(record, user(now - 299), assistant(now - 5, stop="tool_use"))
+    activity.stamp(term, "waiting", now=now - 2)
+    lines: list[str] = []
+    sink = logger.add(lambda message: lines.append(str(message)), level="INFO")
+    try:
+        with pytest.raises(SessionError, match="busy"):
+            await send(registry, workspace, term)
+    finally:
+        logger.remove(sink)
+    refusal = next(line for line in lines if "refused a prompt" in line)
+    assert "T1 as busy (working)" in refusal
+    assert "evidence=working" in refusal and "stamp=waiting" in refusal
+    assert "Updated brief" not in refusal
+    assert sent == []

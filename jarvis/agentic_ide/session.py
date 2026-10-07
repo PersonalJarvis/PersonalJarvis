@@ -6771,6 +6771,7 @@ class Registry:
                         )
                     mid_turn = True
                 elif busy:
+                    self._log_busy_refusal(term, busy)
                     raise AgentBusyError("The selected coding agent is busy; nothing was sent.")
             pending = None
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
@@ -6817,6 +6818,34 @@ class Registry:
         if has_submission and activity not in ("waiting", "stopped"):
             return "starting"
         return ""
+
+    @staticmethod
+    def _log_busy_refusal(term: Terminal, busy: str) -> None:
+        """Record what a busy refusal was based on, so a wrong one can be traced.
+
+        A refusal of an idle agent (live 2026-10-07) left nothing behind to
+        tell a stale stamp from missing lifecycle evidence. No prompt text.
+        """
+        from .task_state import evidence
+
+        now = time.time()
+        proof = evidence(term, now=now)
+
+        def age(at: float | None) -> str:
+            return f"{now - at:.0f}s" if at else "never"
+
+        logger.info(
+            "Agentic IDE: refused a prompt for {} as busy ({}): evidence={} ({} old), "
+            "stamp={} ({} old), last submit age={}, submitted to this process={}",
+            term.name,
+            busy,
+            proof.state if proof else "none",
+            age(proof.at) if proof else "-",
+            term.activity or "none",
+            age(term.activity_at),
+            age(term.last_submit_at),
+            term.submit_generation == term.process_generation,
+        )
 
     async def _interrupt_turn(self, owner: Session, term: Terminal) -> tuple[str, bool]:
         """Press Stop once and wait for the turn to end.
