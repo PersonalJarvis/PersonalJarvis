@@ -33,7 +33,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts" / "spikes"))
 
-from agent_runtimes_e2e import _run  # noqa: E402
+from agent_runtimes_e2e import (  # noqa: E402
+    _run,
+    keep_user_path,
+    prepare,
+    user_path_snapshot,
+)
 
 from jarvis.agent_runtimes import base, driver, gateway  # noqa: E402
 from jarvis.agent_runtimes.base import RuntimeTurn  # noqa: E402
@@ -223,13 +228,21 @@ async def main(name: str, provider: str, wanted: str) -> int:
 async def _check(name: str, provider: str, wanted: str, tmp: Path, *, replay: bool) -> int:
     workspace = tmp / "workspace"
     workspace.mkdir()
+    keep_user_path()  # before detect(): it would run the app's PATH cleanup
     status = driver(name).detect(refresh=True)
     print("detect:", status.ready, status.problem)
     if not status.ready:
         return 2
+    path_before = user_path_snapshot()
+    await prepare(name)
     port = _free_port()
     with _serve(port):
-        return await _turns(name, provider, wanted, workspace, port, replay=replay)
+        result = await _turns(name, provider, wanted, workspace, port, replay=replay)
+    if user_path_snapshot() != path_before:
+        print("user PATH changed: FAIL")
+        return 1
+    print("user PATH unchanged: yes")
+    return result
 
 
 async def _turns(name, provider, wanted, workspace, port, *, replay):
@@ -265,7 +278,9 @@ async def _turns(name, provider, wanted, workspace, port, *, replay):
         mcp_url=None,
         control_key=None,
     )
+    started = time.monotonic()
     first, _io1 = await _run(name, turn, "Remember the word PELICAN. Reply with exactly: READY")
+    print(f"turn 1 took {time.monotonic() - started:.1f} s")
     print("turn 1:", first.status, first.error, repr(first.result_text[:120]))
     turn.resume = first.vendor_session
     second, _io2 = await _run(name, turn, "Which word did I ask you to remember? One word.")

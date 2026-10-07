@@ -20,27 +20,54 @@ Nobody installs Hermes or OpenClaw by hand (`jarvis/agent_runtimes/manager.py`):
 
 - **Picking a runtime sets it up.** The dialog sends
   `POST /api/agent-runtimes/{runtime}/ensure` as soon as Hermes or OpenClaw is
-  picked; creating the agent sends it again. `ensure` runs the project's own
-  installer when the runtime is missing (OpenClaw's also adds the Node.js it
-  needs) and its own updater when it is too old. The agent can be created
-  while that runs.
-- **A turn waits for the setup.** A turn on a runtime that is not ready posts
-  a `runtime_setup` notice in the chat and waits for the job; a setup that
-  fails ends the turn with its reason.
-- **Daily updates.** While any agent uses a runtime, the society runtime runs
-  its updater once a day (first round 10 minutes after start), only when no
-  turn of it is running. An update that leaves the runtime unable to start is
-  repaired by a fresh install with the official installer.
+  picked; creating the agent sends it again. `ensure` starts whichever job the
+  runtime needs: an install when it is missing, an update when it is older
+  than the minimum, and for Hermes a one-time *prepare* of the data root its
+  agents share (below). The agent can be created while that runs.
+- **Pinned releases.** `jarvis/agent_runtimes/runtime-versions.json` names per
+  runtime a `minimum` (older installs are not ready) and a `tested` release
+  (Hermes also its source `commit` and the `config_version` it writes). Every
+  install and update goes to `tested`, never to upstream latest; `tested` is
+  bumped only from a green agent-runtimes canary run on all three OSes. A
+  newer install the person made themselves keeps running and is reported as
+  `untested` in `GET /api/agent-runtimes`.
+- **Installers.** Hermes: its official `install.ps1` / `install.sh` at the
+  pinned commit, without browser tools or desktop control
+  (`-SkipBrowser -SkipComputerUse` / `--skip-browser --skip-computer-use`).
+  OpenClaw: Jarvis installs its own copy into `<runtimes_root>/openclaw-cli`
+  with a private Node.js — `install-cli.sh --prefix … --version <tested>` on
+  macOS and Linux (no sudo, no shell-profile change), `install.ps1 -NodeOnly`
+  (a checksum-verified private Node.js, no `winget`/UAC prompt) plus that
+  Node's npm on Windows. Jarvis never updates the person's own OpenClaw; a
+  ready one they installed is used until Jarvis' copy exists. On macOS and
+  Linux the installer script is downloaded first and run under
+  `set -euo pipefail`, so a missing `curl`/`git`, an offline machine or a 404
+  fails the job with a plain reason (exit 90 names the missing tool); the
+  installer's last log line is the reason a waiting turn shows.
+- **Setup holds the runtime alone.** A job waits until no turn of its runtime
+  runs, and turns that arrive meanwhile wait for the job (`base.RuntimeGate`).
+  An update replaces files a running turn holds open; on Windows it cannot.
+- **A turn waits for the setup.** A turn on a runtime that needs a job posts a
+  `runtime_setup` notice in the chat and waits for it; a setup that fails ends
+  the turn with its reason.
+- **Daily round.** While any agent uses a runtime, the society runtime checks
+  it once a day (first round 10 minutes after start) and, only when no turn of
+  it runs, lifts an install older than `tested` up to it. An update that
+  leaves the runtime unable to start is repaired by a fresh install; when
+  that fails too, the last release that finished a setup ready
+  (`<runtimes_root>/<runtime>-last-good.json`) is reinstalled.
+- **Found without a restart.** Binary discovery re-checks the well-known
+  install folders on every call (`base.which`), searches the installers'
+  private Node.js and command folders, and merges the persistent PATH the
+  installer may have changed (Windows registry) after each job.
 - **No version numbers in the UI.** The dialog says "Ready", "Setting up…" or
-  "Sets itself up"; versions stay internal (the minimum versions gate
-  readiness).
+  "Sets itself up"; versions stay internal.
 
 None of this calls a model, so setup and updates never spend a key.
 
-The current implementation still updates to upstream latest. A canary-gated
-manifest and automatic rollback are outstanding (#425); the canary now tests
-both model-gateway protocols with scripted providers. See
-[acceptance evidence](agent-runtimes-eval.md) for the remaining #428 work.
+Each app instance keeps its own runtime folders (`agent_runtimes` for the
+default app, `agent_runtimes-dev` for the dev instance), and a turn holds a
+cross-process lock on its folder.
 
 ## Models: Jarvis' model gateway
 
@@ -171,17 +198,56 @@ replayed during `session/load` is swallowed because the chat already shows it.
   Bypass allows without a card, Ask shows the card, Plan refuses.
 - **A finished turn ends.** After the prompt's answer the runtime gets ten
   seconds to exit on its own, then it is ended; the answer already stands.
+- **Stop is a real stop.** Stop, the turn deadline, a provider failure and the
+  stall watchdog first send ACP `session/cancel` and give the runtime five
+  seconds to end its turn, then kill it. An OpenClaw run lives in its Gateway,
+  so killing the bridge alone would leave it calling the model and running
+  tools.
+- **Stall watchdog.** The runtime must open its session within 7 minutes (it
+  may finish its own setup first); afterwards the model must say something
+  within 5 minutes. The counter resets on every ACP frame and pauses while a
+  tool runs or an approval card is open. A stalled turn ends with a plain
+  reason instead of holding the agent's folder for the full hour.
+- **Incomplete answers say so.** `stopReason` `max_tokens`,
+  `max_turn_requests` or `cancelled` without any text is the turn's error;
+  with text the answer stands and a `stop_reason` notice marks it incomplete.
+- **Nothing outlives the turn.** The runtime runs in the turn's process
+  container (Job Object on Windows, process group on POSIX). On POSIX its
+  descendants are also recorded while it runs, so a shell command it started
+  under `setsid` (Hermes does that for every command) is reaped with the turn.
+  A frame larger than the 16 MB read limit ends the turn with a plain error.
 
 ## Hermes
 
 - **Process:** `hermes acp`, one process per turn, stdin EOF ends it (exit 0).
-- **Isolation:** one Hermes profile per agent, `HERMES_HOME` under Jarvis' data
-  directory. The user's own `~/.hermes` / default profile is never touched.
-- **Config Jarvis writes** (`config.yaml`): `model.provider` / `model.default` /
+- **Profiles of one Jarvis data root:** every agent folder is a Hermes profile,
+  `HERMES_HOME=<runtimes_root>/hermes-home/profiles/<agent>`. Hermes keeps its
+  Python dependency environment (about 700 MB) per *data root*, and a profile
+  shares its root's. With a root per agent, every agent's first turn — and the
+  first after every Hermes update — spent about two minutes building its own
+  (measured 84–136 s); now the setup job prepares the shared root once per
+  Hermes build (`hermes profile list` under a setup profile, 37–45 s measured
+  on Windows) and a first turn starts in seconds (6.8–8.3 s measured, replay
+  model). The root is Jarvis' own, not the person's Hermes home: a profile of
+  their home would read, and rotate, their own Hermes logins through Hermes'
+  global-root credential fallback.
+- **Never on the user's PATH:** Hermes' home maintenance publishes launchers
+  into `<data root>/bin` and, on Windows, registers that folder in the user's
+  PATH. The shared root keeps a *file* named `bin`, so that step fails before
+  it touches the registry; on macOS and Linux the config sets
+  `cli.expose_on_path: false`. Older builds left one PATH entry per agent
+  folder; `path_cleanup` removes exactly those (entries inside an
+  `agent_runtimes` folder) once per app run. An agent's old folder is moved:
+  its session store is copied into the profile, then the old folder and its
+  private environment are removed.
+- **Config Jarvis writes** (`config.yaml`): `_config_version` from the pins (so
+  Hermes migrates the file forward), `model.provider` / `model.default` /
   `model.base_url`, `terminal.cwd` = the agent workspace, Hermes' own memory
-  and skill nudges off (Jarvis owns memory and skills), and `SOUL.md` = the
-  agent's Jarvis briefing. The only key is the gateway token, in the process
-  environment.
+  and skill nudges off (Jarvis owns memory and skills), the `browser`,
+  `computer_use` and `cronjob` toolsets always disabled (Jarvis has a visible
+  browser and its own routines; Hermes' browser is a headless Chromium), and
+  `SOUL.md` = the agent's Jarvis briefing. The only key is the gateway token,
+  in the process environment.
 - **Jarvis tools:** passed per session in `session/new` / `session/load`
   `mcpServers` (HTTP with headers); `HERMES_ACP_SKIP_CONFIGURED_MCP=1` keeps
   any configured servers out. Hermes names them `mcp__jarvis__<tool>`.
@@ -202,6 +268,10 @@ replayed during `session/load` is swallowed because the chat already shows it.
   The price is prompt size — about 69k input tokens per model call instead of
   about 27k on a fresh Hermes session (prompt caching covers roughly half of
   it from the second call on).
+- **Not yet covered:** Hermes discovers ambient credentials (for example the
+  GitHub CLI's `gh auth token` for Copilot) into each profile's credential
+  pool. Jarvis' config never routes a model call to them; switching the
+  discovery off needs an upstream setting.
 
 ## OpenClaw
 
@@ -216,16 +286,29 @@ replayed during `session/load` is swallowed because the chat already shows it.
   `OPENCLAW_CONFIG_PATH`) and one Gateway per agent folder, on its own
   loopback port, started on the first turn and stopped after 15 idle minutes.
   A changed config restarts the Gateway (with no turn in flight) instead of
-  trusting its file watcher to have reloaded in time. Start-up is
-  about 16 s on Windows with the preset (measured with 2026.9.8). The user's
-  own `~/.openclaw` and their Gateway service are never touched.
+  trusting its file watcher to have reloaded in time. Start-up took 17–26 s
+  on Windows with the plugins below denied (46 s before). The user's own
+  `~/.openclaw` and their Gateway service are never touched.
+- **Supervision:** the Gateway counts as ready when `GET /healthz` answers 200
+  from a live child — a bare TCP accept could be another program that took
+  the port, which is retried once on a fresh port. Each folder's Gateway holds
+  a cross-process lock and records `gateway.pid` (pid, port, creation time); a
+  Gateway an earlier app left running after a crash or force-quit (POSIX,
+  where no Job Object reaps it) is stopped before a new one starts — only the
+  recorded process, never a recycled pid. Descendants that left its process
+  group are reaped with it.
 - **Config Jarvis writes** (`openclaw.json`, only long-stable keys):
   `gateway.{mode,port,bind,auth}`, `models.providers.<id>` for the agent's
   model, `agents.defaults.{model.primary,workspace,heartbeat.every:"0m"}`,
-  `session.reset.mode:"none"`, `mcp.servers.jarvis`, and `tools.deny` for
-  native tools that duplicate Jarvis features (automations, messaging).
-  A Gateway exit code 78 (invalid config) runs
-  `openclaw doctor --fix --yes --non-interactive` once, then retries.
+  `session.reset.mode:"none"`, `mcp.servers.jarvis`, `tools.deny` for native
+  tools that duplicate Jarvis features (automations, messaging, the browser),
+  `plugins.deny` for the bundled browser, canvas, desktop-control
+  (`cua-computer`), device-pairing, file-transfer, location, voice, GitHub and
+  Linux-node plugins, and `logging.file` inside the agent's state folder
+  (OpenClaw otherwise appends every Gateway's log to one shared temp-folder
+  file). A Gateway exit code 78 (invalid config) runs
+  `openclaw doctor --fix --yes --non-interactive` once (contained, killed
+  after two minutes), then retries.
 - **Jarvis tools:** OpenClaw rejects per-session `mcpServers`, so the Jarvis
   server is configured in the agent's own state directory. Values such as
   `${JARVIS_CONTROL_API_KEY}` are substituted from the Gateway's environment,
@@ -238,8 +321,12 @@ replayed during `session/load` is swallowed because the chat already shows it.
   person did not start may bill a key.
   Its native cron scheduler and memory-core plugin/slot are also disabled:
   disabling heartbeat alone still allowed a managed dreaming job at startup.
-- **Node:** OpenClaw 2026.9 requires Node `>=24.16 <25 || >=26.1`. The runtime
-  manager reports an unsuitable Node instead of failing a turn.
+- **Node:** OpenClaw 2026.9 requires Node `>=24.16 <25 || >=26.1`. Jarvis' own
+  copy brings Node 24.21; a person's own install on an unsuitable Node is
+  reported (`problem_kind: node`) and replaced by Jarvis' copy.
+- **Not yet covered:** on Windows a Gateway is stopped with
+  `TerminateProcess`, skipping its own shutdown drain; a graceful stop needs a
+  console-less signal path upstream.
 
 ## Spike
 

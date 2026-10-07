@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -114,18 +115,90 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
                 launch.release()
 
 
+def _key_on_disk(root: Path, key: str) -> bool:
+    for path in root.rglob("*") if root.exists() else ():
+        if "installs" in path.parts or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size < 5_000_000 and key in path.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                return True
+        except OSError:  # locked by a process the runtime left: reported below
+            print("  unreadable:", path.name)
+    return False
+
+
+def keep_user_path() -> None:
+    """A spike never edits the machine's PATH: the app's one-time cleanup of
+    stale Hermes entries (``path_cleanup``) stays the app's job."""
+    from jarvis.agent_runtimes import path_cleanup
+
+    path_cleanup._done = True  # noqa: SLF001 — the spike opts out of an app duty
+
+
+def user_path_snapshot() -> str:
+    """The user's persistent PATH (Windows), to prove a run never changed it."""
+    if sys.platform != "win32":
+        return ""
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+        try:
+            return str(winreg.QueryValueEx(key, "Path")[0])
+        except FileNotFoundError:
+            return ""
+
+
+async def prepare(name: str) -> float:
+    """Run the runtime's setup preparation (Hermes: the shared data root) like
+    the setup job does, before any turn; returns how long it took."""
+    command = getattr(driver(name), "prepare_command", lambda: None)()
+    if not command:
+        return 0.0
+    argv, env = command
+    started = time.monotonic()
+    tree = make_process_tree("runtime-e2e-prepare")
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        env=env,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+        start_new_session=os.name != "nt",
+    )
+    tree.assign(proc.pid)
+    try:
+        code = await asyncio.wait_for(proc.wait(), timeout=1800)
+    finally:
+        tree.close()
+    elapsed = time.monotonic() - started
+    print(f"prepare: exit {code} in {elapsed:.1f} s")
+    if code == 0:
+        driver(name).mark_prepared(driver(name).detect(refresh=True))
+    return elapsed
+
+
 async def main(name: str) -> int:
     tmp = Path(tempfile.mkdtemp(prefix=f"jarvis-{name}-e2e-"))
     base.runtimes_root = lambda: tmp / "agent_runtimes"  # keep the real data dir clean
     workspace = tmp / "workspace"
     workspace.mkdir()
+    keep_user_path()  # before detect(): it would run the app's PATH cleanup
     status = driver(name).detect(refresh=True)
     print("detect:", status.to_dict())
     if not status.ready:
         return 2
+    path_before = user_path_snapshot()
+    await prepare(name)
     with FakeOpenAIServer() as server:
         key = "sk-e2e-" + uuid.uuid4().hex
-        route = ModelRoute("local-openai", MODEL_ID, server.base_url, "chat_completions", None)
+        # The key travels like the gateway token: process environment only.
+        route = ModelRoute(
+            "local-openai", MODEL_ID, server.base_url, "chat_completions", key,
+            context_window=131_072,  # Hermes refuses models below 64k
+        )
         # JARVIS_E2E_MCP=<url>|<agent id>: hand the runtime a running Jarvis'
         # MCP server (a dev instance) and make the fake model call a real tool.
         mcp = os.environ.get("JARVIS_E2E_MCP", "")
@@ -148,7 +221,9 @@ async def main(name: str) -> int:
             if mcp_url
             else "first message"
         )
+        started = time.monotonic()
         first, io1 = await _run(name, turn, opening)
+        print(f"turn 1 took {time.monotonic() - started:.1f} s")
         if server.requests:
             offered = [
                 (t.get("function") or {}).get("name", "")
@@ -166,19 +241,20 @@ async def main(name: str) -> int:
         print("turn 2:", second.status, second.error, repr(second.result_text[:80]))
         history = len(server.requests[-1].get("messages", [])) if server.requests else 0
         print("  model saw", history, "messages on turn 2")
-        home = tmp / "agent_runtimes" / name / agent_id
-        written = sorted(p.name for p in home.iterdir())
-        print("  runtime home:", written)
-        secret_leak = any(
-            p.is_file()
-            and p.stat().st_size < 5_000_000
-            and key in p.read_text(encoding="utf-8", errors="replace")
-            for p in home.rglob("*")
-        )
-        # Only a fixed word is printed: never anything derived from the key.
-        print("  key written to disk:", "YES" if secret_leak else "no")
+    # Stopped first: a running Gateway holds some of its files open.
     await driver(name).stop()
-    ok = first.status == "done" and second.status == "done" and history > 2 and not secret_leak
+    secret_leak = _key_on_disk(tmp / "agent_runtimes", key)
+    # Only a fixed word is printed: never anything derived from the key.
+    print("  key written to disk:", "YES" if secret_leak else "no")
+    path_kept = user_path_snapshot() == path_before
+    print("  user PATH unchanged:", "yes" if path_kept else "NO")
+    ok = (
+        first.status == "done"
+        and second.status == "done"
+        and history > 2
+        and not secret_leak
+        and path_kept
+    )
     print("RESULT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 

@@ -48,7 +48,7 @@ import signal
 import sys
 import threading
 from ctypes import wintypes
-from typing import Protocol
+from typing import Any, Protocol
 
 from loguru import logger
 
@@ -322,4 +322,84 @@ def make_process_tree(name: str) -> ProcessTree:
     return _NoContainment(name)
 
 
-__all__ = ["GRACE_S", "ProcessTree", "make_process_tree"]
+class DescendantTracker:
+    """Remember every descendant of a process while it runs; kill survivors at close.
+
+    A process group is not a tree: a child that calls ``setsid`` (Hermes runs
+    every shell command that way, and so do many dev servers) leaves its
+    parent's group, and ``killpg`` never reaches it. Once its parent exits it
+    is reparented and nothing can find it any more. So the tree is walked
+    while the parent still lives (every :data:`interval_s`, and once more at
+    close), and :meth:`close` kills whatever it saw that still runs. A pid is
+    only ever killed when its creation time matches what was recorded, so a
+    recycled pid is never touched.
+
+    Windows needs none of this — a Job Object follows descendants by itself —
+    so there :meth:`start` and :meth:`close` do nothing.
+    """
+
+    def __init__(
+        self, pid: int, *, interval_s: float = 1.0, enabled: bool | None = None
+    ) -> None:
+        self.pid = pid
+        self.interval_s = interval_s
+        self.seen: dict[int, float] = {}
+        self._task: Any = None
+        self._enabled = sys.platform != "win32" if enabled is None else enabled
+
+    def snapshot(self) -> None:
+        if not self._enabled:
+            return
+        try:
+            import psutil
+
+            root = psutil.Process(self.pid)
+            for child in root.children(recursive=True):
+                try:
+                    self.seen.setdefault(child.pid, child.create_time())
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue  # exited meanwhile or not ours to inspect: nothing to reap
+        except Exception as exc:  # noqa: BLE001 - the parent is gone or psutil is unusable
+            logger.debug("descendant snapshot of {} skipped: {}", self.pid, exc)
+
+    def start(self) -> None:
+        """Begin watching (call from a running event loop)."""
+        if not self._enabled:
+            return
+        import asyncio
+
+        async def _watch() -> None:
+            while True:
+                self.snapshot()
+                await asyncio.sleep(self.interval_s)
+
+        self._task = asyncio.get_running_loop().create_task(_watch())
+
+    def close(self) -> list[int]:
+        """Stop watching and kill every recorded descendant still alive."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+        if not self._enabled:
+            return []
+        self.snapshot()
+        killed: list[int] = []
+        try:
+            import psutil
+        except ImportError:  # pragma: no cover - psutil is a base dependency
+            return killed
+        for pid, created in self.seen.items():
+            try:
+                proc = psutil.Process(pid)
+                if abs(proc.create_time() - created) > 1.0:
+                    continue  # the pid was recycled: never ours
+                proc.kill()
+                killed.append(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue  # already gone, or not ours to kill: the good outcome
+        if killed:
+            logger.info("Reaped {} detached descendant(s) of pid {}", len(killed), self.pid)
+        return killed
+
+
+__all__ = ["GRACE_S", "DescendantTracker", "ProcessTree", "make_process_tree"]

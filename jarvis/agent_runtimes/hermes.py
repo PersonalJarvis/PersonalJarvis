@@ -1,10 +1,22 @@
 """Hermes Agent as a society agent runtime (``docs/agent-runtimes.md``).
 
-One turn = one ``hermes acp`` process with ``HERMES_HOME`` pointed at the
-agent's own profile folder. Jarvis writes that profile's ``config.yaml``
-(JSON, which is valid YAML) and ``SOUL.md`` before every turn and hands the
-Jarvis MCP server over per session; the profile keeps Hermes' own session
-store, so ``session/load`` reopens the agent's one conversation.
+One turn = one ``hermes acp`` process. Every agent is a Hermes *profile* of
+one Hermes data root that Jarvis owns (``<runtimes_root>/hermes-home``):
+``HERMES_HOME`` points at ``hermes-home/profiles/<agent>``. Jarvis writes the
+profile's ``config.yaml`` (JSON, which is valid YAML) and ``SOUL.md`` before
+every turn and hands the Jarvis MCP server over per session; the profile keeps
+Hermes' own session store, so ``session/load`` reopens the agent's one
+conversation.
+
+Why profiles of one root, not one root per agent: Hermes keeps its Python
+dependency environment per data root. A root per agent made the first turn of
+every agent (and the first after every Hermes update) build a ~700 MB
+environment for about two minutes, and Hermes' Windows home maintenance put
+every agent folder on the user's PATH. Profiles share their root's
+environment, which the setup job prepares (:meth:`HermesRuntime.prepare_command`)
+before a turn needs it. The root is Jarvis' own, not the person's Hermes home:
+a profile of the person's root would read (and rotate) their own Hermes
+logins through Hermes' global-root credential fallback.
 
 Hermes' self-learning extras (memory nudges, background review, curator,
 skill-creation nudges, title generation) are switched off: Jarvis owns
@@ -16,13 +28,17 @@ option degrades to Hermes' default instead of breaking the turn.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import logging
 import os
 import re
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+from jarvis.agent_runtimes import base, versions
 from jarvis.agent_runtimes.acp import McpServer
 from jarvis.agent_runtimes.base import (
     DetectCache,
@@ -31,7 +47,6 @@ from jarvis.agent_runtimes.base import (
     RuntimeTurn,
     RuntimeUnavailable,
     TurnSlots,
-    agent_home,
     child_env,
     first_existing,
     format_version,
@@ -39,26 +54,53 @@ from jarvis.agent_runtimes.base import (
     is_windows,
     parse_version,
     persona_text,
+    posix_installer,
+    private_dir,
+    ps_quote,
     run_version,
+    safe_key,
     which,
+    windows_installer,
     write_if_changed,
     write_json_if_changed,
 )
 from jarvis.agent_runtimes.model_map import KEY_ENV_VAR, RUNTIME_PROVIDER_NAME
 
+log = logging.getLogger(__name__)
+
 NAME: Final[str] = "hermes"
 LABEL: Final[str] = "Hermes"
-
-#: Oldest release verified to persist ACP sessions and accept per-session MCP
-#: servers (spike 2026-10-06). Older installs are offered an update.
-MINIMUM_VERSION: Final[tuple[int, int, int]] = (0, 20, 6)
 
 _INSTALL_URL_PS1: Final[str] = "https://hermes-agent.nousresearch.com/install.ps1"
 _INSTALL_URL_SH: Final[str] = "https://hermes-agent.nousresearch.com/install.sh"
 
+#: Hermes' own profile-name rule (``hermes_cli.main._PROFILE_NAME_RE``).
+_PROFILE_NAME: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+#: The profile the setup job runs Hermes under to prepare the shared root.
+_SETUP_KEY: Final[str] = "~setup"
+
+#: Hermes toolsets no Jarvis agent gets: a headless Chromium (Jarvis has a
+#: visible browser over MCP), background desktop control, and Hermes' own
+#: scheduler (Jarvis owns routines and their budgets).
+_ALWAYS_DISABLED: Final[frozenset[str]] = frozenset({"browser", "computer_use", "cronjob"})
+
+_BIN_BLOCKER_TEXT: Final[str] = (
+    "Personal Jarvis keeps this a file on purpose. Hermes' home maintenance\n"
+    "publishes launchers into <data root>/bin and puts that folder on the\n"
+    "user's PATH on Windows; a file here makes that step a no-op for the data\n"
+    "root Jarvis' agents use, so they never change the user's PATH.\n"
+)
+
 
 def _binary() -> str | None:
-    found = which("hermes", "hermes.exe", "hermes.cmd")
+    """The person's Hermes launcher, never one inside a Jarvis agent folder.
+
+    Builds before the profile layout left per-agent ``bin`` folders on the
+    user's PATH (``path_cleanup`` removes them); a stale one must not shadow
+    the real install.
+    """
+    found = which("hermes", "hermes.exe", "hermes.cmd", skip=_in_jarvis_data)
     if found:
         return found
     home = Path.home()
@@ -70,10 +112,107 @@ def _binary() -> str | None:
     return str(found_path) if found_path else None
 
 
+def _in_jarvis_data(directory: str) -> bool:
+    from jarvis.agent_runtimes.path_cleanup import is_jarvis_hermes_bin
+
+    return is_jarvis_hermes_bin(directory)
+
+
 def _install_hint() -> str:
     if is_windows():
         return f"iex (irm {_INSTALL_URL_PS1})"
     return f"curl -fsSL {_INSTALL_URL_SH} | bash"
+
+
+# ------------------------------------------------------------------ layout
+
+
+def hermes_root() -> Path:
+    """The Hermes data root every Jarvis agent profile shares."""
+    return base.runtimes_root() / "hermes-home"
+
+
+def profile_name(key: str) -> str:
+    """Hermes profile name for a runtime home key (``<agent>`` / ``<agent>~runs``)."""
+    agent, runs = (key[: -len("~runs")], True) if key.endswith("~runs") else (key, False)
+    slug = re.sub(r"[^a-z0-9_-]+", "-", agent.lower()).strip("-_") or "agent"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:6]
+    if runs or slug != agent or len(slug) > 48:
+        # Lowercased, shortened or a routine folder: the hash keeps two keys
+        # that slug alike ("Ada" / "ada", "x~runs" / "x-runs") apart.
+        slug = f"{slug[:48].rstrip('-_') or 'agent'}-{'runs-' if runs else ''}{digest}"
+    name = slug[:64]
+    return name if _PROFILE_NAME.match(name) else f"agent-{digest}"
+
+
+def _root_config(pin: versions.Pin) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        # Never put Jarvis' data root on the user's PATH (honoured on POSIX;
+        # the ``bin`` file covers Windows).
+        "cli": {"expose_on_path": False},
+        "approvals": {"mode": "manual"},
+    }
+    if pin.config_version is not None:
+        config["_config_version"] = pin.config_version
+    return config
+
+
+def prepare_root() -> Path:
+    """Create the shared root: marker config, ``profiles/``, the ``bin`` blocker."""
+    root = private_dir(hermes_root())
+    private_dir(root / "profiles")
+    # A root ``config.yaml`` is also what makes Hermes accept ``root/profiles``
+    # as a real profiles folder (``hermes_constants._is_hermes_profiles_root``).
+    write_json_if_changed(root / "config.yaml", _root_config(versions.pin(NAME)))
+    blocker = root / "bin"
+    if blocker.is_dir() and not blocker.is_symlink():
+        shutil.rmtree(blocker, ignore_errors=True)
+    if not blocker.exists():
+        write_if_changed(blocker, _BIN_BLOCKER_TEXT)
+    return root
+
+
+def profile_home(key: str) -> Path:
+    """The agent's Hermes profile folder (created on demand, with its root)."""
+    root = prepare_root()
+    home = private_dir(root / "profiles" / profile_name(key))
+    _adopt_legacy_home(key, home)
+    return home
+
+
+def _adopt_legacy_home(key: str, home: Path) -> None:
+    """Carry an agent's conversation over from the old per-agent data root.
+
+    Builds before the profile layout kept ``agent_runtimes/hermes/<agent>``,
+    each with its own ~700 MB dependency environment. The session store moves
+    into the profile (so the agent keeps its Hermes context); the old folder,
+    everything else in it rebuildable, is removed once that copy succeeded.
+    """
+    from jarvis.core.instance import current_instance
+
+    if not current_instance().is_default:
+        return  # the old folders belong to the default app's agents
+    legacy = base.legacy_runtimes_root() / NAME / safe_key(key)
+    if not legacy.is_dir():
+        return
+    try:
+        if not (home / "state.db").exists():
+            for name in ("state.db", "state.db-wal", "state.db-shm"):
+                if (legacy / name).is_file():
+                    shutil.copy2(legacy / name, home / name)
+            if (legacy / "sessions").is_dir():
+                shutil.copytree(legacy / "sessions", home / "sessions", dirs_exist_ok=True)
+    except OSError as exc:
+        log.warning("agent runtimes: Hermes sessions of %s not carried over: %s", key, exc)
+        return
+    shutil.rmtree(legacy, ignore_errors=True)
+    log.info("agent runtimes: moved Hermes agent %s into its profile", key)
+    parent = legacy.parent
+    try:
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError as exc:
+        log.debug("agent runtimes: legacy Hermes folder kept: %s", exc)
 
 
 class HermesRuntime:
@@ -82,7 +221,7 @@ class HermesRuntime:
 
     def __init__(self) -> None:
         self._detect = DetectCache()
-        self._slots = TurnSlots()
+        self._slots = TurnSlots(NAME, lock_dir=lambda: base.runtimes_root() / "locks")
 
     # ----------------------------------------------------------- detection
 
@@ -92,7 +231,11 @@ class HermesRuntime:
         cached = self._detect.get()
         if cached is not None:
             return cached
-        minimum = format_version(MINIMUM_VERSION)
+        from jarvis.agent_runtimes.path_cleanup import clean_user_path_once
+
+        clean_user_path_once()
+        pin = versions.pin(NAME)
+        minimum = format_version(pin.minimum)
         binary = _binary()
         if binary is None:
             return self._detect.put(
@@ -106,7 +249,8 @@ class HermesRuntime:
                     install_hint=_install_hint(),
                 )
             )
-        version = parse_version(run_version([binary, "--version"]))
+        output = run_version([binary, "--version"])
+        version = parse_version(output)
         if version is None:
             return self._detect.put(
                 RuntimeStatus(
@@ -119,7 +263,7 @@ class HermesRuntime:
                     install_hint=_install_hint(),
                 )
             )
-        ready = version >= MINIMUM_VERSION
+        ready = version >= pin.minimum
         return self._detect.put(
             RuntimeStatus(
                 NAME,
@@ -131,24 +275,78 @@ class HermesRuntime:
                 problem="" if ready else f"Hermes {minimum} or newer is needed. Update it.",
                 problem_kind="" if ready else "outdated",
                 install_hint=_install_hint(),
+                untested=ready and pin.tested is not None and version > pin.tested,
+                build=output.splitlines()[0].strip() if output else "",
             )
         )
 
-    def install_command(self) -> list[str] | None:
+    def install_command(self, revision: str | None = None) -> list[str] | None:
+        """The official installer, at the pinned commit (or ``revision``, a rollback).
+
+        Without browser tools (a headless Chromium) or desktop control: Jarvis
+        agents use Jarvis' visible browser and never Hermes' computer use.
+        """
+        commit = revision or versions.pin(NAME).commit
         if is_windows():
-            script = (
-                f"& ([scriptblock]::Create((irm {_INSTALL_URL_PS1}))) -SkipSetup -NonInteractive"
+            flags = "-SkipSetup -NonInteractive -SkipBrowser -SkipComputerUse"
+            if commit:
+                flags += f" -Commit {ps_quote(commit)}"
+            return windows_installer(
+                f"& ([scriptblock]::Create((Invoke-RestMethod {_INSTALL_URL_PS1}))) {flags}"
             )
-            return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]
-        return [
-            "bash",
-            "-c",
-            f"curl -fsSL {_INSTALL_URL_SH} | bash -s -- --skip-setup --non-interactive",
-        ]
+        args = ["--skip-setup", "--non-interactive", "--skip-browser", "--skip-computer-use"]
+        if commit:
+            args += ["--commit", commit]
+        return posix_installer(_INSTALL_URL_SH, args, requires=("git",))
 
     def update_command(self) -> list[str] | None:
+        """Update to the tested release: the installer at its pinned commit.
+
+        ``hermes update`` would go to upstream latest, which no canary has
+        seen; only a broken pins file falls back to it.
+        """
+        if versions.pin(NAME).commit:
+            return self.install_command()
         binary = _binary()
         return [binary, "update", "--yes"] if binary else None
+
+    def revision(self, status: RuntimeStatus) -> str:
+        """What a rollback reinstalls: the build's upstream commit."""
+        match = re.search(r"upstream ([0-9a-f]{7,40})|\.g([0-9a-f]{7,40})\b", status.build)
+        return (match.group(1) or match.group(2)) if match else ""
+
+    @property
+    def gate(self) -> Any:
+        return self._slots.gate
+
+    # ------------------------------------------------------------- prepare
+
+    def needs_prepare(self, status: RuntimeStatus) -> bool:
+        """Whether the shared root's environment was not yet built for this build."""
+        if not status.ready or not status.build:
+            return False
+        try:
+            done = (hermes_root() / ".jarvis-prepared").read_text(encoding="utf-8").strip()
+        except OSError:  # never prepared on this machine
+            return True
+        return done != status.build
+
+    def mark_prepared(self, status: RuntimeStatus) -> None:
+        if status.build:
+            write_if_changed(hermes_root() / ".jarvis-prepared", status.build + "\n")
+
+    def prepare_command(self) -> tuple[list[str], dict[str, str]] | None:
+        """Build the shared root's dependency environment ahead of the first turn.
+
+        ``hermes profile list`` passes through Hermes' launch preparation (a
+        version query skips it), which syncs the data root's environment once
+        per Hermes build; afterwards every agent's first turn starts at once.
+        """
+        binary = _binary()
+        if binary is None:
+            return None
+        home = profile_home(_SETUP_KEY)
+        return [binary, "profile", "list"], child_env({"HERMES_HOME": str(home)})
 
     def busy(self) -> bool:
         return self._slots.busy()
@@ -185,7 +383,13 @@ class HermesRuntime:
             "terminal": {"cwd": str(turn.workspace)},
             # Jarvis ends failed turns and retains the user's request. Do not
             # stack Hermes retries, recovery cycles or paid fallback routes.
-            "agent": {"api_max_retries": 1, "auto_recovery_cycles": 0},
+            "agent": {
+                "api_max_retries": 1,
+                "auto_recovery_cycles": 0,
+                "disabled_toolsets": sorted(
+                    _ALWAYS_DISABLED | _disabled_toolsets(turn.denied_native)
+                ),
+            },
             "fallback_model": None,
             # Jarvis owns memory and skills on every runtime.
             "memory": {
@@ -208,10 +412,14 @@ class HermesRuntime:
             # never depends on which session wrote it last. Never the "smart"
             # guardian, which spends model calls of its own.
             "approvals": {"mode": "manual"},
+            # Never put the data root on the user's PATH (POSIX; see prepare_root).
+            "cli": {"expose_on_path": False},
         }
-        disabled = sorted(_disabled_toolsets(turn.denied_native))
-        if disabled:
-            config["agent"]["disabled_toolsets"] = disabled
+        config_version = versions.pin(NAME).config_version
+        if config_version is not None:
+            # Without it Hermes reads the file as pre-version-12 and refuses to
+            # migrate it (logged on every Hermes update).
+            config["_config_version"] = config_version
         return config
 
     async def launch(self, turn: RuntimeTurn) -> RuntimeLaunch:
@@ -232,7 +440,7 @@ class HermesRuntime:
         self, binary: str, turn: RuntimeTurn, release: Callable[[], None]
     ) -> RuntimeLaunch:
         home = await asyncio.to_thread(
-            agent_home, NAME, home_key(turn.agent_id, turn.session_id)
+            profile_home, home_key(turn.agent_id, turn.session_id)
         )
         await asyncio.to_thread(self._write_profile, home, turn)
         env = child_env(
