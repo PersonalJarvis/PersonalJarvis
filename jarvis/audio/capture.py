@@ -1124,6 +1124,7 @@ class MicrophoneCapture:
                             dtype=DTYPE,
                             callback=self._callback,
                         )
+                        topology.register_native_stream(opened)
                         try:
                             opened.start()
                         except BaseException:
@@ -1131,15 +1132,19 @@ class MicrophoneCapture:
                             # outer candidate loop only sees the exception.
                             try:
                                 opened.close()
+                                topology.unregister_native_stream(opened)
                             except Exception:  # noqa: BLE001, S110 - preserve the original open failure
                                 pass
                             raise
+                        # Publish before releasing the refresh guard. Otherwise
+                        # the watcher can miss this live stream while its async
+                        # caller is still waiting for the worker result.
+                        self._stream = opened
                         return opened
 
                 stream = await asyncio.to_thread(
                     _guarded_open, attempt, capture_rate, capture_blocksize
                 )
-                self._stream = stream
                 _remember_input_latency(stream)
                 self._device = attempt
                 self._using_physical_fallback = physical_fallback
@@ -1409,7 +1414,8 @@ class MicrophoneCapture:
         except Exception:  # noqa: BLE001 - a notice must never break the capture
             _log.debug("Mic silence notice could not be published.", exc_info=True)
 
-    def discard_native_stream(self) -> None:
+    @topology.native_stream_operation()
+    def discard_native_stream(self) -> bool:
         """Drop the native stream so the stall watchdog reopens it (BUG-102).
 
         Called by the topology watcher (worker thread) right before a
@@ -1420,7 +1426,9 @@ class MicrophoneCapture:
         """
         stream, self._stream = self._stream, None
         if stream is not None:
-            self._discard_stream(stream)
+            if self._discard_stream(stream) is False:
+                self._stream = stream
+                return False
         if not isinstance(self._device_spec, int):
             # Indices renumber across a PortAudio re-init; retrying the stale
             # resolved index first could silently open a DIFFERENT physical
@@ -1430,6 +1438,7 @@ class MicrophoneCapture:
             self._last_chunk_monotonic,
             time.monotonic() - self._STALL_THRESHOLD_S - 1.0,
         )
+        return True
 
     #: How long a coroutine waits for a native stream to shut down before it
     #: leaves the rest to a worker thread. Long enough that the ordinary close
@@ -1468,7 +1477,8 @@ class MicrophoneCapture:
         )
 
     @staticmethod
-    def _discard_stream(stream: Any) -> None:
+    @topology.native_stream_operation()
+    def _discard_stream(stream: Any) -> bool:
         """Abort-then-close a (possibly wedged) native stream, never raising.
 
         Abort discards the dead native stream immediately; CoreAudio can
@@ -1492,6 +1502,9 @@ class MicrophoneCapture:
             stream.close()
         except Exception as exc:  # noqa: BLE001
             _log.debug("Mic discard: close() ignored ({}).", exc)
+            return False
+        topology.unregister_native_stream(stream)
+        return True
 
     async def __aenter__(self) -> MicrophoneCapture:
         self._loop = asyncio.get_running_loop()
