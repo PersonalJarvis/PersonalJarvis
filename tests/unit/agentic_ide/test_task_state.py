@@ -83,9 +83,21 @@ async def test_completion_abort_question_and_resume_are_distinct(pane):
 @pytest.mark.asyncio
 async def test_old_completion_missing_record_and_remote_record_are_unknown(pane):
     term, registry, path = pane
+    append(path, row("event_msg", {"type": "task_started"}, term.last_submit_at - 2))
+    await task_state.refresh(registry)
+    # An earlier job still running when the new submit came proves nothing.
+    assert activity.read_activity(term) == "unknown"
     append(path, row("event_msg", {"type": "task_complete"}, term.last_submit_at - 1))
     await task_state.refresh(registry)
-    assert activity.read_activity(term) == "unknown"
+    # A finished job, then a submit that never started a turn (an empty Enter,
+    # a slash command): the still pane is back where that job left it, but the
+    # old completion never finishes the new submit.
+    assert task_state.evidence(term).state == "unknown"
+    assert activity.read_activity(term) == "waiting"
+    term.last_submit_at = time.time() - 1
+    await task_state.refresh(registry)
+    assert activity.read_activity(term) == "unknown"  # inside the submit grace
+    term.last_submit_at = time.time() - 100
     append(path, row("event_msg", {"type": "task_complete"}))
     term.computer_id = "other-machine"
     await task_state.refresh(registry)

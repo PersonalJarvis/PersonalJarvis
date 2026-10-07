@@ -268,6 +268,12 @@ def read_activity(
             return states[proof.state]
         if _has_current_instruction(term) and is_moving(term, moment, still_since):
             return "working"
+        if proof.before in ("completed", "stopped") and not in_submit_wake(term, moment):
+            # A submission past its grace with no record and a still screen
+            # started no turn (an empty Enter, a slash command): the pane is
+            # where its last job left it. It still finishes nothing, so no
+            # completion is announced for it.
+            return states[proof.before]
         return "unknown" if has_work_behind_it(term) else "waiting"
     if _has_current_instruction(term) and is_moving(term, moment, still_since):
         return "working"

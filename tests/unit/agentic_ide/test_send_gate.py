@@ -130,7 +130,9 @@ async def test_enter_that_started_no_turn_does_not_make_the_pane_busy(pane):
     # An empty Enter / slash command after the turn: a submit with no record.
     submitted(term, now - 120)
     await task_state.probe(term)
-    assert activity.read_activity(term) == "unknown"  # the badge stays honest
+    # The pane reads as finished again; its old completion is not re-announced.
+    assert activity.read_activity(term) == "waiting"
+    assert task_state.evidence(term).state == "unknown"
     activity.stamp(term, "unknown", now=now)
     await send(registry, workspace, term)
     assert sent == ["Updated brief"]
