@@ -55,6 +55,7 @@ async def runtime_gateway_chat(request: Request) -> Any:
             raise gateway.GatewayError("This agent's subscription answers on /responses.")
         body = await _body(request)
         model, brain_request = gateway.chat_request(body)
+        gateway.check_model(grant, model)
         # A runtime that sets no temperature gets the model's own default.
         temperature_given = gateway.temperature_given(body)
         if body.get("stream") is True:
@@ -80,6 +81,7 @@ async def runtime_gateway_responses(request: Request) -> Any:
             raise gateway.GatewayError("This agent's provider answers on /chat/completions.")
         body = await _body(request)
         args = gateway.request_args(body)
+        gateway.check_model(grant, args["model"])
         if body.get("stream") is True:
             events = await gateway.open_response_stream(grant, args)
             return StreamingResponse(

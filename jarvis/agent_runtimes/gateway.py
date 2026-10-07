@@ -88,7 +88,10 @@ class Grant:
 
 _LOCK = threading.Lock()
 _GRANTS: dict[str, Grant] = {}
-_TOKENS: dict[Grant, str] = {}
+_TOKENS: OrderedDict[Grant, str] = OrderedDict()
+#: Grants kept at once. Each chat session mints its own; the least recently
+#: minted one is forgotten first (its next turn simply mints a new token).
+_GRANTS_MAX: Final[int] = 1024
 _CLIENTS: dict[str, Any] = {}
 _MODEL_LIMITS: dict[Grant, dict[str, ModelLimits]] = {}
 _CATALOG: Any = None
@@ -144,7 +147,61 @@ def grant_token(agent_id: str, provider: str, account_id: str = "", *, scope: st
             token = f"jrg_{secrets.token_urlsafe(32)}"
             _TOKENS[grant] = token
             _GRANTS[token] = grant
+        _TOKENS.move_to_end(grant)
+        stale = [
+            old for old in list(_TOKENS)[: max(0, len(_TOKENS) - _GRANTS_MAX)]
+            if old not in _FAILURES  # never a grant whose turn is running
+        ]
+        for old in stale:
+            _forget(old)
         return token
+
+
+def _forget(grant: Grant) -> None:
+    """Drop one grant's token and model registrations. Holds ``_LOCK``."""
+    old_token = _TOKENS.pop(grant, None)
+    if old_token is not None:
+        _GRANTS.pop(old_token, None)
+    _MODEL_LIMITS.pop(grant, None)
+
+
+def revoke_agent(agent_id: str) -> int:
+    """Invalidate every token minted for ``agent_id`` (the agent was deleted
+    or switched to another provider or model): a runtime still holding one
+    gets 401 instead of spending on the old route. Returns how many."""
+    with _LOCK:
+        grants = [grant for grant in _TOKENS if grant.agent_id == agent_id]
+        for grant in grants:
+            _forget(grant)
+        brains = [key for key in _BRAINS if key and key[0] == agent_id]
+        slots = [_BRAINS.pop(key) for key in brains]
+    for slot in slots:
+        slot.retired = True
+        if slot.users == 0:
+            _close_later(slot.brain)
+    return len(grants)
+
+
+def check_model(grant: Grant, model: str) -> None:
+    """Refuse a model the grant was not routed to.
+
+    A token speaks for one agent on the model its route registered; without
+    this check anything holding it could pick a costlier model on the same
+    key. A grant minted without a route has nothing registered and is not
+    restricted.
+    """
+    with _LOCK:
+        allowed = set(_MODEL_LIMITS.get(grant, {}))
+    if not allowed:
+        return
+    if {model, f"{model}:latest", model.removesuffix(":latest")} & allowed:
+        return
+    raise GatewayError(
+        f"This agent runs on {', '.join(sorted(allowed))}; its token cannot use {model}. "
+        "Choose the model in the agent's settings.",
+        status=404,
+        code="model_not_found",
+    )
 
 
 def verify(token: str) -> Grant | None:

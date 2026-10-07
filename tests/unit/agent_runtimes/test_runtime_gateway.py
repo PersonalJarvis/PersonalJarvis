@@ -774,3 +774,50 @@ def test_every_gateway_call_lands_in_the_cost_ledger(monkeypatch, guarded, tmp_p
     ] * 2
     assert (rows[0].tokens_in, rows[0].tokens_out, rows[0].tokens_cached) == (200, 9, 1_800)
 
+
+# --------------------------------------------------------- grant lifecycle
+
+
+def test_a_token_only_speaks_for_the_models_its_route_registered(brain, guarded) -> None:
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+
+    token = gateway.grant_token("agent-1", "openai")
+    gateway.register_model(token, "gpt-5.2", ModelLimits())
+    assert _chat(guarded, token, _CHAT).status_code == 200
+    costly = _chat(guarded, token, {**_CHAT, "model": "gpt-5.5-pro"})
+    assert costly.status_code == 404
+    assert costly.json()["error"]["code"] == "model_not_found"
+    assert len(brain["requests"]) == 1
+
+
+def test_an_ollama_tag_and_its_latest_alias_are_one_model(brain, guarded) -> None:
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+
+    token = gateway.grant_token("agent-1", "ollama")
+    gateway.register_model(token, "qwen3.5:latest", ModelLimits())
+    assert _chat(guarded, token, {**_CHAT, "model": "qwen3.5"}).status_code == 200
+
+
+def test_a_revoked_agent_token_is_refused(brain, guarded) -> None:
+    token = gateway.grant_token("agent-1", "openai", scope="s1")
+    other = gateway.grant_token("agent-2", "openai")
+    assert gateway.revoke_agent("agent-1") == 1
+    assert _chat(guarded, token, _CHAT).status_code == 401
+    assert _chat(guarded, other, _CHAT).status_code == 200
+    assert gateway.grant_token("agent-1", "openai", scope="s1") != token
+
+
+def test_old_session_grants_are_forgotten_but_never_a_running_turn(monkeypatch) -> None:
+    gateway.reset()
+    monkeypatch.setattr(gateway, "_GRANTS_MAX", 2)
+    first = gateway.grant_token("agent-1", "openai", scope="s1")
+    running = gateway.watch_failure(first)
+    second = gateway.grant_token("agent-1", "openai", scope="s2")
+    third = gateway.grant_token("agent-1", "openai", scope="s3")
+    fourth = gateway.grant_token("agent-1", "openai", scope="s4")
+    assert gateway.verify(first) is not None  # its turn is still running
+    assert gateway.verify(second) is None
+    assert gateway.verify(third) is not None and gateway.verify(fourth) is not None
+    gateway.unwatch_failure(first, running)
+    gateway.reset()
+
