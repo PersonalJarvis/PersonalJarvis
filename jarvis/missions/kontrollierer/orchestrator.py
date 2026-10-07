@@ -380,6 +380,31 @@ def _safe_read_text(path: Path) -> str:
         return ""
 
 
+# Windows antivirus and the search indexer briefly hold files that were just
+# copied into a snapshot tree, and renaming the tree's directory then fails
+# with WinError 5/32 although nothing is wrong. Seen under parallel load
+# (2026-10-07): the archive returned None and the worker's deliverable was not
+# archived. A short bounded retry rides that out; any other error class still
+# fails at once, and the final PermissionError is re-raised unchanged.
+_SNAPSHOT_RENAME_RETRY_DELAYS_S: tuple[float, ...] = (
+    0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6,
+)
+
+
+def _rename_with_retry(src: Path, dst: Path) -> None:
+    last_error: PermissionError | None = None
+    for delay_s in _SNAPSHOT_RENAME_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            src.replace(dst)
+            return
+        except PermissionError as exc:  # transient share lock: retried, re-raised below
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
 def _real_diff_is_empty(diff_text: str) -> bool:
     """True iff the diff carries no foreign hunks after stripping
     managed persona files.
@@ -3177,17 +3202,17 @@ class Kontrollierer:
                 # exchange flags.
                 moved_previous = False
                 if files_root.exists():
-                    files_root.replace(previous_root)
+                    _rename_with_retry(files_root, previous_root)
                     moved_previous = True
                 try:
-                    staged_root.replace(files_root)
+                    _rename_with_retry(staged_root, files_root)
                 except OSError:
                     if (
                         moved_previous
                         and previous_root.exists()
                         and not files_root.exists()
                     ):
-                        previous_root.replace(files_root)
+                        _rename_with_retry(previous_root, files_root)
                     raise
                 if moved_previous:
                     shutil.rmtree(previous_root, ignore_errors=True)

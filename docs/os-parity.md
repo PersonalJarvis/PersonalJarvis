@@ -77,6 +77,20 @@ red close, yellow minimize/Dock restore, green fullscreen/exit and Option-green
 zoom in light and dark appearance, including a detached view and a reopened
 main window. This Windows development host cannot qualify those native clicks.
 
+## Reopening the desktop with detached windows (2026-10-07, T2)
+
+A second launch reopens the main window when a detached view keeps the desktop
+process alive. It uses the same serialized creation path as the tray's Open
+action, preserving the running backend and detached views. A quitting process
+or a host without a desktop window loop still reports that no window can open.
+The recovery decision is shared across Windows, macOS and Linux; native window
+creation and each platform's frame controls are unchanged. Regression tests cover
+the focus HTTP route through launcher recovery, repeated opens, background mode,
+and native creation failure. Native macOS and Linux execution remains unverified.
+An isolated Windows WebView2 smoke closed main with a detached window alive,
+reopened it through the real focus handler and launcher recovery twice, and
+confirmed that exactly one main and the original detached window remained.
+
 ## Current cryptography and SSH channel validation (2026-10-01, T3)
 
 Every architecture now requires cryptography >=50.0.2 and AsyncSSH >=2.24.0.

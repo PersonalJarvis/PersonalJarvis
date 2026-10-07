@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 _NON_WORD = re.compile(r"[^\w]+", flags=re.UNICODE)
 _WER_WORD = re.compile(r"[^\w']+", flags=re.UNICODE)
@@ -20,27 +21,54 @@ def _wer_words(text: str) -> list[str]:
     return [word for word in _WER_WORD.split((text or "").lower()) if word]
 
 
-def word_error_rate(reference: str, hypothesis: str) -> float:
-    """Return deterministic word-level Levenshtein error for STT output."""
+@dataclass(frozen=True, slots=True)
+class WordErrors:
+    """Edit counts; reference_words is the denominator for speech WER."""
+
+    reference_words: int
+    substitutions: int = 0
+    deletions: int = 0
+    insertions: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.substitutions + self.deletions + self.insertions
+
+
+def word_errors(reference: str, hypothesis: str) -> WordErrors:
+    """Count a minimum edit alignment, preferring substitutions on equal cost."""
     expected = _wer_words(reference)
     actual = _wer_words(hypothesis)
-    if not expected:
-        return 0.0 if not actual else 1.0
-
-    previous = list(range(len(actual) + 1))
+    # Each cell stores substitutions, deletions and insertions. Only the
+    # previous row is retained, so long recordings do not require a full matrix.
+    previous = [(0, 0, column) for column in range(len(actual) + 1)]
     for row, expected_word in enumerate(expected, start=1):
-        current = [row]
+        current = [(0, row, 0)]
         for column, actual_word in enumerate(actual, start=1):
-            substitution = 0 if expected_word == actual_word else 1
-            current.append(
-                min(
-                    previous[column] + 1,
-                    current[column - 1] + 1,
-                    previous[column - 1] + substitution,
+            if expected_word == actual_word:
+                current.append(previous[column - 1])
+            else:
+                sub, delete, insert = previous[column - 1]
+                above = previous[column]
+                left = current[column - 1]
+                current.append(
+                    min(
+                        (sub + 1, delete, insert),
+                        (above[0], above[1] + 1, above[2]),
+                        (left[0], left[1], left[2] + 1),
+                        key=sum,
+                    )
                 )
-            )
         previous = current
-    return previous[-1] / len(expected)
+    return WordErrors(len(expected), *previous[-1])
+
+
+def word_error_rate(reference: str, hypothesis: str) -> float:
+    """Return WER, retaining the historical binary score for an empty reference."""
+    counts = word_errors(reference, hypothesis)
+    if not counts.reference_words:
+        return float(bool(counts.total))
+    return counts.total / counts.reference_words
 
 
 def switch_error_rate(anchors: Sequence[str], hypothesis: str) -> float | None:
@@ -71,4 +99,7 @@ def repeatability_error_rate(hypotheses: Sequence[str]) -> float | None:
     )
 
 
-__all__ = ["repeatability_error_rate", "switch_error_rate", "word_error_rate"]
+__all__ = [
+    "WordErrors", "repeatability_error_rate", "switch_error_rate",
+    "word_error_rate", "word_errors",
+]
