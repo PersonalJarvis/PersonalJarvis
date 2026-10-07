@@ -35,7 +35,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from jarvis.google_cli.auth_service import _oauth_login_present
 from jarvis.google_cli.isolated_home import (
@@ -152,6 +152,8 @@ class GoogleCliWorker:
     """
 
     cli: Literal["claude"] = "claude"
+    # Provider family this worker bills (jarvis/missions/capacity.worker_family).
+    family: ClassVar[str] = "antigravity"
 
     def __init__(
         self,

@@ -307,22 +307,18 @@ async def test_iter1_does_not_resume_jarvis_agent_session(
 
 
 @pytest.mark.asyncio
-async def test_critic_unavailable_short_circuits_when_iter0_has_real_diff(
+async def test_critic_crash_on_delivered_work_parks_and_fails_only_after_retries(
     manager: MissionManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Live forensic 2026-05-16 (mission_019e3288): the Critic subprocess
-    crashed on iter0 (EPERM symlink on `plugin-skills/browser-automation`,
-    then `Unknown agent id "critic"`), but the worker had already produced
-    a real 1237-byte diff. The old behavior swallowed the crash via
-    `continue`, let iter1+iter2 land no-op edits that reverted the diff
-    back to empty, then exited with `critic_loop_exhausted` — the user
-    heard a generic failure phrase and the iter0 work was lost.
-
-    With the new short-circuit, iter0 crash + non-empty real diff yields
-    a `MissionFailed` carrying ``reason="critic_unavailable"`` after
-    exactly one critic call. The on-disk `diff.iter0.patch` records the
-    work so the user can replay it.
+    """Live forensic 2026-05-16 (mission_019e3288): the Critic crashed on
+    iter0 while the worker had already produced a real diff. Delivered work
+    is never thrown away or redone for a critic that could not judge it
+    (2026-10-06): the mission parks with the review pending, a resume runs
+    ONLY the critic on the saved result, and after ``MAX_REVIEW_RETRIES``
+    failed reviews it fails honestly as ``critic_unavailable`` — with the
+    ``diff.iter0.patch`` it kept.
     """
+    from jarvis.missions.capacity import MAX_REVIEW_RETRIES
     from jarvis.missions.critic.verdict import CriticSchemaInvalid
 
     class _CrashingCritic:
@@ -341,7 +337,6 @@ async def test_critic_unavailable_short_circuits_when_iter0_has_real_diff(
         critic=critic,  # type: ignore[arg-type]
         worker_factory_fn=lambda step: shared_worker,
     )
-    # Fake a non-empty real diff so the short-circuit condition fires.
     monkeypatch.setattr(
         Kontrollierer,
         "_capture_diff",
@@ -352,25 +347,27 @@ async def test_critic_unavailable_short_circuits_when_iter0_has_real_diff(
             "+real BUG-021 content\n"
         ),
     )
+    # The fake worktrees are plain dirs: report the archived work as restored.
+    monkeypatch.setattr(Kontrollierer, "_restore_task_workspace", lambda self, wt, art: True)
 
     mid = await manager.dispatch(prompt="add BUG-021 entry to BUGS.md")
-    end_state = await k.run_mission(mid)
+    assert await k.run_mission(mid) == MissionState.WAITING_CAPACITY
+    assert (len(critic.calls), len(shared_worker.spawn_calls)) == (1, 1)
 
-    assert end_state == MissionState.FAILED
-    # Exactly one critic call: short-circuit fires immediately.
-    assert len(critic.calls) == 1
-    # Mission-failed event carries the new reason.
+    for attempt in range(2, MAX_REVIEW_RETRIES):
+        assert await k.resume_mission(mid) == MissionState.WAITING_CAPACITY
+        assert len(critic.calls) == attempt
+    assert await k.resume_mission(mid) == MissionState.FAILED
+
+    # Every retry was a review only — the worker ran exactly once.
+    assert len(shared_worker.spawn_calls) == 1
+    assert len(critic.calls) == MAX_REVIEW_RETRIES
     events = await manager.store.events_for_mission(mid)
-    failed = [
-        e.payload for e in events if e.payload.event_type == "MissionFailed"
-    ]
+    failed = [e.payload for e in events if e.payload.event_type == "MissionFailed"]
     assert len(failed) == 1
     assert failed[0].reason == "critic_unavailable"  # type: ignore[attr-defined]
-    # Partial-artifacts records the iter0 diff file we kept.
     artifacts = failed[0].partial_artifacts  # type: ignore[attr-defined]
-    assert any("diff.iter0.patch" in str(p) for p in artifacts), (
-        f"expected diff.iter0.patch in partial_artifacts, got {artifacts!r}"
-    )
+    assert any("diff.iter0.patch" in str(p) for p in artifacts), artifacts
 
 
 @pytest.mark.asyncio

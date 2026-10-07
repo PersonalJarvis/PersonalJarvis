@@ -20,6 +20,7 @@ These tests use a real on-disk git worktree plus a sibling external directory
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,16 @@ from jarvis.missions.kontrollierer.orchestrator import (
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 
+# The fixture's git calls ignore the developer's or runner's global and system
+# config (commit signing, hooks, templates), which could otherwise prompt, fail
+# or slow the fixture commit down.
+_FIXTURE_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+
+
 def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603
         ["git", *args],
@@ -40,8 +51,11 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=_FIXTURE_GIT_ENV,
         creationflags=NO_WINDOW_CREATIONFLAGS,
-        timeout=15.0,
+        # Generous ceiling for a loaded CI runner; each call on this one-file
+        # repository normally returns in milliseconds.
+        timeout=120.0,
     )
 
 

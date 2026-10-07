@@ -65,10 +65,15 @@ async def main() -> None:
             assert value == "Typed through the preview", value
             assert native.input_hwnd != native.hwnd
             assert badge
-            native.input("click", {"x": 300 * scale, "y": y * 0.72})
+            # Focus the address bar through Chrome's own location command, not
+            # a click at a guessed toolbar position: on a slow runner the URL
+            # never reached the omnibox within the wait (CI run 37599288714).
+            # The command and the characters go to the same window queue, so
+            # the omnibox owns focus before the first character arrives.
+            native.input("key", {"key": "Control+l"})
             native.input("text", {"text": "about:blank#jarvis-input-probe"})
             native.input("key", {"key": "Enter"})
-            await page.wait_for_url("about:blank#jarvis-input-probe", timeout=5000)
+            await page.wait_for_url("about:blank#jarvis-input-probe", timeout=20_000)
             print(json.dumps({"typed": value, "badge": badge, "address": page.url}))
         finally:
             if native:

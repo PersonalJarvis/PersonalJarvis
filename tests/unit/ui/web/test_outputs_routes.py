@@ -385,6 +385,26 @@ async def test_list_outputs_mission_dir_running_state(
 
 
 @pytest.mark.asyncio
+async def test_parked_mission_is_running_and_flags_the_capacity_decision(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A WAITING_CAPACITY mission has not landed (status "running") and tells
+    the Artifacts view to offer wait / approve-paid / cancel for it."""
+    parked = "019e3600-c001-7000-8000-0000000000c1"
+    running = "019e3600-c002-7000-8000-0000000000c2"
+    for mission_id, state in ((parked, "WAITING_CAPACITY"), (running, "RUNNING")):
+        _make_mission_dir(tmp_path, mission_id)
+        await _insert_mission(db_conn, mission_id=mission_id, state=state)
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    by_id = {s["mission_id"]: s for s in r.json()["sessions"]}
+    assert by_id[parked]["status"] == "running"
+    assert by_id[parked]["waiting_capacity"] is True
+    assert by_id[running]["waiting_capacity"] is False
+
+
+@pytest.mark.asyncio
 async def test_list_outputs_mission_dir_failed_state(
     app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
 ) -> None:

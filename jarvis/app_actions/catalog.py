@@ -18,12 +18,15 @@ _METHODS: Final[tuple[str, ...]] = ("get", "post", "put", "patch", "delete")
 
 #: Never offered to the brain: credentials and sign-ins (voice must never carry
 #: a secret, AP-2), the raw control plane, webhooks, self-modification, the
-#: action policy itself — Jarvis never edits its own permissions — and the
-#: main-brain switch, which only the person may flip (the provider lock).
+#: action policy itself — Jarvis never edits its own permissions — the
+#: main-brain switch, which only the person may flip (the provider lock), and
+#: consent to spend money: the missions' paid-API fallback switch and a
+#: mission's paid-use approval (jarvis/missions/capacity.py).
 _EXCLUDED: Final[re.Pattern[str]] = re.compile(
     r"(secret|api-?keys?|/keys?(/|$)|install-key|host-key|use-key|token|password|"
     r"credential|oauth|/auth(/|$)|login|pairing|/callback|/hooks/|openapi|/ws$|"
-    r"^/api/control/|^/api/self-mod|^/api/app-actions|^/api/brain/switch$)",
+    r"^/api/control/|^/api/self-mod|^/api/app-actions|^/api/brain/switch$|"
+    r"^/api/mission-billing|/capacity-decision$)",
     re.IGNORECASE,
 )
 

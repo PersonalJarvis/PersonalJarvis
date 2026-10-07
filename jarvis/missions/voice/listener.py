@@ -34,10 +34,11 @@ from ..events import (
     MissionCancelled,
     MissionFailed,
     MissionTimedOut,
+    MissionWaitingCapacity,
     WorkerCorrectionRequired,
     WorkerKilled,
 )
-from .readback import Lang, MissionReadback
+from .readback import Lang, MissionReadback, render_capacity_wait
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,19 @@ class MissionVoiceListener:
 
         if isinstance(payload, MissionCancelled):
             return self._readback.render_cancelled(language=lang)
+
+        if isinstance(payload, MissionWaitingCapacity):
+            if payload.repeat:
+                return ""  # parked again with no new step done: nothing new to say
+            return render_capacity_wait(
+                reason=payload.reason,
+                provider=payload.provider,
+                steps_done=payload.steps_done,
+                steps_total=payload.steps_total,
+                files_saved=payload.files_saved,
+                checkpoint_saved=bool(payload.checkpoint_path),
+                language=lang,
+            )
 
         if isinstance(payload, MissionBudgetWarning):
             pct = int(payload.pct_used)
