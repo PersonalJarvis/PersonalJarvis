@@ -112,7 +112,9 @@ def test_a_detached_grandchild_is_reaped_with_its_parent(tmp_path):
         assert grandchild in tracker.close()
         proc = psutil.Process(grandchild)
         proc.wait(timeout=10)
-    except psutil.NoSuchProcess:
+    except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+        # A container's PID 1 may never reap the orphan: it stays a zombie,
+        # which the check below accepts; a live grandchild still fails it.
         pass
     finally:
         if parent.poll() is None:

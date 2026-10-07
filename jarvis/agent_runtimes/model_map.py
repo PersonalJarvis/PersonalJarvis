@@ -24,7 +24,9 @@ from typing import Any, Final, Literal
 
 log = logging.getLogger(__name__)
 
-Transport = Literal["chat_completions", "anthropic_messages", "responses"]
+#: ``claude_cli``: no model API at all — OpenClaw runs the person's own
+#: Claude Code (its bundled ``claude-cli`` backend) on Claude Code's login.
+Transport = Literal["chat_completions", "anthropic_messages", "responses", "claude_cli"]
 
 #: The environment variable both runtimes read the model key from.
 KEY_ENV_VAR: Final[str] = "JARVIS_RUNTIME_API_KEY"
@@ -51,6 +53,9 @@ class _Endpoint:
     #: May authenticate without a key: Google Cloud Application Default
     #: Credentials for a configured project (Vertex AI).
     cloud_project: bool = False
+    #: The person's SuperGrok / X Premium+ subscription, through Jarvis' own
+    #: xAI login for agents (``xai_login``); served as Chat Completions.
+    xai_login: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
@@ -65,6 +70,7 @@ _ENDPOINTS: Final[dict[str, _Endpoint]] = {
     "ollama": _Endpoint(None, keyless=True, local_server=True),
     "local-openai": _Endpoint(None, keyless=True, local_server=True),
     "openai-codex": _Endpoint(None, subscription=True),
+    "grok-build": _Endpoint("https://api.x.ai/v1", xai_login=True),
 }
 
 
@@ -84,10 +90,15 @@ class ModelRoute:
     api_key: str | None
     context_window: int = 32_768
     max_output_tokens: int | None = None
+    #: More child environment the route needs (Claude Code's config folder).
+    extra_env: tuple[tuple[str, str], ...] = ()
 
     def env(self) -> dict[str, str]:
         """The child environment that carries the key (empty when keyless)."""
-        return {KEY_ENV_VAR: self.api_key} if self.api_key else {}
+        env = dict(self.extra_env)
+        if self.api_key:
+            env[KEY_ENV_VAR] = self.api_key
+        return env
 
 
 def supported_providers() -> frozenset[str]:
@@ -97,7 +108,9 @@ def supported_providers() -> frozenset[str]:
 
 def subscription_providers() -> frozenset[str]:
     """Providers served by Jarvis' model gateway on the person's subscription."""
-    return frozenset(name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription)
+    return frozenset(
+        name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription or endpoint.xai_login
+    )
 
 
 def claude_login_token() -> str | None:
@@ -194,6 +207,14 @@ def access_blocked() -> dict[str, dict[str, str]]:
         refusal = login_blocked(token, "") if token else None
         if refusal is not None:
             blocked[name] = {"subscription": refusal.code}
+    from jarvis.agent_runtimes import xai_login
+
+    if not xai_login.connected():
+        # The Grok CLI's own login stays the CLI's; agents need Jarvis' own.
+        blocked["grok-build"] = {"subscription": "xai_login_needed"}
+    # Google forbids third-party tools on the Gemini CLI / Antigravity login
+    # (account suspension); Gemini reaches these agents on an API key only.
+    blocked["antigravity"] = {"subscription": "vendor_forbids_subscription"}
     return blocked
 
 
@@ -213,7 +234,8 @@ def usable_providers(config: Any) -> list[str]:
     first: it spends no API key). Blocking (keyring): call it in a thread.
     """
     usable: list[str] = []
-    for provider in sorted(_ENDPOINTS, key=lambda name: (not _ENDPOINTS[name].subscription, name)):
+    paid = subscription_providers()
+    for provider in sorted(_ENDPOINTS, key=lambda name: (name not in paid, name)):
         try:
             _checked_model(config, provider, "probe")
         except RouteUnavailable:  # not connected: the provider is simply not offered
@@ -274,6 +296,17 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
         if not chosen:
             raise RouteUnavailable("Choose a ChatGPT model for this agent first.")
         return chosen
+    if endpoint.xai_login:
+        from jarvis.agent_runtimes import xai_login
+
+        if not xai_login.connected():
+            raise RouteUnavailable(
+                "Grok's subscription is not connected for agents yet. Connect it in the "
+                "New agent dialog, or use an xAI API key."
+            )
+        from jarvis.plugins.brain.grok import DEFAULT_MODEL as GROK_DEFAULT
+
+        return model.strip() or _default_model(config, "grok") or GROK_DEFAULT
     from jarvis.core.config import resolve_provider_endpoint
 
     resolved = resolve_provider_endpoint(
@@ -335,6 +368,48 @@ def _check_login_billing(provider: str, model: str, account_id: str) -> None:
         raise RouteUnavailable(refusal.message)
 
 
+#: Runtimes that can run a Claude subscription through the person's own
+#: Claude Code instead of a model API (OpenClaw's bundled ``claude-cli``).
+CLAUDE_CLI_RUNTIMES: Final[frozenset[str]] = frozenset({"openclaw"})
+
+
+def cli_subscriptions() -> dict[str, list[str]]:
+    """Per runtime, the providers whose subscription it runs through the
+    vendor's own CLI right now: Claude on OpenClaw while a Claude Code login
+    exists. Anthropic decides how such use is billed. Blocking (keyring)."""
+    if claude_login_token() is None:
+        return {}
+    return {runtime: ["claude-api"] for runtime in sorted(CLAUDE_CLI_RUNTIMES)}
+
+
+def _claude_cli_env() -> tuple[tuple[str, str], ...]:
+    """Claude Code's config folder (the active Claude account) and its binary's
+    folder on ``PATH``, for the OpenClaw Gateway that starts ``claude``."""
+    import os
+    from pathlib import Path
+
+    from jarvis import agent_accounts
+    from jarvis.core.binary_lookup import which
+    from jarvis.core.path_augment import ensure_cli_paths
+
+    env: dict[str, str] = {}
+    try:
+        account = agent_accounts.active_account("claude")
+        env.update(agent_accounts.env_overrides("claude", account.id))
+    except Exception:  # noqa: BLE001 — Claude Code then uses its default folder
+        log.info("agent runtimes: no Claude account folder; Claude Code uses its default")
+    ensure_cli_paths()
+    names = ("claude", "claude.cmd", "claude.exe")
+    binary = next((found for name in names if (found := which(name))), None)
+    if binary is None:
+        raise RouteUnavailable(
+            "Claude Code is not installed on this computer, and OpenClaw runs the Claude "
+            "subscription through it. Install Claude Code, or use an Anthropic API key."
+        )
+    env["PATH"] = os.pathsep.join([str(Path(binary).parent), os.environ.get("PATH", "")])
+    return tuple(sorted(env.items()))
+
+
 def route_for(
     config: Any,
     provider: str,
@@ -343,11 +418,30 @@ def route_for(
     agent_id: str = "",
     account_id: str = "",
     session_id: str = "",
+    runtime: str = "",
 ) -> ModelRoute:
     """The agent's route through Jarvis' gateway. Blocking (keyring): call it
     in a thread. The token speaks for ``agent_id`` on ``provider`` (and, for
-    the subscription, on that Codex ``account_id``)."""
+    the subscription, on that Codex ``account_id``). On OpenClaw a Claude
+    subscription runs through Claude Code itself (``claude_cli``)."""
     chosen = _checked_model(config, provider, model, account_id=account_id)
+    if runtime in CLAUDE_CLI_RUNTIMES and login_route(provider, account_id)[0]:
+        from jarvis.agent_runtimes.model_limits import resolve_limits
+        from jarvis.brain.model_catalog import ModelCatalog
+
+        limits = resolve_limits(
+            config, provider, chosen, ModelCatalog().cached_model(provider, chosen)
+        )
+        return ModelRoute(
+            provider=provider,
+            model=chosen,
+            base_url="",
+            transport="claude_cli",
+            api_key=None,
+            context_window=limits.context_window,
+            max_output_tokens=limits.max_output_tokens,
+            extra_env=_claude_cli_env(),
+        )
     _check_login_billing(provider, chosen, account_id)
     from jarvis.agent_runtimes import gateway
     from jarvis.agent_runtimes.base import home_key
@@ -380,15 +474,17 @@ def route_for(
 
 async def prepare_route(
     config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = "",
-    session_id: str = "",
+    session_id: str = "", runtime: str = "",
 ) -> ModelRoute:
     """Refresh catalog metadata before writing either runtime's configuration."""
     from jarvis.agent_runtimes import gateway
 
     route = await asyncio.to_thread(
         route_for, config, provider, model, agent_id=agent_id, account_id=account_id,
-        session_id=session_id,
+        session_id=session_id, runtime=runtime,
     )
+    if route.transport == "claude_cli":
+        return route  # Claude Code answers itself: no gateway grant to refresh
     assert route.api_key is not None
     grant = gateway.verify(route.api_key)
     assert grant is not None

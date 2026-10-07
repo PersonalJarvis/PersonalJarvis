@@ -173,7 +173,7 @@ def test_routes_list_status_and_start_jobs(fakes, monkeypatch):
     assert "claude-api" not in body["supported_providers"]
     assert "claude-api" in body["all_providers"]
     assert "openai-codex" in body["all_providers"]
-    assert body["subscription_providers"] == ["openai-codex"]
+    assert body["subscription_providers"] == ["grok-build", "openai-codex"]
     assert body["login_providers"] == []
     rows = body["runtimes"]
     assert [row["runtime"] for row in rows] == ["hermes", "openclaw"]
@@ -295,7 +295,7 @@ def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch
         body = TestClient(app).get("/api/agent-runtimes").json()
     assert "claude-api" in body["supported_providers"]
     assert body["login_providers"] == ["claude-api"]
-    assert body["access_blocked"] == {}
+    assert "claude-api" not in body["access_blocked"]
     # Extra Usage off: the way exists, the dialog shows it disabled with why.
     monkeypatch.setattr(provider_errors, "_REPORTS", {})
     monkeypatch.setattr(
@@ -304,7 +304,7 @@ def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch
     routes._USABLE_CACHE[:] = [float("-inf"), [], []]
     with override_provider_secrets(secrets):
         body = TestClient(app).get("/api/agent-runtimes").json()
-    assert body["access_blocked"] == {"claude-api": {"subscription": "extra_usage_off"}}
+    assert body["access_blocked"]["claude-api"] == {"subscription": "extra_usage_off"}
 
 
 # ------------------------------------------------- gate, prepare, rollback
@@ -435,7 +435,12 @@ def test_the_posix_installer_reports_a_missing_tool():
     )
     done = subprocess.run([_bash(), *argv[1:]], capture_output=True, text=True, timeout=60)
     assert done.returncode == base.SETUP_MISSING_TOOL_EXIT
-    assert "Setup needs jarvis-no-such-tool" in done.stderr
+    import shutil
+
+    # The first missing tool is named: curl itself on a box without it
+    # (python:3.11-slim), else the one the installer additionally requires.
+    missing = "curl" if shutil.which("curl") is None else "jarvis-no-such-tool"
+    assert f"Setup needs {missing}" in done.stderr
 
 
 @pytest.mark.skipif(_bash() is None, reason="no bash on this machine")

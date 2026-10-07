@@ -32,26 +32,33 @@ class GrokBrain:
     # 2026-06-21 CU "no vision" incident).
     supports_vision: bool = True
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, *, auth_token: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        #: A SuperGrok / X Premium+ OAuth access token (``agent_runtimes.xai_login``)
+        #: that stands in for the API key: xAI serves the subscription to agents.
+        self._auth_token = auth_token
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
 
     def _ensure_client(self) -> Any:
         if self._client is None:
-            ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url=BASE_URL)
-            if not ep.credential:
-                raise RuntimeError(
-                    "No xAI API key found "
-                    "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
-                )
+            if self._auth_token:
+                credential, base_url = self._auth_token, BASE_URL
+            else:
+                ep = cfg.resolve_provider_endpoint("grok", vendor_default_base_url=BASE_URL)
+                if not ep.credential:
+                    raise RuntimeError(
+                        "No xAI API key found "
+                        "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
+                    )
+                credential, base_url = ep.credential, ep.base_url
             from openai import AsyncOpenAI
 
             self._client = AsyncOpenAI(
-                api_key=ep.credential,
-                base_url=ep.base_url,
+                api_key=credential,
+                base_url=base_url,
                 timeout=CLIENT_TIMEOUT,
                 max_retries=0,
             )

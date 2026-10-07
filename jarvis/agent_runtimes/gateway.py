@@ -55,6 +55,8 @@ BASE_PATH: Final[str] = f"{PATH_PREFIX}/v1"
 
 #: The Jarvis provider whose agents run through this gateway.
 SUBSCRIPTION_PROVIDER: Final[str] = "openai-codex"
+#: The SuperGrok / X Premium+ seat, answered on Jarvis' xAI login for agents.
+XAI_SUBSCRIPTION_PROVIDER: Final[str] = "grok-build"
 
 
 class GatewayError(Exception):
@@ -249,7 +251,9 @@ async def refresh_model_limits(grant: Grant, model: str, config: Any) -> ModelLi
         else:
             if _CATALOG is None:
                 _CATALOG = await asyncio.to_thread(ModelCatalog)
-            catalog = await asyncio.wait_for(_CATALOG.list_models(grant.provider), timeout=5)
+            catalog = await asyncio.wait_for(
+                _CATALOG.list_models(_catalog_provider(grant.provider)), timeout=5
+            )
             aliases = {model, f"{model}:latest"} if grant.provider == "ollama" else {model}
             metadata = next((row for row in catalog.models if row.id in aliases), None)
     except (TimeoutError, SubscriptionAuthError, SubscriptionReasoningError):
@@ -627,7 +631,7 @@ async def list_models(grant: Grant) -> list[dict[str, Any]]:
     if grant.provider != SUBSCRIPTION_PROVIDER:
         from jarvis.agent_chat.catalog import provider_row
 
-        row = provider_row(grant.provider)
+        row = provider_row(_catalog_provider(grant.provider))
         models = [model.id for model in row.curated_models] if row is not None else []
         with _LOCK:
             models = list(dict.fromkeys([*models, *_MODEL_LIMITS.get(grant, {})]))
@@ -890,11 +894,34 @@ def _brain_key(grant: Grant, model: str, login: str | None) -> tuple[str, ...]:
     return (grant.agent_id, grant.scope, grant.provider, grant.account_id, model, digest)
 
 
+def _catalog_provider(provider: str) -> str:
+    """The catalog that names ``provider``'s API models: the Grok subscription
+    calls xAI's API, so its models are the API's."""
+    return "grok" if provider == XAI_SUBSCRIPTION_PROVIDER else provider
+
+
+def _xai_token() -> str:
+    """The agents' live xAI access token, or the refusal as a gateway error. Blocking."""
+    from jarvis.agent_runtimes.xai_login import XaiLoginError, access_token
+
+    try:
+        return access_token()
+    except XaiLoginError as exc:
+        status = {"tier_denied": 402, "unreachable": 503}.get(exc.code, 401)
+        raise GatewayError(str(exc), status=status, code=f"xai_{exc.code}") from exc
+
+
 def _new_brain(provider: str, model: str, login: str | None) -> Any:
     from jarvis.agent_chat.runner_api import build_brain
     from jarvis.brain.usage_meter import meter_brain
 
-    if login:
+    if provider == XAI_SUBSCRIPTION_PROVIDER:
+        # The person's SuperGrok / X Premium+ subscription: xAI takes the
+        # agents' OAuth access token where an API key would go.
+        from jarvis.plugins.brain.grok import GrokBrain
+
+        brain = GrokBrain(model=model or None, auth_token=login)
+    elif login:
         # No API key: the person's Claude Code login answers, which
         # Anthropic bills as extra usage.
         from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
@@ -991,9 +1018,12 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context(RUNTIME_CALLER):
-                on_login, login = await asyncio.to_thread(
-                    login_route, grant.provider, grant.account_id
-                )
+                if grant.provider == XAI_SUBSCRIPTION_PROVIDER:
+                    on_login, login = True, await asyncio.to_thread(_xai_token)
+                else:
+                    on_login, login = await asyncio.to_thread(
+                        login_route, grant.provider, grant.account_id
+                    )
                 if on_login and not login:
                     # Only the Claude CLI renews the login; without it the
                     # API-key path would only say "no key".
@@ -1012,7 +1042,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     _release_brain(slot)
             await queue.put(_DONE)
         except Exception as exc:  # noqa: BLE001 — handed to the reader, which reports it
-            if login:
+            if login and grant.provider != XAI_SUBSCRIPTION_PROVIDER:
                 # Anthropic answers a Claude login it will not serve with a
                 # bare 429; the account's usage report says why.
                 from jarvis.agent_runtimes.provider_errors import explain_login_refusal

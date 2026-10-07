@@ -64,12 +64,16 @@ export function runtimeSeats(
   supported: readonly string[],
   gateway: readonly string[] = [],
   login: readonly string[] = [],
+  blocked: Record<string, Record<string, string>> = {},
 ): BrainSeat[] {
   const usable = new Set(supported);
   const served = new Set(gateway);
   const onLogin = new Set(login);
-  return all.filter((seat) => usable.has(seat.provider.id))
-    .map((seat) => seat.kind === "subscription" && !served.has(seat.provider.id) ? {
+  // A connected seat the runtime cannot use yet stays listed, with its reason
+  // (`access_blocked`): every provider the person switched on is shown.
+  const refused = (seat: BrainSeat) => !usable.has(seat.provider.id) && Boolean(blocked[seat.provider.id]?.[seat.kind]);
+  return all.filter((seat) => usable.has(seat.provider.id) || refused(seat))
+    .map((seat) => seat.kind === "subscription" && !served.has(seat.provider.id) && !refused(seat) ? {
       ...seat,
       kind: onLogin.has(seat.provider.id) ? "subscription" as const : "api" as const,
       accounts: [],

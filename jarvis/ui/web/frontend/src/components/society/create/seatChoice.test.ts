@@ -11,8 +11,10 @@ import {
   blockedReasonKey,
   defaultModel,
   pickableOption,
+  markCliSubscriptions,
   providerChoices,
   SUBSCRIPTION_ACCOUNT,
+  withCliSubscriptions,
 } from "./seatChoice";
 
 function models(...ids: string[]): CuratedModel[] {
@@ -148,5 +150,49 @@ describe("defaultModel", () => {
     const [plain] = providerChoices([seat({ curated_models: models("gpt-5.2", "gpt-5.5") })]);
     expect(defaultModel(plain.options[0])).toBe("gpt-5.5");
     expect(defaultModel(null)).toBe("");
+  });
+});
+
+describe("every switched-on provider is listed for Hermes / OpenClaw", () => {
+  const grokSub = seat({ id: "grok-build", label: "Grok Build", family: "xai", runner: "grok-cli", curated_models: models("grok-4.7") }, "subscription");
+  const grokKey = seat({ id: "grok", label: "xAI Grok", family: "xai", curated_models: models("grok-4.3") });
+  const gemini = seat({ id: "antigravity", label: "Antigravity", family: "antigravity", runner: "agy-cli" }, "subscription");
+  const blocked = {
+    "grok-build": { subscription: "xai_login_needed" },
+    antigravity: { subscription: "vendor_forbids_subscription" },
+  };
+
+  it("keeps a subscription the runtime cannot use yet, with its reason", () => {
+    const seats = runtimeSeats([grokSub, grokKey, gemini], ["grok"], ["openai-codex", "grok-build"], [], blocked);
+    expect(seats.map((s) => `${s.provider.id}:${s.kind}`)).toEqual(["grok-build:subscription", "grok:api", "antigravity:subscription"]);
+    const choices = providerChoices(seats, {}, true, blocked);
+    const xai = choices.find((choice) => choice.id === "xai")!;
+    expect(xai.options.map((o) => [o.kind, o.blocked ?? ""])).toEqual([["subscription", "xai_login_needed"], ["api", ""]]);
+    expect(pickableOption(xai)?.kind).toBe("api");
+    const google = choices.find((choice) => choice.id === "gemini")!;
+    expect(google.options).toEqual([expect.objectContaining({ kind: "subscription", blocked: "vendor_forbids_subscription", extraUsage: false })]);
+    expect(pickableOption(google)).toBeNull();
+    expect(blockedReasonKey("xai_login_needed")).toBe("society.create_agent.access_blocked_xai_login_needed");
+  });
+
+  it("offers the Grok subscription once its agents' login is connected", () => {
+    const seats = runtimeSeats([grokSub], ["grok-build"], ["openai-codex", "grok-build"], [], {});
+    const [xai] = providerChoices(seats, {}, true, {});
+    expect(pickableOption(xai)).toMatchObject({ kind: "subscription", accountId: "" });
+    expect(accessModels(pickableOption(xai)).map((m) => m.id)).toEqual(["grok-4.7"]);
+  });
+});
+
+describe("OpenClaw runs a Claude subscription through Claude Code", () => {
+  it("offers the refused subscription as an own-risk choice", () => {
+    const claude = seat({ id: "claude-api", label: "Claude", family: "claude", runner: "claude-cli", curated_models: models("claude-opus-5-5") }, "subscription");
+    const refused = { "claude-api": { subscription: "extra_usage_off" } };
+    const { access, blocked } = withCliSubscriptions({}, refused, ["claude-api"]);
+    expect(blocked["claude-api"]).toEqual({});
+    const seats = runtimeSeats([claude], ["claude-api"], [], ["claude-api"], blocked);
+    const [choice] = markCliSubscriptions(providerChoices(seats, access, true, blocked), ["claude-api"]);
+    const option = pickableOption(choice);
+    expect(option).toMatchObject({ kind: "subscription", accountId: SUBSCRIPTION_ACCOUNT, viaCli: true, extraUsage: false });
+    expect(option?.blocked).toBeUndefined();
   });
 });

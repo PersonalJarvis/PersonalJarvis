@@ -165,6 +165,7 @@ async def plan_runtime_turn(
             agent_id=agent.agent_id,
             account_id=getattr(session, "account_id", "") or "",
             session_id=session.session_id,
+            runtime=runtime_name,
         )
     except RouteUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc

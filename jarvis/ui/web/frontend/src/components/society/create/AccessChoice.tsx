@@ -9,8 +9,10 @@ import { useId, useRef, type KeyboardEvent } from "react";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { blockedReasonKey, type AccessOption } from "./seatChoice";
+import { Button } from "@/components/ui/button";
+import { XaiConnect } from "./XaiConnect";
 
-export function AccessChoice({ options, value, hint, disabled, onChange }: {
+export function AccessChoice({ options, value, hint, disabled, onChange, onUseOpenClaw }: {
   options: AccessOption[];
   /** The picked kind; "" when no access can be picked. */
   value: string;
@@ -18,6 +20,9 @@ export function AccessChoice({ options, value, hint, disabled, onChange }: {
   hint: string;
   disabled: boolean;
   onChange: (kind: string) => void;
+  /** Set when OpenClaw can run a refused subscription through the vendor's own
+   *  CLI (Claude Code): the refusal then offers that runtime instead. */
+  onUseOpenClaw?: () => void;
 }) {
   const t = useT();
   const id = useId();
@@ -75,10 +80,23 @@ export function AccessChoice({ options, value, hint, disabled, onChange }: {
       </div>
       {hint ? <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p> : null}
       {options.filter((entry) => entry.blocked).map((entry) => (
-        <p key={entry.kind} id={`${id}-blocked-${entry.kind}`} role="note" className="text-xs text-warning"
-          data-testid={`create-agent-access-blocked-${entry.kind}`}>
-          {t(blockedReasonKey(entry.blocked ?? ""))}
-        </p>
+        <div key={entry.kind} className="flex flex-col gap-1.5">
+          <p id={`${id}-blocked-${entry.kind}`} role="note" className="text-xs text-warning"
+            data-testid={`create-agent-access-blocked-${entry.kind}`}>
+            {t(blockedReasonKey(entry.blocked ?? ""))}
+          </p>
+          {/* The one refusal the person can lift right here: connect Grok for agents. */}
+          {entry.blocked === "xai_login_needed" ? <XaiConnect disabled={disabled} /> : null}
+          {onUseOpenClaw && entry.kind === "subscription" && (entry.blocked ?? "").startsWith("extra_usage") ? (
+            <div className="flex flex-col gap-1">
+              <p className="text-xs text-muted-foreground">{t("society.create_agent.use_openclaw_hint")}</p>
+              <Button type="button" size="sm" variant="outline" className="self-start" disabled={disabled}
+                onClick={onUseOpenClaw} data-testid="create-agent-use-openclaw">
+                {t("society.create_agent.use_openclaw")}
+              </Button>
+            </div>
+          ) : null}
+        </div>
       ))}
     </div>
   );

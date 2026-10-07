@@ -25,7 +25,10 @@ import { useModelMenuData } from "../chat/useModelMenuData";
 import { accountChoice, accountHint } from "./brainPicker";
 import { useCreateAgentDialog } from "./createAgentStore";
 import { AccessChoice } from "./AccessChoice";
-import { accessModels, defaultModel, pickableOption, providerChoices, type AccessBlocked, type AccessOption } from "./seatChoice";
+import {
+  accessModels, defaultModel, markCliSubscriptions, pickableOption, providerChoices, withCliSubscriptions,
+  type AccessBlocked, type AccessOption,
+} from "./seatChoice";
 
 const CompanionEditor = lazy(() =>
   import("../companion/CompanionEditor").then((m) => ({ default: m.CompanionEditor })),
@@ -73,12 +76,21 @@ function CreateAgentDialog() {
   const accessKey = JSON.stringify(data?.access && typeof data.access === "object" ? data.access : {});
   // Refusals only concern Hermes / OpenClaw (Claude's login billed as Extra Usage).
   const blockedKey = JSON.stringify(external && data?.access_blocked && typeof data.access_blocked === "object" ? data.access_blocked : {});
+  // OpenClaw runs a Claude subscription through the person's own Claude Code.
+  const cliKey = runtime === "openclaw" ? list(data?.cli_subscriptions?.[runtime]).join(",") : "";
+  // Hermes has no Claude Code backend: a refused Claude subscription there
+  // offers OpenClaw, which runs it through the person's own Claude Code.
+  const openClawRuns = runtime === "hermes" ? list(data?.cli_subscriptions?.openclaw) : [];
   const choices = useMemo(() => {
     const all = modelSeats(menu.options, Array.isArray(menu.providers) ? menu.providers : [], menu.live, defaultModelLabel);
     const split = (key: string) => key.split(",").filter(Boolean);
-    const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey)) : all;
-    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external, JSON.parse(blockedKey) as AccessBlocked);
-  }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey, blockedKey]);
+    const viaCli = split(cliKey);
+    const { access, blocked } = withCliSubscriptions(
+      JSON.parse(accessKey) as Record<string, string[]>, JSON.parse(blockedKey) as AccessBlocked, viaCli,
+    );
+    const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey), blocked) : all;
+    return markCliSubscriptions(providerChoices(seats, access, external, blocked), viaCli);
+  }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey, blockedKey, cliKey]);
 
   // The person's picks stay while they are offered; a pick that disappears (a
   // key removed, another runtime chosen) falls back to the first one left.
@@ -202,9 +214,13 @@ function CreateAgentDialog() {
                 <AccessChoice
                   options={chosen.options}
                   value={option?.kind ?? ""}
-                  hint={option ? t(option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`) : ""}
+                  hint={option ? t(option.viaCli ? "society.create_agent.access_cli_subscription"
+                    : option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`) : ""}
                   disabled={saving}
                   onChange={(next) => { setKind(next); setAccount(""); }}
+                  onUseOpenClaw={chosen.options.some((entry) => openClawRuns.includes(entry.seat.provider.id))
+                    ? () => { setRuntime("openclaw"); setKind("subscription"); setAccount(""); }
+                    : undefined}
                 />
               ) : null}
 

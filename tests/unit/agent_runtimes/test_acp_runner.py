@@ -306,7 +306,7 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
             agent_id="hermit", name="Hermit", denies=[], grants=[], grant_mode="all",
         )
 
-    async def route(_cfg, provider, model, *, agent_id, account_id, session_id):
+    async def route(_cfg, provider, model, *, agent_id, account_id, session_id, runtime=""):
         return ModelRoute(
             provider,
             model,
