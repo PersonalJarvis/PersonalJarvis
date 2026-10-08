@@ -264,6 +264,9 @@ class HermesRuntime:
         )
 
     def _write_profile(self, home: Path, turn: RuntimeTurn) -> None:
+        from jarvis.agent_runtimes.tool_snapshot import refresh_tool_search_cache
+
+        refresh_tool_search_cache(home, turn.resume)
         write_json_if_changed(home / "config.yaml", self.config_for(turn))
         write_if_changed(
             home / "SOUL.md",
