@@ -142,7 +142,21 @@ function AccessoryItemShapes({ item, shape, color, regions, uid }: { item: Acces
 }
 
 /** Plain ink eyes share one resting gaze; only a working agent moves. */
-export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false, accessories }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean; accessories?: AccessoryChoice }) {
+/**
+ * One eye that can change its expression: the open ellipse it always has,
+ * plus a happy arc and a closed dash that stay hidden until a stage
+ * (components/agentchat/botStage) animates between them. Each eye is its own
+ * group, so the two can look, squint or wink independently.
+ */
+function ExpressiveEye({ side, cx, cy, rx, ry }: { side: "l" | "r"; cx: number; cy: number; rx: number; ry: number }) {
+  return <g className={`ae-eye ae-${side}`}>
+    <ellipse className="ae-open" cx={cx} cy={cy} rx={rx} ry={ry} />
+    <path className="ae-happy" d={`M${cx - 2.6} ${cy + 1}Q${cx} ${cy - 2.9} ${cx + 2.6} ${cy + 1}`} />
+    <path className="ae-shut" d={`M${cx - 2.4} ${cy}H${cx + 2.4}`} />
+  </g>;
+}
+
+export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false, accessories, expressive = false }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean; accessories?: AccessoryChoice; expressive?: boolean }) {
   const eyeY = shape === "cloud" || shape === "triangle" ? 23 : shape === "drop" ? 25 : 17.2;
   const ink = companionEyeColors(color);
   const maskId = `agent-body-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -152,7 +166,7 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
   const faceTransform = `translate(2 -0.6) rotate(-14 20 ${eyeY})`;
   const onFace = worn.filter(item => FACE_SLOTS.has(item.slot));
   return (
-    <svg aria-hidden focusable="false" data-agent-symbol={shape} data-thinking={thinking ? "true" : undefined} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox={viewBox} className="society-agent-symbol block">
+    <svg aria-hidden focusable="false" data-agent-symbol={shape} data-expressive={expressive ? "true" : undefined} data-thinking={thinking ? "true" : undefined} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox={viewBox} className="society-agent-symbol block">
       <g className="agent-symbol-character">
         {draw(worn.filter(item => item.slot === "back"))}
         {worn.flatMap(item => item.parts.map((part, index) => {
@@ -175,8 +189,14 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
         <g className="agent-symbol-gaze">
           <g data-agent-eyes fill={ink.eye} transform={faceTransform}>
             <g className="agent-symbol-lids">
-              <ellipse cx={15.4} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
-              <ellipse cx={24.6} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
+              {expressive ? <>
+                {/* A little larger than the resting eyes: at chat size the expression must read. */}
+                <ExpressiveEye side="l" cx={15.2} cy={eyeY} rx={eyes === "lines" ? 1.8 : 2.4} ry={eyes === "lines" ? 3.5 : 2.7} />
+                <ExpressiveEye side="r" cx={24.8} cy={eyeY} rx={eyes === "lines" ? 1.8 : 2.4} ry={eyes === "lines" ? 3.5 : 2.7} />
+              </> : <>
+                <ellipse cx={15.4} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
+                <ellipse cx={24.6} cy={eyeY} rx={eyes === "lines" ? 1.45 : 2} ry={eyes === "lines" ? 3.1 : 2.3} />
+              </>}
             </g>
           </g>
           {onFace.length > 0 && <g transform={faceTransform}>{draw(onFace)}</g>}

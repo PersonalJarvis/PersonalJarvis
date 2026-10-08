@@ -88,3 +88,19 @@
   .society-agent-symbol .agent-acc-twinkle,
   .society-agent-symbol .agent-acc-twinkle-late { opacity: 0; }
 }
+
+/* Expressive eyes (AgentSymbol `expressive`): the open ellipse shows; the
+   happy arc and the closed dash wait for a stage to animate between them. */
+.society-agent-symbol .ae-eye,
+.society-agent-symbol .ae-open {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.society-agent-symbol .ae-happy,
+.society-agent-symbol .ae-shut {
+  fill: none;
+  stroke: #101014;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0;
+}

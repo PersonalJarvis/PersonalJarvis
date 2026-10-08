@@ -8,7 +8,7 @@ import {
   assignmentOf,
   routineTask,
 } from "./ChatActivity";
-import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
+import { MemoryNoticeViewer, MemoryUpdateNotice, memoryNoticePath, memoryNoticeTitle } from "./MemoryUpdateNotice";
 import { foldMemoryNotices } from "./memoryNotices";
 import { foldRepeatedThreadStatus } from "@/components/agentic/threads/openCodingThread";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
@@ -60,7 +60,7 @@ import {
   type TurnItem,
   type UserItem,
 } from "@/components/agentchat/reduce";
-import { MessengerTurn } from "@/components/agentchat/MessengerTurn";
+import { AwaitingTurn, MessengerTurn, type MemoryLink } from "@/components/agentchat/MessengerTurn";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
@@ -705,6 +705,9 @@ export function Transcript({
   // layout pass — waiting for ResizeObserver is one frame too late, and
   // that frame is when overflow anchoring would unstick the view.
   useLayoutEffect(follow, [follow, items]);
+  // A message of the person's with no turn after it yet: the agent is reading it.
+  const lastItem = items[items.length - 1];
+  const awaiting = lastItem?.type === "user" && lastItem.origin !== "control" && !assignmentOf(lastItem.text) ? lastItem : null;
 
   if (items.length === 0) {
     return (
@@ -748,6 +751,8 @@ export function Transcript({
             </div>
           );
         })}
+        {awaiting ? <AwaitingTurn since={awaiting.tsMs} seed={awaiting.id}
+          avatar={<AgentSwatch agent={{ ...agent, state: undefined }} size={28} expressive />} color={agentColor(agent)} /> : null}
         </div>
       </div>
       {!atEnd && <ScrollToEndButton onClick={jumpToEnd} testId="society-scroll-end" className="top-auto bottom-3" />}
@@ -1121,15 +1126,24 @@ function TurnBubble({
   memory?: NoticeItem[];
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
-  const extras = useMemo(
-    () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} /> })),
-    [memory],
+  const t = useT();
+  const [openId, setOpenId] = useState<string | null>(null);
+  const memoryLinks = useMemo<MemoryLink[] | undefined>(
+    () => memory?.flatMap((notice) => {
+      const path = memoryNoticePath(notice);
+      return path ? [{ key: notice.id, title: memoryNoticeTitle(t, path), onOpen: () => setOpenId(notice.id) }] : [];
+    }),
+    [memory, t],
   );
+  const opened = openId ? memory?.find((notice) => notice.id === openId) : undefined;
   // An agent's turn reads like a messenger: its messages, what it changed,
   // and while it works its face with a word for what it is doing.
   // The face stays a face: the effect beside it says what it is doing, so
   // the swatch's own "working" dots would only repeat it.
-  return <MessengerTurn turn={item} avatar={<AgentSwatch agent={{ ...agent, state: undefined }} size={26} />} onDecide={onDecide} extras={extras} />;
+  return <>
+    <MessengerTurn turn={item} avatar={<AgentSwatch agent={{ ...agent, state: undefined }} size={28} expressive />} color={agentColor(agent)} onDecide={onDecide} memoryLinks={memoryLinks} />
+    {opened && <MemoryNoticeViewer item={opened} onClose={() => setOpenId(null)} />}
+  </>;
 }
 
 /**

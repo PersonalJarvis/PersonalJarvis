@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { MessengerTurn } from "./MessengerTurn";
 import { actionNoticeOf, callPresence, presenceOf } from "./messengerPresence";
@@ -35,7 +35,8 @@ describe("presenceOf", () => {
     expect(presenceOf(turn([call("society_propose_change", { kind: "routine" })]))).toBe("setting_up");
     expect(presenceOf(turn([call("web_search", {})]))).toBe("searching");
     expect(presenceOf(turn([call("browser_navigate", {})]))).toBe("browsing");
-    expect(presenceOf(turn([call("Bash", {})]))).toBe("working");
+    expect(presenceOf(turn([call("Bash", {})]))).toBe("command");
+    expect(presenceOf(turn([call("send_message", {})]))).toBe("working");
   });
 
   it("goes back to thinking between steps and says nothing once done", () => {
@@ -69,7 +70,8 @@ describe("actionNoticeOf", () => {
   });
 
   it("classifies a call even behind a transport prefix", () => {
-    expect(callPresence(call("mcp__jarvis__society_memory_recall", {}))).toBe("searching");
+    expect(callPresence(call("mcp__jarvis__society_memory_recall", {}))).toBe("recall");
+    expect(callPresence(call("Bash", {}))).toBe("command");
   });
 });
 
@@ -77,7 +79,7 @@ describe("MessengerTurn", () => {
   it("draws messages as bubbles and never shows a thought", () => {
     render(<MessengerTurn
       turn={turn([thought("secret reasoning"), text("Checking it now.", "a"), routineDone(), text("It runs every day at 10:04.", "b")], "done")}
-      avatar={<span data-testid="face" />} onDecide={() => undefined} />);
+      avatar={<span data-testid="face" />} color="#7ab6ef" onDecide={() => undefined} />);
     expect(screen.getAllByTestId("agent-message-bubble")).toHaveLength(2);
     expect(screen.queryByText("secret reasoning")).toBeNull();
     expect(screen.getByTestId("messenger-action").textContent).toContain("Daily contributor check");
@@ -86,10 +88,24 @@ describe("MessengerTurn", () => {
 
   it("shows the agent's face with what it is doing while it works", () => {
     render(<MessengerTurn turn={turn([call("society_wiki_note", { title: "x" })])}
-      avatar={<span data-testid="face" />} onDecide={() => undefined} />);
+      avatar={<span data-testid="face" />} color="#7ab6ef" onDecide={() => undefined} />);
     const line = screen.getByTestId("messenger-presence");
     expect(line.dataset.presence).toBe("writing");
     expect(screen.getByTestId("face")).toBeTruthy();
+  });
+
+  it("opens memory receipts from the Noted quill lines, never as a line of their own twice", () => {
+    const opened: string[] = [];
+    const link = (key: string) => ({ key, title: `Memory updated · ${key}.md`, onOpen: () => opened.push(key) });
+    render(<MessengerTurn
+      turn={turn([call("society_wiki_note", { title: "Plan" }, "{\"ok\": true}"), text("Saved.", "a")], "done")}
+      avatar={<span />} color="#7ab6ef" onDecide={() => undefined} memoryLinks={[link("USER"), link("MEMORY")]} />);
+    const lines = screen.getAllByTestId("messenger-action");
+    expect(lines).toHaveLength(2);
+    expect(lines[0].textContent).toContain("Plan");
+    fireEvent.click(screen.getByRole("button", { name: "Memory updated · USER.md" }));
+    fireEvent.click(screen.getByRole("button", { name: "Memory updated · MEMORY.md" }));
+    expect(opened).toEqual(["USER", "MEMORY"]);
   });
 });
 

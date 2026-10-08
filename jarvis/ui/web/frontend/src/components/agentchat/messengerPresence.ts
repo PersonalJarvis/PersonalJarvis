@@ -16,9 +16,15 @@ export type Presence =
   | "typing"
   | "writing"
   | "searching"
+  | "recall"
   | "browsing"
   | "setting_up"
-  | "working";
+  | "command"
+  | "working"
+  /** The person's message is in, the turn has not started yet. */
+  | "reading"
+  /** The turn just finished: a short flourish before the stage clears. */
+  | "done";
 
 /** The bare operation of a call, without its transport prefix (`mcp__jarvis__…`, `jarvis/…`). */
 export function bareToolName(name: string): string {
@@ -47,7 +53,9 @@ export function callPresence(block: ToolBlock): Presence {
     return "writing";
   }
   if (/(^browser|browser_|navigate|click|screenshot|computer)/.test(name)) return "browsing";
-  if (/(search|recall|^grep$|^rg$|^glob$|^read|^ls$|^list|fetch|lookup|^find)/.test(name)) return "searching";
+  if (/(recall|memory_?(read|search|get)|^memory$)/.test(name)) return "recall";
+  if (/^(bash|powershell|shell|run_?shell(_command)?|exec(_command)?|run_?command|terminal)$/.test(name)) return "command";
+  if (/(search|^grep$|^rg$|^glob$|^read|^ls$|^list|fetch|lookup|^find)/.test(name)) return "searching";
   if (/(credential|routine|install|connect|plugin|connector|configure|setup)/.test(name)) return "setting_up";
   return "working";
 }

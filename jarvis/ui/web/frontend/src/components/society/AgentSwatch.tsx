@@ -32,10 +32,13 @@ export function AgentSwatch({
   agent,
   size = 36,
   className,
+  expressive = false,
 }: {
   agent: SwatchAgent;
   size?: number;
   className?: string;
+  /** Eyes a stage can animate between expressions (look, squint, wink, smile). */
+  expressive?: boolean;
 }) {
   const isJarvis = isLead(agent);
   // Real roster identities survive renames. Name-only historical participants
@@ -56,7 +59,7 @@ export function AgentSwatch({
         {thinking && <svg aria-hidden viewBox="0 0 40 44" className="pointer-events-none absolute inset-0 h-full w-full"><SymbolThinkingDots color="#ffcf45" /></svg>}
         </>
       ) : (
-        <AgentSymbol {...appearance} size={size} thinking={thinking} />
+        <AgentSymbol {...appearance} size={size} thinking={thinking} expressive={expressive} />
       )}
     </span>
   );
