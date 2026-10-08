@@ -282,7 +282,7 @@ def test_routine_chats_are_not_offered_the_tool(monkeypatch: pytest.MonkeyPatch)
     from jarvis.society import surface
 
     browser = SimpleNamespace(is_installed=lambda: False, live=SimpleNamespace(model_resolver=None))
-    rt = SimpleNamespace(browser=browser, chat_service=lambda: None)
+    rt = SimpleNamespace(browser=browser, chat_service=lambda: None, cached_agent=lambda _: None)
     monkeypatch.setattr(surface, "current_runtime", lambda: rt)
     canonical = SimpleNamespace(session_id="society:ada", cwd="", permission_mode="")
     routine = SimpleNamespace(

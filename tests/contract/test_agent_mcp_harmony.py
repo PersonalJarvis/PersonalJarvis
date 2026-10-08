@@ -17,8 +17,8 @@ from __future__ import annotations
 from typing import Final
 
 from jarvis.mcp.agents import TOOLS
-from jarvis.ui.web.society_routes import router as society_router
 from jarvis.ui.web.society_browser_routes import router as browser_router
+from jarvis.ui.web.society_routes import router as society_router
 
 #: REST route -> the MCP tool that covers it.
 COVERED: Final[dict[str, str]] = {
@@ -48,6 +48,19 @@ COVERED: Final[dict[str, str]] = {
 
 #: REST route -> why an MCP client does not get it. Each line is a decision.
 WITHHELD: Final[dict[str, str]] = {
+    "GET /api/society/sandbox": (
+        "Docker readiness belongs to the owner's local execution settings, "
+        "not the remote MCP surface"
+    ),
+    "POST /api/society/sandbox/prepare": (
+        "downloading a local container runtime is an explicit owner action in the app or CLI"
+    ),
+    "GET /api/society/agents/{agent_id}/sandbox/files": (
+        "sandbox artifacts are browsed by the owner; remote MCP clients do not get raw file access"
+    ),
+    "GET /api/society/agents/{agent_id}/sandbox/file": (
+        "binary artifact downloads belong to the owner-facing app and REST/CLI surface"
+    ),
     "GET /api/society/provider-prefs": (
         "which providers the agents may use is a settings page for the owner; "
         "a remote client already sees the effective seat on each agent"
@@ -119,7 +132,9 @@ WITHHELD: Final[dict[str, str]] = {
     "GET /api/society/browser/status": "browser install state is local setup, not ecosystem state",
     "POST /api/society/browser/install": "installs software on the machine — never from outside",
     "POST /api/society/browser/repair": "repairs host software; local owner setup",
-    "POST /api/society/agents/{agent_id}/browser/cancel": "local browser control belongs to the owner UI",
+    "POST /api/society/agents/{agent_id}/browser/cancel": (
+        "local browser control belongs to the owner UI"
+    ),
     "GET /api/society/agents/{agent_id}/browser/open": (
         "whether the owner UI may attach its live view; local process state"
     ),

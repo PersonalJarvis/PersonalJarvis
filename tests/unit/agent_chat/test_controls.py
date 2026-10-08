@@ -355,7 +355,10 @@ def test_goal_attachments_are_saved_and_read_before_work_starts() -> None:
     asyncio.run(scenario())
 
 
-def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: Any) -> None:
+@pytest.mark.parametrize("environment", ["local", "sandbox"])
+def test_message_uses_executor_exact_text_sender_and_idempotency(
+    monkeypatch: Any, environment: str,
+) -> None:
     from types import SimpleNamespace
 
     from jarvis.agent_chat.service import AgentChatService
@@ -394,7 +397,11 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
         async def completed(*_: Any) -> None:
             return None
 
+        async def live_agent(_agent_id: str) -> Any:
+            return SimpleNamespace(execution_environment=environment)
+
         runtime = SimpleNamespace(
+            roster=SimpleNamespace(get=live_agent),
             conversations=SimpleNamespace(checkpoint=lambda _: (0, "")),
             turn_completed=completed,
             browser=SimpleNamespace(live=SimpleNamespace(sessions={})),
@@ -421,6 +428,10 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
         request_data = request("message", '@"Drive Agent" First line\nSecond line')
         first = await svc.controls.execute(sid, request_data)
         second = await svc.controls.execute(sid, request_data)
+        if environment == "sandbox":
+            assert first.status == "failed" and first == second
+            assert not calls, "a sandbox agent must not send host-side messages"
+            return
         assert first.status == "done" and first == second
         assert len(calls) == 1
         assert calls[0][0] == "mail"
