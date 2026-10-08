@@ -5,6 +5,10 @@ import { useEventStore } from "@/store/events";
 import { SubscriptionsTab } from "./SubscriptionsTab";
 import { groupSubscriptions, resetText, windowLength } from "./subscriptionsModel";
 
+vi.mock("@/lib/agentResetsApi", () => ({ fetchAccountResets: vi.fn(async () => ({
+  status: "unsupported", credits: null, available_count: null, can_redeem: false, usage: null,
+})), consumeAccountReset: vi.fn(), ResetRequestError: class extends Error {} }));
+
 vi.mock("@/lib/agentAccountsApi", async () => {
   const actual = await vi.importActual<typeof import("@/lib/agentAccountsApi")>("@/lib/agentAccountsApi");
   return { ...actual, fetchAgentAccounts: vi.fn(), fetchAgentUsage: vi.fn() };
