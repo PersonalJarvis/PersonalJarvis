@@ -52,6 +52,7 @@ async def test_fresh_agent_applies_its_first_identity_from_the_user_turn(world):
     rt, svc = world
     fresh, _ = await rt.roster.create()
     placeholder = fresh.name
+    assert placeholder == "New Bot"
     tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
     token = _user_turn(fresh.session_id, "You handle my Gmail inbox.")
     try:
@@ -64,6 +65,8 @@ async def test_fresh_agent_applies_its_first_identity_from_the_user_turn(world):
     agent = await rt.roster.get(fresh.agent_id)
     assert (agent.name, agent.title) == ("Mail Desk", "Gmail assistant")
     assert agent.agent_id == fresh.agent_id
+    assert agent.session_id == fresh.session_id
+    assert (await rt.store.get_agent_row(fresh.agent_id))["name"] == "Mail Desk"
     assert not is_fresh(agent)
     assert "plugin:gmail" in agent.focus  # the new role grows the focus
     outcome = _identity_notices(svc, "proposal_resolved")

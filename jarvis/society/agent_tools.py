@@ -478,8 +478,8 @@ class MemoryRecallTool:
 class ProposeChangeTool:
     """``society_propose_change`` — configuration by chat (agent-definition §3.5).
 
-    An explicit current request can apply in this turn. Inferred changes
-    park on a proposal card until confirmed; permission changes always do.
+    Goal-derived background work can apply autonomously in the user's turn.
+    Other inferred configuration changes and permission changes use a card.
     """
 
     name: str = PROPOSE_TOOL_NAME
@@ -488,6 +488,13 @@ class ProposeChangeTool:
     description: str = (
         "Configure ONE aspect of how you work. Use mode=apply with an exact request_quote "
         "for an explicitly requested change; otherwise mode=propose asks on a chat card. "
+        "For kind=routine, mode=autonomous registers useful background follow-ups or "
+        "recurring work derived from the user's goal, without requiring a request to "
+        "create a routine. Quote that goal in request_quote and explain why in reason. "
+        "Use a one-time trigger for one-time work. Register work BEFORE promising to "
+        "do it later; read back task_id, state and next_run. List existing work first "
+        "and update it instead of creating duplicates. Information questions, quotations "
+        "and hypothetical suggestions are not execution requests. Honor exclusions. "
         "kind 'rule' adds a standing instruction (operation replace/remove uses old_text) to your "
         "description ({text}); 'skill' saves the procedure you just used under a name "
         "({name, goal, steps[], outcome}); 'routine' schedules recurring work "
@@ -503,7 +510,7 @@ class ProposeChangeTool:
         "workflow chains. "
         "Use society_routines for the source schema and available drivers before configuring one. "
         "Call society_routines for existing schedules and supported event names/fields. "
-        "routine operation update/pause/resume/delete uses task_id from society_routines; "
+        "routine operation update/pause/resume/cancel/delete uses task_id from society_routines; "
         "update also requires title, prompt and schedule. "
         "'approval_rule' changes what needs the user's approval ({require_approval[], "
         "always_allow[]} of capability ids like plugin:gmail:send); 'focus' changes which "
@@ -522,8 +529,11 @@ class ProposeChangeTool:
         "properties": {
             "mode": {
                 "type": "string",
-                "enum": ["propose", "apply"],
-                "description": "apply for an explicit current user request; otherwise propose.",
+                "enum": ["propose", "apply", "autonomous"],
+                "description": (
+                    "autonomous for goal-derived routine work; "
+                    "apply for explicit configuration; otherwise propose."
+                ),
             },
             "request_quote": {
                 "type": "string",
@@ -583,7 +593,8 @@ class ProposeChangeTool:
             # A long role text is a card, not an automatic change.
             and len(str(payload.get("description") or "")) <= FRESH_IDENTITY_MAX_CHARS
         )
-        apply_now = fresh_apply or args.get("mode") == "apply"
+        autonomous = args.get("mode") == "autonomous"
+        apply_now = fresh_apply or args.get("mode") == "apply" or autonomous
         if apply_now and not fresh_apply:
             quote = str(args.get("request_quote") or "").strip()
             if (
@@ -598,6 +609,14 @@ class ProposeChangeTool:
                 )
             if kind == "approval_rule":
                 apply_now = False
+        if autonomous:
+            from .autonomous_routines import apply_autonomous_routine
+
+            if self._session_id and turn.session_id != self._session_id:
+                return _failure(
+                    FailureReason.BLOCKED_BY_POLICY, "current chat does not own this call",
+                )
+            return await apply_autonomous_routine(rt, caller, turn, args)
         try:
             item = await propose(
                 rt,
@@ -633,7 +652,7 @@ class ProposeChangeTool:
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str:
         # An identity rewrites the standing instructions: never a silent "safe".
-        if args.get("mode") == "apply" or str(args.get("kind") or "") == "identity":
+        if args.get("mode") in {"apply", "autonomous"} or str(args.get("kind") or "") == "identity":
             return "monitor"
         return "safe"
 
