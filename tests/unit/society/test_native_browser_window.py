@@ -299,7 +299,8 @@ def test_parking_preserves_monitor_geometry_and_does_not_activate(scene):
     assert args[:2] == (1, 1)  # Owned Chrome, HWND_BOTTOM.
     assert args[-1] & 0x13 == 0x13  # No move, no size, no activation.
     assert desktop.alpha[1] == 0
-    assert desktop.styles[1] & 0x08080080 == 0x08080080
+    assert desktop.styles[1] & 0x08080000 == 0x08080000
+    assert not desktop.styles[1] & 0x00040080
 
 
 def test_parking_hides_later_owned_popups_but_never_other_windows(scene):
@@ -313,6 +314,25 @@ def test_parking_hides_later_owned_popups_but_never_other_windows(scene):
     window._sync_windows()
     assert desktop.alpha == {1: 0, 2: 0}
     assert window.click_target(45, 15) == (2, 5, 5)
+
+
+def test_parked_windows_remain_eligible_for_capture_creation(scene):
+    window, desktop, _codec = scene
+    factory = window._capture_factory
+
+    def captureable(**kwargs):
+        # The capture library excludes WS_EX_TOOLWINDOW at item creation.
+        assert not desktop.styles.get(kwargs["window_hwnd"], 0) & 0x80
+        return factory(**kwargs)
+
+    window._capture_factory = captureable
+    desktop.styles[1] = 0x40080
+    window.park()
+    assert window._stop_capture(1)
+    window._start_capture(1)
+    desktop.styles[2] = 0x80
+    popup(window, desktop)
+    assert desktop.alpha == {1: 0, 2: 0}
 
 
 def test_parking_preserves_captured_pixels_and_manual_input(scene):

@@ -1736,7 +1736,10 @@ library's cached WinRT factories from outliving their apartment during manual
 handover. Each window still stops its capture and event threads on close.
 
 A stopped Windows popup capture discards its stale pixels and retries once while
-the same owned popup remains visible. Input waits for the replacement's first
+the same owned popup remains visible. Parked owned windows retain layered and
+no-activate styles, but clear tool-window and app-window flags before creating
+a capture item; a tool-window flag makes native capture reject the target.
+Input waits for the replacement's first
 frame. A repeated failure, failed restart, or unfinished capture cleanup reports
 an error instead of retaining an unusable preview or starting overlapping captures.
 Closing the popup resets its retry allowance. Regression tests use native-window
