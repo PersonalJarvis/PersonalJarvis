@@ -280,6 +280,7 @@ class _EchoBar:
     def set_on_dictation_stop(self, cb: Any) -> None: ...
     def set_feedback_publisher(self, cb: Any) -> None: ...
     def set_on_show_window(self, cb: Any) -> None: ...
+    def set_on_visibility_changed(self, cb: Any) -> None: ...
     def set_on_speaker_toggle(self, cb: Any) -> None: ...
     def set_on_compose(self, cb: Any) -> None: ...
     def set_on_notifications_toggle(self, cb: Any) -> None: ...
@@ -400,6 +401,7 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
             "accent",
             "opacity",
             "startup_gated",
+            "user_hidden",
             "size_scale",
             "follow_cursor_monitor",
         )
@@ -459,6 +461,11 @@ def _wire_surface_events(surface: Any) -> None:
         lambda kind, payload: emit("feedback", kind=kind, payload=payload),
     )
     _call(surface, "set_on_show_window", lambda: emit("show_window"))
+    _call(
+        surface,
+        "set_on_visibility_changed",
+        lambda visible: emit("visibility_changed", visible=bool(visible)),
+    )
     # The pet's pen: raising the window (and the new chat) happens in the
     # parent, where the bus and the window live.
     _call(surface, "set_on_compose", lambda: emit("compose"))
