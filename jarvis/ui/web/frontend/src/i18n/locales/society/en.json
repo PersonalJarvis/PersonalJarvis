@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "Collapse Options",
+      "options_expand": "Expand Options"
+    },
     "browser_profiles": {
       "profile_unavailable": "Profile disconnected — choose a profile",
       "chrome_offline": "Chrome disconnected",

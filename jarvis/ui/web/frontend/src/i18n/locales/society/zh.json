@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "收起选项",
+      "options_expand": "展开选项"
+    },
     "browser_profiles": {
       "profile_unavailable": "配置文件已断开 — 请选择一个配置文件",
       "chrome_offline": "Chrome 已断开",

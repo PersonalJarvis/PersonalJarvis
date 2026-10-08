@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "Contraer opciones",
+      "options_expand": "Expandir opciones"
+    },
     "browser_profiles": {
       "profile_unavailable": "Perfil desconectado — elige un perfil",
       "chrome_offline": "Chrome desconectado",

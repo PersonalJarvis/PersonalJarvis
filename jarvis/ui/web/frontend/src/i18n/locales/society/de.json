@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "Optionen einklappen",
+      "options_expand": "Optionen ausklappen"
+    },
     "browser_profiles": {
       "profile_unavailable": "Profil getrennt — bitte ein Profil auswählen",
       "chrome_offline": "Chrome nicht verbunden",
