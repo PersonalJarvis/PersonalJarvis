@@ -208,6 +208,13 @@ def test_live_site_checks_run_only_nightly_and_never_fail_the_run():
     assert all(s.get("continue-on-error") for s in job["steps"] if "pytest" in s.get("run", ""))
 
 
+def test_pull_requests_run_the_whole_windows_suite():
+    steps = workflows()["ci.yml"]["jobs"]["detect"]["steps"]
+    sizing = next(s for s in steps if s.get("id") == "shards")["run"]
+    assert "windows_shards=[1,2,3,4]" in sizing and "windows_shards=[1]'" not in sizing
+    assert "tests_full=true" in sizing and "tests_full=false" not in sizing
+
+
 def test_merge_queue_runs_the_whole_suite_and_is_never_cancelled():
     ci = workflows()["ci.yml"]
     triggers = ci.get("on", ci.get(True))

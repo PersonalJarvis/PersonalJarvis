@@ -3,8 +3,8 @@
 The Jarvis Agents section. Agents v2 (MASTERPLAN §2.10): one click creates an
 agent (`data.ts` `useQuickCreateAgent`) and opens its one endless chat
 (`chat/AgentChatPanel.tsx`); delegations, waiting messages and routine runs
-render as folded cards there (`chat/ChatActivity.tsx`), and an agent's
-self-chosen identity offers Undo (`IdentityNotice`).
+render as folded cards there (`chat/ChatActivity.tsx`). Applied identity
+changes update the profile without adding a notice to the chat.
 
 Folders, as planned in `docs/agent-society/MASTERPLAN.md` (§4, §9):
 
@@ -17,8 +17,7 @@ Folders, as planned in `docs/agent-society/MASTERPLAN.md` (§4, §9):
 - `feed/` — society message feed and bounded room transcripts.
 
 Branding: the world viewport carries its OWN bright video-game art direction (MASTERPLAN §4.3) —
-never Ink & Paper monochrome and never the Cursor-derived design doc; only the app chrome around
-the viewport uses the app's theme tokens.
+only the app chrome around the viewport uses the app's theme tokens.
 
 Binding frontend rules: every canvas mounts through `useWebglSurface` (AP-32 context-loss
 recovery + context budget); rAF pauses via IntersectionObserver, never `document.hidden`; the whole

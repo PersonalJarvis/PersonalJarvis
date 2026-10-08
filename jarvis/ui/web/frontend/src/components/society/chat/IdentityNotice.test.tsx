@@ -1,37 +1,55 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { NoticeItem } from "@/components/agentchat/reduce";
-import { IdentityNotice } from "./AgentChatPanel";
+import type { SocietyAgent } from "../data";
+import { Transcript } from "./AgentChatPanel";
 
-const restore = vi.hoisted(() => ({ fn: vi.fn(async () => undefined) }));
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("../data", async (original) => ({
   ...(await original<typeof import("../data")>()),
-  useRestoreIdentity: () => restore.fn,
+  useResolveProposal: () => async () => undefined,
 }));
-afterEach(() => { cleanup(); restore.fn.mockClear(); });
+afterEach(cleanup);
 
-const previous = { name: "Nova", title: "", description: "", focus: [] };
+const agent = { agentId: "agent-1a2b3c4d", name: "Mail Desk", tier: "worker" } as unknown as SocietyAgent;
 
-function notice(extra: Record<string, unknown> = {}): NoticeItem {
+function notice(overrides: Partial<NoticeItem> = {}): NoticeItem {
   return {
     type: "notice", id: "n1", kind: "proposal_resolved", text: "I am now Mail Desk - Gmail assistant.",
-    agentName: "Mail Desk", agentId: "agent-1a2b3c4d", status: "applied", tsMs: 1, resolved: "",
-    data: { proposal_kind: "identity", status: "applied", previous, ...extra },
+    agentName: agent.name, agentId: agent.agentId, status: "applied", tsMs: 1, resolved: "",
+    data: { proposal_kind: "identity", status: "applied", previous: { name: "Nova" } },
+    ...overrides,
   };
 }
 
-it("shows the new identity and undoes it back to the placeholder", async () => {
-  render(<IdentityNotice item={notice()} />);
-  expect(screen.getByText("society.chat.identity_now")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "society.chat.identity_undo" }));
-  await waitFor(() => expect(restore.fn).toHaveBeenCalledWith("agent-1a2b3c4d", previous));
-  expect(await screen.findByText("society.chat.identity_undone")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "society.chat.identity_undo" })).toBeNull();
+it.each([
+  {},
+  { status: "" },
+  { kind: "proposal", resolved: "applied" },
+])("hides applied identity receipts without leaving timeline rows: %j", (overrides) => {
+  const { container } = render(<Transcript items={[notice(overrides)]} agent={agent} roster={[]} onDecide={async () => {}} />);
+  expect(screen.queryByTestId("identity-notice")).toBeNull();
+  expect(screen.queryByText(/I am now/)).toBeNull();
+  expect(container.querySelector("[data-chat-item]")).toBeNull();
+  expect(screen.getByText("society.chat.empty_title")).toBeTruthy();
 });
 
-it("offers no undo when the card carries nothing to restore", () => {
-  render(<IdentityNotice item={notice({ previous: undefined })} />);
-  expect(screen.queryByRole("button")).toBeNull();
+it("keeps an identity proposal visible while it needs approval, then removes its resolved row", () => {
+  const pending = notice({ kind: "proposal", status: "", resolved: "" });
+  const { container, rerender } = render(<Transcript items={[pending]} agent={agent} roster={[]} onDecide={async () => {}} />);
+  expect(screen.getByText("society.chat.proposal_title")).toBeTruthy();
+  expect(container.querySelector('[data-chat-item="n1"]')).not.toBeNull();
+  rerender(<Transcript items={[{ ...pending, resolved: "applied" }]} agent={agent} roster={[]} onDecide={async () => {}} />);
+  expect(container.querySelector('[data-chat-item="n1"]')).toBeNull();
+});
+
+it("preserves identity failures and other proposal results", () => {
+  const items = [
+    notice({ id: "failed", status: "failed", text: "Could not change the name." }),
+    notice({ id: "rule", data: { proposal_kind: "rule" }, text: "Rule saved." }),
+  ];
+  const { container } = render(<Transcript items={items} agent={agent} roster={[]} onDecide={async () => {}} />);
+  expect(container.querySelector('[data-chat-item="failed"]')).not.toBeNull();
+  expect(container.querySelector('[data-chat-item="rule"]')).not.toBeNull();
 });
