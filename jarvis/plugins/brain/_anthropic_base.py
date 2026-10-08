@@ -338,7 +338,13 @@ async def stream_complete(
     # An agent call may think for minutes; the voice path's short client
     # timeout is replaced only while an agent request profile is active.
     if (timeout := _agent_profile.http_timeout()) is not None:
-        kwargs["timeout"] = timeout
+        from anthropic import Timeout
+
+        # The SDK owns its transport family (httpx or httpx2). Preserve every
+        # bound while constructing the timeout type that its client accepts.
+        kwargs["timeout"] = Timeout(
+            connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool,
+        )
     # A requested reasoning effort (the agent chat's picker) becomes
     # ``output_config.effort`` plus adaptive thinking on the models that
     # take it; the voice brain never sets one and sends exactly what it did.

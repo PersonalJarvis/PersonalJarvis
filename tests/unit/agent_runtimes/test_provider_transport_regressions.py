@@ -39,6 +39,24 @@ async def test_claude_tool_history_uses_the_declared_names_without_mutating_hist
     assert blocks[0]["name"] == "github/search"
 
 
+async def test_claude_agent_timeout_reaches_the_sdks_own_http_transport():
+    from jarvis.plugins.brain import _agent_profile
+
+    wire = AnthropicWire()
+    token = _agent_profile.PROFILE.set(_agent_profile.AgentRequestProfile(read_timeout_s=301.0))
+    try:
+        async with AsyncAnthropic(api_key="test-only", http_client=wire.client()) as client:
+            result = [delta async for delta in stream_complete(
+                client, "claude-sonnet-4-6", BrainRequest(messages=(BrainMessage("user", "Hi"),)),
+            )]
+        assert any(delta.content == "OK" for delta in result)
+        assert wire.requests[0].extensions["timeout"] == {
+            "connect": 5.0, "read": 301.0, "write": 60.0, "pool": 30.0,
+        }
+    finally:
+        _agent_profile.PROFILE.reset(token)
+
+
 @pytest.mark.parametrize("intermediate_usage", [False, True])
 async def test_claude_cache_preserves_oauth_header_and_stream_usage(
     monkeypatch, intermediate_usage,
