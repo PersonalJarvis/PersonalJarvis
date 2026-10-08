@@ -49,9 +49,12 @@ class LiveDisabled(RuntimeError):
     """A live-only action was asked for while the switch is off."""
 
 
-def readiness(telegram_config: Any, token: Callable[[], str | None] = default_token) -> str:
-    """``""`` when live delivery could run, else the first missing piece."""
-    if not token():
+def readiness(telegram_config: Any, token: Callable[[], str | None] | None = None) -> str:
+    """``""`` when live delivery could run, else the first missing piece.
+
+    *token* defaults to the secret store, looked up at call time.
+    """
+    if not (token or default_token)():
         return "token_missing"
     owner = owner_chat(telegram_config)
     if owner.chat_id is None:
@@ -76,7 +79,7 @@ async def enable_live(
     store: NotifyStore,
     telegram_config: Any,
     *,
-    token: Callable[[], str | None] = default_token,
+    token: Callable[[], str | None] | None = None,
 ) -> NotifySettings:
     reason = readiness(telegram_config, token)
     if reason:
