@@ -54,9 +54,11 @@ one click.
   pet*). A pet the person drew becomes a voxel figure cut from its idle
   frames.
 
-The pet stays on screen while Jarvis is idle. The global shortcut
+The pet stays on screen while Jarvis is idle. Right-clicking the figure or its
+control strip hides the whole pet, including its bubble and cards. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
-back and to the front; hiding lasts until the next app start. The shortcut is
+back and to the front; voice updates do not undo dismissal. The pet returns
+when shown again or on the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
 
