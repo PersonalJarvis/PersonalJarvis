@@ -17,9 +17,9 @@ Design (Option B from the integration analysis):
     ``ActionApproved`` straight onto the bus, which resolves the executor's
     ``wait()``. The full audit trail (Proposed -> Approved -> Executed) is
     preserved — this answers the gate, it does not bypass it.
-  - Anything NOT armed (read-only grants arm with an empty set; ungranted
-    tools) is left to block and deny on timeout. Nothing is auto-approved
-    by default.
+  - An armed task explicitly denies consequential calls outside its write
+    grants, including read-only grants. Unarmed traces use the executor's
+    app-wide policy.
 
 Concurrency-safe: a persistent ``ActionApprovalRequired`` subscriber plus a
 ``trace_id -> grant`` map, so several tasks can run at once without a
@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from uuid import UUID
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import ActionApprovalRequired, ActionApproved
+from jarvis.core.events import ActionApprovalRequired, ActionApproved, ActionDenied
 
 
 class TaskAutoApprover:
@@ -46,9 +46,8 @@ class TaskAutoApprover:
     def arm(self, trace_id: UUID, plugin_ids: Iterable[str], *, approved_by: str) -> None:
         """Pre-authorize ``plugin_ids`` for the turn identified by ``trace_id``.
 
-        An empty ``plugin_ids`` is a valid no-op arm (a read-only task): it
-        registers the trace but approves nothing, so the disarm() in the
-        runner stays symmetric.
+        An empty ``plugin_ids`` is a read-only task: it registers the trace
+        and denies consequential calls until disarmed.
         """
         self._active[trace_id] = (frozenset(plugin_ids), approved_by)
 
@@ -61,6 +60,13 @@ class TaskAutoApprover:
             return
         granted, approved_by = ctx
         if not self._tool_is_granted(event.tool_name, granted):
+            await self._bus.publish(
+                ActionDenied(
+                    trace_id=event.trace_id,
+                    tool_name=event.tool_name,
+                    reason="Scheduled task has no write grant for this tool",
+                )
+            )
             return
         await self._bus.publish(
             ActionApproved(

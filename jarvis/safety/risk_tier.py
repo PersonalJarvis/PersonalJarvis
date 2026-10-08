@@ -185,6 +185,11 @@ class RiskTierEvaluator:
             command_string=cmd,
         )
 
+    @property
+    def bypass_permissions(self) -> bool:
+        """The app default for calls without a session-owned approval policy."""
+        return self._safety.approval_mode == "bypass"
+
     def needs_user_confirmation(self, decision: TierDecision) -> bool:
         """True if a user confirmation must be obtained before execution."""
         if decision.approved_by is not None:

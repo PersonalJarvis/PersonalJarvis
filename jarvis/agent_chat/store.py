@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
     model            TEXT NOT NULL DEFAULT '',
     effort           TEXT NOT NULL DEFAULT '',
     cwd              TEXT NOT NULL DEFAULT '',
-    permission_mode  TEXT NOT NULL DEFAULT 'ask',
+    permission_mode  TEXT NOT NULL DEFAULT 'bypass',
     vendor_session   TEXT,
     created_ms       INTEGER NOT NULL,
     updated_ms       INTEGER NOT NULL,
@@ -266,7 +266,7 @@ class AgentChatStore:
         now = now_ms()
         # The route validated the mode against the runner's ladder; the store
         # keeps the id as given.
-        mode = (permission_mode or "").strip()
+        mode = (permission_mode or "").strip() or "bypass"
         with self._lock:
             self._conn.execute(
                 "INSERT INTO agent_chat_sessions (session_id, title, provider, model, effort, "

@@ -1934,6 +1934,9 @@ class SafetyBlacklistConfig(BaseModel):
 
 
 class SafetyConfig(BaseModel):
+    # App-owned executions run without permission prompts unless the person
+    # selects Ask. Chat sessions keep their own explicitly selected stance.
+    approval_mode: Literal["bypass", "ask"] = "bypass"
     default_tier: RiskTier = "safe"
     always_confirm_tiers: list[RiskTier] = Field(default_factory=lambda: ["ask"])
     always_block_tiers: list[RiskTier] = Field(default_factory=lambda: ["block"])

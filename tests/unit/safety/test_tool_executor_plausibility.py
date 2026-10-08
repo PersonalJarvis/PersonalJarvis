@@ -70,7 +70,7 @@ def _executor_with_plausibility(
     auto_approval: bool = True,
 ) -> tuple[ToolExecutor, _AutoApproval]:
     bus = EventBus()
-    safety = safety or SafetyConfig()
+    safety = safety or SafetyConfig(approval_mode="ask")
     evaluator = RiskTierEvaluator(safety)
     approval = _AutoApproval(bus, approve=auto_approval)
     executor = ToolExecutor(

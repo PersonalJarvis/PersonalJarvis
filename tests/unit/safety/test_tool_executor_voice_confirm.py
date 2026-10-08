@@ -62,7 +62,7 @@ class _BlockingApproval(ApprovalWorkflow):
 
 def _executor() -> tuple[ToolExecutor, _BlockingApproval, EventBus]:
     bus = EventBus()
-    evaluator = RiskTierEvaluator(SafetyConfig())
+    evaluator = RiskTierEvaluator(SafetyConfig(approval_mode="ask"))
     approval = _BlockingApproval(bus)
     executor = ToolExecutor(bus=bus, evaluator=evaluator, approval=approval)
     return executor, approval, bus

@@ -622,11 +622,7 @@ class Roster:
             "workspace_dir": f"society/{agent_id}/workspace",
             "wiki_namespace": f"society/{agent_id}/",
             "approval_mode": (None if tier_value is Tier.LEAD else str(AgentApprovalMode.BYPASS)),
-            "permission_ceiling": (
-                str(PermissionCeiling.MONITOR)
-                if tier_value is Tier.LEAD
-                else str(PermissionCeiling.ASK)
-            ),
+            "permission_ceiling": str(PermissionCeiling.ASK),
         }
         if tier_value is Tier.ORCHESTRATOR:
             row["max_concurrent_runs"] = 3
