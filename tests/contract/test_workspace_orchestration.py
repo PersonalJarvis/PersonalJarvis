@@ -130,6 +130,131 @@ async def test_no_reference_uses_visible_workspace_without_focused_pane(rig):
     assert rig[1].session.surface_terminal == ""
 
 
+@pytest.mark.parametrize("reference", ["", "idle", "free", "available", "empty", "unused"])
+async def test_free_session_prefers_empty_over_interrupted_and_completed(rig, reference):
+    owner = rig[1].session
+    interrupted = owner.terminals[0]
+    interrupted.activity = "stopped"
+    interrupted.prompts_sent = 1
+    owner.terminals.extend([
+        Terminal("t2", "Completed", "codex", "Codex", 1, status="live",
+                 activity="waiting", activity_at=time.time(), prompts_sent=2),
+        Terminal("t3", "Fresh", "codex", "Codex", 2, status="live",
+                 activity="waiting", activity_at=time.time()),
+    ])
+    result = await rig[0].run({"action": "resolve", "workspace": owner.name, "agent": reference})
+    assert result["target"]["terminal_id"] == "pane:" + owner.terminals[-1].history_id
+    assert result["selection"] == "empty_session"
+    assert result["session"]["has_history"] is False
+    assert not rig[2].calls
+
+
+@pytest.mark.parametrize("word", ["working", "asking", "starting", "stopped", "failed", "unknown"])
+async def test_automatic_selection_excludes_unavailable_activity(rig, word):
+    rig[1].session.terminals[0].activity = word
+    result = await rig[0].run({"action": "resolve", "agent": "free"})
+    assert result["status"] == "unavailable"
+    assert not rig[2].calls
+
+
+async def test_empty_selector_does_not_reuse_completed_conversation(rig):
+    rig[1].session.terminals[0].prompts_sent = 1
+    empty = await rig[0].run({"action": "resolve", "agent": "empty"})
+    assert empty["status"] == "unavailable"
+    idle = await rig[0].run({"action": "resolve", "agent": "idle"})
+    assert idle["selection"] == "first_idle_agent"
+
+
+async def test_custom_name_idle_remains_an_explicit_target(rig):
+    term = rig[1].session.terminals[0]
+    term.name, term.activity = "Idle", "working"
+    result = await rig[0].run({"action": "resolve", "agent": "Idle"})
+    assert result["selection"] == "explicit_agent"
+    assert result["target"]["terminal_id"] == "pane:" + term.history_id
+
+
+async def test_explicit_ids_resolve_exact_background_pane(rig):
+    owner = rig[1].sessions[0]
+    second = Terminal("t2", "Second", "codex", "Codex", 1, status="live")
+    owner.terminals.append(second)
+    result = await rig[0].run({
+        "action": "resolve", "project_id": owner.project_id, "workspace_id": owner.id,
+        "terminal_id": "pane:" + second.history_id,
+    })
+    assert result["selection"] == "explicit_agent"
+    assert result["target"]["terminal_id"] == "pane:" + second.history_id
+    assert result["target"]["workspace_id"] == owner.id
+    assert rig[1].active_id != owner.id
+
+
+@pytest.mark.parametrize("key", ["project_id", "workspace_id", "terminal_id"])
+async def test_invalid_explicit_id_never_falls_back_to_free_session(rig, key):
+    owner = rig[1].session
+    result = await rig[0].run({
+        "action": "resolve", "project_id": owner.project_id, "workspace_id": owner.id,
+        "terminal_id": "pane:" + owner.terminals[0].history_id, key: "missing",
+    })
+    assert result["status"] != "resolved"
+    assert not rig[2].calls
+
+
+async def test_scoped_inspect_only_reads_selected_workspace_history(rig, monkeypatch):
+    from jarvis.agentic_ide import agent_transcript
+    from jarvis.agentic_ide.agent_sessions import ResumeHandle
+
+    owner = rig[1].session
+    for space in rig[1].sessions:
+        space.terminals[0].resume = ResumeHandle("codex", space.id, 0.0)
+    reads = []
+
+    def read(agent, session_id, **kwargs):
+        reads.append(session_id)
+        return agent_transcript.TimelineRead([
+            {"kind": "user_message", "ts_ms": 1, "payload": {"text": "Repair the queue"}},
+            {"kind": "tool_call", "ts_ms": 2,
+             "payload": {"name": "read_file", "summary": "queue.py"}},
+        ])
+
+    monkeypatch.setattr(agent_transcript, "read_timeline", read)
+    graph = await rig[0].run({"action": "inspect", "workspace_id": owner.id})
+    assert reads == [owner.id]
+    assert len(graph["projects"]) == 1
+    agents = graph["projects"][0]["workspaces"][0]["agents"]
+    assert agents[0]["last_user_message"] == "Repair the queue"
+    assert agents[0]["has_history"] is True
+    assert agents[0]["recent_events"][-1]["name"] == "read_file"
+
+
+async def test_context_cursor_reaches_session_gateway(rig):
+    resolved = await target(rig)
+    cursor = {"source": "native-session", "offset": 30, "prefix": "fingerprint"}
+    await rig[0].run({"action": "context", **resolved, "cursor": cursor, "limit": 10})
+    assert rig[2].calls[-1]["cursor"] == cursor
+    assert rig[2].calls[-1]["limit"] == 10
+    assert "cursor" in WorkspaceOrchestrationTool.schema["properties"]
+
+
+async def test_free_session_excludes_a_pane_with_an_assignment_being_written(rig, monkeypatch):
+    from jarvis.agentic_ide import fanout
+
+    owner = rig[1].session
+    monkeypatch.setattr(fanout, "in_flight_briefs", lambda space: {"Alex": 5.0})
+    result = await rig[0].run({"action": "resolve", "workspace_id": owner.id, "agent": "free"})
+    assert result["status"] == "unavailable"
+    assert not rig[2].calls
+
+
+async def test_inspect_project_includes_all_its_workspaces(rig):
+    owner = rig[1].session
+    sibling = Session(
+        id=uuid4().hex, folder=owner.folder, name="Sibling", profile=owner.profile,
+        terminals=[], created_at=2, project_id=owner.project_id,
+    )
+    rig[1]._sessions[sibling.id] = sibling
+    graph = await rig[0].run({"action": "inspect", "project_id": owner.project_id})
+    assert {w["id"] for w in graph["projects"][0]["workspaces"]} == {owner.id, sibling.id}
+
+
 async def test_unique_named_agent_can_be_addressed_in_background_workspace(rig):
     owner = rig[1].sessions[0]
     owner.terminals[0].name = "Installer expert"

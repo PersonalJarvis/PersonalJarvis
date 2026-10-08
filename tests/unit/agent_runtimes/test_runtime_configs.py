@@ -111,9 +111,19 @@ def test_hermes_has_one_attempt_and_no_automatic_recovery_or_fallback(tmp_path):
     assert "terminal" in config["agent"]["disabled_toolsets"]
 
 
-def test_hermes_offers_jarvis_tools_directly(tmp_path):
-    """Never deferred behind Hermes' tool search (a 9B model missed them live)."""
-    assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
+def test_hermes_discovers_connected_tools_with_explicit_persona_guidance(tmp_path):
+    """Large catalogs stay lazy, and the persona explains how to reach them."""
+    runtime = HermesRuntime()
+    turn = _turn(tmp_path)
+    runtime._write_profile(tmp_path, turn)
+    config = json.loads((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    search = config["tools"]["tool_search"]
+    assert search["enabled"] == "on"
+    assert search["listing_max_tokens"] <= 2000
+    persona = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert "tool_search" in persona and "tool_describe" in persona and "tool_call" in persona
+    assert "reply directly without searching" in persona
+    assert "Search before concluding a capability is missing" in persona
 
 
 def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):

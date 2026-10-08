@@ -304,14 +304,15 @@ replayed during `session/load` is swallowed because the chat already shows it.
   `key_env`. Jarvis therefore also writes `model.base_url` and passes the
   gateway token as `OPENAI_API_KEY` with `OPENAI_BASE_URL` = the gateway URL,
   the pair that path reads, in that one process' environment only.
-- **Tool search:** Hermes defers MCP schemas behind its own `tool_search` by
-  default; OpenClaw does the same for local models. Both are switched off for
-  agent profiles (`tools.tool_search: false`, `tools.toolSearch: false`): in a
-  live turn a 9B local model never found the deferred Jarvis tools, and with
-  them offered directly both runtimes called `society_wiki_note` correctly.
-  The price is prompt size — about 69k input tokens per model call instead of
-  about 27k on a fresh Hermes session (prompt caching covers roughly half of
-  it from the second call on).
+- **Tool search:** Hermes agents keep MCP schemas behind Hermes' own
+  `tool_search` (`tools.tool_search.enabled: on`, listing capped at 2000
+  tokens): connected accounts can expose hundreds of tools, and offering them
+  all cost about 69k input tokens per call. The profile's `SOUL.md` tells the
+  model to search, describe and call through `tool_search` / `tool_describe` /
+  `tool_call` and to answer greetings directly; a resumed session's pinned
+  eager tool catalog is invalidated first (`tool_snapshot.py`) so the deferred
+  configuration takes effect. OpenClaw still offers the tools directly
+  (`tools.toolSearch: false`): a 9B local model never found deferred tools there.
 - **Not yet covered:** Hermes discovers ambient credentials (for example the
   GitHub CLI's `gh auth token` for Copilot) into each profile's credential
   pool. Jarvis' config never routes a model call to them; switching the

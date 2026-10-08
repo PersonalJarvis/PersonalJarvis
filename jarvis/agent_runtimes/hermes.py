@@ -405,10 +405,10 @@ class HermesRuntime:
             },
             "skills": {"creation_nudge_interval": 0, "project_discovery": False},
             "curator": {"enabled": False},
-            # Jarvis' tools are what make this a Jarvis agent: offered directly,
-            # never deferred behind Hermes' tool search, where smaller models
-            # fail to find them (seen live with a 9B model, 2026-10-06).
-            "tools": {"tool_search": False},
+            # Connected accounts can expose hundreds of tools. Keep their
+            # schemas out of every greeting; Hermes discovers and dispatches
+            # them through the same MCP server, including its approval gates.
+            "tools": {"tool_search": {"enabled": "on", "listing_max_tokens": 2000}},
             "auxiliary": {
                 "background_review": {"enabled": False},
                 "title_generation": {"enabled": False},
@@ -487,8 +487,20 @@ class HermesRuntime:
         )
 
     def _write_profile(self, home: Path, turn: RuntimeTurn) -> None:
+        from jarvis.agent_runtimes.tool_snapshot import refresh_tool_search_cache
+
+        refresh_tool_search_cache(home, turn.resume)
         write_json_if_changed(home / "config.yaml", self.config_for(turn))
-        write_if_changed(home / "SOUL.md", persona_text(turn.agent_name))
+        write_if_changed(
+            home / "SOUL.md",
+            persona_text(turn.agent_name)
+            + "Jarvis MCP tools are available through tool_search, tool_describe and "
+            "tool_call. For a task that needs Jarvis or a connected account, use "
+            "tool_search with the service and action, read the returned schema, "
+            "then invoke its exact tool name through tool_call. Search before "
+            "concluding a capability is missing. For a greeting or ordinary "
+            "conversation, reply directly without searching for tools.\n",
+        )
 
 
 def _restore_key_aliases(base_url: str, api_key: str | None) -> dict[str, str]:
