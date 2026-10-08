@@ -6592,6 +6592,26 @@
         "weekly_scoped": "每周限额 · {scope}",
         "monthly": "每月限额",
         "other": "其他限额"
+      },
+      "switch": {
+        "use": "切换",
+        "use_tip": "让 {tool} 使用此订阅：新终端从这里启动，所有正在运行的智能体都会迁移过来并继续各自的对话。",
+        "switching": "正在切换…",
+        "done": "现在使用 {label}。",
+        "moved": "{n} 个智能体已连同对话一起迁移。",
+        "queued": "{n} 个正在工作的智能体会在当前步骤结束后跟进。",
+        "failed": "切换未成功（{error}）。",
+        "empty_until": "已用完，{when} 恢复",
+        "auto": "自动切换",
+        "auto_tip": "当某个订阅额度将尽或达到上限时，正在运行的智能体会迁移到剩余额度最多的订阅并继续工作。",
+        "threshold": "切换时机",
+        "at_left": "剩余 {left}% 时",
+        "at_limit": "仅在达到上限时",
+        "event_manual": "{time} · {tool} 已切换到 {to}",
+        "event_limit": "{time} · {tool}：{from} 已达上限，工作在 {to} 上继续",
+        "event_threshold": "{time} · {tool}：{from} 即将用完，工作已迁移到 {to}",
+        "event_no_seat": "{time} · {tool}：{from} 已用完，且没有其他订阅仍有额度",
+        "event_refilled": "{time} · {tool}：{from} 额度已恢复，中断的工作已继续"
       }
     },
     "git": {
