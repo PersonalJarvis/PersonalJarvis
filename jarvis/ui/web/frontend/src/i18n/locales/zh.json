@@ -175,7 +175,13 @@
     "close": "关闭",
     "nav_back": "后退",
     "nav_forward": "前进",
-    "nav_home": "主页"
+    "nav_home": "主页",
+    "update_blocked_app_read_only": "{name} 无法在此文件夹中替换自身。请将它移到“应用程序”文件夹，然后再更新。",
+    "update_blocked_app_translocated": "macOS 正在从临时副本运行 {name}。请将它移到“应用程序”文件夹，从那里打开，然后再更新。",
+    "update_blocked_appimage_read_only": "{name} 无法写入 AppImage 所在的文件夹。请将 AppImage 移到你拥有的文件夹（例如 ~/Applications），然后再更新。",
+    "update_blocked_no_app_bundle": "{name} 找不到自己的应用，因此无法替换自身。请从发布页面下载新版本。",
+    "update_blocked_no_appimage": "此副本不是从其 AppImage 文件启动的，因此没有可替换的内容。请改为下载新的 AppImage。",
+    "update_open_release": "打开下载页面"
   },
   "nav": {
     "chat_workspace": "对话",
