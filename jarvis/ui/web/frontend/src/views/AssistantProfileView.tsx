@@ -20,6 +20,8 @@
  *   Character                                            Edit
  *   Role     …   /   Tone     …   /   Limits   …
  *   ────────────────────────────────────────────────────────────
+ *   Initiative   ○ Off  ● Balanced  ○ Proactive (+ dated plans)
+ *   ────────────────────────────────────────────────────────────
  *   Memory   [Remembered · About you · About itself]
  *   ────────────────────────────────────────────────────────────
  *   Recently learned  — the ledger, with the person's words
@@ -37,6 +39,7 @@ import { fileOf, useSoulProfile, type SoulFileId, type SoulProfile } from "@/vie
 import { CharacterSection } from "@/views/assistant/CharacterSection";
 import { FilePage } from "@/views/assistant/FilePage";
 import { FilesSection } from "@/views/assistant/FilesSection";
+import { InitiativeSection } from "@/views/assistant/InitiativeSection";
 import { Intro } from "@/views/assistant/Intro";
 import { MemorySection } from "@/views/assistant/MemorySection";
 import { RecentSection } from "@/views/assistant/RecentSection";
@@ -109,6 +112,7 @@ export function AssistantProfileView() {
             <Intro profile={data} />
             <FilesSection files={data.files} onOpen={setOpen} />
             <CharacterSection soul={fileOf(data, "soul")} onEdit={() => setOpen("soul")} />
+            {data.initiative && <InitiativeSection initiative={data.initiative} />}
             <MemorySection profile={data} />
             <RecentSection activity={data.activity} />
           </div>

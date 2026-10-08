@@ -165,6 +165,45 @@ describe("AssistantProfileView", () => {
     expect(within(screen.getByTestId("assistant-file-user")).getByText("Not created yet")).toBeTruthy();
   });
 
+  it("lets the person choose how much initiative it takes", async () => {
+    const initiative = {
+      level: "balanced" as const,
+      levels: ["off", "balanced", "high"] as ("off" | "balanced" | "high")[],
+      upcoming: [{ date: "2026-10-09", text: "The user is preparing a product launch for 2026-10-09." }],
+    };
+    const calls = installFetch({
+      "GET /api/soul": () => ({ body: profile({ initiative }) }),
+      "PUT /api/soul/initiative": () => ({
+        body: profile({ initiative: { ...initiative, level: "off", upcoming: [] } }),
+      }),
+    });
+    renderWithClient(<AssistantProfileView />);
+
+    const section = await screen.findByTestId("assistant-initiative");
+    const radios = within(section).getAllByRole("radio");
+    expect(radios.map((r) => r.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
+    expect(within(section).getByText(/nothing is sent, bought, deleted or started without your yes/)).toBeTruthy();
+    expect(within(screen.getByTestId("assistant-initiative-upcoming")).getByText(/product launch/)).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("assistant-initiative-off"));
+    await waitFor(() =>
+      expect(screen.getByTestId("assistant-initiative-off").getAttribute("aria-checked")).toBe("true"),
+    );
+    const put = calls.find((c) => c.url === "/api/soul/initiative");
+    expect(put?.init?.method).toBe("PUT");
+    expect(JSON.parse(String(put?.init?.body))).toEqual({ level: "off" });
+    // Off: nothing is pointed at, so no dated plans are listed.
+    await waitFor(() => expect(screen.queryByTestId("assistant-initiative-upcoming")).toBeNull());
+  });
+
+  it("hides the initiative section for a backend without the setting", async () => {
+    installFetch({ "GET /api/soul": () => ({ body: profile() }) });
+    renderWithClient(<AssistantProfileView />);
+
+    await screen.findByTestId("assistant-character");
+    expect(screen.queryByTestId("assistant-initiative")).toBeNull();
+  });
+
   it("forgets a note through the soul endpoint", async () => {
     const calls = installFetch({
       "GET /api/soul": () => ({ body: profile() }),

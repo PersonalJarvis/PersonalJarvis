@@ -14,6 +14,7 @@ The section shows every file that shapes who the assistant is, in one place:
 Endpoints:
     GET    /api/soul                              → the whole profile
     PUT    /api/soul/file                         → save SOUL.md's Markdown
+    PUT    /api/soul/initiative                   → how much initiative it takes
     DELETE /api/soul/entries/{target}/{entry_id}  → forget one learned note
 
 Reads never create a file: a fresh install shows the files as missing
@@ -40,6 +41,10 @@ _ACTIVITY_LIMIT = 12
 _EVIDENCE_CHARS = 220
 #: The ledger rotates at 256 KB; reading its tail is enough for the list.
 _LEDGER_TAIL_BYTES = 64 * 1024
+
+
+class InitiativeBody(BaseModel):
+    level: Literal["off", "balanced", "high"]
 
 
 class SoulBody(BaseModel):
@@ -259,6 +264,20 @@ def _payload(request: Request) -> dict[str, Any]:
             _book_file(folder, "user"),
         ],
         "activity": _activity(folder),
+        "initiative": _initiative(config),
+    }
+
+
+def _initiative(config: Any) -> dict[str, Any]:
+    """The initiative level and the dated plans the assistant may bring up."""
+    from jarvis.brain import proactivity
+
+    level = proactivity.current_level(config)
+    upcoming = [] if level == "off" else proactivity.upcoming_notes()
+    return {
+        "level": level,
+        "levels": list(proactivity.LEVELS),
+        "upcoming": [{"date": day.isoformat(), "text": text} for day, text in upcoming],
     }
 
 
@@ -284,6 +303,32 @@ def put_soul(body: SoulBody, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="SOUL.md is busy; try again.") from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Could not save: {exc}") from exc
+    return {"ok": True, **_payload(request)}
+
+
+@router.put("/initiative", summary="Set how much initiative the assistant takes")
+def put_initiative(body: InitiativeBody, request: Request) -> dict[str, Any]:
+    """Persist ``[brain] proactivity``, then apply it live to every surface.
+
+    The write comes first: a level that could not be saved is not shown as set.
+    """
+    from jarvis.brain import proactivity
+    from jarvis.core import config_writer
+    from jarvis.core.config import resolve_config_path
+
+    try:
+        # Honour JARVIS_CONFIG so the write lands in the file load_config reads.
+        config_writer.set_proactivity(body.level, path=resolve_config_path())
+    except Exception as exc:  # noqa: BLE001 — reported to the page, nothing applied
+        log.warning("soul: initiative level not saved", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Could not save: {exc}") from exc
+    level = proactivity.apply_level(body.level)
+    brain = getattr(_config(request), "brain", None)
+    if brain is not None:
+        try:
+            brain.proactivity = level
+        except Exception:  # noqa: BLE001 — the live level above already answers
+            log.debug("soul: in-memory brain.proactivity not updated", exc_info=True)
     return {"ok": True, **_payload(request)}
 
 

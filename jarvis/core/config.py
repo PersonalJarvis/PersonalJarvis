@@ -1643,6 +1643,12 @@ class BrainConfig(BaseModel):
     # ``BrainManager._reply_language_directive``. Persisted via
     # ``config_writer.set_reply_language``.
     reply_language: str = "auto"
+    # How much initiative the assistant takes (assistant page → Initiative):
+    # "off" answers only what was asked, "balanced" adds at most one grounded
+    # idea when it clearly helps, "high" up to two plus a heads-up on dated
+    # plans that are close. Never authorises an action. Consumed by
+    # ``jarvis.brain.proactivity``; persisted via ``config_writer.set_proactivity``.
+    proactivity: Literal["off", "balanced", "high"] = "balanced"
     # Persona mandate Phase 3: deterministic spawn heuristic for the router.
     routing: BrainRoutingConfig = Field(default_factory=BrainRoutingConfig)
     # Persona mandate Phase 4: plausibility thresholds for tool execution.
@@ -1670,6 +1676,24 @@ class BrainConfig(BaseModel):
     # beheads with a misleading "took too long" phrase). Set False to fall back to
     # the UI-approval path.
     voice_confirm: bool = True
+
+    @field_validator("proactivity", mode="before")
+    @classmethod
+    def _known_proactivity(cls, value: object) -> str:
+        # A hand-typed value must not leave the backend unbootable: what clearly
+        # means "off" is off, any other unknown level falls back to the default
+        # (with a warning) instead of failing validation.
+        if value is False:
+            return "off"
+        level = value.strip().casefold() if isinstance(value, str) else ""
+        if level in ("off", "balanced", "high"):
+            return level
+        if level in ("false", "none", "no", "0", "disabled"):
+            return "off"
+        logging.getLogger(__name__).warning(
+            "[brain] proactivity = %r is not off/balanced/high; using balanced", value
+        )
+        return "balanced"
 
     @property
     def computer_use(self) -> BrainTierConfig | None:

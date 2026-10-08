@@ -40,7 +40,24 @@ def _identity(config: Any) -> str:
     except Exception:  # noqa: BLE001 — never block a call on the identity block
         log.warning("live voice: identity block unavailable", exc_info=True)
         return ""
-    return identity + _instructions(config) + _memory()
+    return identity + _instructions(config) + _memory() + _initiative(config)
+
+
+def _initiative(config: Any) -> str:
+    """The initiative rule and the dated plans it may draw on; ``""`` on a fault.
+
+    A call is short-lived, so the dated plans are read once at its start like
+    the notebooks above (``jarvis.brain.proactivity``).
+    """
+    try:
+        from jarvis.brain import proactivity
+
+        level = proactivity.current_level(config)
+        blocks = [proactivity.directive(level), proactivity.upcoming_block(level)]
+    except Exception:  # noqa: BLE001 — never block a call on the initiative rule
+        log.warning("live voice: initiative rule unavailable", exc_info=True)
+        return ""
+    return "".join("\n\n" + block for block in blocks if block)
 
 
 #: Same cap as the realtime engines' preferences block: a pathological file

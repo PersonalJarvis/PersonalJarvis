@@ -1,7 +1,7 @@
 /**
  * The assistant profile page's data layer — the shapes `soul_routes.py` returns and the
- * three writes the page makes (save SOUL.md, save or clear the standing
- * instructions, forget one note).
+ * four writes the page makes (save SOUL.md, save or clear the standing
+ * instructions, forget one note, set the initiative level).
  *
  * Every write answers with the whole profile, so the page swaps it in place
  * and never shows a stale count next to a fresh list.
@@ -67,6 +67,21 @@ export interface SoulActivity {
   evidence: string;
 }
 
+export type InitiativeLevel = "off" | "balanced" | "high";
+
+/** A dated plan from the notebooks the assistant may bring up (next two weeks). */
+export interface UpcomingNote {
+  /** ISO day, `2026-10-09`. */
+  date: string;
+  text: string;
+}
+
+export interface Initiative {
+  level: InitiativeLevel;
+  levels: InitiativeLevel[];
+  upcoming: UpcomingNote[];
+}
+
 export interface SoulProfile {
   name: string;
   named: boolean;
@@ -76,6 +91,8 @@ export interface SoulProfile {
   learning: boolean;
   files: SoulFile[];
   activity: SoulActivity[];
+  /** Absent from a backend older than the initiative setting. */
+  initiative?: Initiative;
 }
 
 export const SOUL_QUERY_KEY = ["soul"] as const;
@@ -153,6 +170,19 @@ export function useForgetNote() {
         `/api/soul/entries/${encodeURIComponent(target)}/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       ),
+    onSuccess: (profile) => client.setQueryData(SOUL_QUERY_KEY, profile),
+  });
+}
+
+export function useSetInitiative() {
+  const client = useQueryClient();
+  return useMutation<SoulProfile, Error, InitiativeLevel>({
+    mutationFn: (level) =>
+      request<SoulProfile>("/api/soul/initiative", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ level }),
+      }),
     onSuccess: (profile) => client.setQueryData(SOUL_QUERY_KEY, profile),
   });
 }

@@ -155,3 +155,43 @@ def test_forgetting_a_note_needs_the_running_loop_and_is_ledgered(
     ledger = (book.folder / notebook_module.LEDGER_NAME).read_text(encoding="utf-8")
     last = json.loads(ledger.strip().splitlines()[-1])
     assert last["source"] == "soul page: forgotten by the user"
+
+
+def test_the_initiative_level_is_saved_applied_live_and_lists_dated_plans(
+    server: WebServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date, timedelta
+
+    from jarvis.brain import proactivity
+    from jarvis.core.config import load_config
+
+    config_file = tmp_path / "jarvis.toml"
+    config_file.write_text("[brain]\n", encoding="utf-8")
+    monkeypatch.setattr(core_config, "resolve_config_path", lambda: config_file)
+    proactivity.reset_applied_level()
+    soon = (date.today() + timedelta(days=2)).isoformat()
+    book = JarvisNotebook(tmp_path / "vault")
+    book.apply(target="user", operation="add", text=f"The user's launch is on {soon}.")
+    notebook_module.set_active(book)
+    try:
+        with TestClient(server.app) as client:
+            initiative = client.get("/api/soul").json()["initiative"]
+            assert initiative["level"] == "balanced"
+            assert initiative["levels"] == ["off", "balanced", "high"]
+            assert initiative["upcoming"] == [
+                {"date": soon, "text": f"The user's launch is on {soon}."}
+            ]
+            assert client.put("/api/soul/initiative", json={"level": "loud"}).status_code == 422
+            resp = client.put("/api/soul/initiative", json={"level": "off"})
+            assert resp.status_code == 200
+            # Off: nothing is pointed at, so the page lists nothing either.
+            assert resp.json()["initiative"] == {
+                "level": "off",
+                "levels": ["off", "balanced", "high"],
+                "upcoming": [],
+            }
+        assert load_config(config_file=config_file).brain.proactivity == "off"
+        assert proactivity.current_level(server.app.state.config) == "off"
+        assert server.app.state.config.brain.proactivity == "off"
+    finally:
+        proactivity.reset_applied_level()

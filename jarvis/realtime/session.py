@@ -2206,6 +2206,36 @@ def _learned_block(*, compact: bool = False) -> str:
         return ""
 
 
+def _initiative_blocks(level: str | None, *, compact: bool = False) -> tuple[str, str]:
+    """The initiative rule and the dated plans it may draw on (``jarvis.brain.proactivity``).
+
+    ``level`` ``None`` reads the live level. Degrades to ``("", "")`` so a
+    fault never blocks the session handshake.
+    """
+    try:
+        from jarvis.brain import proactivity
+
+        resolved = proactivity.current_level() if level is None else level
+        return (
+            proactivity.directive(resolved, compact=compact),
+            proactivity.upcoming_block(resolved, compact=compact),
+        )
+    except Exception:  # noqa: BLE001 — never break the voice session on an initiative fault
+        log.warning("realtime: initiative blocks unavailable", exc_info=True)
+        return "", ""
+
+
+def _proactivity_level(config: Any) -> str | None:
+    """The configured initiative level; ``None`` (the live level) on a fault."""
+    try:
+        from jarvis.brain.proactivity import current_level
+
+        return current_level(config)
+    except Exception:  # noqa: BLE001 — the live level still answers
+        log.debug("realtime: initiative level unavailable", exc_info=True)
+        return None
+
+
 def _identity_block(config: Any, *, compact: bool = False) -> str:
     """Name directive and SOUL.md character (``jarvis.brain.identity``).
 
@@ -2238,6 +2268,7 @@ def _session_instructions(
     society_directive: str = "",
     compact: bool = False,
     history_lost: bool = False,
+    proactivity_level: str | None = None,
 ) -> str:
     """Assemble the session instructions; ``compact`` is the small-brain profile.
 
@@ -2370,6 +2401,7 @@ def _session_instructions(
     )
     history_lost_line = _HISTORY_LOST_INSTRUCTION if history_lost else ""
     learned = _learned_block(compact=compact)
+    initiative, upcoming = _initiative_blocks(proactivity_level, compact=compact)
     if compact:
         # Static-first / dynamic-last: everything that is identical from turn
         # to turn forms one stable prefix, so Ollama's KV prefix cache skips
@@ -2382,6 +2414,7 @@ def _session_instructions(
             learned,
             _ONE_SPEAKER_DIRECTIVE,
             _COMPLETE_THE_REQUEST_DIRECTIVE,
+            initiative,
             tool_directive,
             _REALTIME_SAFETY_APPENDIX,
             freshness_line,
@@ -2393,6 +2426,7 @@ def _session_instructions(
             skills_directive,
             skill_directive,
             input_directive,
+            upcoming,
             clock_line,
             language_directive,
         ]
@@ -2415,6 +2449,9 @@ def _session_instructions(
         # thing: how much of the turn belongs to this reply. One says "do not
         # speak twice", this one says "do not answer only a third of it".
         _COMPLETE_THE_REQUEST_DIRECTIVE,
+        # What to add once the request is answered: one grounded idea at most,
+        # never an action. Below "complete the request", which it extends.
+        initiative,
         tool_directive,
         # The live workspace roster sits with the tool directive because it is
         # a routing rule, not background colour: it names the one class of word
@@ -2439,6 +2476,8 @@ def _session_instructions(
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
         clock_line,
+        # Dated plans from the notebooks, relative to the clock line above.
+        upcoming,
         freshness_line,
         precision_line,
         identity_line,
@@ -3872,6 +3911,7 @@ class RealtimeVoiceSession:
             session_config = RealtimeSessionConfig(
                 instructions=_session_instructions(
                     self._language,
+                    proactivity_level=_proactivity_level(self._config),
                     identity=_identity_block(
                         self._config,
                         compact=bool(
@@ -5486,6 +5526,7 @@ class RealtimeVoiceSession:
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
+                                proactivity_level=_proactivity_level(self._config),
                                 identity=_identity_block(
                                     self._config,
                                     compact=getattr(
@@ -7373,6 +7414,7 @@ class RealtimeVoiceSession:
             await self._session.update_session(
                 instructions=_session_instructions(
                     self._language,
+                    proactivity_level=_proactivity_level(self._config),
                     identity=_identity_block(
                         self._config,
                         compact=getattr(self, "_compact_instructions", False),

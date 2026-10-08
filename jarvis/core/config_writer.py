@@ -1113,6 +1113,15 @@ def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _patch_table(path, "brain", "reply_language", name)
 
 
+def set_proactivity(level: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the assistant's initiative level in ``[brain] proactivity``.
+
+    ``level`` is one of ``off`` | ``balanced`` | ``high`` (validated by the
+    caller). The live switch happens via ``jarvis.brain.proactivity.apply_level``.
+    """
+    _patch_table(path, "brain", "proactivity", level)
+
+
 def set_ui_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the interface (display) language in ``[ui] language``.
 
