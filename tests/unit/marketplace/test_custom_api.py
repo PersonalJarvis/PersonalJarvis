@@ -227,6 +227,24 @@ def test_definitions_honor_the_headless_data_directory(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_explicitly_blocked_action_cannot_run_even_if_an_outer_gate_allows_it(store):
+    spec = definition()
+    spec.actions[0].risk_tier = "block"
+    store.save(spec, "test-secret-key")
+    runtime = CustomApiRuntime(
+        store,
+        transport=httpx.MockTransport(
+            lambda request: pytest.fail("Blocked action reached the provider"),
+        ),
+    )
+    await runtime.refresh()
+    result = await next(iter(runtime.tools.values())).execute(args(), context())
+    assert not result.success
+    assert "blocked" in result.error
+    await runtime.stop()
+
+
+@pytest.mark.asyncio
 async def test_current_credentials_and_disconnect_revoke_retained_tools(store):
     spec = definition()
     store.save(spec, "test-secret-key")

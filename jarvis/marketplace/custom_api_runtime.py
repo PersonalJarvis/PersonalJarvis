@@ -108,6 +108,8 @@ class CustomApiTool:
         """Execution is authorized by ToolExecutor, like every native tool."""
         from jsonschema import Draft202012Validator
 
+        if self.action.risk_tier == "block":
+            return ToolResult(False, None, "This API action is blocked in Custom APIs")
         if not Draft202012Validator(self.schema).is_valid(args):
             return ToolResult(False, None, "Arguments do not match this action's input schema")
         try:
