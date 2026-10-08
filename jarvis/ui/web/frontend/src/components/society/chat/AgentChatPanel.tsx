@@ -60,7 +60,8 @@ import {
   type TurnItem,
   type UserItem,
 } from "@/components/agentchat/reduce";
-import { TurnTrace } from "@/components/agentchat/WorkTrace";
+import { ThreadTurn } from "@/components/agentic/threads/ThreadTimeline";
+import { formatTokens, outputTokens } from "@/components/agentchat/toolView";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
@@ -770,7 +771,7 @@ function TimeStamp({ ms }: { ms: number }) {
  * summary underneath, muted — it is the society reporting, not Jarvis
  * speaking, so it never wears an assistant bubble.
  */
-function NoticeLine({ item }: { item: NoticeItem }) {
+export function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "message_queued") {
@@ -790,6 +791,20 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     const runtime = String(item.data.runtime ?? "");
     return <p className="py-1 text-center text-[11px] text-muted-foreground" data-testid="runtime-setup-notice">
       {runtime ? t("society.runtime.setting_up_chat").replace("{0}", t(`society.runtime.${runtime}`)) : item.text}
+    </p>;
+  }
+  if (item.kind === "stop_reason") {
+    // A runtime turn that ended early: the answer above stands, but is cut off.
+    const reason = String(item.data.stop_reason ?? "");
+    const known = ["max_tokens", "max_turn_requests", "cancelled"].includes(reason);
+    return <p role="note" className="py-1 text-xs italic text-muted-foreground" data-testid="stop-reason-notice">
+      {known ? t(`society.chat.stop_reason_${reason}`) : item.text}
+    </p>;
+  }
+  if (item.kind === "routine_runtime_fallback") {
+    const runtime = String(item.data.runtime ?? "");
+    return <p className="py-1 text-center text-[11px] text-muted-foreground" data-testid="routine-runtime-fallback">
+      {runtime ? t("society.runtime.routine_fallback").replace(/\{0\}/g, t(`society.runtime.${runtime}`)) : item.text}
     </p>;
   }
   if (item.kind === "routine_run") {
@@ -1037,11 +1052,20 @@ function TurnBubble({
   memory?: NoticeItem[];
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
+  const t = useT();
   const extras = useMemo(
     () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} inTrace /> })),
     [memory],
   );
-  return <TurnTrace turn={item} conversation extras={extras} onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
+  // What the turn spent: output tokens only (BUG-173), and the cost when billed.
+  const tokens = outputTokens(item.usage ?? item.liveUsage);
+  const spent = [
+    tokens !== null && tokens > 0 ? `${formatTokens(tokens)} ${t("agent_chat.tokens")}` : "",
+    item.costUsd !== null && item.costUsd > 0 ? `$${item.costUsd.toFixed(4)}` : "",
+  ].filter(Boolean).join(" · ");
+  // An agent's turn reads exactly like a coding thread's turn in the Agentic
+  // IDE; only its questions and approvals are answered in place.
+  return <ThreadTurn turn={item} prompts="inline" onDecide={onDecide} extras={extras} receipt={spent || undefined} />;
 }
 
 /**

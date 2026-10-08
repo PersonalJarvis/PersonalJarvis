@@ -18,6 +18,8 @@ class BusyChat:
     def __init__(self, surface: str = "society") -> None:
         self.surface = surface
         self.busy: set[str] = set()
+        #: Idle chats whose agent is busy elsewhere: ``send`` still refuses.
+        self.refusing: set[str] = set()
         self.sent: list[tuple[str, str]] = []
         self.notices: list[tuple[str, dict]] = []
         self.fail_next = False
@@ -32,7 +34,7 @@ class BusyChat:
         return session_id in self.busy
 
     async def send(self, session_id, text, attachments=None, *, tool_choices=None) -> str:
-        if session_id in self.busy:
+        if session_id in self.busy or session_id in self.refusing:
             raise SessionBusy(session_id)
         if self.fail_next:
             self.fail_next = False
@@ -152,8 +154,37 @@ async def test_a_message_that_fails_to_start_is_reported_and_the_next_runs():
     assert "refused" not in failed[0]["text"]
 
 
-async def test_a_message_that_waits_too_long_is_reported(monkeypatch):
+async def test_a_message_behind_a_long_running_turn_still_runs(monkeypatch):
+    # A Hermes agent's first turn may set its runtime up for many minutes; the
+    # message behind it waits for that turn, not for a fixed idle timer.
+    monkeypatch.setattr(send_queue, "MAX_WAIT_S", 0.03)
+    chat = BusyChat()
+    chat.busy.add("society:scout")
+    queue_id = (await send_or_queue(chat, "society:scout", "after the setup"))[1]
+    await asyncio.sleep(0.15)
+    assert not any(p.get("status") == "failed" for _, p in chat.notices)
+    chat.busy.clear()
+    await _until(lambda: chat.sent)
+    assert chat.sent == [("society:scout", "after the setup")]
+    assert any(p == {"kind": "message_dequeued", "queue_id": queue_id, "status": "sent"}
+               for _, p in chat.notices)
+
+
+async def test_a_message_the_idle_chat_cannot_take_is_reported(monkeypatch):
     monkeypatch.setattr(send_queue, "MAX_WAIT_S", 0.05)
+    chat = BusyChat()
+    chat.busy.add("society:scout")
+    queue_id = (await send_or_queue(chat, "society:scout", "too late"))[1]
+    chat.busy.clear()
+    chat.refusing.add("society:scout")  # the agent works in another chat
+    await _until(lambda: any(p.get("status") == "failed" for _, p in chat.notices))
+    assert chat.sent == []
+    failed = [p for _, p in chat.notices if p.get("status") == "failed"]
+    assert failed[0]["queue_id"] == queue_id
+
+
+async def test_a_message_that_waits_too_long_is_reported(monkeypatch):
+    monkeypatch.setattr(send_queue, "MAX_TOTAL_WAIT_S", 0.05)
     chat = BusyChat()
     chat.busy.add("society:scout")
     queue_id = (await send_or_queue(chat, "society:scout", "too late"))[1]

@@ -38,7 +38,9 @@ async def test_review_seat_construction_keeps_loop_responsive(monkeypatch, no_ag
     registry = RecordingRegistry(["openai"], on_instantiate=slow_build)
     monkeypatch.setattr(resolver, "_get_registry", lambda: registry)
     runtime = SimpleNamespace(config=lambda: None, skills_for=lambda agent_id: None)
-    agent = SimpleNamespace(provider="openai", model="test-model", effort="low", agent_id="test")
+    agent = SimpleNamespace(
+        provider="openai", model="test-model", effort="low", agent_id="test", account_id=""
+    )
     task = asyncio.create_task(_ask(runtime, agent, "Evidence"))
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
@@ -59,6 +61,8 @@ async def test_unavailable_review_seat_finishes_without_stop_iteration(monkeypat
     monkeypatch.setattr(resolver, "_get_registry", lambda: registry)
     runtime = SimpleNamespace(config=lambda: None, skills_for=lambda agent_id: None)
     # A coding CLI with no background brain in this app: nothing can answer.
-    agent = SimpleNamespace(provider="cursor", model="", effort="low", agent_id="test")
+    agent = SimpleNamespace(
+        provider="cursor", model="", effort="low", agent_id="test", account_id=""
+    )
     assert await asyncio.wait_for(_ask(runtime, agent, "Evidence"), timeout=2) is None
     assert registry.built == []

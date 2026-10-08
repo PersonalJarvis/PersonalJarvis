@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -251,6 +252,58 @@ def test_runner_reports_failures_and_passes(tmp_path):
     assert code == 1
     assert report["counts"]["passed"] == 1
     assert any(fid.endswith("::test_bad") for fid in report["failed_ids"])
+
+
+def test_memory_probe_reads_this_machine():
+    free = run_tests_parallel.available_memory()
+    assert free is None or free > 0
+
+
+def test_memory_gate_never_holds_back_the_only_batch():
+    gate = run_tests_parallel.MemoryGate(reserve=10, probe=lambda: 0, poll_seconds=0.01)
+    gate.acquire()
+    assert gate.running == 1
+    assert gate.waits == 0
+
+
+def test_memory_gate_holds_a_second_batch_until_memory_frees():
+    free = {"bytes": 0}
+    gate = run_tests_parallel.MemoryGate(reserve=10, probe=lambda: free["bytes"], poll_seconds=0.01)
+    gate.acquire()
+    entered = threading.Event()
+
+    def second() -> None:
+        gate.acquire()
+        entered.set()
+
+    worker = threading.Thread(target=second, daemon=True)
+    worker.start()
+    assert not entered.wait(0.2)
+    assert gate.waits == 1
+    free["bytes"] = 100
+    assert entered.wait(2)
+    worker.join(2)
+    assert gate.running == 2
+
+
+def test_memory_gate_lets_a_waiting_batch_in_when_the_others_finish():
+    gate = run_tests_parallel.MemoryGate(reserve=10, probe=lambda: 0, poll_seconds=0.01)
+    gate.acquire()
+    entered = threading.Event()
+    worker = threading.Thread(target=lambda: (gate.acquire(), entered.set()), daemon=True)
+    worker.start()
+    assert not entered.wait(0.2)
+    gate.release()
+    assert entered.wait(2)
+    worker.join(2)
+
+
+def test_memory_gate_is_open_where_memory_cannot_be_read():
+    gate = run_tests_parallel.MemoryGate(reserve=10, probe=lambda: None)
+    gate.acquire()
+    gate.acquire()
+    assert gate.running == 2
+    assert gate.waits == 0
 
 
 # --------------------------------------------------------------------------- ratchet

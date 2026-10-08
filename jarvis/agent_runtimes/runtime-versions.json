@@ -1,0 +1,13 @@
+{
+  "_comment": "Runtime versions Jarvis installs and updates to. 'minimum' gates readiness; 'tested' is the release the agent-runtimes canary verified on Windows, macOS and Linux. Setup and daily updates go to 'tested' only, never to upstream latest. Bump 'tested' only from a green canary run (docs/agent-runtimes.md).",
+  "hermes": {
+    "minimum": "0.20.6",
+    "tested": "0.21.5",
+    "commit": "ed2dd0b35ced262f9c3f6f5d78cb4c831edc5245",
+    "config_version": 50
+  },
+  "openclaw": {
+    "minimum": "2026.9.8",
+    "tested": "2026.9.8"
+  }
+}

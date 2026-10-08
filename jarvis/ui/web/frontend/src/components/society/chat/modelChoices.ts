@@ -78,6 +78,24 @@ export function runtimeSeats(
     } : seat);
 }
 
+/**
+ * Why a Hermes / OpenClaw seat cannot answer right now ("" when it can): the
+ * provider refuses the way this seat pays (`/api/agent-runtimes` →
+ * `access_blocked`). Claude's login is refused while its Extra Usage is off;
+ * the seat pays that way when it is the login seat (`extraUsage`) or the
+ * agent is pinned to its subscription (`account_id` "subscription").
+ */
+export function seatBlocked(
+  seat: BrainSeat,
+  blocked: Record<string, Record<string, string>> | undefined,
+  pinnedAccount = "",
+): string {
+  const refused = blocked?.[seat.provider.id];
+  if (!refused || typeof refused !== "object") return "";
+  const way = seat.extraUsage || pinnedAccount === "subscription" ? "subscription" : seat.kind;
+  return typeof refused[way] === "string" ? refused[way] : "";
+}
+
 /** A CLI catalog narrowed to real model ids: its aliases mean nothing to an API. */
 export function apiModels(models: CuratedModel[]): CuratedModel[] {
   return models.filter((model) => /\d/.test(model.id));

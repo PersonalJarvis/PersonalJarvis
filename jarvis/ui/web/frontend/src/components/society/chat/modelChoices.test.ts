@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import type { ProviderOption } from "@/store/agentChat";
 import type { SocietyProviderRow } from "@/lib/societyApi";
-import { isFreeOpenCodeModel, modelEffort, modelSeats, visibleModels } from "./modelChoices";
+import { isFreeOpenCodeModel, modelEffort, modelSeats, seatBlocked, visibleModels } from "./modelChoices";
 
 const option = (overrides: Partial<ProviderOption> = {}): ProviderOption => ({
   id: "cli", label: "CLI", family: "cli", runner: "grok-cli", connected: false,
@@ -55,4 +55,14 @@ test("the default model never authorizes a disconnected, missing, or API seat", 
   expect(modelSeats([option({ cli_installed: false, curated_models: [] })], accounts, {})).toEqual([]);
   const [seat] = modelSeats([option({ runner: "api", cli_installed: null, connected: true, curated_models: [] })], [], {});
   expect(seat.provider.curated_models).toEqual([]);
+});
+
+test("a Claude login seat is blocked while the backend refuses it, an API seat is not", () => {
+  const blocked = { "claude-api": { subscription: "extra_usage_off" } };
+  const [login] = modelSeats([option({ id: "claude-api", family: "claude", runner: "brain", connected: true })], [], {});
+  expect(seatBlocked({ ...login, extraUsage: true }, blocked)).toBe("extra_usage_off");
+  expect(seatBlocked({ ...login, kind: "api", extraUsage: false }, blocked)).toBe("");
+  // An agent pinned to the subscription pays by login even where an API key exists.
+  expect(seatBlocked({ ...login, kind: "api", extraUsage: false }, blocked, "subscription")).toBe("extra_usage_off");
+  expect(seatBlocked({ ...login, extraUsage: true }, undefined)).toBe("");
 });

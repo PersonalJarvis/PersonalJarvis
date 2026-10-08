@@ -821,6 +821,48 @@ def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
     asyncio.run(scenario())
 
 
+def test_a_card_nothing_waits_on_closes_when_clicked(tmp_path: Path) -> None:
+    """A click on a card whose asker is gone closes it for good; nothing runs."""
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.store.create_session(
+            provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+        )
+        sid = session.session_id
+        payload = {"turn_id": "t1", "approval_id": "gone", "call_id": "c1", "name": "Bash"}
+        svc.store.append_event(sid, {"kind": "turn_started", "ts_ms": 1, "payload": {"turn_id": "t1"}})
+        svc.store.append_event(sid, {"kind": "approval_required", "ts_ms": 2, "payload": payload})
+
+        assert not svc.resolve_approval(sid, "gone", "allow")
+        assert await svc.close_stale_approval(sid, "gone")
+        last = svc.store.list_events(sid)[-1]
+        assert last["kind"] == "approval_resolved"
+        assert last["payload"] == {"turn_id": "t1", "approval_id": "gone", "decision": "expired"}
+        # Closed once; an id the chat never showed is not invented into it.
+        assert not await svc.close_stale_approval(sid, "gone")
+        assert not await svc.close_stale_approval(sid, "never-shown")
+        assert len(svc.store.list_events(sid)) == 3
+
+    asyncio.run(scenario())
+
+
+def test_the_approval_route_answers_410_for_an_expired_card(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        svc = app.state.agent_chat_factory()
+        app.state.agent_chat = svc
+        sid = svc.store.create_session(
+            provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+        ).session_id
+        payload = {"turn_id": "t1", "approval_id": "gone", "call_id": "c1", "name": "Bash"}
+        svc.store.append_event(sid, {"kind": "approval_required", "ts_ms": 2, "payload": payload})
+        expired = client.post(f"/api/agent-chat/sessions/{sid}/approvals/gone", json={"decision": "allow"})
+        assert expired.status_code == 410
+        unknown = client.post(f"/api/agent-chat/sessions/{sid}/approvals/nope", json={"decision": "allow"})
+        assert unknown.status_code == 404
+
+
 def test_a_new_process_closes_turns_a_restart_left_open(tmp_path: Path) -> None:
     """A turn whose runner died with the old process ends as failed, not Working for ever."""
     db = tmp_path / "agent_chat.db"
