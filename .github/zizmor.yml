@@ -6,19 +6,17 @@ rules:
       # Runs on a merged PR but checks out `main` only and executes nothing
       # from the pull request; the push token reaches the commit step alone.
       - contributors.yml
-      # Both react to completed runs of this repository's own workflows and
-      # act on main / release tags; neither checks out or runs PR head code.
+      # Both react to completed runs of this repository's own workflows.
+      # release-finalize acts on main / release tags only. merge-train runs
+      # PR code solely in its read-only `integrate` job without secrets
+      # (apart from the resolver step that precedes it); the write-token
+      # `apply` job executes nothing from a pull request.
       - merge-train.yml
       - release-finalize.yml
       # Reacts to completed CI runs on main only (repository, branch and event
       # checked in `if:` and again by flaky_report.py vet-run), checks out
       # `main`, and reads the downloaded shard reports as JSON data.
       - flaky-tests.yml
-  artipacked:
-    ignore:
-      # This job pushes commits with git after checkout, so the checkout must
-      # keep its credential. It does not upload the workspace.
-      - merge-train.yml
   unpinned-uses:
     config:
       policies:
