@@ -214,8 +214,9 @@ def visual_mode(
     return "speak"
 
 
-connected_stamp = controls.connected_stamp
-connected_elapsed = controls.connected_elapsed
+# The connect clock every bar surface keeps (``ui.orb.controls``).
+ConnectTimeline = controls.ConnectTimeline
+ConnectLook = controls.ConnectLook
 
 
 def apply_display_scale(scale: float, user_size: float | None = None) -> None:
@@ -267,7 +268,7 @@ class JarvisBarRenderer:
         drop_state: str = DROP_STATE_NONE,
         drop_elapsed: float = 0.0,
         surface_mode: str | None = None,
-        connected_elapsed: float | None = None,
+        connect_look: controls.ConnectLook | None = None,
     ) -> Image.Image:
         actual = surface_mode or mode
         motion = (
@@ -279,15 +280,15 @@ class JarvisBarRenderer:
             if mode in ("listen", "speak", "dictate")
             else "rest"
         )
-        clock = t
-        if (
-            motion != "connect"
-            and actual in ACTIVE_VOICE_MODES
-            and controls.connected_flourish_running(connected_elapsed)
-        ):
-            # The call just connected: one flourish before the live look.
-            motion = "connected"
-            clock = float(connected_elapsed or 0.0)
+        phase = controls.indicator_phase(motion, t)
+        spin = 0
+        if connect_look is not None and actual in ACTIVE_VOICE_MODES:
+            # The surface's ConnectTimeline: the strokes bending into the
+            # loading loop, or the one-shot back out of it once connected.
+            motion, phase, spin = connect_look.motion, connect_look.phase, connect_look.spin
+        elif motion == "connect":
+            # No timeline (a bare render): the loop, fully bent, spinning on t.
+            phase, spin = controls.PET_MORPH_STEPS, controls.spin_step(t)
         state = controls.PetStripState(
             jarvis_bar=True,
             mic_muted=muted,
@@ -295,7 +296,8 @@ class JarvisBarRenderer:
             active=actual in ACTIVE_VOICE_MODES,
             level=controls.quantize_level(ext_level) if motion in ("voice", "connect") else 0,
             motion=motion,
-            phase=controls.indicator_phase(motion, clock),
+            phase=phase,
+            spin=spin,
             hovered=hovered_action,
             call_ring=call_ring,
         )

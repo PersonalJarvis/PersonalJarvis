@@ -34,10 +34,10 @@ one click.
     strokes stand still and dimmed at rest, follow the live audio level while
     listening, dictating or talking, and carry a travelling highlight while
     thinking or transcribing. While a realtime call is still connecting
-    (`SystemStateChanged(CONNECTING)`) a comet circles the strokes — the
-    loading loop — while they hop as dots and still follow the voice; once
-    the provider takes the call the ring closes, flares green and fades into
-    the listening look. The Jarvis Bar shows the same loop;
+    (`SystemStateChanged(CONNECTING)`) the three strokes bend into the arcs
+    of one ring and spin as the loading loop (a live voice lengthens the
+    arcs); once the provider takes the call they flash green, unbend and
+    slide back into the listening row. The Jarvis Bar shows the same loop;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thought bubble** above the pet's head while Jarvis thinks, drawn in
