@@ -93,6 +93,11 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
         from jarvis.core.background_service import SERVICE_FLAG
 
         service_args = (SERVICE_FLAG,)
+        background = getattr(cfg, "background", None)
+        if getattr(background, "persistent_server", False) and not getattr(
+            background, "server_url", ""
+        ):
+            service_args += ("--persistent-server",)
 
     args: tuple[str, ...] = ("-m", LAUNCHER_MODULE, *service_args)
     if sys.platform == "win32":

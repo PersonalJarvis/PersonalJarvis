@@ -2937,6 +2937,13 @@
       "instant_start_declined_toast": "Permission was declined — {name} still starts via the shortcut (may be delayed)."
     },
     "background_agents": {
+      "server_title": "Independent agent server",
+      "server_backend_update": "Restart the desktop app once to load agent server support.",
+      "server_description": "Run Jarvis, Hermes and OpenClaw on a server that stays running when every client closes. Applies to the next desktop launch.",
+      "server_active": "This independent server keeps agents running. Closing this client does not stop it.",
+      "server_url_label": "Server address (leave empty to run on this computer)",
+      "server_save": "Save address",
+      "server_hint": "Remote servers use HTTPS and their own sign-in. The client uses browser voice; local wake word, overlays and device control require the integrated desktop or an available device.",
       "title": "Keep agents running after closing",
       "description": "When you close {name}, a small background service keeps your routines and chat channels (Telegram, Discord) running. Opening the app takes over again. It only starts when there is something to keep.",
       "keeps_now": "Closing now keeps: {what}.",

@@ -2939,6 +2939,13 @@
       "instant_start_declined_toast": "权限被拒绝，{name}仍会通过快捷方式启动（可能会延迟）。"
     },
     "background_agents": {
+      "server_title": "独立代理服务器",
+      "server_backend_update": "重启一次桌面应用，以加载代理服务器支持。",
+      "server_description": "让 Jarvis、Hermes 和 OpenClaw 在服务器上持续运行，即使所有客户端均已关闭。下次启动桌面应用时生效。",
+      "server_active": "此独立服务器会让代理持续运行。关闭此客户端不会停止服务器。",
+      "server_url_label": "服务器地址（留空则在本机运行）",
+      "server_save": "保存地址",
+      "server_hint": "远程服务器使用 HTTPS 并需单独登录。客户端通过浏览器提供语音功能；本地唤醒词、悬浮界面和设备控制仍需要集成桌面应用或可用设备。",
       "title": "关闭后保持智能体运行",
       "description": "关闭{name}后，一个小型后台服务会让你的例程和聊天渠道（Telegram、Discord）继续运行。打开应用后会重新接管。只有在有需要保持运行的内容时它才会启动。",
       "keeps_now": "现在关闭会保留：{what}。",

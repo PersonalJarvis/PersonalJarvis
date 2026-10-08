@@ -175,10 +175,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def write_marker(port: int) -> None:
+def write_marker(port: int, *, persistent: bool = False) -> None:
     _write_json(
         marker_path(),
-        {"pid": os.getpid(), "port": int(port), "started_at": time.time()},
+        {"pid": os.getpid(), "port": int(port), "started_at": time.time(),
+         "persistent": persistent},
     )
 
 
@@ -210,7 +211,7 @@ def _is_service_process(pid: int) -> bool:
         cmdline = psutil.Process(int(pid)).cmdline()
     except Exception:  # noqa: BLE001 — gone or unreadable: not our service
         return False
-    return SERVICE_FLAG in cmdline
+    return SERVICE_FLAG in cmdline or "--persistent-server" in cmdline
 
 
 def service_pid(*, is_service: Callable[[int], bool] = _is_service_process) -> int | None:
@@ -270,6 +271,8 @@ def _windowless_python(executable: str) -> str:
 def service_command(
     *,
     after_pid: int | None,
+    persistent: bool = False,
+    port: int | None = None,
     executable: str | None = None,
     frozen: bool | None = None,
 ) -> list[str]:
@@ -287,6 +290,10 @@ def service_command(
 
         frozen = is_frozen()
     tail = [*current_instance().launcher_args]
+    if persistent:
+        tail.append("--persistent-server")
+    if port is not None:
+        tail += ["--port", str(int(port))]
     if after_pid is not None:
         tail += [AFTER_PID_FLAG, str(int(after_pid))]
     if frozen:
@@ -349,7 +356,9 @@ def _spawn_windows_outside_job(argv: list[str], cwd: str, env: dict[str, str]) -
     return True
 
 
-def spawn_service(*, after_pid: int | None) -> bool:
+def spawn_service(
+    *, after_pid: int | None, persistent: bool = False, port: int | None = None,
+) -> bool:
     """Start the service detached from this process. Never raises."""
     try:
         from jarvis.core.instance import current_instance
@@ -358,7 +367,7 @@ def spawn_service(*, after_pid: int | None) -> bool:
         cwd = restart_workdir(_source_root())
         env = current_instance().environ(fresh_user_env())
         env["PYTHONIOENCODING"] = "utf-8"
-        argv = service_command(after_pid=after_pid)
+        argv = service_command(after_pid=after_pid, persistent=persistent, port=port)
         if sys.platform == "win32":
             return _spawn_windows_outside_job(argv, cwd, env)
         spawn_detached(argv, cwd=cwd, env=env)
@@ -376,19 +385,24 @@ def hand_off_on_quit(state: Any, cfg: Any, *, pid: int | None = None) -> bool:
     try:
         from jarvis.core.instance import current_instance
 
-        if not current_instance().owns_ambient_duties:
+        section = getattr(cfg, "background", None)
+        persistent = bool(getattr(section, "persistent_server", False)) and not bool(
+            getattr(section, "server_url", "")
+        )
+        if not current_instance().owns_ambient_duties and not persistent:
             # A dev instance carries no channels and must not linger unseen.
             return False
-        if not keep_running_enabled(cfg):
+        if not persistent and not keep_running_enabled(cfg):
             logger.info("background: keep_agents_running is off — everything stops with the app")
             return False
         work = work_from_state(state)
-        if not work:
+        if not persistent and not work:
             logger.info("background: no routines or channels to keep — no background service")
             return False
         # A leftover request would make the new service exit at once.
         clear_handover_request()
-        started = spawn_service(after_pid=os.getpid() if pid is None else pid)
+        options = {"persistent": True} if persistent else {}
+        started = spawn_service(after_pid=os.getpid() if pid is None else pid, **options)
         logger.info(
             "background: {} the background service to keep {}",
             "started" if started else "could NOT start",
