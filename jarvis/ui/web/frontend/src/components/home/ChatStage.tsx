@@ -204,7 +204,7 @@ function ChatStageContent() {
   // chat is coding sessions and never shows a spoken thread.
   if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
-  // The front page opens the way the Codex app does: the greeting alone in
+  // The front page opens with the greeting alone in
   // the middle of the page, the composer already where it will stay — at the
   // bottom — so the first send moves nothing.
   if (!hasContent && isJarvis) {

@@ -483,7 +483,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 /**
- * Empty state — Claude-style: calm, centered, no suggestion cards. A quiet
+ * Empty state — calm, centered, no suggestion cards. A quiet
  * mascot, a centered greeting and a one-line subtitle. The composer below is
  * the focus (it carries the new mic / dictation button). Deliberately minimal —
  * the user explicitly asked to drop the canned prompt cards.

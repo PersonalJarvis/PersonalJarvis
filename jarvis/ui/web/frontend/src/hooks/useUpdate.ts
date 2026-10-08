@@ -33,6 +33,14 @@ export interface UpdateStatus {
     rolled_back: boolean;
     completed_at?: number | null;
   } | null;
+  /**
+   * A native install that cannot replace itself where it runs (macOS app in a
+   * temporary or read-only location, Linux not started from a writable
+   * AppImage). The update is still announced; ``blocked_code`` picks the
+   * translated explanation and ``blocked_reason`` is the English fallback.
+   */
+  blocked_code?: string | null;
+  blocked_reason?: string | null;
 }
 
 /**

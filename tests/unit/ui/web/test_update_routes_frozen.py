@@ -21,7 +21,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import jarvis.ui.web.update_routes as u
-from jarvis.core.installer_update import CHECKSUMS_ASSET_NAME, InstallerUpdateError
+from jarvis.core.installer_update import (
+    CHECKSUMS_ASSET_NAME,
+    InstallerUpdateError,
+    UpdateBlocker,
+)
 from jarvis.ui.web.update_routes import router as update_router
 
 SETUP_NAME = "PersonalJarvis-Setup-x64.exe"
@@ -533,7 +537,10 @@ def test_a_mission_started_during_the_download_still_stops_the_handover(
 # --------------------------------------------------------------------------- #
 # Preflight: an install that cannot replace itself is told so BEFORE download
 # --------------------------------------------------------------------------- #
-BLOCKED = "macOS is running Personal Jarvis from a temporary copy. Move it first."
+BLOCKED = UpdateBlocker(
+    "app_translocated",
+    "macOS is running Personal Jarvis from a temporary copy. Move it first.",
+)
 
 
 def test_status_announces_the_update_and_says_why_it_cannot_install(
@@ -547,8 +554,10 @@ def test_status_announces_the_update_and_says_why_it_cannot_install(
 
     # The user still learns that 1.6.0 exists...
     assert body["update_available"] is True
-    # ...and the reason travels with it.
-    assert body["blocked_reason"] == BLOCKED
+    # ...and the reason travels with it: a code the UI translates, and the
+    # English sentence for anything that does not know the code.
+    assert body["blocked_code"] == "app_translocated"
+    assert body["blocked_reason"] == BLOCKED.message
 
 
 def test_status_does_not_run_the_preflight_without_an_update(
@@ -557,12 +566,13 @@ def test_status_does_not_run_the_preflight_without_an_update(
     _patch_frozen(monkeypatch, running="1.6.0")
     _patch_latest(monkeypatch, _release("1.6.0"))
 
-    def _never() -> str:
+    def _never() -> UpdateBlocker:
         raise AssertionError("nothing to install, nothing to preflight")
 
     monkeypatch.setattr(u, "update_blocker", _never)
     body = client.get("/api/update/status").json()
     assert body["blocked_reason"] is None
+    assert body["blocked_code"] is None
 
 
 def test_apply_refuses_a_blocked_install_before_downloading(
@@ -582,11 +592,11 @@ def test_apply_refuses_a_blocked_install_before_downloading(
     response = client.post("/api/update/apply")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == BLOCKED
+    assert response.json()["detail"] == BLOCKED.message
     assert desktop.quit_calls == 0
     progress = client.get("/api/update/progress").json()
     assert progress["phase"] == "failed"
-    assert progress["error"] == BLOCKED
+    assert progress["error"] == BLOCKED.message
 
 
 def test_status_reclaims_old_downloads_once_per_process(

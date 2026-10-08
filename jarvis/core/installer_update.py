@@ -60,6 +60,7 @@ __all__ = [
     "HttpxAssetFetcher",
     "InstallerAsset",
     "InstallerUpdateError",
+    "UpdateBlocker",
     "SubprocessCommandRunner",
     "apply_installer",
     "download_and_verify",
@@ -996,17 +997,44 @@ def supported_here() -> bool:
     return installer_asset_name(sys.platform, machine_for_update()) is not None
 
 
+@dataclass(frozen=True)
+class UpdateBlocker:
+    """Why this install cannot replace itself.
+
+    ``code`` is stable and what the UI translates (``topbar.update_blocked_*``);
+    ``message`` is the English sentence for logs, the API and any client that
+    does not know the code yet.
+    """
+
+    code: str
+    message: str
+
+    def __str__(self) -> str:
+        return self.message
+
+
+#: Every code :func:`update_blocker` can answer. The frontend has one locale
+#: string per code; a parity test keeps the two lists equal.
+UPDATE_BLOCKER_CODES = (
+    "no_app_bundle",
+    "app_translocated",
+    "app_read_only",
+    "no_appimage",
+    "appimage_read_only",
+)
+
+
 def update_blocker(
     platform_name: str | None = None,
     *,
     app_path: Path | None = None,
     appimage_path: Path | None = None,
-) -> str | None:
+) -> UpdateBlocker | None:
     """Why the handover would fail on THIS install, or ``None`` when it can run.
 
     Asked before a single byte is downloaded: every case below otherwise
     surfaces only after a several-hundred-MB download, as a refusal the user
-    cannot act on. Each answer is a user-facing sentence that says what to do.
+    cannot act on. Each answer says what to do.
 
     Windows has no such case — the per-user installer replaces its own
     directory — so it always answers ``None``.
@@ -1015,31 +1043,38 @@ def update_blocker(
     if active_platform == "darwin":
         app = app_path if app_path is not None else _running_macos_app()
         if app is None:
-            return "Personal Jarvis could not find its own app bundle, so it cannot replace it."
+            return UpdateBlocker(
+                "no_app_bundle",
+                "Personal Jarvis could not find its own app bundle, so it cannot replace it.",
+            )
         if "/AppTranslocation/" in app.as_posix():
             # Gatekeeper runs a quarantined app that was never moved from a
             # read-only, randomised copy; nothing there can be replaced.
-            return (
+            return UpdateBlocker(
+                "app_translocated",
                 "macOS is running Personal Jarvis from a temporary copy. Move it to "
-                "the Applications folder, open it from there, then update."
+                "the Applications folder, open it from there, then update.",
             )
         if not _can_write(app.parent):
-            return (
+            return UpdateBlocker(
+                "app_read_only",
                 f"Personal Jarvis cannot write to {app.parent} (a disk image or a "
-                "protected folder). Move it to the Applications folder, then update."
+                "protected folder). Move it to the Applications folder, then update.",
             )
         return None
     if active_platform.startswith("linux"):
         appimage = appimage_path if appimage_path is not None else _running_appimage()
         if appimage is None:
-            return (
+            return UpdateBlocker(
+                "no_appimage",
                 "This copy of Personal Jarvis was not started from its AppImage file, "
-                "so there is no file to update. Download the new AppImage instead."
+                "so there is no file to update. Download the new AppImage instead.",
             )
         if not _can_write(appimage.parent):
-            return (
+            return UpdateBlocker(
+                "appimage_read_only",
                 f"Personal Jarvis cannot write to {appimage.parent}. Move the AppImage "
-                "to a folder you own (for example ~/Applications), then update."
+                "to a folder you own (for example ~/Applications), then update.",
             )
         return None
     return None

@@ -185,7 +185,7 @@ the loop adds no new destination. `enabled = false` switches it off.
 
 ## Design reference
 
-The loop follows the design of Nous Research's Hermes Agent: a bounded
+The loop is a bounded
 USER/MEMORY pair, a review that runs after the reply instead of during it,
 declarative entries instead of imperatives, and an explicit list of what not
 to keep. Jarvis adds the evidence rule of its Society agents (every change

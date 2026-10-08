@@ -136,7 +136,7 @@ describe("work trace", () => {
 
   it("renders edit input, a diff and output on demand", () => {
     render(<WorkTrace {...props} blocks={[tool("edit",{name:"Edit",input:{file_path:"app.ts",old_string:"oldValue",new_string:"newValue"},output:"File updated"})]} />);
-    // Codex-style: the edit is one line with its size; the diff is one tap away.
+    // The edit is one line with its size; the diff is one tap away.
     const edit = screen.getByRole("button", { name: /^Edited app\.ts \+1 −1/ });
     fireEvent.click(edit);
     expect(screen.getByLabelText("Changes").textContent).toContain("− oldValue");
@@ -237,7 +237,7 @@ describe("work trace", () => {
 });
 
 describe("rail look", () => {
-  it("reads like the Codex app: prose, quiet lines, no thread, no bullets", () => {
+  it("reads as prose: quiet lines, no thread, no bullets", () => {
     const { container } = render(<WorkTrace {...props} status="running" blocks={[thought, tool("a", { name: "exec_command", input: { command: "npm test" } })]} />);
     expect(screen.getByTestId("work-trace").getAttribute("data-look")).toBe("rail");
     expect(container.querySelector(".trace-dot, .trace-node-live")).toBeNull();
