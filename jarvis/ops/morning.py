@@ -12,8 +12,8 @@ tasks, appointments, cancellations, moves) for the day in that timezone and
 hands it to the :class:`~jarvis.ops.notify.OwnerNotifier`:
 
 - no model call, so no cost — the phrasing step is never used here;
-- delivery is SIMULATED only (``SimulatedTelegramTransport``) and still
-  honours the notifier's own opt-in;
+- delivery is simulated unless the owner's live switch is on
+  (``jarvis/ops/delivery.py``), and it still honours the notifier's opt-in;
 - one briefing per local day: the notifier's dedup key is the date, so a
   second firing (restart, "Run now") sends nothing twice;
 - a missed slot (the app was closed at that time) is skipped, not caught up —
@@ -39,6 +39,7 @@ from jarvis.core.protocols import ToolResult
 from jarvis.ops.briefing import BriefingComposer, normalize_language
 from jarvis.ops.notify import (
     NotificationTransport,
+    NotifySettings,
     NotifyStore,
     OwnerNotifier,
     SimulatedTelegramTransport,
@@ -263,7 +264,9 @@ class MorningBriefingTool:
         *,
         composer: Callable[[], BriefingComposer | None],
         notify_store: Callable[[], NotifyStore | None],
-        transport: Callable[[], NotificationTransport] = SimulatedTelegramTransport,
+        transport: Callable[[NotifySettings], NotificationTransport] = (
+            lambda _settings: SimulatedTelegramTransport()
+        ),
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._composer = composer
@@ -293,7 +296,8 @@ class MorningBriefingTool:
                 language=str(args.get("language") or "en"),
                 include_calendar=bool(args.get("include_calendar", True)),
             )
-            transport = self._transport()
+            # Simulated unless the owner's live switch is on (jarvis/ops/delivery.py).
+            transport = self._transport(await store.settings())
             report = await OwnerNotifier(store, transport).deliver(
                 notifications_from_briefing(briefing)
             )
@@ -324,9 +328,15 @@ def ops_task_tools(
     *,
     composer: Callable[[], BriefingComposer | None],
     notify_store: Callable[[], NotifyStore | None],
+    transport: Callable[[NotifySettings], NotificationTransport] | None = None,
 ) -> dict[str, Any]:
     """The task runner's private tool registry: the Ops core's scheduled tools."""
-    return {TOOL_NAME: MorningBriefingTool(composer=composer, notify_store=notify_store)}
+    tool = (
+        MorningBriefingTool(composer=composer, notify_store=notify_store, transport=transport)
+        if transport is not None
+        else MorningBriefingTool(composer=composer, notify_store=notify_store)
+    )
+    return {TOOL_NAME: tool}
 
 
 __all__ = [

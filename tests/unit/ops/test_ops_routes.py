@@ -77,8 +77,14 @@ async def test_only_the_priority_marks_are_writable() -> None:
     for route in ops_routes.router.routes:
         methods = set(getattr(route, "methods", ()))
         path = getattr(route, "path", "")
-        if path in ("/api/ops/briefing/preview", "/api/ops/notify/simulate"):
+        if path in (
+            "/api/ops/briefing/preview",
+            "/api/ops/notify/simulate",
+            "/api/ops/notify/telegram/test",
+        ):
             assert methods == {"POST"}
+        elif path == "/api/ops/notify/live":
+            assert methods == {"PUT"}  # the owner's live switch
         elif path in ("/api/ops/notify/settings", "/api/ops/morning/settings"):
             assert methods <= {"GET", "HEAD", "PUT"}  # the person's own switches
         elif methods - {"GET", "HEAD"}:

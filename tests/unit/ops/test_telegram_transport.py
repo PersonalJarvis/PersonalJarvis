@@ -242,7 +242,7 @@ async def test_logs_never_show_the_token_or_the_chat(
 # --- Not wired: every path still sends simulated --------------------------------------
 
 
-def test_no_app_path_uses_the_live_transport_yet() -> None:
+def test_only_the_live_switch_selects_the_live_transport() -> None:
     root = Path(jarvis.__file__).parent
     users = []
     for path in root.rglob("*.py"):
@@ -259,7 +259,8 @@ def test_no_app_path_uses_the_live_transport_yet() -> None:
                 users.append(str(path.relative_to(root)))
             elif isinstance(node, ast.Name) and node.id == "TelegramBotTransport":
                 users.append(str(path.relative_to(root)))
-    assert users == []
+    # The live switch module is the one sanctioned user (jarvis/ops/delivery.py).
+    assert sorted(set(users)) == ["ops/delivery.py"]
 
 
 # --- Readiness endpoint: facts only, never the token or the chat ---------------------

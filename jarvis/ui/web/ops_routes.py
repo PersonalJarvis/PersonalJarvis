@@ -42,10 +42,20 @@ from jarvis.ops.briefing import (
     normalize_language,
     phrase_briefing,
 )
+from jarvis.ops.delivery import (
+    LiveDisabled,
+    LiveNotReady,
+    disable_live,
+    enable_live,
+    select_transport,
+    send_connection_test,
+)
 from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
 from jarvis.ops.morning import MorningSettings, MorningStore, apply_schedule, validate_settings
 from jarvis.ops.notify import (
     NOTIFICATION_KINDS,
+    NotificationTransport,
+    NotifySettings,
     NotifyStore,
     OwnerNotifier,
     SimulatedTelegramTransport,
@@ -104,6 +114,16 @@ def notify_store_for_state(state: Any) -> NotifyStore | None:
 
 def morning_store_for_state(state: Any) -> MorningStore | None:
     return _cached_store(state, "ops_morning_store", MorningStore)
+
+
+def _telegram_config(state: Any) -> Any:
+    config = getattr(state, "config", None)
+    return getattr(getattr(config, "integrations", None), "telegram", None)
+
+
+def transport_for_state(state: Any, settings: NotifySettings) -> NotificationTransport:
+    """Simulated unless the owner's live switch is on (``jarvis/ops/delivery.py``)."""
+    return select_transport(settings, _telegram_config(state))
 
 
 def _required(store: Any, what: str) -> Any:
@@ -453,3 +473,51 @@ async def telegram_readiness(request: Request) -> dict[str, Any]:
         "ready_for_activation": token_stored and owner.chat_id is not None,
         "next_steps": steps,
     }
+
+
+
+class LiveSwitchBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+@router.put("/notify/live")
+async def set_live_delivery(request: Request, body: LiveSwitchBody) -> dict[str, Any]:
+    """The owner's live switch for real Telegram delivery (off by default).
+
+    Switching on needs the stored bot token and exactly one paired private
+    owner chat; otherwise 409 with a reason code. Switching off always works.
+    """
+    store = _notify_store(request)
+    if not body.enabled:
+        return (await disable_live(store)).to_dict()
+    try:
+        settings = await enable_live(store, _telegram_config(request.app.state))
+    except LiveNotReady as exc:
+        raise HTTPException(status_code=409, detail=exc.reason) from None
+    return settings.to_dict()
+
+
+class TelegramTestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=300)
+
+
+@router.post("/notify/telegram/test", openapi_extra={"x-jarvis-dangerous": True})
+async def send_telegram_test(request: Request, body: TelegramTestBody) -> dict[str, Any]:
+    """Send ONE real test message to the paired owner chat — only while the
+    live switch is on. Repeating the same text on the same day sends nothing."""
+    from datetime import datetime
+
+    store = _notify_store(request)
+    settings = await store.settings()
+    transport = transport_for_state(request.app.state, settings)
+    try:
+        outcome = await send_connection_test(
+            store, transport, text=body.text, day=datetime.now().astimezone().date()
+        )
+    except LiveDisabled:
+        raise HTTPException(status_code=409, detail="live_disabled") from None
+    return outcome.to_dict()

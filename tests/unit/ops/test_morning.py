@@ -193,7 +193,7 @@ def _tool(
     return MorningBriefingTool(
         composer=composer,
         notify_store=lambda: notify,
-        transport=lambda: sent,
+        transport=lambda _settings: sent,
         clock=lambda: datetime.fromisoformat(clock),
     )
 

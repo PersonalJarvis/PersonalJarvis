@@ -3588,7 +3588,11 @@ class WebServer:
 
         from jarvis.ops.morning import ops_task_tools
 
-        from .ops_routes import briefing_composer_for_state, notify_store_for_state
+        from .ops_routes import (
+            briefing_composer_for_state,
+            notify_store_for_state,
+            transport_for_state,
+        )
 
         state = self.app.state
 
@@ -3613,6 +3617,7 @@ class WebServer:
             tool_registry=ops_task_tools(
                 composer=lambda: briefing_composer_for_state(state),
                 notify_store=lambda: notify_store_for_state(state),
+                transport=lambda settings: transport_for_state(state, settings),
             ),
             tool_executor=_BrainToolExecutor(),
             harness_manager=HarnessManager(bus=self.bus),

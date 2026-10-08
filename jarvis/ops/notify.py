@@ -44,13 +44,18 @@ from jarvis.ops.briefing import Briefing, event_line, item_line, normalize_langu
 log = logging.getLogger(__name__)
 
 NotificationKind = Literal[
-    "daily_briefing", "important_task", "appointment_cancelled", "appointment_moved"
+    "daily_briefing",
+    "important_task",
+    "appointment_cancelled",
+    "appointment_moved",
+    "connection_test",
 ]
 NOTIFICATION_KINDS: Final[tuple[str, ...]] = (
     "daily_briefing",
     "important_task",
     "appointment_cancelled",
     "appointment_moved",
+    "connection_test",
 )
 #: Telegram's limit for one text message.
 TELEGRAM_MAX_CHARS: Final = 4096
@@ -81,13 +86,18 @@ class NotifySettings:
     enabled: bool = False
     kinds: frozenset[str] = frozenset(NOTIFICATION_KINDS)
     updated_ms: int = 0
+    #: Real Telegram delivery. Off by default; only the explicit live switch
+    #: (``jarvis/ops/delivery.py``) turns it on, and any other settings change
+    #: turns it off again.
+    live: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "kinds": sorted(self.kinds),
             "channel": "telegram",
-            "transport": "simulated",
+            "transport": "telegram" if self.live else "simulated",
+            "live": self.live,
             "updated_ms": self.updated_ms,
         }
 
@@ -371,13 +381,20 @@ class NotifyStore:
         await conn.execute("PRAGMA busy_timeout = 5000")
         for statement in _SCHEMA:
             await conn.execute(statement)
+        cur = await conn.execute("PRAGMA table_info(ops_notify_settings)")
+        columns = {str(row[1]) for row in await cur.fetchall()}
+        if "live" not in columns:  # files from before the live switch
+            await conn.execute(
+                "ALTER TABLE ops_notify_settings ADD COLUMN live INTEGER NOT NULL DEFAULT 0"
+            )
+            await conn.commit()
         return conn
 
     async def settings(self) -> NotifySettings:
         conn = await self._connect()
         try:
             cur = await conn.execute(
-                "SELECT enabled, kinds, updated_ms FROM ops_notify_settings WHERE id = 1"
+                "SELECT enabled, kinds, updated_ms, live FROM ops_notify_settings WHERE id = 1"
             )
             row = await cur.fetchone()
         finally:
@@ -385,9 +402,15 @@ class NotifyStore:
         if row is None:
             return NotifySettings()
         kinds = frozenset(k for k in str(row["kinds"]).split(",") if k in NOTIFICATION_KINDS)
-        return NotifySettings(bool(row["enabled"]), kinds, int(row["updated_ms"]))
+        return NotifySettings(
+            bool(row["enabled"]), kinds, int(row["updated_ms"]), bool(row["live"])
+        )
 
-    async def save_settings(self, *, enabled: bool, kinds: Iterable[str]) -> NotifySettings:
+    async def save_settings(
+        self, *, enabled: bool, kinds: Iterable[str], live: bool = False
+    ) -> NotifySettings:
+        """Store the opt-in. ``live`` defaults to off, so any settings change
+        that does not ask for live delivery switches it off."""
         chosen = frozenset(kinds)
         unknown = chosen - set(NOTIFICATION_KINDS)
         if unknown:
@@ -396,16 +419,21 @@ class NotifyStore:
         conn = await self._connect()
         try:
             await conn.execute(
-                "INSERT INTO ops_notify_settings (id, enabled, kinds, updated_ms)"
-                " VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET"
+                "INSERT INTO ops_notify_settings (id, enabled, kinds, updated_ms, live)"
+                " VALUES (1, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET"
                 " enabled = excluded.enabled, kinds = excluded.kinds,"
-                " updated_ms = excluded.updated_ms",
-                (int(bool(enabled)), ",".join(sorted(chosen)), now),
+                " updated_ms = excluded.updated_ms, live = excluded.live",
+                (int(bool(enabled)), ",".join(sorted(chosen)), now, int(bool(live))),
             )
             await conn.commit()
         finally:
             await conn.close()
-        return NotifySettings(bool(enabled), chosen, now)
+        return NotifySettings(bool(enabled), chosen, now, bool(live))
+
+    async def set_live(self, live: bool) -> NotifySettings:
+        """Flip only the live switch; the opt-in and kinds stay as they are."""
+        current = await self.settings()
+        return await self.save_settings(enabled=current.enabled, kinds=current.kinds, live=live)
 
     async def get(self, dedup_key: str) -> LogRow | None:
         conn = await self._connect()
@@ -509,8 +537,15 @@ class OwnerNotifier:
         self._rng = rng or random.Random()  # noqa: S311 - backoff jitter, not crypto
         self._clock = clock
 
-    async def deliver(self, notifications: Sequence[Notification]) -> DeliveryReport:
+    async def deliver(
+        self, notifications: Sequence[Notification], *, explicit: bool = False
+    ) -> DeliveryReport:
+        """Send what is due. ``explicit``: a one-off the owner asked for right
+        now (the connection test) — it skips the general opt-in and the kind
+        filter, never the dedup, retry or logging rules."""
         settings = await self._store.settings()
+        if explicit:
+            settings = NotifySettings(True, frozenset(n.kind for n in notifications))
         if not settings.enabled:
             return DeliveryReport(
                 tuple(
