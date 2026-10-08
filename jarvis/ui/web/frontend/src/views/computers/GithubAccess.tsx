@@ -23,6 +23,8 @@ function fill(template: string, values: Record<string, string>): string {
 export function GithubAccess({ computer }: { computer: Computer }) {
   const t = useT();
   const github = useGithubShare();
+  // A backend from before GitHub sharing does not send the field: nothing to offer yet.
+  if (computer.github_shared_at === undefined) return null;
   const shared = computer.github_shared_at != null;
   const reachable = computer.enabled !== false && computer.health.status === "online";
   const error = github.error instanceof Error ? github.error.message : null;

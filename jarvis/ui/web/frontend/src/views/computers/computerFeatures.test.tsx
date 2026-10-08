@@ -228,16 +228,23 @@ describe("computer row", () => {
     expect(screen.getByTestId("computer-copy-error-c_1")).toBeTruthy();
   });
 
-  it("an older backend without routes still shows one address", () => {
+  it("an older backend gets no controls it would ignore", () => {
     installFetch({});
     const old = computer();
     delete old.routes;
     delete old.enabled;
-    withQuery(<ComputerRow computer={old} checking={false} onOpen={() => undefined} />);
+    delete old.github_shared_at;
+    withQuery(
+      <>
+        <ComputerRow computer={old} checking={false} onOpen={() => undefined} />
+        <GithubAccess computer={old} />
+      </>,
+    );
 
-    expect(screen.getByText("1 address")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("computer-routes-toggle-c_1"));
-    expect(within(screen.getByTestId("computer-routes-c_1")).getByText("203.0.113.15")).toBeTruthy();
+    expect(screen.getByText(/203\.0\.113\.15/)).toBeTruthy();
+    expect(screen.queryByTestId("computer-switch-c_1")).toBeNull();
+    expect(screen.queryByTestId("computer-routes-toggle-c_1")).toBeNull();
+    expect(screen.queryByTestId("computer-github")).toBeNull();
   });
 });
 

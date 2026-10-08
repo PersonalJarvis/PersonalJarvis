@@ -76,8 +76,11 @@ export function ComputerRow({
         { label: t("computers.meter_disk"), pct: health.disk_used_pct },
       ].filter((v): v is { label: string; pct: number } => v.pct !== null && v.pct >= TIGHT_PCT)
     : [];
+  // A backend from before routes and the switch sends neither field: it would
+  // ignore both controls, so they appear only once it understands them.
+  const modern = computer.routes !== undefined;
   const routeCount = computer.routes?.length ?? 1;
-  const showRoutes = computer.kind !== "local_vm";
+  const showRoutes = modern && computer.kind !== "local_vm";
   const failed = enabled && !online && Boolean(health.trace_id);
   const tooltip = [
     enabled && health.message && !online ? health.message : status,
@@ -162,13 +165,15 @@ export function ComputerRow({
             {/* A check in flight pings the dot instead of swapping it for a spinner. */}
             <StatusDot tone={busy ? "busy" : tone} label={status} />
           </QuickTooltip>
-          <Switch
-            checked={enabled}
-            disabled={update.isPending}
-            onCheckedChange={(next) => update.mutate({ id: computer.id, patch: { enabled: next } })}
-            aria-label={fill(t("computers.row_switch_label"), { computer: computer.name })}
-            data-testid={`computer-switch-${computer.id}`}
-          />
+          {modern && (
+            <Switch
+              checked={enabled}
+              disabled={update.isPending}
+              onCheckedChange={(next) => update.mutate({ id: computer.id, patch: { enabled: next } })}
+              aria-label={fill(t("computers.row_switch_label"), { computer: computer.name })}
+              data-testid={`computer-switch-${computer.id}`}
+            />
+          )}
           <button
             type="button"
             tabIndex={-1}
