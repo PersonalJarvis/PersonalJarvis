@@ -117,7 +117,13 @@ class OpenAILiveProvider:
 
         from websockets.asyncio.client import connect
 
-        from ._live_transport import preparing_http_client, websocket_options
+        from ._live_transport import (
+            preparing_http_client,
+            preparing_websocket_options,
+            startup_http_trace,
+            startup_websocket_options,
+            websocket_options,
+        )
 
         if not self._api_key:
             raise ValueError("Connect OpenAI in API Keys before starting voice.")
@@ -136,13 +142,17 @@ class OpenAILiveProvider:
                 # Construction can load certificates/proxy settings synchronously.
                 # Keep the application's existing HTTP trust/cache policy;
                 # never retain a billed or loop-bound idle voice connection.
-                async with preparing_http_client(timeout=25) as preparation:
+                async with (
+                    preparing_http_client(timeout=25) as preparation,
+                    preparing_websocket_options() as tls_preparation,
+                ):
                     client = await asyncio.shield(preparation)
                     mark("http_client_ready")
                     response = await client.post(
                         "https://api.openai.com/v1/live/sessions",
                         headers=headers,
                         json={"session": session, "transport": {"type": "webrtc", "sdp": offer}},
+                        extensions={"trace": startup_http_trace(mark)},
                     )
                     if response.status_code >= 400:
                         from jarvis.brain.provider_test import classify_provider_error
@@ -161,6 +171,11 @@ class OpenAILiveProvider:
                     session_id = payload["session"]["id"]
                     answer = payload["transport"]["sdp"]
                     mark("session_response")
+                    on_transport_ready = getattr(cfg, "on_transport_ready", None)
+                    if answer and on_transport_ready is not None:
+                        await on_transport_ready(answer)
+                    options = await tls_preparation
+                    mark("control_tls_ready")
                 log.info(
                     "OpenAI Live session created in %.0f ms.",
                     (time.monotonic() - started_at) * 1000.0,
@@ -171,18 +186,14 @@ class OpenAILiveProvider:
                     **session.get("audio", {}),
                     "format": {"type": "audio/pcm", "rate": 24000},
                 }
-            on_transport_ready = getattr(cfg, "on_transport_ready", None)
-            if answer and on_transport_ready is not None:
-                # Let ICE/DTLS run concurrently with sideband attachment. The
-                # application still withholds microphone audio and tool-ready
-                # state until this method returns successfully.
-                await on_transport_ready(answer)
-            options = await websocket_options()
-            mark("control_tls_ready")
+                options = await websocket_options()
+                mark("control_tls_ready")
             attach_started_at = time.monotonic()
+            mark("control_connect_started")
             socket = await connect(
                 url, additional_headers=headers, open_timeout=25, max_size=8_000_000,
                 **options,
+                **startup_websocket_options(mark),
             )
             log.info(
                 "OpenAI Live transport attached in %.0f ms.",

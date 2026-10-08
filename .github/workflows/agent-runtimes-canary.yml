@@ -1,7 +1,7 @@
 name: Agent runtimes canary
 # Installs the LATEST Hermes and OpenClaw with their own official installers and
-# drives two turns through Jarvis' runtime drivers against a scripted fake model
-# (scripts/spikes/agent_runtimes_e2e.py, tests/fakes/fake_openai_server.py).
+# drives two turns through Jarvis' model gateway against a scripted subscription
+# (scripts/spikes/agent_runtimes_gateway_e2e.py --replay; no allowance used).
 # Not part of the CI gate: an upstream release that breaks the integration
 # opens an issue here before a person runs into it. See docs/agent-runtimes.md.
 on:
@@ -46,8 +46,10 @@ jobs:
       - name: Install OpenClaw (latest)
         if: matrix.runtime == 'openclaw'
         run: npm install -g openclaw@latest
-      - name: Drive two turns through the Jarvis driver
-        run: python scripts/spikes/agent_runtimes_e2e.py ${{ matrix.runtime }}
+      - name: Drive two turns through the guarded Jarvis model gateway
+        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} openai-codex --replay
+      - name: Check the Chat Completions gateway with a scripted provider
+        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} ollama --replay
   report:
     needs: canary
     if: failure() && github.event_name == 'schedule'

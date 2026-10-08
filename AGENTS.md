@@ -78,6 +78,12 @@ the install base, and "works on my machine" is the defect. (AP-23)
 - **Any single key must work.** Gate on capability, never a provider name or
   model id (AP-21). A tier whose primary AND fallback share one provider family
   is a brick — every chain crosses families or degrades honestly (AP-22).
+- **Bypass permissions is the project default.** Fresh installs, chats, agents,
+  delegated work and coding panes execute permitted work without asking for
+  permission. Carry this default into native CLI launch flags too; an omitted
+  pick must not restore a vendor's ask-first default. Preserve explicitly
+  selected restrictions and blocked actions. Questions for missing task
+  information remain available; do not turn them into permission prompts.
 - **Nothing the user did not start may bill a key on its own.** Health dots
   come from real calls, never a paid probe. Once a subscription is connected,
   background work runs only on subscriptions or local models

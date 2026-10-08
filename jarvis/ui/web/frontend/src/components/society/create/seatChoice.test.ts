@@ -52,6 +52,26 @@ const openai = seat({});
 const ollama = seat({ id: "ollama", label: "Ollama", family: "ollama", keyless: true, curated_models: models("qwen3:8b") }, "local");
 
 describe("providerChoices", () => {
+  it("respects an explicit empty access list and a missing required CLI", () => {
+    expect(providerChoices([claude], { "claude-api": [] })).toEqual([]);
+    const missing = { ...claude, provider: { ...claude.provider, cli_installed: false } };
+    expect(providerChoices([missing], { "claude-api": ["subscription"] })).toEqual([]);
+  });
+
+  it.each([
+    ["grok-build", "grok", "xai", "xai", "grok-cli"],
+    ["antigravity", "gemini", "antigravity", "gemini", "agy-cli"],
+  ])("groups %s with its API brand while retaining each access's own models", (subscription, api, family, brand, runner) => {
+    const [choice] = providerChoices([
+      seat({ id: api, family: brand, curated_models: models("api-model-1") }),
+      seat({ id: subscription, family, runner, cli_installed: true, curated_models: models("subscription-model-2") }, "subscription"),
+    ]);
+    expect(choice.id).toBe(brand);
+    expect(choice.options.map((option) => [option.kind, option.seat.provider.id, accessModels(option)[0].id])).toEqual([
+      ["subscription", subscription, "subscription-model-2"], ["api", api, "api-model-1"],
+    ]);
+  });
+
   it("folds a brand's subscription and API rows into one provider", () => {
     const [choice] = providerChoices([codex, openai]);
     expect(choice.label).toBe("OpenAI");

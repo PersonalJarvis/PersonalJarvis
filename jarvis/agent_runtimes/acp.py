@@ -292,9 +292,17 @@ class AcpTurn:
             self._take_usage(res.get("usage"))
             if self.stop_reason == "refusal" and not self.emitted_text:
                 self._fail("The model refused this request.")
-            elif self.stop_reason in {"max_tokens", "max_turn_requests"} and not self.emitted_text:
+            elif self.stop_reason in {"max_tokens", "max_turn_requests"}:
                 self._fail(f"The agent stopped early ({self.stop_reason}).")
             return
+
+    async def cancel(self, io: AcpIO) -> None:
+        """Abort the upstream session before its stdio bridge is terminated."""
+        if self._acp_session and not self.saw_result:
+            await io.write({
+                "jsonrpc": "2.0", "method": "session/cancel",
+                "params": {"sessionId": self._acp_session},
+            })
 
     async def _on_agent_request(self, obj: dict[str, Any], method: str, io: AcpIO) -> None:
         rid = obj.get("id")
@@ -542,6 +550,21 @@ def _tool_name(update: dict[str, Any]) -> str:
 def _error_text(error: dict[str, Any]) -> str:
     message = str(error.get("message") or "error")
     data = error.get("data")
+    if isinstance(data, dict):
+        # Hermes' ACP SDK nests this local configuration failure under
+        # details. Translate only the known numeric contract; never expose
+        # arbitrary upstream details (which may contain provider bodies).
+        detail = str(data.get("details") or "")
+        bounds = re.search(
+            r"context window of ([\d,]+) tokens, which is below the minimum "
+            r"([\d,]+) required by Hermes Agent\.", detail,
+        )
+        if bounds:
+            actual, minimum = bounds.groups()
+            return (
+                f"Hermes requires at least {minimum} context tokens; this model has {actual}. "
+                "Increase the model context in Settings or choose a model with a larger window."
+            )
     if isinstance(data, str) and data:
         return f"{message}: {data}"
     if isinstance(data, dict) and data.get("message"):

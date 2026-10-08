@@ -261,7 +261,7 @@ async def test_late_connection_closes_even_if_hangup_send_fails(monkeypatch, tmp
     from jarvis.live import session as module
     from jarvis.live.config import LiveConfig
 
-    opening, release = asyncio.Event(), asyncio.Event()
+    opening = asyncio.Event()
     closes = []
 
     async def send(message):
@@ -278,7 +278,11 @@ async def test_late_connection_closes_even_if_hangup_send_fails(monkeypatch, tmp
 
         async def open_session(self, config):
             opening.set()
-            await release.wait()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                # Remote allocation may complete concurrently with hangup.
+                pass
             return SimpleNamespace(answer_sdp="answer", send=failed_send, close=close)
 
     monkeypatch.setattr(module, "get_supervisor_tool_gateway", lambda: SimpleNamespace())
@@ -294,8 +298,7 @@ async def test_late_connection_closes_even_if_hangup_send_fails(monkeypatch, tmp
     }))
     await asyncio.wait_for(opening.wait(), 2)
     await session.end()
-    release.set()
-    with pytest.raises(RuntimeError, match="control disconnected"):
+    with pytest.raises(asyncio.CancelledError):
         await task
     assert closes == [True]
 

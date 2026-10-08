@@ -116,7 +116,7 @@ export function actionNoticeOf(block: ToolBlock): ActionNotice | null {
     if (kind === "rule") return { key: "rule_saved", subject: "", icon: "rule" };
     if (kind === "skill") return { key: "skill_saved", subject: String(payload.name ?? ""), icon: "skill" };
     if (kind === "focus" || kind === "approval_rule") return { key: "settings_updated", subject: "", icon: "settings" };
-    // An identity change has its own notice with Undo (IdentityNotice).
+    // Identity changes update the agent profile without a chat notice.
     return null;
   }
   if (/(wiki_?note|^remember$)/.test(name)) {

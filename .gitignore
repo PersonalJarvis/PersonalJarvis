@@ -1,4 +1,4 @@
-# Secrets (nie committen — Secrets liegen im Windows Credential Manager)
+# Secrets (never commit; stored in the system credential manager)
 .env
 .env.local
 .env.*.local
@@ -504,3 +504,4 @@ scripts/figures/cache/
 
 # Launch-video renders from the /brag skill (thousands of frames).
 brag-output/
+eval-results/

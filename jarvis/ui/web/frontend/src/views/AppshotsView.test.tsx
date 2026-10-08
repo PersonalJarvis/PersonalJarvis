@@ -274,6 +274,32 @@ describe("AppshotsView shortcut recorder", () => {
     await waitFor(() => expect(puts()).toEqual([{ region_hotkey: "shift+shift" }]));
   });
 
+  it("offers the video recording shortcut beside the picture shortcuts", async () => {
+    const withRecording = {
+      ...SETTINGS,
+      recording_hotkey: "",
+      recording_shortcut: { hotkey: "", armed: false, detail: "" },
+    };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/appshot/settings" && init?.method === "PUT") {
+        return json({ ...withRecording, ...JSON.parse(String(init.body)) });
+      }
+      if (url === "/api/appshot/settings") return json(withRecording);
+      return json({ phase: "idle", id: "", message: "" });
+    });
+    render(<AppshotsView />);
+    const field = await screen.findByTestId("appshots-recording-hotkey");
+    const region = screen.getByTestId("appshots-region-hotkey");
+    // Same settings list, right after the area shortcut.
+    expect(region.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Video recording shortcut")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("appshots-recording-hotkey-change"));
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyDown(window, { code: "Digit9", key: "9", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "Digit9", key: "9", ctrlKey: false });
+    await waitFor(() => expect(puts()).toEqual([{ recording_hotkey: "ctrl+9" }]));
+  });
+
   it("records an ordinary combo for the window shortcut", async () => {
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));

@@ -172,6 +172,7 @@ class _Gateway:
     log_handle: Any
     last_used: float = field(default_factory=time.monotonic)
     in_use: int = 0
+    poisoned: bool = False
 
     def alive(self) -> bool:
         return self.proc.returncode is None
@@ -273,8 +274,9 @@ class OpenClawRuntime:
                     "id": route.model,
                     "name": route.model,
                     "input": ["text"],
-                    "contextWindow": 128_000,
-                    "maxTokens": 8_192,
+                    "contextWindow": route.context_window,
+                    **({"maxTokens": route.max_output_tokens}
+                       if route.max_output_tokens is not None else {}),
                 }
             ],
         }
@@ -306,6 +308,17 @@ class OpenClawRuntime:
                 }
             },
             "session": {"reset": {"mode": "none"}},
+            # Heartbeat is only one background caller. The memory plugin can
+            # create dreaming jobs at startup even with heartbeat disabled.
+            # Jarvis owns memory and scheduling; neither may call this key.
+            "cron": {"enabled": False},
+            # Detached workshop reviews spend the model key after a turn,
+            # independently of cron and heartbeat. Jarvis owns that work.
+            "skills": {"workshop": {"autonomous": {"mode": "off"}}},
+            "plugins": {
+                "slots": {"memory": "none"},
+                "entries": {"memory-core": {"enabled": False}},
+            },
             # Jarvis' tools offered directly, never behind OpenClaw's tool search
             # (on by default for local models; smaller models miss deferred tools).
             "tools": {"deny": denied, "exec": {"mode": exec_mode}, "toolSearch": False},
@@ -393,6 +406,7 @@ class OpenClawRuntime:
             acp_resume=None,
             vendor_session=session_key(turn.agent_id, turn.session_id),
             release=release,
+            invalidate=lambda: setattr(gateway, "poisoned", True),
         )
 
     async def _ensure_gateway(
@@ -423,7 +437,7 @@ class OpenClawRuntime:
                 write_json_if_changed, home / "openclaw.json", config
             )
             if current is not None and (
-                not current.alive() or current.env_hash != env_hash or changed
+                not current.alive() or current.poisoned or current.env_hash != env_hash or changed
             ):
                 await self._stop_gateway(current)
                 current = None

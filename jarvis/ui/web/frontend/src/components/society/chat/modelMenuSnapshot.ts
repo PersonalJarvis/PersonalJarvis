@@ -18,6 +18,7 @@ const snapshotSchema = z.object({
       effort_levels: z.array(text), default_effort: text,
       permission_modes: z.array(z.object({ id: text, label: text, description: text })),
       default_permission_mode: text, cli_installed: z.boolean().nullable(), agent: text.optional(),
+      enabled: z.boolean().optional(), hidden_models: z.array(text).max(20_000).optional(),
     })).max(100),
   }),
   connections: z.array(z.object({

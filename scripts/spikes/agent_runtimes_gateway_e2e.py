@@ -13,8 +13,9 @@ state lands in a temporary folder.
     python scripts/spikes/agent_runtimes_gateway_e2e.py openclaw openai-codex
     python scripts/spikes/agent_runtimes_gateway_e2e.py hermes openai-codex --replay
 
-``--replay`` keeps ChatGPT out of it (no allowance used): the subscription
-answers from a stand-in in its own event format.
+``--replay`` uses a scripted provider: ``openai-codex`` checks Responses and
+``ollama`` checks Chat Completions (no network to a model, no allowance used).
+Failed runs retain their diagnostic log under ``eval-results/`` (gitignored).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -35,7 +37,7 @@ from agent_runtimes_e2e import _run  # noqa: E402
 
 from jarvis.agent_runtimes import base, driver, gateway  # noqa: E402
 from jarvis.agent_runtimes.base import RuntimeTurn  # noqa: E402
-from jarvis.agent_runtimes.model_map import route_for  # noqa: E402
+from jarvis.agent_runtimes.model_map import prepare_route  # noqa: E402
 from jarvis.core import runtime_refs  # noqa: E402
 from jarvis.core.config import load_config  # noqa: E402
 
@@ -46,7 +48,8 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _serve(port: int) -> None:
+@contextmanager
+def _serve(port: int):
     import uvicorn
     from fastapi import FastAPI
 
@@ -57,13 +60,21 @@ def _serve(port: int) -> None:
     app.include_router(router)
     guarded = SurfaceSecurity(app, control_key_validator=lambda token: False)
     config = uvicorn.Config(guarded, host="127.0.0.1", port=port, log_level="warning")
-    threading.Thread(target=uvicorn.Server(config).run, daemon=True).start()
-    for _ in range(100):
-        with socket.socket() as sock:
-            if sock.connect_ex(("127.0.0.1", port)) == 0:
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                yield
                 return
-        time.sleep(0.05)
-    raise RuntimeError("the gateway did not start")
+            time.sleep(0.05)
+        raise RuntimeError("the gateway did not start")
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        if thread.is_alive():
+            raise RuntimeError("the gateway did not stop")
 
 
 class _ReplayUpstream:
@@ -141,7 +152,8 @@ class _ReplayUpstream:
         }
 
     async def list_models(self) -> list[dict]:
-        return [{"id": "gpt-replay", "label": "Replay"}]
+        return [{"id": "gpt-replay", "label": "Replay", "context_length": 128000,
+                 "max_output_tokens": 8192}]
 
 
 async def _pick_model(wanted: str) -> str:
@@ -154,13 +166,61 @@ async def _pick_model(wanted: str) -> str:
 
 
 async def main(name: str, provider: str, wanted: str) -> int:
+    # This two-turn smoke may cause runtime retries. It cannot enforce a paid
+    # one-call budget; refuse paid providers instead of silently overspending.
+    if provider not in {"ollama", "local-openai", "openai-codex"}:
+        raise ValueError("This multi-turn smoke supports local models and subscriptions only.")
+    replay = wanted == "--replay"
+    from jarvis.agent_chat import runner_api
+    from jarvis.brain.model_catalog import ModelCatalog
+    from jarvis.costs import ledger
+
+    previous_client = gateway._client
+    previous_ready = gateway.subscription_ready
+    previous_build = runner_api.build_brain
+    previous_catalog = gateway._CATALOG
+    previous_ledger = ledger.ledger_path()
+    previous_root = base.runtimes_root
+    previous_url = runtime_refs.get_api_base_url()
     if wanted == "--replay":
         wanted = "gpt-replay"
         upstream = _ReplayUpstream()
         gateway._client = lambda account_id: upstream  # noqa: SLF001 — the spike's stand-in
         gateway.subscription_ready = lambda account_id="": True
-    tmp = Path(tempfile.mkdtemp(prefix=f"jarvis-{name}-sub-e2e-"))
-    base.runtimes_root = lambda: tmp / "agent_runtimes"
+        from tests.fakes.fake_runtime_brain import ReplayRuntimeBrain
+
+        runner_api.build_brain = lambda provider, model: ReplayRuntimeBrain()
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"jarvis-{name}-gateway-e2e-") as directory:
+            tmp = Path(directory)
+            base.runtimes_root = lambda: tmp / "agent_runtimes"
+            ledger.set_ledger_path(tmp / "usage.db")
+            gateway._CATALOG = ModelCatalog(cache_path=tmp / "catalog.json")
+            result = 1
+            try:
+                result = await _check(name, provider, wanted, tmp, replay=replay)
+                return result
+            finally:
+                await driver(name).stop()
+                await asyncio.to_thread(ledger.flush)
+                if result != 0:
+                    log = tmp / "runtime-stderr.log"
+                    if log.exists():
+                        target = ROOT / "eval-results" / f"{name}-{time.time_ns()}.log"
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(log.read_bytes())
+                        print("diagnostic:", target)
+    finally:
+        gateway._client = previous_client
+        gateway.subscription_ready = previous_ready
+        runner_api.build_brain = previous_build
+        gateway._CATALOG = previous_catalog
+        ledger.set_ledger_path(previous_ledger)
+        base.runtimes_root = previous_root
+        runtime_refs.set_api_base_url(previous_url or "")
+
+
+async def _check(name: str, provider: str, wanted: str, tmp: Path, *, replay: bool) -> int:
     workspace = tmp / "workspace"
     workspace.mkdir()
     status = driver(name).detect(refresh=True)
@@ -168,13 +228,32 @@ async def main(name: str, provider: str, wanted: str) -> int:
     if not status.ready:
         return 2
     port = _free_port()
-    _serve(port)
+    with _serve(port):
+        return await _turns(name, provider, wanted, workspace, port, replay=replay)
+
+
+async def _turns(name, provider, wanted, workspace, port, *, replay):
     runtime_refs.set_api_base_url(f"http://127.0.0.1:{port}")
     model = await _pick_model(wanted) if provider == "openai-codex" else wanted
-    route = await asyncio.to_thread(
-        route_for, load_config(), provider, model, agent_id="sub-e2e-agent"
-    )
+    if replay:
+        from jarvis.core.config import BrainProviderConfig, JarvisConfig, OllamaModelOptions
+
+        replay_config = JarvisConfig()
+        replay_config.brain.providers["ollama"] = BrainProviderConfig(
+            models={model: OllamaModelOptions(num_ctx=128000)}
+        )
+
+        # No catalog lookup to a real server on the Chat Completions replay.
+        if provider != "openai-codex":
+            from jarvis.agent_runtimes.model_map import route_for
+
+            route = route_for(replay_config, provider, model, agent_id="sub-e2e-agent")
+        else:
+            route = await prepare_route(replay_config, provider, model, agent_id="sub-e2e-agent")
+    else:
+        route = await prepare_route(load_config(), provider, model, agent_id="sub-e2e-agent")
     print("route:", route.provider, route.model, route.transport, route.base_url)
+    print("limits:", route.context_window, route.max_output_tokens)
     turn = RuntimeTurn(
         agent_id="sub-e2e-agent",
         agent_name="Probe",

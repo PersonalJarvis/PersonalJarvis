@@ -68,16 +68,16 @@ async def test_the_picks_reach_the_command_line(
     assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
 
 
-async def test_a_pane_with_no_picks_is_launched_exactly_as_before(
+async def test_a_pane_with_no_picks_launches_with_bypass_permissions(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:
-    """Nobody who never opens the picker may notice this feature exists."""
+    """A fresh pane applies the project default without opening a picker."""
     await registry.start(str(tmp_path), [{"agent": "claude"}])
     await _attach(registry, "T1")
     argv = _argv(fake_pty)
     assert "--model" not in argv
     assert "--effort" not in argv
-    assert "--permission-mode" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
 
 
 async def test_the_wizard_opens_each_pane_on_its_own_picks(

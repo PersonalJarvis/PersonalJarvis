@@ -50,7 +50,13 @@ from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, Routin
 from .credential_tool import CREDENTIAL_TOOL_NAME, RequestCredentialTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
+from .roster import (
+    PAIR_SESSION_MARKER,
+    AgentRecord,
+    canonical_session_id,
+    has_placeholder_name,
+    is_fresh,
+)
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
 from .share_tool import ShareTemplateTool
@@ -130,6 +136,19 @@ society_wiki_note. Keep dated findings as kind note. Consolidate rather than dup
 Search only your own notes with society_memory_recall. Other agents' notes and \
 shared knowledge are not automatically available. Use separately granted wiki tools only \
 when the task explicitly calls for the user's wiki. Never edit the user's own pages.
+- Autonomy: carry out the user's goal through its necessary steps without another start
+request. Decide optional details yourself. When useful work belongs later or in the
+background, register it with society_propose_change(kind=routine, mode=autonomous,
+request_quote=the user's goal, reason=why the follow-up advances it). You do not need
+the words "create a routine". Infer a suitable trigger from the conversation and
+existing integrations. Register and read back the task BEFORE promising a later
+check or result. Use after_delay/at_time for one-time work; recurring triggers only
+for a continuing need. Do not turn information questions, quotations, hypothetical
+examples or optional suggestions into jobs. Respect "only this time", "no routine"
+and cancellations. List existing work and update/pause/cancel it when the user changes
+scope; never recreate cancelled work. Missing timing that matters requires one
+question; optional preferences do not block execution. The same rules apply to all
+agent runtimes. Unattended runs must not create further routines on their own.
 - Routines: recurring work runs from the Automations section as tasks tagged with your name; \
 their results arrive in this chat.
 Use society_routines to inspect existing routines and available event names/fields before
@@ -183,10 +202,11 @@ repeated autumn times run once. Missed runs while the app is offline are skipped
 - Earlier conversations: use society_conversation_recall for old decisions and exact messages.
 - Configuring yourself: when the user explicitly requests a rule, procedure or routine,
 call society_propose_change with mode=apply and request_quote copied from this user's current
-request. Read the stored result before claiming success. For inferred suggestions use
-mode=propose. Permission changes always need confirmation. Rules support operation
+request. Read the stored result before claiming success. Goal-derived background work
+uses mode=autonomous; other inferred configuration suggestions use mode=propose.
+Permission changes always need confirmation. Rules support operation
 add/replace/remove (old_text identifies the old rule); routines support
-create/update/pause/resume/delete (task_id identifies an existing routine).
+create/update/pause/resume/cancel/delete (task_id identifies an existing routine).
 An explicit recurring-work request is an instruction to save a routine in this turn,
 not an invitation to describe a plan or ask again whether to start. Inspect connected
 accounts for missing details before asking. Optional preferences do not block scheduling.
@@ -917,13 +937,37 @@ def _kind_label(kind: CapabilityKind) -> str:
 #: The introduction frame of a fresh agent (one-click creation): it has a
 #: placeholder name and no role until its person says what it is for.
 FRESH_AGENT_GUIDANCE = (
-    "You were just created and have no role yet; your current name is a placeholder. "
+    "You have no assigned role yet. "
     "If the person has not said what you are for, greet them in one or two sentences, say "
     "you are new, and ask what you should take care of. As soon as they tell you, call "
-    "society_propose_change with kind 'identity': a short fitting name, a one-line title, "
+    "society_propose_change with kind 'identity': a one-line title "
     "and a description written as your standing instructions (goal, responsibilities, "
-    "working style), in the person's language. Then start on the task they gave you. "
+    "working style), in the turn's output language. Then start on the task they gave you. "
+    "Keep your name unless the current naming guidance says it is a placeholder "
+    "or the person explicitly asks for another name. "
     "Never invent a role the person did not describe."
+)
+
+
+AGENT_NAMING_GUIDANCE = (
+    "Your current name is only a temporary creation label. Infer your ongoing responsibility "
+    "from the person's messages in this chat and your standing instructions. As soon as it "
+    "is clear, normally within the first one to three meaningful replies, replace the label "
+    "with a short descriptive name in the turn's output language. Do this on the first clear "
+    "role request; do not wait for three replies or for a request to rename you. "
+    "For example, an assigned Discord moderation role can be named Discord-Mod; apply the "
+    "same principle to any role, rather than picking an unrelated personal name. "
+    "Before your answer, call society_propose_change with kind=identity and payload={name: "
+    "the chosen name}. This first name saves automatically in your own direct user chat; "
+    "no confirmation question is needed. Check that the result says applied; if a name is "
+    "taken, choose another fitting name. If your role is already stored, send only name "
+    "and keep your standing instructions. If you also need to establish your first role, "
+    "you may include title and description. Never claim the name changed without a saved "
+    "result. A greeting, a quoted example, or a task assigned to another agent does not "
+    "establish your role: leave the label until your own responsibility is clear. "
+    "Do not create another agent to name yourself. After choosing a name, keep it through "
+    "ordinary follow-up tasks unless the person asks for a change."
+    " Honor an explicit instruction to keep the current name."
 )
 
 
@@ -968,6 +1012,8 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    if has_placeholder_name(agent):
+        parts.append("## Choosing your name\n" + AGENT_NAMING_GUIDANCE)
     if is_fresh(agent):
         parts.append("## You are new\n" + FRESH_AGENT_GUIDANCE)
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)

@@ -1934,6 +1934,9 @@ class SafetyBlacklistConfig(BaseModel):
 
 
 class SafetyConfig(BaseModel):
+    # App-owned executions run without permission prompts unless the person
+    # selects Ask. Chat sessions keep their own explicitly selected stance.
+    approval_mode: Literal["bypass", "ask"] = "bypass"
     default_tier: RiskTier = "safe"
     always_confirm_tiers: list[RiskTier] = Field(default_factory=lambda: ["ask"])
     always_block_tiers: list[RiskTier] = Field(default_factory=lambda: ["block"])
@@ -2382,6 +2385,19 @@ class BackgroundConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     keep_agents_running: bool = True
+    # Independent server ownership is opt-in for existing integrated desktops.
+    # A client never stops this server or inherits its provider credentials.
+    persistent_server: bool = False
+    server_url: str = ""
+
+    @field_validator("server_url")
+    @classmethod
+    def validate_server_url(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        from jarvis.core.server_endpoint import server_endpoint
+
+        return server_endpoint(value)
 
 
 class TelemetryConfig(BaseModel):
@@ -2705,6 +2721,12 @@ class AppshotConfig(BaseModel):
 
     #: One shortcut selects a recording area; pressing it again stops and saves.
     recording_hotkey: str = "ctrl+shift+9"
+
+    #: Recording preferences are snapshotted when selection starts.
+    recording_resolution: Literal["720p", "1080p", "1440p", "2160p", "native"] = "1080p"
+    recording_fps: Literal[30, 60, 120] = 60
+    recording_bitrate_mbps: int = Field(default=12, ge=1, le=100, strict=True)
+    recording_system_audio: bool = False
 
     #: Where a shortcut appshot goes. ``auto``: into the running voice call,
     #: otherwise onto the next message. ``message``: always onto the next

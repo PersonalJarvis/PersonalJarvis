@@ -29,7 +29,7 @@ import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
-import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { releaseHeldFiles, restoreHeldFiles, useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { usePasteRescue } from "@/components/agentchat/usePasteRescue";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
@@ -43,7 +43,7 @@ import {
   type BrainSection,
 } from "@/components/agentchat/ComposerBrainPicker";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
-import { readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
+import { captureComposerDraftTarget, readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
 import { PetMark } from "@/components/pets/PetMark";
 import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
@@ -253,37 +253,45 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const running = runningTurn(timeline) !== null;
   const live = running || busy;
+  const canQueue = surface === "jarvis" || surface === "society";
 
   async function onSend() {
     const sessionAtSend = activeSessionId;
-    const content = value.trim();
-    if (await commands.execute(content)) return;
+    if (await commands.execute(fieldRef.current?.getDraft().text.trim() ?? value.trim())) return;
+    const submitted = fieldRef.current?.getDraft() ?? readComposerDraft(store, sessionAtSend);
+    const content = submitted.text.trim();
     // A message may be files alone: dropping a screenshot and pressing Enter
     // is a complete gesture, and refusing it would be the composer insisting
     // on a sentence the picture already is.
-    if ((!content && files.attachments.length === 0) || (running || busy) && !commands.canSteer) return;
+    if ((!content && files.attachments.length === 0) || (running || busy) && !commands.canSteer && !canQueue) return;
     if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
-    const selected = selectedTools;
+    const selected = submitted.choices;
+    const held = files.take();
+    if (!content && held.attachments.length === 0) return;
+    const draftTarget = captureComposerDraftTarget(store, sessionAtSend);
     writeComposerDraft(store, sessionAtSend, { text: "", choices: [] });
     fieldRef.current?.clear();
     setAttachError("");
-    const attached = files.attachments;
-    files.clear();
-    if (selected.length)
-      await send(
+    const result = selected.length ? await send(
         content,
-        attached,
+        held.attachments,
         [...new Set(selected.map((row) => row.id))],
-      );
-    else await send(content, attached);
-    if (sessionAtSend && store.getState().activeSessionId !== sessionAtSend) return;
-    if (store.getState().lastError) {
-      const target = store.getState().activeSessionId;
-      const current = readComposerDraft(store, target);
-      if (!current.text && !current.choices.length) {
-        writeComposerDraft(store, target, { text: value, choices: selected });
+      ) : await send(content, held.attachments);
+    if (result === "failed" || result === undefined && store.getState().lastError) {
+      if (draftTarget.superseded) {
+        releaseHeldFiles(held);
+        pushToast("error", `${t("society.chat.message_not_sent").replace("{0}", submitted.text)}`);
+        return;
       }
+      const current = readComposerDraft(store, draftTarget.sessionId);
+      writeComposerDraft(store, draftTarget.sessionId, {
+        text: [submitted.text, current.text].filter(Boolean).join("\n"),
+        choices: [...selected, ...current.choices.filter((row) => !selected.some((sent) => sent.id === row.id))],
+      });
+      restoreHeldFiles(store, draftTarget.sessionId ?? "", held);
+    } else {
+      releaseHeldFiles(held);
     }
   }
 
@@ -429,7 +437,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   }, [minimal, providers]);
 
   const brainSections = useMemo<BrainSection[]>(
-    () => brainProviders.map((p) => ({ id: p.id, label: p.label, icon: providerIcon(p), muted: !p.connected })),
+    () => brainProviders.map((p) => ({ id: p.id, family: p.family,
+      access: p.keyless ? "local" : isApiRunner(p.runner) ? "api" : "subscription",
+      label: p.label, icon: providerIcon(p), muted: !p.connected })),
     [brainProviders, providerIcon],
   );
 
@@ -621,12 +631,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     commands.isCommand || connected &&
     (Boolean(value.trim()) || files.attachments.length > 0) &&
     files.analyzing === 0 &&
-    (!running || commands.canSteer) &&
-    (!busy || commands.canSteer) &&
+    (!running || commands.canSteer || canQueue) &&
+    (!busy || commands.canSteer || canQueue) &&
     Boolean(provider?.connected);
   // Send while the mic is open ends the dictation and sends once the words
   // land, so it is live even before the box holds any text.
-  const canFinishDictation = dictating && connected && !live && Boolean(provider?.connected);
+  const canFinishDictation = dictating && connected && (!live || canQueue) && Boolean(provider?.connected);
   const placeholder = dictating
     ? t("chats_view.dictation_listening")
     : connected
@@ -827,7 +837,14 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           {/* One round action in the signal blue: voice mode while the box is
               empty, Send once there is something to send, Stop while a turn
               runs. */}
-          {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+          {live && canQueue && (
+            <button type="button" onClick={() => void cancel()} aria-label={t("agent_chat.stop")}
+              title={t("agent_chat.stop")} data-testid="composer-stop"
+              className={cn(ROUND_ACTION_CLASS, "bg-secondary text-foreground hover:bg-secondary/80")}>
+              <Square className="h-3 w-3 fill-current" />
+            </button>
+          )}
+          {live && !canQueue && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
             <button
               type="button"
               onClick={() => void cancel()}
@@ -1059,7 +1076,14 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           startLabel={t("chats_view.dictation_start")}
           stopLabel={t("chats_view.dictation_stop")}
         />
-        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && canQueue && (
+          <button type="button" onClick={() => void cancel()} aria-label={t("agent_chat.stop")}
+            title={t("agent_chat.stop")} data-testid="composer-stop"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80">
+            <Square className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {live && !canQueue && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
           <button
             type="button"
             onClick={() => void cancel()}

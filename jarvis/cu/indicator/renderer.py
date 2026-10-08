@@ -341,6 +341,7 @@ class _SnapWindow(QWidget):
         on_done,
         *,
         flash: bool = True,
+        corner: str = "right",
     ) -> None:
         super().__init__(None)
         self.setWindowFlags(
@@ -384,6 +385,8 @@ class _SnapWindow(QWidget):
         right = float(avail.right() + 1 - geo.x())
         bottom = float(avail.bottom() + 1 - geo.y())
         self._dst = QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
+        if corner == "left":
+            self._dst.moveLeft(float(avail.left() - geo.x()) + _SNAP_MARGIN)
         self._t = 0.0
         self._anim = QVariantAnimation(self)
         self._anim.setStartValue(0.0)
@@ -1201,6 +1204,9 @@ class Renderer(QObject):
         self._snaps: list[_SnapWindow] = []
         #: The corner stack, oldest first; the newest sits at the bottom.
         self._cards: list[_CardWindow] = []
+        from jarvis.appshot.recording_preview import RecordingPreviews
+
+        self._recordings = RecordingPreviews(_emit, self._recording_activity)
         self._card_hint = ""
         self._card_rest_ms = _CARD_REST_MS
         self._card_labels: dict[str, str] = {}
@@ -1272,6 +1278,12 @@ class Renderer(QObject):
                     self._snap(payload)
                 elif cmd == protocol.CMD_SNAP_IMAGE:
                     self._snap_image(payload)
+                elif cmd == protocol.CMD_RECORDING:
+                    self._recordings.show(payload)
+                elif cmd == protocol.CMD_RECORDING_STATUS:
+                    self._recordings.set_status(
+                        str(payload.get("id", "")), str(payload.get("text", ""))
+                    )
                 elif cmd == protocol.CMD_CARD:
                     self._card_cmd(payload)
                 elif cmd == protocol.CMD_CARD_STATUS:
@@ -1329,6 +1341,10 @@ class Renderer(QObject):
     def shutdown(self) -> None:
         """The user's pointer always comes back, whatever ended the sidecar."""
         self._set_pointer(False)
+        self._recordings.close()
+
+    def _recording_activity(self) -> None:
+        _emit(protocol.EVENT_CARD, open=bool(self._cards) or self._recordings.active)
 
     def _snap(self, payload: dict) -> None:
         thumb = QImage()
@@ -1531,7 +1547,7 @@ class Renderer(QObject):
         with suppress(ValueError):
             self._cards.remove(card)
         if not self._cards:
-            _emit(protocol.EVENT_CARD, open=False)
+            self._recording_activity()
             return
         self._relayout()  # the cards above it glide down
 
@@ -1565,6 +1581,7 @@ class Renderer(QObject):
             return None
 
     def _blank(self) -> None:
+        self._recordings.suspend(True)
         # A resting thumbnail must never end up inside the next capture.
         # A flight still on its way lands now, so a quick next appshot only
         # stacks it instead of losing it; then every card hides.
@@ -1581,6 +1598,7 @@ class Renderer(QObject):
             self._pointer.set_blanked(True)
 
     def _unblank(self) -> None:
+        self._recordings.suspend(False)
         for card in self._cards:
             if not card.isVisible():
                 card.show()

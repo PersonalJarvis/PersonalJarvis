@@ -213,6 +213,7 @@ def login_refusal(usage: Any, model: str) -> Refusal | None:
 #: The last usage report per login, so routing does not ask on every turn.
 _REPORTS: dict[str, tuple[float, Any]] = {}
 _REPORT_TTL_S: Final = 120.0
+_REPORT_FAILURE_TTL_S: Final = 10.0
 
 
 def _claude_usage(token: str) -> Any:
@@ -250,12 +251,14 @@ def login_blocked(token: str, model: str) -> Refusal | None:
 
     key = hashlib.sha256(token.encode()).hexdigest()
     cached = _REPORTS.get(key)
-    if cached is not None and time.monotonic() - cached[0] < _REPORT_TTL_S:
+    ttl = _REPORT_FAILURE_TTL_S if cached is not None and cached[1] is None else _REPORT_TTL_S
+    if cached is not None and time.monotonic() - cached[0] < ttl:
         usage = cached[1]
     else:
         usage = _claude_usage(token)
-        if usage is not None:
-            _REPORTS[key] = (time.monotonic(), usage)
+        # Availability is read by several picker lists. A report outage is
+        # unknown, not blocked; briefly cache it to avoid repeated timeouts.
+        _REPORTS[key] = (time.monotonic(), usage)
     return login_refusal(usage, model)
 
 

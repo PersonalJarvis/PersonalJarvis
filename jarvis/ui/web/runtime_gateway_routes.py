@@ -10,6 +10,7 @@ OpenAPI schema.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,6 +33,9 @@ def _error(exc: gateway.GatewayError) -> JSONResponse:
     return JSONResponse(
         {"error": {"message": str(exc), "type": exc.code, "code": exc.code}},
         status_code=exc.status,
+        headers={"Retry-After": str(math.ceil(exc.retry_after))}
+        if exc.retry_after is not None
+        else None,
     )
 
 
@@ -47,16 +51,17 @@ async def runtime_gateway_chat(request: Request) -> Any:
     """One model call for a Hermes / OpenClaw agent, on its Jarvis provider."""
     grant = _grant(request)
     try:
+        lease = gateway.capture_turn(grant)
         if grant.provider == gateway.SUBSCRIPTION_PROVIDER:
             raise gateway.GatewayError("This agent's subscription answers on /responses.")
         body = await _body(request)
         model, brain_request = gateway.chat_request(body)
         if body.get("stream") is True:
-            chunks = await gateway.open_chat_stream(grant, model, brain_request)
+            chunks = await gateway.open_chat_stream(grant, model, brain_request, lease=lease)
             return StreamingResponse(
                 chunks, media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
             )
-        return await gateway.complete_chat(grant, model, brain_request)
+        return await gateway.complete_chat(grant, model, brain_request, lease=lease)
     except gateway.GatewayError as exc:
         return _error(exc)
 
@@ -66,17 +71,19 @@ async def runtime_gateway_responses(request: Request) -> Any:
     """One model turn for a Hermes / OpenClaw agent, on its ChatGPT subscription."""
     grant = _grant(request)
     try:
+        lease = gateway.capture_turn(grant)
         if grant.provider != gateway.SUBSCRIPTION_PROVIDER:
             raise gateway.GatewayError("This agent's provider answers on /chat/completions.")
         body = await _body(request)
         args = gateway.request_args(body)
         if body.get("stream") is True:
+            events = await gateway.open_response_stream(grant, args, lease=lease)
             return StreamingResponse(
-                gateway.stream_response(grant, args),
+                events,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache"},
             )
-        return await gateway.complete_response(grant, args)
+        return await gateway.complete_response(grant, args, lease=lease)
     except gateway.GatewayError as exc:
         return _error(exc)
 

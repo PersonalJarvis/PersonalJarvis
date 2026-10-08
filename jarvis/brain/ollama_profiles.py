@@ -10,7 +10,7 @@ the native ``/api/chat``, the per-model knobs travel three ways:
   the same trick the local-realtime supervisor uses for its ``-voice-8k``
   alias. The alias shares the weights (metadata only, no download), and its
   name carries a hash of the baked set so a changed knob yields a new alias
-  and the stale one is deleted. Aliases end in ``-jarvis-<8 hex>`` so the
+  without deleting another caller's profile. Aliases end in ``-jarvis-<8 hex>`` so the
   inventory can hide them from the user.
 * ``keep_alive`` rides a warm ping (``POST /api/generate`` with an empty
   prompt) once per process per (model, keep_alive).
@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 #: Option keys that are baked into the derived model's ``parameters``.
 #: ``num_predict``, ``temperature``, ``keep_alive`` and ``think`` are NOT
 #: here on purpose: they have a per-request channel, and baking them would
-#: force a new alias (and a stale-alias delete) for a knob that costs nothing
+#: force a new alias for a knob that costs nothing
 #: to send.
 BAKEABLE_KEYS: tuple[str, ...] = (
     "num_ctx",
@@ -71,9 +71,8 @@ _OVERHEAD_GB = 1.0
 #: the same rule ``ollama_pull.fit_verdict`` applies.
 _RAM_SHARE = 0.6
 
-# Per-process memo so a turn never repeats an HTTP round-trip it has already
-# won: (root, alias) once ensured, (root, model, keep_alive) once warmed.
-_ensured: set[tuple[str, str]] = set()
+# Warm pings are memoized; profile existence is checked each time because a
+# server restart or an explicit model removal can invalidate a previous create.
 _warmed: set[tuple[str, str, str]] = set()
 
 # Creating a derived model or loading weights for the warm ping can take a
@@ -117,18 +116,6 @@ def is_profile_alias(name: str) -> bool:
     return bool(_PROFILE_ALIAS_RE.match((name or "").strip().removesuffix(":latest")))
 
 
-def _stale_aliases(names: list[str], base: str, keep: str) -> list[str]:
-    """Earlier ``<base>-jarvis-*`` aliases that are not ``keep``."""
-    prefix = _fold(base)
-    stale: list[str] = []
-    for raw in names:
-        name = raw.strip().removesuffix(":latest")
-        match = _PROFILE_ALIAS_RE.match(name)
-        if match and match.group("prefix") == prefix and name != keep:
-            stale.append(name)
-    return stale
-
-
 async def _tag_names(client: httpx.AsyncClient, root: str) -> list[str]:
     resp = await client.get(f"{root}/api/tags")
     resp.raise_for_status()
@@ -141,14 +128,15 @@ async def ensure_profile(
     opts: OllamaModelOptions,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """Return the alias that carries ``opts`` for ``base``, creating it once.
 
     Idempotent against ``/api/tags``: an alias that already exists is reused
     without a create call; a base with NO bakeable knob returns ``base``
-    itself. When the hash changed, every earlier ``<base>-jarvis-*`` alias is
-    deleted (a failed delete is logged and does not fail the turn — the alias
-    is a ghost in the list, not a wrong answer). Raises ``RuntimeError`` with
+    itself. Other option sets remain available for concurrent agents and
+    voice sessions. Check existence on each use to recover deleted aliases.
+    Raises ``RuntimeError`` with
     an English sentence when the create itself fails; the caller then runs the
     base model and says so.
 
@@ -158,10 +146,7 @@ async def ensure_profile(
     if not has_bakeable(opts):
         return base
     alias = profile_name(base, opts)
-    key = (root, alias)
-    if key in _ensured:
-        return alias
-    async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
+    async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport, headers=headers) as client:
         try:
             names = await _tag_names(client, root)
         except Exception as exc:
@@ -191,19 +176,6 @@ async def ensure_profile(
                 base,
                 json.dumps(baked_parameters(opts), sort_keys=True),
             )
-        for stale in _stale_aliases(names, base, alias):
-            try:
-                resp = await client.request("DELETE", f"{root}/api/delete", json={"model": stale})
-                resp.raise_for_status()
-                log.info("ollama profile: deleted stale alias %s", stale)
-            except Exception as exc:  # noqa: BLE001 — a leftover alias is cosmetic
-                log.warning(
-                    "ollama profile: could not delete stale alias %s (%s: %s)",
-                    stale,
-                    type(exc).__name__,
-                    exc,
-                )
-    _ensured.add(key)
     return alias
 
 
@@ -213,6 +185,7 @@ async def warm(
     keep_alive: str | int,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    headers: dict[str, str] | None = None,
 ) -> bool:
     """Load ``model`` with ``keep_alive`` via an empty ``/api/generate`` ping.
 
@@ -226,7 +199,9 @@ async def warm(
         return True
     payload = {"model": model, "keep_alive": keep_alive, "stream": False}
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
+        async with httpx.AsyncClient(
+            timeout=_TIMEOUT, transport=transport, headers=headers,
+        ) as client:
             resp = await client.post(f"{root}/api/generate", json=payload)
             resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001 — the warm ping is best-effort
@@ -244,8 +219,7 @@ async def warm(
 
 
 def reset_process_memo() -> None:
-    """Forget what was ensured/warmed (tests, or after a server restart)."""
-    _ensured.clear()
+    """Forget warm pings (tests, or after a server restart)."""
     _warmed.clear()
 
 

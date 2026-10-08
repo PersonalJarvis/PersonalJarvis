@@ -133,6 +133,7 @@ class CUIndicatorController:
         self._idle_quit_task: asyncio.Task | None = None
         # At least one appshot card in the corner stack is up.
         self._card_open = False
+        self._appshot_warm = False
         self._loop: asyncio.AbstractEventLoop | None = None
         # The finished picture for the current card. It can be ready before the
         # effect reached the sidecar, so ``snap`` re-sends it after the card.
@@ -266,7 +267,7 @@ class CUIndicatorController:
             protocol.CMD_HIDE,
             _SHOW_ACK_TIMEOUT_S,
         )
-        if self._card_open or time.monotonic() < self._snap_until:
+        if self._appshot_warm or self._card_open or time.monotonic() < self._snap_until:
             # An appshot effect is still on screen; quit once it has played.
             self._schedule_idle_quit()
             return
@@ -287,6 +288,42 @@ class CUIndicatorController:
             await asyncio.to_thread(self._reap, proc)
 
     # ---------------------------------------------------------- appshot snap
+    async def warm_for_appshots(self, enabled: bool) -> None:
+        """Retain an idle GUI runtime without showing a border or taking pixels."""
+        self._loop = asyncio.get_running_loop()
+        async with self._lock:
+            self._appshot_warm = enabled and self._border_capability()[0]
+            if not self._appshot_warm:
+                self._schedule_idle_quit()
+                return
+            if self._proc is not None and self._proc.poll() is None:
+                return  # Never hide an existing mission border or Appshot card.
+            spawn = asyncio.create_task(asyncio.to_thread(self._spawn_sidecar))
+            try:
+                await asyncio.shield(spawn)
+            except asyncio.CancelledError:
+                await spawn  # Acquire the late Popen before the owner tears down.
+                raise
+            if self._proc is not None:
+                ready = await asyncio.to_thread(
+                    self._send_and_wait, protocol.CMD_HIDE, _SHOW_ACK_TIMEOUT_S
+                )
+                if not ready:
+                    log.warning("appshot: shutter runtime did not acknowledge standby")
+                    await self._quit_sidecar()
+
+    async def close(self) -> None:
+        """Stop owned tasks and reap the helper when the application exits."""
+        self._appshot_warm = False
+        task, self._idle_quit_task = self._idle_quit_task, None
+        if task is not None:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        self._disarm_escape()
+        async with self._lock:
+            await self._quit_sidecar()
+
     def hold_for_snap(self) -> None:
         """Keep the sidecar alive for an effect that is about to be sent.
 
@@ -404,6 +441,32 @@ class CUIndicatorController:
             self._schedule_idle_quit()
             return shown
 
+    async def show_recording(
+        self, *, recording_id: str, video_path: str, thumb_b64: str,
+        monitor: list[int], rect: list[float], screen_name: str,
+        duration_s: float, rest_ms: int, labels: dict[str, str],
+    ) -> bool:
+        """Fly a finalized video into its bottom-right card, without changing screenshot state."""
+        ok, reason = self._border_capability()
+        if not ok:
+            log.debug("[appshot-effect] recording preview unavailable: %s", reason)
+            return False
+        self._loop = asyncio.get_running_loop()
+        async with self._lock:
+            self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
+            await asyncio.to_thread(self._spawn_sidecar)
+            if self._proc is None:
+                return False
+            capture_guard.register_hook(self._suppress_for_grab)
+            shown = await asyncio.to_thread(
+                self._send_and_wait, protocol.CMD_RECORDING, _SHOW_ACK_TIMEOUT_S,
+                id=f"recording:{recording_id}", video_path=video_path, thumb=thumb_b64,
+                monitor=list(monitor), rect=list(rect), screen_name=screen_name,
+                duration_s=duration_s, rest_ms=rest_ms, labels=labels,
+            )
+            self._schedule_idle_quit()
+            return shown
+
     async def snap_image(self, image_b64: str, shot_id: str = "") -> bool:
         """Hand the finished picture to the newest card, for a drag out.
 
@@ -434,6 +497,13 @@ class CUIndicatorController:
 
     def _handle_sidecar_event(self, payload: dict[str, Any]) -> None:
         event = payload.get("event")
+        if event in (protocol.EVENT_RECORDING_OPEN, protocol.EVENT_RECORDING_SAVE):
+            action = "open" if event == protocol.EVENT_RECORDING_OPEN else "save"
+            asyncio.get_running_loop().create_task(
+                self._recording_action(action, str(payload.get("id", ""))),
+                name="appshot-recording-card",
+            )
+            return
         if event == protocol.EVENT_CARD:
             self._card_open = bool(payload.get("open"))
             if not self._card_open:
@@ -454,7 +524,6 @@ class CUIndicatorController:
     async def _card_action(self, action: str, shot_id: str = "") -> None:
         """Copy, save or copy text from a card, then tell that card how it went."""
         from jarvis.appshot.card_actions import run_card_action  # noqa: PLC0415
-
         status = await run_card_action(action, shot_id)
         if self._proc is None or self._proc.poll() is not None:
             return
@@ -497,6 +566,19 @@ class CUIndicatorController:
         except Exception:  # noqa: BLE001 - a lost click must not break the sidecar
             log.warning("[appshot-effect] opening the editor failed", exc_info=True)
 
+    async def _recording_action(self, action: str, card_id: str) -> None:
+        from jarvis.appshot.recording_cards import RECORDING_PREFIX, run_recording_card_action
+
+        try:
+            status = await run_recording_card_action(action, card_id.removeprefix(RECORDING_PREFIX))
+            if status and self._proc is not None and self._proc.poll() is None:
+                await asyncio.to_thread(
+                    self._send_and_wait, protocol.CMD_RECORDING_STATUS, _SHOW_ACK_TIMEOUT_S,
+                    text=status, id=card_id,
+                )
+        except Exception:
+            log.exception("[appshot-effect] recording card action failed")
+
     def _schedule_idle_quit(self) -> None:
         task = self._idle_quit_task
         if task is not None and not task.done():
@@ -515,7 +597,8 @@ class CUIndicatorController:
             await asyncio.sleep(remaining + 0.05)
         async with self._lock:
             if (
-                self._active
+                self._appshot_warm
+                or self._active
                 or self._screen_active
                 or self._card_open
                 or time.monotonic() < self._snap_until

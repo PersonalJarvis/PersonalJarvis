@@ -107,10 +107,10 @@ async def test_api_stream_preserves_complete_replies_under_the_short_default(
         store.close()
 
 
-async def _drain(q: asyncio.Queue, until_kind: str, timeout: float = 5.0) -> list[dict[str, Any]]:
+async def _drain(q: asyncio.Queue, until_kind: str, budget_s: float = 5.0) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
+    deadline = loop.time() + budget_s
     while True:
         remaining = deadline - loop.time()
         if remaining <= 0:
@@ -144,7 +144,7 @@ def test_turn_streams_text_runs_a_tool_and_asks_for_approval(tmp_path: Path, scr
         store = AgentChatStore(":memory:")
         svc = AgentChatService(store, assistant_name=lambda: "Testo")
         session = svc.create_session(
-            provider="fakeprov", model="m", effort="high", cwd=str(tmp_path)
+            provider="fakeprov", model="m", effort="high", cwd=str(tmp_path), permission_mode="ask"
         )
         q = svc.subscribe(session.session_id)
         turn_id = await svc.send(session.session_id, "please write hello.txt")
@@ -194,7 +194,7 @@ def test_deny_feeds_a_denied_result_and_allow_always_flips_the_mode(tmp_path: Pa
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path), permission_mode="ask")
         q = svc.subscribe(session.session_id)
         await svc.send(session.session_id, "run things")
         ev = (await _drain(q, "approval_required"))[-1]["payload"]
@@ -224,7 +224,7 @@ def test_cancel_ends_the_turn(tmp_path: Path, scripted):
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path), permission_mode="ask")
         q = svc.subscribe(session.session_id)
         turn_id = await svc.send(session.session_id, "go")
         await _drain(q, "approval_required")
@@ -787,7 +787,7 @@ def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
 
     async def scenario() -> None:
         svc = AgentChatService(AgentChatStore(":memory:"))
-        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+        session = svc.create_session(provider="fakeprov", cwd=str(tmp_path), permission_mode="ask")
         q = svc.subscribe(session.session_id)
         await svc.send(session.session_id, "run things")
         ev = (await _drain(q, "approval_required"))[-1]["payload"]
@@ -800,18 +800,70 @@ def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
     asyncio.run(scenario())
 
 
+def test_a_card_nothing_waits_on_closes_when_clicked(tmp_path: Path) -> None:
+    """A click on a card whose asker is gone closes it for good; nothing runs."""
+
+    async def scenario() -> None:
+        svc = AgentChatService(AgentChatStore(":memory:"))
+        session = svc.store.create_session(
+            provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+        )
+        sid = session.session_id
+        payload = {"turn_id": "t1", "approval_id": "gone", "call_id": "c1", "name": "Bash"}
+        svc.store.append_event(sid, {"kind": "turn_started", "ts_ms": 1, "payload": {"turn_id": "t1"}})
+        svc.store.append_event(sid, {"kind": "approval_required", "ts_ms": 2, "payload": payload})
+
+        assert not svc.resolve_approval(sid, "gone", "allow")
+        assert await svc.close_stale_approval(sid, "gone")
+        last = svc.store.list_events(sid)[-1]
+        assert last["kind"] == "approval_resolved"
+        assert last["payload"] == {"turn_id": "t1", "approval_id": "gone", "decision": "expired"}
+        # Closed once; an id the chat never showed is not invented into it.
+        assert not await svc.close_stale_approval(sid, "gone")
+        assert not await svc.close_stale_approval(sid, "never-shown")
+        assert len(svc.store.list_events(sid)) == 3
+
+    asyncio.run(scenario())
+
+
+def test_the_approval_route_answers_410_for_an_expired_card(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        svc = app.state.agent_chat_factory()
+        app.state.agent_chat = svc
+        sid = svc.store.create_session(
+            provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+        ).session_id
+        payload = {"turn_id": "t1", "approval_id": "gone", "call_id": "c1", "name": "Bash"}
+        svc.store.append_event(sid, {"kind": "approval_required", "ts_ms": 2, "payload": payload})
+        expired = client.post(f"/api/agent-chat/sessions/{sid}/approvals/gone", json={"decision": "allow"})
+        assert expired.status_code == 410
+        unknown = client.post(f"/api/agent-chat/sessions/{sid}/approvals/nope", json={"decision": "allow"})
+        assert unknown.status_code == 404
+
+
 def test_a_new_process_closes_turns_a_restart_left_open(tmp_path: Path) -> None:
     """A turn whose runner died with the old process ends as failed, not Working for ever."""
     db = tmp_path / "agent_chat.db"
     store = AgentChatStore(db)
-    open_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
-    done_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
+    open_chat = store.create_session(
+        provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+    )
+    done_chat = store.create_session(
+        provider="claude-api", model="m", effort="medium", cwd=str(tmp_path)
+    )
     for sid, ts in ((open_chat.session_id, 1_000), (done_chat.session_id, 1_000)):
-        store.append_event(sid, {"kind": "turn_started", "ts_ms": ts, "payload": {"turn_id": f"t-{sid}"}})
-        store.append_event(sid, {"kind": "tool_call", "ts_ms": ts + 500, "payload": {"turn_id": f"t-{sid}", "call_id": "c"}})
+        store.append_event(sid, {
+            "kind": "turn_started", "ts_ms": ts, "payload": {"turn_id": f"t-{sid}"},
+        })
+        store.append_event(sid, {
+            "kind": "tool_call", "ts_ms": ts + 500,
+            "payload": {"turn_id": f"t-{sid}", "call_id": "c"},
+        })
     store.append_event(
         done_chat.session_id,
-        {"kind": "turn_finished", "ts_ms": 2_000, "payload": {"turn_id": f"t-{done_chat.session_id}", "status": "done"}},
+        {"kind": "turn_finished", "ts_ms": 2_000,
+         "payload": {"turn_id": f"t-{done_chat.session_id}", "status": "done"}},
     )
 
     AgentChatService(AgentChatStore(db))

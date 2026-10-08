@@ -46,6 +46,18 @@ function societyRow(over: Partial<SocietyProviderRow>): SocietyProviderRow {
 }
 
 describe("brainSeats", () => {
+  it.each(["claude-api", "gemini", "grok"])("%s uses its actual API transport even when account metadata describes a subscription", (id) => {
+    const [seat] = brainSeats([option({ id, runner: "brain" })],
+      [societyRow({ id, subscription: true, accounts: [account("subscription-login")] })]);
+    expect(seat.kind).toBe("api");
+    expect(seat.accounts).toEqual([]);
+  });
+
+  it.each(["claude-api", "gemini", "grok", "openrouter", "nvidia"])("%s does not resurrect fallback models after a successful empty live catalog", (id) => {
+    const [seat] = brainSeats([option({ id, curated_models: [{ id: "retired", label: "Retired" }] })], [], { [id]: [] });
+    expect(seat.provider.curated_models).toEqual([]);
+  });
+
   it("lists only connected rows, subscriptions first, then keys, then local", () => {
     const seats = brainSeats(
       [

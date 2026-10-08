@@ -63,6 +63,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -464,6 +465,8 @@ class CliPlan:
     acp: Any | None = None
     #: Called once the process is gone (a runtime releasing its Gateway).
     after_turn: Callable[[], None] | None = None
+    #: The local gateway knows failures that a runtime may render as prose.
+    provider_failure: Future[str] | None = None
 
 
 def claude_control_init() -> str:
@@ -491,6 +494,30 @@ def claude_control_init() -> str:
         )
         + "\n"
     )
+
+
+def claude_session_rules(tool_name: str, suggestions: Any) -> list[dict[str, Any]]:
+    """What "Always allow" answers Claude Code: its own rule, for this session.
+
+    A ``can_use_tool`` request carries ``permission_suggestions`` — the rule
+    its own prompt would offer ("don't ask again for git log commands here").
+    Those name a settings file as their destination; the chat keeps them to
+    the running session, so a click never writes into the person's repo or
+    user settings. Without a suggestion the tool itself is allowed.
+    """
+    rules = [
+        {**rule, "destination": "session"}
+        for rule in (suggestions if isinstance(suggestions, list) else [])
+        if isinstance(rule, dict) and rule.get("type")
+    ]
+    return rules or [
+        {
+            "type": "addRules",
+            "rules": [{"toolName": tool_name}],
+            "behavior": "allow",
+            "destination": "session",
+        }
+    ]
 
 
 def claude_stream_input(prompt: str) -> str:
@@ -3656,6 +3683,12 @@ async def _drive_cli(
     plain_id = f"plain-{handle.turn_id}"
     stderr_tail: list[str] = []
 
+    def _provider_error() -> str | None:
+        signal = plan.provider_failure
+        if signal is not None and signal.done() and not signal.cancelled():
+            return signal.result()
+        return None
+
     async def _drain_stderr() -> None:
         assert proc.stderr is not None
         while True:
@@ -3710,6 +3743,10 @@ async def _drive_cli(
                     translate(obj, state)
                 continue
             if plan.acp is not None:
+                if _provider_error() or handle.cancel.is_set():
+                    # Do not present a runtime's synthetic error prose as an
+                    # assistant answer, or process tools after the failure.
+                    continue
                 await plan.acp.on_message(obj, acp_io)
                 if plan.acp.saw_result:
                     # The prompt answered; closing stdin lets the runtime exit.
@@ -3798,6 +3835,13 @@ async def _drive_cli(
             )
         if decision in {"allow", "allow_always"}:
             body: dict[str, Any] = {"behavior": "allow", "updatedInput": req.get("input") or {}}
+            if decision == "allow_always" and subtype == "can_use_tool":
+                # Without a rule the CLI asked again at the very next call of
+                # this turn: the session's new access mode only reaches the
+                # next process.
+                body["updatedPermissions"] = claude_session_rules(
+                    tool_name, req.get("permission_suggestions")
+                )
             if bridge is not None and subtype == "can_use_tool":
                 # A Jarvis tool the CLI just asked about will hit the executor's
                 # own gate over MCP in a moment; the person has answered once.
@@ -3898,8 +3942,37 @@ async def _drive_cli(
             if not plan.keep_stdin:
                 _close_stdin()
 
+    async def _cancel_acp() -> None:
+        if plan.provider_failure is not None:
+            # Revoke this turn before waiting for the bridge's abort frame.
+            plan.provider_failure.cancel()
+        if plan.acp is None or plan.acp.saw_result:
+            return
+        try:
+            # OpenClaw's gateway outlives the stdio child. Give the bridge a
+            # bounded chance to abort its upstream run before killing it.
+            await asyncio.wait_for(plan.acp.cancel(acp_io), timeout=1)
+            _close_stdin()
+            await asyncio.wait_for(proc.wait(), timeout=1)
+        except (TimeoutError, BrokenPipeError, ConnectionResetError, OSError):
+            log.debug("agent chat %s: ACP cancellation needs forced cleanup", handle.turn_id)
+
     async def _watch_cancel() -> None:
         await handle.cancel.wait()
+        await _cancel_acp()
+        _kill(proc)
+
+    async def _watch_provider_failure() -> None:
+        nonlocal status, error_text
+        if plan.provider_failure is None:
+            return
+        error_text = await asyncio.wrap_future(plan.provider_failure)
+        status = "error"
+        await _cancel_acp()
+        if tree is not None:
+            # Descendants can hold stdout open after the runtime exits. Reap
+            # the containment group now, before waiting for either pipe.
+            tree.close()
         _kill(proc)
 
     class _AcpIO:
@@ -3928,6 +4001,7 @@ async def _drive_cli(
     drain = asyncio.create_task(_drain_stderr())
     feeder = asyncio.create_task(_feed_stdin())
     watcher = asyncio.create_task(_watch_cancel())
+    provider_watcher = asyncio.create_task(_watch_provider_failure())
     try:
         # EOF is not process exit: a CLI may close both pipes and keep
         # running. The deadline must also cover waiting for the process.
@@ -3944,6 +4018,7 @@ async def _drive_cli(
             proc.returncode,
             pump.done(),
         )
+        await _cancel_acp()
         _kill(proc)
         status = "error"
         error_text = f"{runner} did not finish within {int(_TURN_TIMEOUT_S)} s."
@@ -3953,14 +4028,16 @@ async def _drive_cli(
             # in the turn host and the next app start carries the turn on.
             proc.detach()
         else:
+            await _cancel_acp()
             _kill(proc)
         raise
     finally:
         watcher.cancel()
+        provider_watcher.cancel()
         for task in (pump, drain, feeder):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(watcher, pump, drain, feeder, return_exceptions=True)
+        await asyncio.gather(watcher, provider_watcher, pump, drain, feeder, return_exceptions=True)
         if tree is not None:
             tree.close()
         if proc.returncode is None and not getattr(proc, "detached", False):
@@ -3985,6 +4062,8 @@ async def _drive_cli(
             error_text = "The process that ran this agent stopped unexpectedly."
     if handle.cancel.is_set():
         status = "cancelled"
+    elif provider_error := _provider_error():
+        status, error_text = "error", provider_error
     elif status == "done":
         if state.status == "error":
             status, error_text = (
@@ -4006,7 +4085,7 @@ async def _drive_cli(
         elif plan.shape == "codex" and state.failed_tools:
             status = "error"
             error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
-        elif runner in {"claude-cli", "glm-cli"} and not state.saw_result:
+        elif (runner in {"claude-cli", "glm-cli"} or plan.acp is not None) and not state.saw_result:
             status = "error"
             error_text = f"{runner} exited without a terminal result; its output may be incomplete."
 

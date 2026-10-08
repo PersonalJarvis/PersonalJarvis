@@ -10,7 +10,8 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/i18n";
 import type { Computer } from "@/lib/computersApi";
-import { SettingsRow, SettingsSelect } from "@/views/settings/SettingsLayout";
+import { SettingsSelect } from "@/views/settings/SettingsLayout";
+import { Row } from "./surface";
 
 const ENDPOINT = "/api/agentic-ide/offload-on-quit";
 /** The select's value for "no computer"; a computer id never takes this shape. */
@@ -70,19 +71,15 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
   ];
 
   return (
-    <SettingsRow
+    <Row
       title={
         <span className="inline-flex items-center gap-2">
           {t("computers.keep_title")}
           {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
         </span>
       }
-      description={
-        <>
-          {t("computers.keep_body")}
-          {hasWindows && <span className="mt-1 block text-xs text-foreground-faint">{t("computers.keep_windows_note")}</span>}
-        </>
-      }
+      description={t("computers.keep_body")}
+      status={hasWindows ? t("computers.keep_windows_note") : undefined}
       control={
         <SettingsSelect
           value={value ?? OFF}
@@ -91,11 +88,11 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
           ariaLabel={t("computers.keep_title")}
           disabled={!loaded || saving}
           testId="computers-keep-working"
-          className="min-w-[10rem] justify-between border border-border"
+          className="h-8 min-w-[12rem] justify-between border border-border bg-secondary/40"
         />
       }
     >
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    </SettingsRow>
+      {error && <p role="alert" className="pb-1 text-sm text-destructive">{error}</p>}
+    </Row>
   );
 }

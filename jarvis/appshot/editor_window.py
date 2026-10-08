@@ -25,6 +25,8 @@ EDITOR_VIEW = "appshot-editor"
 
 #: Appshot ids are uuid hex; nothing else may reach the window URL.
 _ID = re.compile(r"^[0-9a-f]{8,64}$")
+#: Recording ids are exactly one uuid hex (``jarvis.appshot.recording``).
+_RECORDING_ID = re.compile(r"^[0-9a-f]{32}$")
 
 _opener: Callable[[str], dict[str, Any]] | None = None
 _prewarm: Callable[[], dict[str, Any]] | None = None
@@ -63,11 +65,28 @@ def can_open_window() -> bool:
 
 async def open_editor_window(shot_id: str) -> bool:
     """Open the editor window on ``shot_id``. ``False`` = use the page instead."""
+    if not _ID.match(shot_id or ""):
+        return False
+    return await _open(f"appshot={shot_id}")
+
+
+async def open_recording_window(recording_id: str) -> bool:
+    """Open the same window as a video player and trimmer on a recording.
+
+    ``False`` where the shell cannot open windows; the caller then falls back
+    to the system's video player.
+    """
+    if not _RECORDING_ID.match(recording_id or ""):
+        return False
+    return await _open(f"recording={recording_id}")
+
+
+async def _open(query: str) -> bool:
     opener = _opener
-    if opener is None or not _ID.match(shot_id or ""):
+    if opener is None:
         return False
     try:
-        result = await asyncio.to_thread(opener, f"appshot={shot_id}")
+        result = await asyncio.to_thread(opener, query)
     except Exception:  # noqa: BLE001 - the page editor is the honest fallback
         log.warning("appshot: the editor window could not be opened", exc_info=True)
         return False
@@ -81,6 +100,7 @@ __all__ = [
     "EDITOR_VIEW",
     "can_open_window",
     "open_editor_window",
+    "open_recording_window",
     "prewarm_editor_window",
     "register_window_opener",
 ]

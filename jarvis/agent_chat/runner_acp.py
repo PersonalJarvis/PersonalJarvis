@@ -12,20 +12,18 @@ driver in ``jarvis.agent_runtimes``). The turn itself is driven over ACP by
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 from pathlib import Path
 from typing import Any
 
-from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver
+from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver, gateway
 from jarvis.agent_runtimes.acp import AcpTurn
 from jarvis.agent_runtimes.base import RuntimeTurn, RuntimeUnavailable
-from jarvis.agent_runtimes.model_map import RouteUnavailable, route_for
+from jarvis.agent_runtimes.model_map import RouteUnavailable, prepare_route
 
 log = logging.getLogger(__name__)
 
-#: Society capability ids whose explicit denial switches the runtime's own
-#: matching tools off as well.
+#: Native tools must honor the same capability selection as the MCP surface.
 _NATIVE_GROUPS: dict[str, str] = {"core:shell": "shell", "core:browser": "web"}
 
 
@@ -60,7 +58,13 @@ def _config() -> Any:
 
 
 def _denied_native(agent: Any, plan_mode: bool) -> frozenset[str]:
-    denied = {group for cap, group in _NATIVE_GROUPS.items() if cap in (agent.denies or [])}
+    grants = set(agent.grants or [])
+    denies = set(agent.denies or [])
+    denied = {
+        group
+        for cap, group in _NATIVE_GROUPS.items()
+        if cap in denies or (str(agent.grant_mode) == "allowlist" and cap not in grants)
+    }
     if plan_mode:
         denied.add("shell")
     return frozenset(denied)
@@ -128,15 +132,11 @@ async def plan_runtime_turn(
     if agent is None:
         raise CliUnavailable(f"{runtime_name.title()} runs society agents only.")
     try:
-        route = await asyncio.to_thread(
-            functools.partial(
-                route_for,
-                _config(),
-                session.provider,
-                session.model,
-                agent_id=agent.agent_id,
-                account_id=getattr(session, "account_id", "") or "",
-            )
+        route = await prepare_route(
+            _config(), session.provider, session.model,
+            agent_id=agent.agent_id,
+            account_id=getattr(session, "account_id", "") or "",
+            session_id=session.session_id,
         )
     except RouteUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
@@ -160,6 +160,25 @@ async def plan_runtime_turn(
         launch = await runtime.launch(turn)
     except RuntimeUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
+    try:
+        failure = gateway.watch_failure(route.api_key or "", effort=session.effort or "")
+    except Exception:
+        if launch.release is not None:
+            launch.release()
+        raise
+
+    def release() -> None:
+        gateway.unwatch_failure(route.api_key or "", failure)
+        if launch.invalidate is not None and (
+            handle.cancel.is_set()
+            or (failure.done() and not failure.cancelled())
+            or not acp.saw_result
+            or acp.status != "done"
+        ):
+            launch.invalidate()
+        if launch.release is not None:
+            launch.release()
+
     text = _PLAN_PREAMBLE + prompt if plan_mode else prompt
     acp = AcpTurn(
         turn_id=handle.turn_id,
@@ -180,5 +199,6 @@ async def plan_runtime_turn(
         vendor_session=None,
         keep_stdin=True,
         acp=acp,
-        after_turn=launch.release,
+        after_turn=release,
+        provider_failure=failure,
     )

@@ -267,7 +267,9 @@ class _FakeOllamaClient(_FakeClient):
         self.show_caps = show_caps
         self.shown: list[str] = []
 
-    async def post(self, url: str, json: dict[str, Any] | None = None) -> _FakeResponse:
+    async def post(
+        self, url: str, json: dict[str, Any] | None = None, headers=None,
+    ) -> _FakeResponse:
         name = str((json or {}).get("model") or "")
         self.shown.append(name)
         assert url.endswith("/api/show")
@@ -316,7 +318,7 @@ async def test_ollama_catalog_survives_a_server_without_api_show(tmp_path, monke
     (capable), exactly as before this enrichment existed."""
 
     class _NoShow(_FakeOllamaClient):
-        async def post(self, url, json=None):  # type: ignore[override]
+        async def post(self, url, json=None, headers=None):  # type: ignore[override]
             raise RuntimeError("api/show unavailable")
 
     _local_env(monkeypatch)

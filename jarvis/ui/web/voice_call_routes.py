@@ -25,10 +25,29 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
+
+
+class BrowserStartupFailure(BaseModel):
+    """A bounded correlation token; no microphone data or failure text."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(
+        min_length=36, max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    )
+
+
+@router.post("/startup-failed")
+async def voice_startup_failed(body: BrowserStartupFailure) -> dict[str, bool]:
+    """Release a pending wake request when browser audio could not start."""
+    from jarvis.live.runtime import browser_startup_failed
+
+    return {"acknowledged": browser_startup_failed(body.request_id)}
 
 
 def _pipeline() -> Any:

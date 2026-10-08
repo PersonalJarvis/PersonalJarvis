@@ -19,11 +19,9 @@ from typing import Any, Final
 
 from jarvis.agent_chat.credential_requests import (
     CANCELLED,
-    CREDENTIAL_TIMEOUT_S,
     DECLINED,
     MAX_REQUESTS_PER_TURN,
     SAVED,
-    TIMEOUT,
     CredentialSpec,
     TooManyCredentialRequests,
 )
@@ -38,12 +36,6 @@ log = logging.getLogger(__name__)
 __all__ = ["CREDENTIAL_TOOL_NAME", "RequestCredentialTool", "usage_note"]
 
 CREDENTIAL_TOOL_NAME: Final[str] = "society_request_credential"
-
-#: One call waits this long for the card, then hands back "waiting" (CLI
-#: seats drop an MCP call after about a minute).
-WAIT_SLICE_S: Final[float] = 45.0
-_MINUTES: Final[int] = int(CREDENTIAL_TIMEOUT_S // 60)
-
 
 def usage_note(env: str) -> str:
     """How the agent uses a stored credential without ever seeing it."""
@@ -75,11 +67,16 @@ class RequestCredentialTool:
         "in env for commands you run with society_shell; reference it by name inside them "
         "($GITHUB_TOKEN) and have your code read it from the environment. "
         "Choose a conventional UPPER_SNAKE_CASE name, give a short label, and say in "
-        "description what it is for and where the user creates it (with the minimal scopes). "
+        "description what it is for and where the user creates it (with the minimal scopes), "
+        "in the user's language. This explanation appears before the secure field. "
         "A credential you already have is not asked for again: the call returns 'available'. "
         "Set replace only when the stored value was rejected by the service. While the user "
-        "has not answered yet, the call returns status 'waiting' with a request_id: then call "
-        "this tool again with only wait_for set to that id, and do nothing else meanwhile."
+        "has not answered yet, the call returns immediately with status 'waiting' and a "
+        "request_id. Do not poll, sleep, or keep the turn running for a token. The field "
+        "stays open until the user saves or cancels, even if the turn ends. Continue unrelated "
+        "work and respond to new messages while the user obtains the credential. If nothing "
+        "else can be done now, finish your reply so the user can ask questions. On a later "
+        "turn, wait_for checks the existing field's status immediately without opening another."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -110,8 +107,8 @@ class RequestCredentialTool:
             "wait_for": {
                 "type": "string",
                 "description": (
-                    "Only to keep waiting on a card you already opened: the request_id from a "
-                    "'waiting' result. Send it alone."
+                    "Check a previously opened field on a later turn: the request_id from a "
+                    "'waiting' result. Returns immediately. Send it alone; never poll in a loop."
                 ),
             },
         },
@@ -125,7 +122,7 @@ class RequestCredentialTool:
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
         wait_for = str(args.get("wait_for") or "").strip()
         if wait_for:
-            return await self._keep_waiting(wait_for)
+            return await self._check_existing(wait_for)
         try:
             env = validate_env_name(args.get("env"))
             spec = CredentialSpec.build(
@@ -135,6 +132,10 @@ class RequestCredentialTool:
                 args.get("placeholder"),
                 replace=bool(args.get("replace")),
             )
+            if not spec.description:
+                raise ValueError(
+                    "description is required: explain why the task needs this credential"
+                )
         except ValueError as exc:
             # A malformed request goes back to the agent as the error to fix.
             return ToolResult(success=False, output=None, error=f"invalid request: {exc}")
@@ -163,29 +164,30 @@ class RequestCredentialTool:
         agent_id = self._agent_id
 
         async def save(value: str) -> None:
-            await asyncio.to_thread(vault.store, agent_id, env, value, label=spec.label)
+            await credentials.save_requested_credential(agent_id, env, value, label=spec.label)
 
         try:
             request_id = await service.open_credential_request(
                 self._session_id, spec, save, asker=self._asker()
             )
-        except TooManyCredentialRequests:
+        except TooManyCredentialRequests as exc:  # Return the limit as the tool's visible error.
             return ToolResult(
                 success=False,
                 output={"status": "limit", "env": env},
                 error=(
-                    f"This turn already asked for {MAX_REQUESTS_PER_TURN} credentials. Ask for "
-                    "the rest in one later turn and say which ones are still missing."
+                    f"Credential field limit reached: {exc}. At most {MAX_REQUESTS_PER_TURN} "
+                    "new fields can be opened per turn. Reuse existing pending fields."
                 ),
             )
         except RuntimeError as exc:
             log.info("society credential: %s cannot ask here (%s)", agent_id, exc)
             return _nobody(env)
-        return await self._wait(service, request_id, env)
+        return await self._status(service, request_id, env)
 
-    async def _keep_waiting(self, request_id: str) -> ToolResult:
+    async def _check_existing(self, request_id: str) -> ToolResult:
         service = self._runtime.chat_service()
         try:
+            await service.restore_credential_requests(self._session_id)
             spec = service.credential_request_spec(self._session_id, request_id)
         except (AttributeError, KeyError):
             # Unknown request id is reported to the agent in the result.
@@ -193,14 +195,16 @@ class RequestCredentialTool:
                 success=False,
                 output=None,
                 error=(
-                    "No open credential field with that id in this chat (it closed with the "
-                    "turn). Do not ask again in this turn; tell the user what is missing."
+                    "No credential field with that id in this chat. Check whether the "
+                    "credential is already available before opening a new field."
                 ),
             )
-        return await self._wait(service, request_id, spec.env)
+        return await self._status(service, request_id, spec.env)
 
-    async def _wait(self, service: Any, request_id: str, env: str) -> ToolResult:
-        status = await service.wait_credential_request(self._session_id, request_id, WAIT_SLICE_S)
+    async def _status(self, service: Any, request_id: str, env: str) -> ToolResult:
+        # The field owns its lifetime. Holding the turn here queues the very
+        # questions the person needs to ask before supplying the credential.
+        status = await service.wait_credential_request(self._session_id, request_id, 0)
         if status is None:
             return ToolResult(
                 success=True,
@@ -209,9 +213,12 @@ class RequestCredentialTool:
                     "request_id": request_id,
                     "env": env,
                     "note": (
-                        "The user has not saved the credential yet; the field stays open for "
-                        f"{_MINUTES} minutes. Call {CREDENTIAL_TOOL_NAME} again now with only "
-                        f'{{"wait_for": "{request_id}"}}. Do nothing else meanwhile.'
+                        "The user has not saved the credential yet. The field stays open "
+                        "until they save or cancel, including after this turn ends. Continue "
+                        "unrelated work if useful; otherwise finish your reply now so the user "
+                        "can ask questions. Do not poll, sleep, or call this tool again in this "
+                        "turn just to wait. On a later turn, check this field with "
+                        f'{{"wait_for": "{request_id}"}} or use the stored credential by name.'
                     ),
                 },
             )
@@ -228,8 +235,6 @@ class RequestCredentialTool:
         reason = (
             "The user declined to provide it."
             if status == DECLINED
-            else f"Nobody filled the field within {_MINUTES} minutes."
-            if status == TIMEOUT
             else "The field closed without a value."
         )
         return ToolResult(
@@ -256,4 +261,3 @@ def _nobody(env: str) -> ToolResult:
             "your chat."
         ),
     )
-

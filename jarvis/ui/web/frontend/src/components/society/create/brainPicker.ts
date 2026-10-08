@@ -35,6 +35,9 @@ export interface BrainSeat {
 const KIND_ORDER: Record<BrainKind, number> = { subscription: 0, api: 1, local: 2 };
 
 function kindOf(option: ProviderOption, row: SocietyProviderRow | undefined): BrainKind {
+  // The runtime catalog resolves dual providers to the actual transport.
+  // An account-reader row can still describe their subscription capability.
+  if (isApiRunner(option.runner)) return option.keyless ? "local" : "api";
   if (row ? row.subscription : !isApiRunner(option.runner)) return "subscription";
   return option.keyless ? "local" : "api";
 }
@@ -68,7 +71,7 @@ export function brainSeats(
     .filter((o) => !o.keyless || (liveModels[o.id]?.length ?? 0) > 0)
     .flatMap((option) => {
       const live = liveModels[option.id];
-      const listed = live?.length ? live : option.curated_models;
+      const listed = live ?? option.curated_models;
       // Models hidden on the API Keys page stay out of the agents' pickers; a
       // provider whose every model is hidden is not offered at all.
       const hidden = new Set(option.hidden_models ?? []);

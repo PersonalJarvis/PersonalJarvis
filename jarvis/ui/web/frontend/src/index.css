@@ -610,6 +610,9 @@ label,
        carried by weight and by --foreground-strong instead. 14.3:1 on paper. */
     --primary: 0 0% 9%;
     --primary-foreground: 0 0% 100%;
+    /* The chat Send control keeps its white fill in both appearances. */
+    --chat-send-background: 0 0% 100%;
+    --chat-send-foreground: 0 0% 9%;
     --accent: 212 92% 45%; /* #096CDC — the SIGNAL: links, focus, active, selected, info */
     --accent-foreground: 0 0% 100%;
     --ring: 212 92% 45%;

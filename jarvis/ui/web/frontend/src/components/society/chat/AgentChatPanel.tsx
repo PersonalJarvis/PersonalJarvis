@@ -38,17 +38,18 @@ import { notifyRoutineChanged } from "../cardData";
 import { routineTaskId } from "./routineExecution";
 import { RoutineChatHost } from "./RoutineChatHost";
 import { AgentConversationsBar } from "./AgentConversations";
-import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
+import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
 import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
-import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import { ComposerChipField, type ComposerChipFieldHandle, type ComposerDraft } from "@/components/agentchat/ComposerChipField";
+import { captureComposerDraftTarget, readComposerDraft, useComposerDraft, writeComposerDraft } from "@/components/agentchat/composerDrafts";
 import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
 import { choiceToken } from "@/components/agentchat/composerChips";
-import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { releaseHeldFiles, restoreHeldFiles, useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationButton } from "@/components/agentchat/DictationButton";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
@@ -74,9 +75,7 @@ import { AgentSwatch, agentColor } from "../AgentSwatch";
 import { bubbleTint, type BubbleTint } from "@/lib/bubbleTint";
 import {
   useResolveProposal,
-  useRestoreIdentity,
   useSocietyCapabilities,
-  type PreviousIdentity,
   type SocietyAgent,
 } from "../data";
 import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
@@ -686,8 +685,14 @@ export function Transcript({
   const sessionId = useAgentChat((state) => state.activeSessionId);
   // Memory receipts are drawn inside the turn they follow, above its reply.
   // A coding thread's unchanged status is one row, however often it arrived.
+  // Applied identity changes stay in history without chat rows or timestamps.
   const { items, memoryByTurn } = useMemo(
-    () => foldMemoryNotices(foldRepeatedThreadStatus(rawItems)),
+    () => foldMemoryNotices(foldRepeatedThreadStatus(rawItems.filter((item) => !(
+      item.type === "notice" && item.data.proposal_kind === "identity" && (
+        item.kind === "proposal" && item.resolved === "applied"
+        || item.kind === "proposal_resolved" && (!item.status || item.status === "applied")
+      )
+    )))),
     [rawItems],
   );
   // Follow the newest while the view sits at the end — the rule every
@@ -777,9 +782,6 @@ function TimeStamp({ ms }: { ms: number }) {
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
-  if (item.kind === "proposal_resolved" && item.data.proposal_kind === "identity") {
-    return <IdentityNotice item={item} />;
-  }
   if (item.kind === "message_queued") {
     return <p className="self-end py-1 text-xs text-muted-foreground" data-testid="message-queued">
       {t("society.chat.message_waiting")} · {item.text}
@@ -823,76 +825,6 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     <ChatActivity label={headline || item.text.split("\n")[0]} failed={item.status === "blocked" || item.resolved === "failed"}>
       {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed" /> : null}
     </ChatActivity>
-  );
-}
-
-function previousIdentity(data: Record<string, unknown>): PreviousIdentity | null {
-  const raw = data.previous;
-  if (!raw || typeof raw !== "object") return null;
-  const value = raw as Record<string, unknown>;
-  if (typeof value.name !== "string" || !value.name) return null;
-  return {
-    name: value.name,
-    title: typeof value.title === "string" ? value.title : "",
-    description: typeof value.description === "string" ? value.description : "",
-    focus: Array.isArray(value.focus) ? value.focus.map(String) : [],
-    ...(value.approval_rules && typeof value.approval_rules === "object"
-      ? { approval_rules: rulesOf(value.approval_rules as Record<string, unknown>) }
-      : {}),
-  };
-}
-
-function rulesOf(raw: Record<string, unknown>): { require_approval: string[]; always_allow: string[] } {
-  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
-  return { require_approval: list(raw.require_approval), always_allow: list(raw.always_allow) };
-}
-
-/**
- * The agent took a name and role from the conversation. A fresh agent does
- * this without asking first, so the line offers the way back: Undo restores
- * the name, title, description and focus it had before.
- */
-export function IdentityNotice({ item }: { item: NoticeItem }) {
-  const t = useT();
-  const restore = useRestoreIdentity();
-  const previous = previousIdentity(item.data);
-  const [state, setState] = useState<"idle" | "busy" | "undone">("idle");
-  const [error, setError] = useState("");
-  const agentId = item.agentId || String(item.data.agent_id ?? "");
-  const outcome = item.text.split("\n").pop() ?? "";
-  const undo = async () => {
-    if (!previous || !agentId) return;
-    setState("busy");
-    setError("");
-    try {
-      await restore(agentId, previous);
-      setState("undone");
-    } catch (err) {
-      setState("idle");
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-  const label =
-    state === "undone" && previous
-      ? t("society.chat.identity_undone").replace("{0}", previous.name)
-      : t("society.chat.identity_now").replace("{0}", item.agentName || outcome);
-  return (
-    <div className="my-2 flex flex-wrap items-center justify-center gap-2 self-center py-1 text-center text-xs text-muted-foreground" data-testid="identity-notice">
-      <span className="font-medium text-foreground">{label}</span>
-      {state !== "undone" && outcome ? <span>{outcome}</span> : null}
-      {previous && agentId && state !== "undone" ? (
-        <button
-          type="button"
-          disabled={state === "busy"}
-          onClick={() => void undo()}
-          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
-        >
-          <RotateCcw size={12} aria-hidden />
-          {t("society.chat.identity_undo")}
-        </button>
-      ) : null}
-      {error ? <span className="text-destructive">{error}</span> : null}
-    </div>
   );
 }
 
@@ -976,7 +908,6 @@ function ProposalCard({ item }: { item: NoticeItem }) {
         : item.resolved
           ? t("society.chat.proposal_failed")
           : "";
-  if (item.resolved === "applied" && kind === "identity") return <IdentityNotice item={item} />;
   if (item.resolved && item.resolved !== "failed") return <ChatActivity
     label={<>{resolvedLabel} · {kind ? t(`society.chat.proposal_kind_${kind}`) : ""} · {summary}</>}>
     <p className="whitespace-pre-wrap">{detail || summary}</p>
@@ -1194,23 +1125,31 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend }: ComposerProps) {
   const t = useT();
   const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
-  const [value, setValue] = useState("");
+  const messageDraft = useComposerDraft(chatStore, sessionId);
+  const value = messageDraft.text;
+  const setValue = (text: string) => writeComposerDraft(chatStore, sessionId, {
+    ...readComposerDraft(chatStore, sessionId), text,
+  });
   const [plusOpen, setPlusOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [selectedTools, setSelectedTools] = useState<MentionItem[]>([]);
-  useEffect(() => { setSelectedTools([]); }, [sessionId, agent.agentId]);
   const fieldRef = useRef<ComposerChipFieldHandle>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
-  const attachmentsRef = useRef(attachments.attachments);
-  attachmentsRef.current = attachments.attachments;
+  const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message),
+    { owner: chatStore, key: sessionId ?? "" });
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    const current = field?.getDraft();
+    if (current && (current.text !== messageDraft.text || JSON.stringify(current.choices) !== JSON.stringify(messageDraft.choices))) {
+      field?.hydrate(messageDraft.text, messageDraft.choices);
+    }
+  }, [messageDraft, sessionId]);
   const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
     attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
@@ -1223,12 +1162,12 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   }, () => void submit());
   const timeline = useAgentChat((s) => s.timeline);
   const sending = useAgentChat((s) => s.busy);
-  // `busy` on this composer also covers "session not open yet". Stop is only
-  // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
+  // Track HTTP admission and running work independently of composer readiness.
   const live = runningTurn(timeline) !== null || sending;
-  // A created agent's one chat never refuses its person: a message written
-  // while it works waits and starts as its next turn (MASTERPLAN §2.10).
-  const canQueue = surface === "society" && agent.tier !== "lead" && !sending && runningTurn(timeline) !== null;
+  // Admission is serialized by the store; execution waits in the backend.
+  // A pending HTTP request or credential card does not lock this composer.
+  const canQueue = surface === "jarvis" || surface === "society";
+  const sessionReady = surface !== "society" || Boolean(sessionId && chatStore.getState().activeSessionId === sessionId);
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1269,8 +1208,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1));
   }, [matches.length, activeIndex]);
 
-  const onDraftChange = (draft: { text: string; caret: number }) => {
-    setValue(draft.text);
+  const onDraftChange = (draft: ComposerDraft) => {
+    writeComposerDraft(chatStore, sessionId, { text: draft.text, choices: draft.choices });
     setMention(mentionToken(draft.text, draft.caret));
   };
 
@@ -1289,21 +1228,18 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       const row = mentionChoice(item);
       const next = `${before}${choiceToken(row)} ${after}`;
       field?.hydrate(next, [...(draft?.choices ?? []), row]);
-      setSelectedTools((items) => (items.some((row) => row.key === item.key) ? items : [...items, item]));
     }
     setMention(null);
   };
 
   const submit = async () => {
+    if (await commands.execute(fieldRef.current?.getDraft().text.trim() ?? value.trim())) return;
     const draft = fieldRef.current?.getDraft();
     const fullDraft = draft?.text ?? value;
     const draftText = fullDraft.trim();
     const submittedFolder = codingFolder;
-    const selected = selectedTools;
-    const sentAttachments = attachments.attachments;
     const text = draftText;
-    if (await commands.execute(text)) return;
-    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
+    if ((!text && attachments.attachments.length === 0) || !sessionReady || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1336,25 +1272,34 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
     setProblem(null);
+    const held = attachments.take();
+    if (!text && held.attachments.length === 0) return;
+    const draftTarget = captureComposerDraftTarget(chatStore, sessionId);
+    const sentDraft = { text: fullDraft, choices: draft?.choices ?? messageDraft.choices };
+    writeComposerDraft(chatStore, sessionId, { text: "", choices: [] });
+    fieldRef.current?.clear();
+    setMention(null);
+    setCodingFolder("");
     try {
-      const result = await onSend(hint ? `${text}\n\n${hint}` : text, sentAttachments);
-      if (result === "stale" || sessionId && chatStore.getState().activeSessionId !== sessionId) return;
+      const result = await onSend(hint ? `${text}\n\n${hint}` : text, held.attachments);
       const sendError = chatStore.getState().lastError;
       if (result === "failed" || result === undefined && sendError) throw new Error(sendError ?? t("common.error_generic"));
-      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
-        setValue("");
-        fieldRef.current?.clear();
-        setMention(null);
-        setSelectedTools([]);
-      }
-      if (attachmentsRef.current === sentAttachments) attachments.clear();
-      else sentAttachments.forEach((file) => attachments.remove(file.name));
+      releaseHeldFiles(held);
     } catch (err) {
-      // The input and files stay in place until the server accepts them.
-      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
-        setSelectedTools(selected);
-        setCodingFolder(submittedFolder);
+      if (draftTarget.superseded) {
+        releaseHeldFiles(held);
+        useEventStore.getState().pushToast("error", t("society.chat.message_not_sent").replace("{0}", sentDraft.text));
+        return;
       }
+      // Restore only this submission's draft, even after changing agents.
+      // Preserve anything typed while the HTTP request was pending.
+      const current = readComposerDraft(chatStore, draftTarget.sessionId);
+      writeComposerDraft(chatStore, draftTarget.sessionId, {
+        text: [sentDraft.text, current.text].filter(Boolean).join("\n"),
+        choices: [...sentDraft.choices, ...current.choices.filter((row) => !sentDraft.choices.some((sent) => sent.id === row.id))],
+      });
+      restoreHeldFiles(chatStore, draftTarget.sessionId ?? "", held);
+      setCodingFolder(submittedFolder);
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1508,27 +1453,16 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
-        {live && !commands.isCommand && !((commands.canSteer || canQueue) && value.trim()) ? (
-          <button
-            type="button"
-            onClick={() => void onCancel()}
-            aria-label={t("society.chat.stop")}
-            title={t("society.chat.stop")}
-            data-testid="composer-stop"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90"
-          >
-            <Square className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        ) : (
+        {(
           <button
             type="button"
             // While recording, Send ends the dictation and sends once the
             // words land, so it is live before the box holds any text.
             onClick={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
-            disabled={modelSaving || attachments.analyzing > 0 || (!value.trim() && selectedTools.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
+            disabled={!sessionReady || modelSaving || attachments.analyzing > 0 || (!value.trim() && messageDraft.choices.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--chat-send-background))] text-[hsl(var(--chat-send-foreground))] disabled:[&_svg]:opacity-40"
           >
             <Send className="h-3.5 w-3.5" aria-hidden />
           </button>

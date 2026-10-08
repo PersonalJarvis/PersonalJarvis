@@ -235,11 +235,11 @@ async def test_armed_mission_call_executes_without_human() -> None:
     assert tool.approved_by == "mission-grant:m-e2e"
 
 
-async def test_unarmed_mission_call_times_out_without_running() -> None:
+async def test_unarmed_mission_in_ask_mode_times_out_without_running() -> None:
     bus = EventBus()
     executor = ToolExecutor(
         bus,
-        RiskTierEvaluator(SafetyConfig()),
+        RiskTierEvaluator(SafetyConfig(approval_mode="ask")),
         ApprovalWorkflow(bus, timeout_s=0.05),
         default_timeout_s=0.05,
     )

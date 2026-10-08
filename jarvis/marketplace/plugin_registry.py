@@ -21,7 +21,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from jarvis.core.protocols import RiskTier
+from jarvis.core.protocols import RiskTier, Tool
 from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
 from jarvis.marketplace.catalog_data import load_catalog
 from jarvis.marketplace.plugin_mcp import plugin_to_mcp_server_spec
@@ -139,6 +139,7 @@ class PluginToolRegistry:
         refresh_handler_builder: Callable[[str], Any | None] | None = None,
         retry_initial_s: float = 5.0,
         retry_max_s: float = 300.0,
+        custom_api_runtime: Any = None,
     ) -> None:
         self._catalog = catalog or load_catalog()
         self._store = token_store or TokenStore()
@@ -166,9 +167,20 @@ class PluginToolRegistry:
         # tokenless client or double-register a plugin's tools. asyncio.Lock is
         # not loop-bound at construction (py3.10+), so building it here is safe.
         self._lock = asyncio.Lock()
+        from jarvis.marketplace.custom_api_runtime import CustomApiRuntime
 
-    def active_tools(self) -> list[MCPToolAdapter]:
-        return list(self._tools.values())
+        self.custom_apis = custom_api_runtime or CustomApiRuntime()
+
+    def active_tools(self) -> list[Tool]:
+        return [*self._tools.values(), *self.custom_apis.tools.values()]
+
+    async def refresh_custom_apis(self) -> None:
+        if self._stopping:
+            return
+        await self.custom_apis.refresh()
+        await self._publish_brain_tools_changed(
+            "custom-apis", connected=bool(self.custom_apis.tools)
+        )
 
     def is_bootstrapped(self) -> bool:
         return self._bootstrapped
@@ -192,6 +204,10 @@ class PluginToolRegistry:
             if self._bootstrapped or self._stopping:
                 return
             plugins = list(self._catalog.plugins)
+        try:
+            await self.refresh_custom_apis()
+        except Exception:  # noqa: BLE001 - user definitions must not block shipped plugins
+            log.warning("Custom API tools could not be loaded", exc_info=True)
         # Per-plugin lock + per-plugin publish: an early plugin's tools reach
         # the live brain IMMEDIATELY, even while a later plugin is still
         # connecting or timing out. Holding one lock across the whole loop let
@@ -208,6 +224,22 @@ class PluginToolRegistry:
         async with self._lock:
             self._bootstrapped = True
             log.info("plugin-registry: %d plugin tools exposed", len(self._tools))
+
+    async def refresh_credentials(self, plugin_id: str) -> None:
+        """Apply token rotation without interrupting a request-aware HTTP session."""
+        async with self._lock:
+            if self._stopping:
+                return
+            client = self._clients.get(plugin_id)
+            tokens = self._store.load(plugin_id)
+            if (
+                getattr(client, "uses_dynamic_http_auth", False)
+                and client.is_healthy
+                and tokens is not None
+                and not tokens.needs_reauth
+            ):
+                return
+        await self.refresh_plugin(plugin_id)
 
     async def refresh_plugin(self, plugin_id: str) -> None:
         """Re-evaluate a single plugin after connect/disconnect."""
@@ -243,6 +275,7 @@ class PluginToolRegistry:
                     task.cancel()
                 await drained
         self._retry_tasks.clear()
+        await self.custom_apis.stop()
         async with self._lock:
             for pid in list(self._clients):
                 await self._disconnect_plugin(pid)
@@ -291,6 +324,18 @@ class PluginToolRegistry:
     ) -> tuple[Any, list[dict[str, Any]]]:
         """Open one bounded client and clean up any failed attempt."""
         client = self._client_factory(server_spec, env_overrides=env_overrides)
+        set_http_auth = getattr(client, "set_http_auth", None)
+        if server_spec.transport == "http" and callable(set_http_auth):
+            authorization = next(
+                (v for k, v in (server_spec.headers or {}).items() if k.lower() == "authorization"),
+                "",
+            )
+            if authorization.lower().startswith("bearer "):
+                from jarvis.marketplace.http_auth import PluginHttpAuth
+
+                set_http_auth(PluginHttpAuth(
+                    server_spec.name, server_spec.url, self._store, self._build_refresh_handler
+                ))
         from jarvis.marketplace.bundled_rest_client import BundledRestMcpClient
 
         if isinstance(client, BundledRestMcpClient):
@@ -341,6 +386,11 @@ class PluginToolRegistry:
             raise pending_cancel
 
     def _connect_error_message(self, exc: Exception) -> str:
+        if isinstance(exc, BaseExceptionGroup):
+            # AnyIO wraps HTTP refusals in TaskGroup errors. Its group summary
+            # contains no status code, so treating it as the error hides the 401
+            # and repeatedly reconnects with the same stale credential.
+            return "; ".join(self._connect_error_message(child) for child in exc.exceptions)
         if isinstance(exc, asyncio.TimeoutError):
             return (
                 f"connect timed out after {self._connect_timeout_s:.0f}s "
@@ -402,7 +452,7 @@ class PluginToolRegistry:
                 )
                 self._last_errors[plugin.id] = message
                 if attempt.outcome == SKIPPED:
-                    self._maybe_mark_needs_reauth(plugin.id, message)
+                    self._maybe_mark_needs_reauth(plugin.id, message, expected_tokens=tokens)
                 else:
                     self._schedule_retry(plugin.id)
                 return
@@ -485,10 +535,15 @@ class PluginToolRegistry:
                     "plugin-registry: %s re-auth mark skipped; token changed during connect retry",
                     plugin_id,
                 )
+                self._schedule_retry(plugin_id)
                 return
-            from jarvis.marketplace.refresh_scheduler import flag_for_reauth
+            from jarvis.marketplace.refresh_scheduler import _save_if_current, flag_for_reauth
 
-            self._store.save(plugin_id, flag_for_reauth(tokens, reason))
+            if not _save_if_current(
+                self._store, plugin_id, tokens, flag_for_reauth(tokens, reason)
+            ):
+                self._schedule_retry(plugin_id)
+                return
             log.warning(
                 "plugin-registry: %s connect needs re-auth (%s) — marked: %s",
                 plugin_id,

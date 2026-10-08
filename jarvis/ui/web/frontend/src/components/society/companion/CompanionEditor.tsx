@@ -75,9 +75,10 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
     </>}
     {/* A shape is painted in the agent's colour; a pet brings its own colours. */}
     {!lead && kind === "shape" && <div><span className="mb-2 block text-sm font-medium">{t("society.companion.color")}</span>
-      <div className="flex flex-wrap items-center gap-2">{COMPANION_COLORS.map(color => <button key={color} type="button" aria-label={`${t("society.companion.color")} ${color}`} aria-pressed={value.color === color}
-        onClick={() => update({ color })} className={`h-8 w-8 rounded-full border-2 ${value.color === color ? "border-foreground ring-2 ring-background" : "border-transparent"}`} style={{ background: color }} />)}
-        <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="h-8 w-10 rounded border border-border bg-background" />
+      {/* Two rows across the full width: the swatches scale with the dialog instead of leaving a gap on the right. */}
+      <div className="grid w-full grid-cols-12 items-center gap-2">{COMPANION_COLORS.map(color => <button key={color} type="button" aria-label={`${t("society.companion.color")} ${color}`} aria-pressed={value.color === color}
+        onClick={() => update({ color })} className={`aspect-square w-full rounded-full border border-border ring-offset-2 ring-offset-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${value.color === color ? "ring-2 ring-foreground" : ""}`} style={{ background: color }} />)}
+        <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="aspect-square h-auto w-full rounded border border-border bg-background" />
       </div>
     </div>}
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.visible")}

@@ -146,7 +146,8 @@ def test_models_are_listed_in_the_openai_shape(fake, guarded) -> None:
     )
     assert answer.json() == {
         "object": "list",
-        "data": [{"id": "gpt-5.6-sol", "object": "model", "owned_by": "openai"}],
+        "data": [{"id": "gpt-5.6-sol", "object": "model", "owned_by": "openai",
+                  "context_length": 128000}],
     }
 
 
@@ -168,9 +169,10 @@ def test_a_gateway_token_opens_nothing_but_the_gateway(fake, guarded) -> None:
 
 
 class _ProviderError(Exception):
-    def __init__(self, status: int) -> None:
+    def __init__(self, status: int, headers: dict[str, str] | None = None) -> None:
         super().__init__("provider body that must never reach the runtime")
         self.status_code = status
+        self.headers = headers or {}
 
 
 @pytest.fixture
@@ -183,10 +185,10 @@ def brain(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def deltas(grant: gateway.Grant, model: str, request: Any) -> AsyncIterator[Any]:
         state["requests"].append((grant, model, request))
         if state["fail"] is not None:
-            raise _ProviderError(state["fail"])
+            raise _ProviderError(state["fail"], state.get("headers"))
         yield BrainDelta(content="Looking")
         if state["fail_late"] is not None:
-            raise _ProviderError(state["fail_late"])
+            raise _ProviderError(state["fail_late"], state.get("headers"))
         yield BrainDelta(
             tool_call={
                 "id": "call_1",
@@ -320,12 +322,146 @@ def test_a_rate_limit_up_front_is_a_429_without_the_provider_body(brain, guarded
     assert "never reach" not in answer.text
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_retry_after_blocks_repeated_calls_and_expires(brain, guarded, monkeypatch, stream):
+    now = [100.0]
+    monkeypatch.setattr(gateway.time, "monotonic", lambda: now[0])
+    brain.update(fail=429, headers={"Retry-After": "90"})
+    token = gateway.grant_token("agent-1", "openai", scope="chat")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    assert answer.status_code == 429 and answer.headers["Retry-After"] == "90"
+    assert "/continue" in signal.result(timeout=1)
+    assert "fallback provider was called" in answer.text
+    assert "never reach" not in signal.result()
+    gateway.unwatch_failure(token, signal)
+
+    # A second agent on the same model/key must also respect the cooldown.
+    other = gateway.grant_token("agent-2", "openai")
+    now[0] += 40
+    assert _chat(guarded, other, _CHAT).headers["Retry-After"] == "50"
+    assert len(brain["requests"]) == 1
+    brain["fail"] = None
+    now[0] += 50
+    assert _chat(guarded, token, _CHAT).status_code == 200
+    assert len(brain["requests"]) == 2
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("12.3", 12.3),
+        ("0", 0),
+        ("-1", 0),
+        ("NaN", None),
+        ("Infinity", None),
+        ("invalid", None),
+        ("Wed, 21 Oct 2015 07:28:00 GMT", 60),
+    ],
+)
+def test_retry_after_parses_numeric_and_http_date_without_provider_body(monkeypatch, raw, expected):
+    monkeypatch.setattr(gateway.time, "time", lambda: 1445412420.0)
+    failure = gateway._failure("openai", _ProviderError(429, {"rEtRy-AfTeR": raw}))
+    assert failure.retry_after == expected
+    assert "never reach" not in str(failure)
+
+
+def test_a_long_limit_returns_immediately_without_waiting_or_fallback(brain, guarded):
+    brain.update(fail=429, headers={"Retry-After": "86400"})
+    token = gateway.grant_token("agent-1", "claude-api")
+    answer = _chat(guarded, token, _CHAT)
+    assert answer.headers["Retry-After"] == "86400"
+    assert len(brain["requests"]) == 1
+    assert brain["requests"][0][0].provider == "claude-api"
+
+
+def test_missing_retry_after_uses_short_conservative_cooldown(brain, guarded):
+    brain["fail"] = 429
+    token = gateway.grant_token("agent-1", "openai")
+    assert _chat(guarded, token, _CHAT).headers["Retry-After"] == "30"
+    assert _chat(guarded, token, _CHAT).status_code == 429
+    assert len(brain["requests"]) == 1
+
+
+def test_routine_failure_cannot_end_the_direct_chat(brain, guarded):
+    chat = gateway.grant_token("agent-1", "openai", scope="agent-1")
+    routine = gateway.grant_token("agent-1", "openai", scope="agent-1~runs")
+    assert chat != routine
+    chat_signal, routine_signal = gateway.watch_failure(chat), gateway.watch_failure(routine)
+    brain["fail"] = 429
+    _chat(guarded, routine, _CHAT)
+    assert routine_signal.done() and not chat_signal.done()
+    gateway.unwatch_failure(chat, chat_signal)
+    gateway.unwatch_failure(routine, routine_signal)
+
+
+def test_late_failure_keeps_the_old_turn_identity(brain):
+    token = gateway.grant_token("agent-1", "openai", scope="chat")
+    old = gateway.watch_failure(token)
+    gateway.unwatch_failure(token, old)
+    current = gateway.watch_failure(token)
+    gateway._report_failure(
+        gateway.verify(token), "m", gateway._failure("openai", _ProviderError(429)), old
+    )
+    assert old.done() and not current.done()
+    gateway.unwatch_failure(token, current)
+
+
+def test_midstream_rate_limit_stops_the_runner_without_done(brain, guarded):
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    brain.update(fail_late=429, headers={"Retry-After": "3"})
+    response = _chat(guarded, token, {**_CHAT, "stream": True})
+    assert "Looking" in response.text and "[DONE]" not in response.text
+    assert "HTTP 429" in signal.result(timeout=1)
+    gateway.unwatch_failure(token, signal)
+
+
+def test_subscription_limit_never_uses_the_api_path(fake, guarded, monkeypatch):
+    async def limited(**kwargs):
+        fake.calls.append(kwargs)
+        raise SubscriptionReasoningError("usage limit", status=429, retry_after="120")
+        yield  # pragma: no cover - keep this a stream
+
+    monkeypatch.setattr(fake, "stream", limited)
+    token = gateway.grant_token("agent-1", "openai-codex", "account-a")
+    signal = gateway.watch_failure(token)
+    answer = _post(guarded, token, {"model": "m", "input": "hello"})
+    assert answer.status_code == 429 and answer.headers["Retry-After"] == "120"
+    assert "openai-codex" in signal.result(timeout=1)
+    _post(guarded, token, {"model": "m", "input": "hello"})
+    assert len(fake.calls) == 1
+    gateway.check_cooldown("openai-codex", "m", "account-b")
+    gateway.unwatch_failure(token, signal)
+
+
 def test_a_failure_mid_stream_is_an_error_chunk(brain, guarded) -> None:
     brain["fail_late"] = 500
     token = gateway.grant_token("agent-1", "openai")
     answer = _chat(guarded, token, {**_CHAT, "stream": True})
     assert '"error"' in answer.text and "[DONE]" not in answer.text
     assert "never reach" not in answer.text
+
+
+async def test_a_closed_stream_releases_the_provider_generator(monkeypatch):
+    from jarvis.core.protocols import BrainDelta
+
+    closed = []
+
+    async def deltas(*_args):
+        try:
+            yield BrainDelta(content="partial")
+            yield BrainDelta(content="more")
+        finally:
+            closed.append(True)
+
+    gateway.reset()
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    model, request = gateway.chat_request(_CHAT)
+    stream = await gateway.open_chat_stream(gateway.Grant("a", "openai"), model, request)
+    await anext(stream)
+    await stream.aclose()
+    assert closed == [True]
 
 
 def test_each_shape_answers_only_its_own_providers(brain, guarded) -> None:
@@ -340,7 +476,8 @@ def test_api_key_models_come_from_jarvis_catalog(guarded) -> None:
     from jarvis.agent_chat.catalog import provider_row
 
     with_catalog = next(
-        name for name in ("claude-api", "openai", "gemini", "grok")
+        name
+        for name in ("claude-api", "openai", "gemini", "grok")
         if (row := provider_row(name)) is not None and row.curated_models
     )
     token = gateway.grant_token("agent-1", with_catalog)

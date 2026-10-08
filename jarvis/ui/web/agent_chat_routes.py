@@ -57,6 +57,7 @@ from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import runner_cli, typeahead
 from jarvis.agent_chat.catalog import claude_code_models, offers, rows_for
 from jarvis.agent_chat.control_types import CommandRequest, CommandResult
+from jarvis.agent_chat.credential_requests import CredentialRequestBusy
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import (
@@ -76,6 +77,7 @@ from jarvis.agent_chat.service import (
 )
 from jarvis.agent_chat.surface_kits import kit_for
 from jarvis.agent_chat.tools import shell_label
+from jarvis.society.credentials import CredentialError
 
 log = logging.getLogger(__name__)
 
@@ -213,7 +215,7 @@ async def run_chat_command(
     session_id: str, body: CommandRequest, request: Request
 ) -> CommandResult:
     try:
-        return await _service(request).controls.execute(session_id, body)
+        return await (await _async_service(request)).controls.execute(session_id, body)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -269,7 +271,7 @@ class CredentialBody(BaseModel):
     #: else: never logged, never echoed, never part of a chat event. No length
     #: constraint here on purpose: a validation error would echo the value in
     #: its 422 body; the vault refuses a bad value with a 400 that names none.
-    value: str = Field(repr=False)
+    value: Any = Field(default=None, repr=False)
 
 
 class QuestionAnswerBody(BaseModel):
@@ -358,7 +360,7 @@ def schedule_turn_reattach(state: Any) -> asyncio.Task[None] | None:
         await asyncio.sleep(_REATTACH_DELAY_S)
         if not await asyncio.to_thread(turn_host_client.may_hold_turns):
             return
-        if _service_from_state(state) is None:
+        if (await asyncio.to_thread(_service_from_state, state)) is None:
             log.warning("agent chat: thread turns wait — the chat service could not be built")
 
     return loop.create_task(_run(), name="agent-chat-boot-reattach")
@@ -369,6 +371,16 @@ def _service(request: Request) -> AgentChatService:
     if svc is None:
         raise HTTPException(status_code=503, detail="agent-chat-unavailable")
     return svc
+
+
+async def _async_service(request: Request) -> AgentChatService:
+    """Wait for lazy construction without holding the serving event loop."""
+    service = getattr(request.app.state, "agent_chat", None)
+    if service is not None:
+        return service
+    # Sync routes can already own the construction lock. Waiting on that lock
+    # here freezes HTTP, voice, and callbacks needed by the builder itself.
+    return await asyncio.to_thread(_service, request)
 
 
 def _ws_service(ws: WebSocket) -> AgentChatService | None:
@@ -431,7 +443,7 @@ async def get_catalog(
     has no CLI seats, so it is offered only the providers whose own API a
     brain plugin drives — and no CLI is probed for its model list either.
     """
-    svc = _service(request)
+    svc = (await _async_service(request))
     cli_seats = kit_for(surface).cli_seats
     from jarvis.agent_chat.runner_cli import cli_catalog_scope
 
@@ -533,7 +545,7 @@ async def get_composer_tools(
     """Discover tools for the Jarvis chat without executing any capability."""
     from jarvis.agent_chat.tool_catalog import discover
 
-    svc = _service(request)
+    svc = (await _async_service(request))
     if provider and not any(row.id == provider for row in rows_for("jarvis")):
         raise HTTPException(status_code=400, detail="Unknown chat provider")
     pending = asyncio.create_task(
@@ -578,7 +590,7 @@ async def get_typeahead(
     commands and plugins, the folder's own, or the files under it — and a
     trigger the seat does not honour answers with an empty list.
     """
-    svc = _service(request)
+    svc = (await _async_service(request))
     runner = resolve_runner(provider, surface=surface) if provider else "api"
     folder = _validate_cwd(cwd) or svc.default_cwd(surface)
     # A society chat completes its own teammates, capabilities and learned
@@ -797,7 +809,7 @@ async def get_provider_health(
     these in when they land. A row that does not finish inside the sweep
     ceiling comes back ``unknown`` and is drawn exactly as it was before.
     """
-    _service(request)  # 503 like every other route when the chat is off
+    (await _async_service(request))  # 503 like every other route when the chat is off
     from jarvis.brain.provider_health_ledger import ledger_version
     from jarvis.core.config import secret_generation
 
@@ -995,7 +1007,7 @@ def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
 
 
 @router.get("/sessions/{session_id}")
-def get_session(
+async def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(
@@ -1006,9 +1018,14 @@ def get_session(
     session = svc.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if session.surface in ("jarvis", "society"):
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session_id)
     d = session.to_dict()
     d["running"] = svc.is_running(session_id)
-    return {"session": d, "events": svc.store.list_events(session_id, tail=tail)}
+    events = await asyncio.to_thread(svc.store.list_events, session_id, tail=tail)
+    return {"session": d, "events": events}
 
 
 @router.get(
@@ -1024,7 +1041,7 @@ async def list_subagents(session_id: str, request: Request) -> dict[str, Any]:
     """
     from jarvis.agent_chat.subagent_transcripts import codex_homes, codex_subagents
 
-    svc = _service(request)
+    svc = (await _async_service(request))
     session = svc.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -1043,7 +1060,7 @@ async def list_subagents(session_id: str, request: Request) -> dict[str, Any]:
 async def patch_session(
     session_id: str, body: PatchSessionBody, request: Request
 ) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     existing = svc.store.get_session(session_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="session not found")
@@ -1150,11 +1167,12 @@ async def patch_session(
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     if svc.store.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
     await svc.controls.pause(session_id, "Session deleted")
     await svc.controls._clear_saved_native(session_id)
+    await svc.discard_credential_requests(session_id)
     if not svc.store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="session not found")
     svc.controls.store.delete(session_id)
@@ -1176,7 +1194,7 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     from jarvis.agent_chat.send_queue import QueueFull, send_or_queue
 
-    svc = _service(request)
+    svc = (await _async_service(request))
     token = client_timezone.set(body.timezone)
     try:
         # A created agent's chat queues a message behind its running turn
@@ -1210,7 +1228,7 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
     openapi_extra={"x-jarvis-dangerous": True},
 )
 async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     if svc.store.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
     session = svc.store.get_session(session_id)
@@ -1239,11 +1257,21 @@ async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
 async def resolve_approval(
     session_id: str, approval_id: str, body: ApprovalBody, request: Request
 ) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     if body.decision not in DECISIONS:
         raise HTTPException(status_code=400, detail=f"decision must be one of {list(DECISIONS)}")
     ok = svc.resolve_approval(session_id, approval_id, body.decision)
     if not ok:
+        if await svc.close_stale_approval(session_id, approval_id):
+            # The card outlived what it asked for (an app restart, a second
+            # card for the same call); it is closed now and nothing ran.
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    "This request expired and nothing ran; "
+                    "the agent asks again if it still needs it."
+                ),
+            )
         raise HTTPException(status_code=404, detail="no such pending approval")
     return {"ok": True, "approval_id": approval_id, "decision": body.decision}
 
@@ -1255,7 +1283,7 @@ async def resolve_approval(
 async def answer_question(
     session_id: str, question_id: str, body: QuestionAnswerBody, request: Request
 ) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     try:
         ok = svc.resolve_question(
             session_id,
@@ -1288,7 +1316,7 @@ async def answer_question(
     summary="Close an agent's question card and let its recommendations apply",
 )
 async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     try:
         ok = svc.skip_question(session_id, question_id) or await svc.skip_turn_question(
             session_id, question_id
@@ -1309,22 +1337,36 @@ async def submit_credential(
     session_id: str, request_id: str, body: CredentialBody, request: Request
 ) -> dict[str, Any]:
     svc = _service(request)
+    if not isinstance(body.value, str):
+        raise HTTPException(status_code=400, detail={
+            "code": "invalid_token", "message": "Enter a credential as text before saving.",
+        })
     try:
         ok = await svc.submit_credential(session_id, request_id, body.value)
-    except ValueError as exc:
-        # The vault's reason names the problem, never the value.
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        log.exception("agent chat: saving a credential for %s failed", session_id)
-        raise HTTPException(
-            status_code=500, detail="The credential could not be stored."
-        ) from exc
+    except CredentialRequestBusy:
+        raise HTTPException(status_code=409, detail={
+            "code": "request_busy",
+            "message": "The credential is still being checked. Please wait.",
+        }) from None
+    except CredentialError as exc:
+        status = {
+            "network_error": 503, "validation_timeout": 504, "storage_failed": 503,
+        }.get(exc.code, 400)
+        raise HTTPException(status_code=status, detail={
+            "code": exc.code, "message": str(exc),
+        }) from None
+    except Exception:
+        # A third-party storage exception may include the token. Never emit
+        # its message or traceback into logs, HTTP bodies or the agent timeline.
+        log.warning("agent chat: credential submission failed for %s", session_id)
+        raise HTTPException(status_code=503, detail={
+            "code": "storage_failed", "message": "The credential could not be stored. Try again.",
+        }) from None
     if not ok:
-        raise HTTPException(
-            status_code=410,
-            detail="This field is closed; the agent asks again if it still needs the credential.",
-        )
-    return {"ok": True, "request_id": request_id}
+        raise HTTPException(status_code=410, detail={
+            "code": "request_closed", "message": "This credential field is already closed.",
+        })
+    return {"ok": True, "request_id": request_id, "status": "saved"}
 
 
 @router.post(
@@ -1333,9 +1375,18 @@ async def submit_credential(
 )
 async def decline_credential(session_id: str, request_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
-    if not await svc.decline_credential(session_id, request_id):
-        raise HTTPException(status_code=404, detail="no such open credential field")
-    return {"ok": True, "request_id": request_id}
+    try:
+        ok = await svc.decline_credential(session_id, request_id)
+    except CredentialRequestBusy:
+        raise HTTPException(status_code=409, detail={
+            "code": "request_busy",
+            "message": "The credential is still being checked. Please wait.",
+        }) from None
+    if not ok:
+        raise HTTPException(status_code=410, detail={
+            "code": "request_closed", "message": "This credential field is already closed.",
+        })
+    return {"ok": True, "request_id": request_id, "status": "declined"}
 
 
 @router.post(
@@ -1343,7 +1394,7 @@ async def decline_credential(session_id: str, request_id: str, request: Request)
     summary="Answer a coding agent's plan card: build it, or keep planning",
 )
 async def resolve_plan(session_id: str, body: PlanBody, request: Request) -> dict[str, Any]:
-    svc = _service(request)
+    svc = (await _async_service(request))
     try:
         ok = await svc.resolve_turn_plan(session_id, body.turn_id, body.decision)
     except ValueError as exc:
@@ -1391,7 +1442,7 @@ async def attach_files(
     composer's own ``cwd``, then the surface's default working directory. So an
     attach works before the first message, when no session exists yet.
     """
-    svc = _service(request)
+    svc = (await _async_service(request))
     folder = ""
     if session_id:
         session = svc.store.get_session(session_id)
@@ -1476,7 +1527,7 @@ async def attachment_file(cwd: str, reference: str) -> Any:
 @router.post("/pick-folder")
 async def pick_folder(body: PickFolderBody, request: Request) -> dict[str, Any]:
     """Open the system folder dialog (desktop only) and return the choice."""
-    _service(request)
+    (await _async_service(request))
     try:
         from jarvis.agentic_ide import native_picker
     except Exception as exc:  # noqa: BLE001 — no picker module on this install
@@ -1511,7 +1562,7 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
     ``{"type": "ping"}`` every 20 s of silence so a proxy keeps the socket.
     """
     await ws.accept()
-    svc = _ws_service(ws)
+    svc = (await asyncio.to_thread(_ws_service, ws))
     if svc is None:
         await ws.close(code=1011, reason="agent chat not ready")
         return
@@ -1527,6 +1578,10 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
     # Subscribe BEFORE reading the snapshot so nothing falls between the two.
     q = svc.subscribe(session_id)
     try:
+        if session.surface in ("jarvis", "society"):
+            from jarvis.agent_chat.send_queue import close_orphans
+
+            await close_orphans(svc, session_id)
         events = svc.store.list_events(session_id, after_seq=after)
         d = session.to_dict()
         d["running"] = svc.is_running(session_id)

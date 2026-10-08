@@ -1,6 +1,6 @@
 """Select an area of the screen for a region appshot.
 
-:func:`pick_region` starts the one-shot picker sidecar
+:func:`pick_region` opens a selection in the prepared picker sidecar
 (:mod:`jarvis.appshot.picker`), waits for the user to drag a rectangle and
 returns it; :func:`selection_to_bbox` turns that into capture coordinates.
 
@@ -48,7 +48,7 @@ MIN_SELECTION_PX = 4
 #: The picker gives up on its own after this long without a result. Long
 #: enough to mark an area up in peace; Esc still ends it at once.
 PICK_TIMEOUT_S = 900.0
-#: Grace for the picker to exit (and its overlay to leave the glass).
+#: Grace for a stopped or failed picker process to exit.
 _EXIT_GRACE_S = 2.0
 #: Extra settle time so the compositor has repainted without the dim layer.
 _SETTLE_S = 0.08
@@ -296,12 +296,13 @@ def snap_layout() -> dict[str, Any]:
     return {"monitors": [dict(m) for m in monitors], "windows": windows}
 
 
-def _spawn(language: str = "en") -> subprocess.Popen[str]:
+def _spawn(language: str = "en", *, resident: bool = False) -> subprocess.Popen[str]:
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
     from jarvis.platform.qt_sidecar import stderr_sink  # noqa: PLC0415
 
     return subprocess.Popen(
-        [sys.executable, "-m", "jarvis.appshot.picker", "--lang", language or "en"],
+        [sys.executable, "-m", "jarvis.appshot.picker", "--lang", language or "en"]
+        + (["--resident"] if resident else []),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=stderr_sink("appshot-picker"),
@@ -313,7 +314,8 @@ def _spawn(language: str = "en") -> subprocess.Popen[str]:
 
 
 def _read_result(
-    proc: subprocess.Popen[str], on_marking: Callable[[], None] | None = None
+    proc: subprocess.Popen[str], on_marking: Callable[[], None] | None = None,
+    on_ready: Callable[[], None] | None = None,
 ) -> dict[str, Any] | None:
     """Block until the picker reports its selection; ``None`` on EOF.
 
@@ -330,6 +332,8 @@ def _read_result(
         event = payload.get("event")
         if event == wire.EVENT_SELECTION:
             return payload
+        if event == wire.EVENT_READY and on_ready is not None:
+            on_ready()
         if event == wire.EVENT_MARKING and on_marking is not None:
             with contextlib.suppress(Exception):  # a lost hint only keeps the global Esc
                 on_marking()
@@ -466,55 +470,15 @@ def _exit_message(code: int) -> str:
 
 
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:
-    """Spawn, wait for one selection, always reap. ``(payload, exit code, timed out)``."""
+    """Use the prepared runtime; only the explicit pick samples the desktop."""
+    from jarvis.appshot.picker_host import get_picker_host
+
     try:
-        layout = await asyncio.to_thread(snap_layout)
-    except Exception:  # noqa: BLE001 - no snapping; dragging still works
-        log.debug("appshot: snap layout unavailable", exc_info=True)
-        layout = None
-    # Shielded: a caller cancelled mid-spawn must still get the process reaped,
-    # or its overlay would cover the screens until the stdin timeout.
-    spawn = asyncio.ensure_future(asyncio.to_thread(_spawn, _language.get()))
-    try:
-        proc = await asyncio.shield(spawn)
-    except asyncio.CancelledError:
-        with contextlib.suppress(Exception):  # a failed spawn leaves nothing to reap
-            late = await spawn
-            await asyncio.to_thread(_cancel, late)
-            await asyncio.to_thread(_reap, late)
-        raise
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user as unavailable
+        return await get_picker_host().pick(timeout_s, _language.get())
+    except (OSError, TimeoutError) as exc:
         log.warning("appshot: area picker could not be started", exc_info=True)
         raise RegionUnavailable("The selection overlay could not be started.") from exc
-    if layout is not None:
-        await asyncio.to_thread(_send_layout, proc, layout)
-    loop = asyncio.get_running_loop()
-    escape = loop.create_task(_escape_cancels(proc), name="appshot-region-esc")
 
-    def marking() -> None:
-        # The picker has keyboard focus now, and Esc there may only end a
-        # text box: the global Esc must stop cancelling the whole picker.
-        loop.call_soon_threadsafe(escape.cancel)
-
-    reader = asyncio.ensure_future(asyncio.to_thread(_read_result, proc, marking))
-    timed_out = False
-    payload: dict[str, Any] | None = None
-    try:
-        try:
-            payload = await asyncio.wait_for(asyncio.shield(reader), timeout=timeout_s)
-        except TimeoutError:  # the timeout is reported through timed_out
-            timed_out = True
-            await asyncio.to_thread(_cancel, proc)
-    finally:
-        escape.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await escape
-        if payload is None and not timed_out:
-            await asyncio.to_thread(_cancel, proc)  # a cancelled caller closes the overlay
-        code = await asyncio.to_thread(_reap, proc)
-        with contextlib.suppress(Exception):  # EOF after the reap ends the reader
-            await reader
-    return payload, code, timed_out
 
 
 __all__ = [

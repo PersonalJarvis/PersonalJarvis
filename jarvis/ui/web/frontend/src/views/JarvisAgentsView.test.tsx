@@ -5,7 +5,7 @@ import { JarvisAgentsView } from "./JarvisAgentsView";
 vi.mock("@/i18n", () => ({ useLocaleChunk: () => true }));
 vi.mock("@/components/society/world/WorldStage", () => ({ WorldStage: () => { throw new Error("Legacy world must not mount"); } }));
 vi.mock("@/components/society/mars/MarsWorldStage", () => ({ MarsWorldStage: () => { throw new Error("Mars must not mount as the map"); } }));
-vi.mock("@/components/society/office/OfficeStage", () => ({ OfficeStage: ({ onOpenLedger, onSelectAgent }: any) => <div data-testid="office-map"><button onClick={onOpenLedger}>Open agents</button><button onClick={() => onSelectAgent("a1")}>Agent a1</button></div> }));
+vi.mock("@/components/society/office/OfficeStage", () => ({ OfficeStage: ({ active, onOpenLedger, onSelectAgent }: any) => <div data-testid="office-map" data-active={active}><button onClick={onOpenLedger}>Open agents</button><button onClick={() => onSelectAgent("a1")}>Agent a1</button></div> }));
 const initialUrl = window.location.href;
 afterEach(() => { cleanup(); window.history.replaceState(null, "", initialUrl); });
 
@@ -24,4 +24,13 @@ it("forwards an agent picked in the office", async () => {
   render(<JarvisAgentsView onOpenAgents={() => undefined} onSelectAgent={onSelect} />);
   fireEvent.click(await screen.findByText("Agent a1"));
   expect(onSelect).toHaveBeenCalledWith("a1");
+});
+
+it("forwards visibility without replacing the office", () => {
+  const view = render(<JarvisAgentsView onOpenAgents={() => undefined} />);
+  const office = screen.getByTestId("office-map");
+  expect(office.dataset.active).toBe("true");
+  view.rerender(<JarvisAgentsView active={false} onOpenAgents={() => undefined} />);
+  expect(screen.getByTestId("office-map")).toBe(office);
+  expect(office.dataset.active).toBe("false");
 });
