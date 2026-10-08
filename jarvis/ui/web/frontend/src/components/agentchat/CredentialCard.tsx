@@ -16,11 +16,22 @@ import type { CredentialState } from "./reduce";
  */
 
 export const CredentialCard = memo(function CredentialCard({ credential }: { credential: CredentialState }) {
-  if (credential.status !== null) return <ClosedCard credential={credential} />;
-  return <OpenCard key={credential.requestId} credential={credential} />;
+  const t = useT();
+  const descriptionId = useId();
+  const agent = credential.asker || t("credential_card.fallback_agent");
+  return (
+    <div className="my-2 w-full max-w-2xl space-y-3">
+      <p id={descriptionId} className="whitespace-pre-wrap text-sm leading-6 text-foreground [overflow-wrap:anywhere]">
+        {credential.description || fill(t("credential_card.subtitle"), { agent, env: credential.env })}
+      </p>
+      {credential.status !== null ? <ClosedCard credential={credential} /> : (
+        <OpenCard key={credential.requestId} credential={credential} descriptionId={descriptionId} />
+      )}
+    </div>
+  );
 });
 
-function OpenCard({ credential }: { credential: CredentialState }) {
+function OpenCard({ credential, descriptionId }: { credential: CredentialState; descriptionId: string }) {
   const t = useT();
   const sessionId = useAgentChat((s) => s.activeSessionId);
   const [value, setValue] = useState("");
@@ -78,16 +89,14 @@ function OpenCard({ credential }: { credential: CredentialState }) {
     <section
       role="group"
       aria-label={t("credential_card.aria")}
+      aria-describedby={descriptionId}
       data-testid="credential-card"
       data-state="open"
-      className="my-2 w-full max-w-2xl rounded-2xl border border-border bg-card p-5 text-foreground shadow-sm"
+      className="w-full rounded-2xl border border-border bg-card p-4 text-foreground shadow-sm"
     >
       <header className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-base font-semibold leading-6 [overflow-wrap:anywhere]">{credential.label}</h3>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-            {credential.description || fill(t("credential_card.subtitle"), { agent, env: credential.env })}
-          </p>
+          <h3 className="text-sm font-semibold leading-6 [overflow-wrap:anywhere]">{credential.label}</h3>
           {credential.replace ? (
             <p className="mt-1 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
               {fill(t("credential_card.replace_note"), { agent })}
@@ -123,7 +132,7 @@ function OpenCard({ credential }: { credential: CredentialState }) {
           placeholder={credential.placeholder || fill(t("credential_card.placeholder"), { label: credential.label })}
           aria-label={credential.label}
           aria-invalid={Boolean(error)}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={error ? `${descriptionId} ${errorId}` : descriptionId}
           className="min-w-0 flex-1 rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         />
         <button

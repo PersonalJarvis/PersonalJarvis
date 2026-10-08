@@ -81,9 +81,12 @@ describe("CredentialCard", () => {
     draw(asking());
     const card = screen.getByTestId("credential-card");
     expect(card.textContent).toContain("GitHub token");
-    expect(card.textContent).toContain("To open the pull request.");
+    const explanation = screen.getByText("To open the pull request.");
+    expect(explanation.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.contains(explanation)).toBe(false);
     const input = screen.getByLabelText("GitHub token") as HTMLInputElement;
     expect(input.type).toBe("password");
+    expect(input.getAttribute("aria-describedby")).toBe(explanation.id);
     const save = screen.getByRole("button", { name: "Save securely" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.change(input, { target: { value: `  ${SECRET}  ` } });
