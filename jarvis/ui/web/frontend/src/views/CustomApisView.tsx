@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Cable, Download, Loader2, Plus, Trash2 } from "lucide-react";
 import { useT } from "@/i18n";
 import { SoftButton } from "@/components/extensions/primitives";
+import { BrandedSelect } from "@/components/ui/select";
 import { actionWithPath, customApiRequest, newApiAction, newApiDefinition,
   type ApiAction, type ApiDefinition, type ApiParameter, type ApiStatus } from "@/lib/customApi";
 
@@ -135,9 +136,9 @@ function ApiEditor({ initial, onCancel, onSaved }: { initial: ApiStatus; onCance
       </div>
       <Field label={t("custom_apis.description")}><input className={fieldClass} maxLength={2000} value={definition.description} onChange={(e) => setDefinition({ ...definition, description: e.target.value })} /></Field>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={t("custom_apis.auth")}><select className={fieldClass} value={definition.auth.mode} onChange={(e) => setDefinition({ ...definition, auth: { ...definition.auth, mode: e.target.value as ApiDefinition["auth"]["mode"] } })}>
-          <option value="bearer">Bearer token</option><option value="header">{t("custom_apis.header_auth")}</option><option value="none">{t("custom_apis.no_auth")}</option>
-        </select></Field>
+        <Field label={t("custom_apis.auth")}><BrandedSelect ariaLabel={t("custom_apis.auth")} disabled={busy} className={fieldClass} value={definition.auth.mode}
+          onValueChange={(mode) => setDefinition({ ...definition, auth: { ...definition.auth, mode: mode as ApiDefinition["auth"]["mode"] } })}
+          options={[{ value: "bearer", label: "Bearer token" }, { value: "header", label: t("custom_apis.header_auth") }, { value: "none", label: t("custom_apis.no_auth") }]} /></Field>
         {definition.auth.mode === "header" && <Field label={t("custom_apis.header")}><input required className={fieldClass} value={definition.auth.header_name} onChange={(e) => setDefinition({ ...definition, auth: { ...definition.auth, header_name: e.target.value } })} /></Field>}
         {definition.auth.mode !== "none" && <Field label={t("custom_apis.key")}><input type="password" autoComplete="new-password" className={fieldClass} value={credential} placeholder={initial.has_credential ? t("custom_apis.key_saved") : ""} onChange={(e) => setCredential(e.target.value)} /></Field>}
       </div>
@@ -151,25 +152,30 @@ function ApiEditor({ initial, onCancel, onSaved }: { initial: ApiStatus; onCance
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={t("custom_apis.action_id")}><input required pattern="[a-z][a-z0-9_]{0,23}" className={fieldClass} value={action.id} onChange={(e) => updateAction(index, { ...action, id: e.target.value })} /></Field>
           <Field label={t("custom_apis.action_description")}><input required className={fieldClass} value={action.description} onChange={(e) => updateAction(index, { ...action, description: e.target.value })} /></Field>
-          <Field label={t("custom_apis.method")}><select className={fieldClass} value={action.method} onChange={(e) => {
-            const method = e.target.value as ApiAction["method"]; updateAction(index, { ...action, method });
+          <Field label={t("custom_apis.method")}><BrandedSelect ariaLabel={t("custom_apis.method")} disabled={busy} className={fieldClass} value={action.method} onValueChange={(value) => {
+            const method = value as ApiAction["method"]; updateAction(index, { ...action, method });
             if (method === "GET") setSchemas(schemas.map((s, i) => i === index ? "" : s));
-          }}>{["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => <option key={m}>{m}</option>)}</select></Field>
+          }} options={["GET", "POST", "PUT", "PATCH", "DELETE"].map((value) => ({ value, label: value }))} /></Field>
           <Field label={t("custom_apis.path")}><input required placeholder="/v1/items/{item_id}" className={fieldClass} value={action.path} onChange={(e) => updateAction(index, actionWithPath(action, e.target.value))} /></Field>
         </div>
         {action.parameters.map((parameter, pi) => <div key={pi} className="flex flex-wrap items-end gap-2">
           <span className="pb-2 text-xs text-muted-foreground">{parameter.location}</span>
           <div className="min-w-0 flex-1"><Field label={t("custom_apis.parameter")}><input required disabled={parameter.location === "path"} className={fieldClass} value={parameter.name} onChange={(e) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, name: e.target.value } : p) })} /></Field></div>
-          <select aria-label={t("custom_apis.type")} className={`${fieldClass} !w-auto`} value={parameter.type} onChange={(e) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, type: e.target.value as ApiParameter["type"] } : p) })}>
-            {["string", "integer", "number", "boolean"].map((value) => <option key={value}>{value}</option>)}</select>
+          <BrandedSelect ariaLabel={t("custom_apis.type")} disabled={busy} className={`${fieldClass} !w-auto`} value={parameter.type}
+            onValueChange={(value) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, type: value as ApiParameter["type"] } : p) })}
+            options={["string", "integer", "number", "boolean"].map((value) => ({ value, label: value }))} />
           {parameter.location === "query" && <><label className="pb-2 text-xs text-muted-foreground"><input type="checkbox" checked={parameter.required} onChange={(e) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, required: e.target.checked } : p) })} /> {t("custom_apis.required")}</label>
             <button type="button" aria-label={t("custom_apis.remove_parameter")} className="p-2 text-muted-foreground" onClick={() => updateAction(index, { ...action, parameters: action.parameters.filter((_, i) => i !== pi) })}><Trash2 className="h-4 w-4" /></button></>}
         </div>)}
         <SoftButton onClick={() => updateAction(index, { ...action, parameters: [...action.parameters, { name: "", location: "query", type: "string", required: false, description: "" }] })}>{t("custom_apis.add_query")}</SoftButton>
         {action.method !== "GET" && <Field label={t("custom_apis.body")}><textarea rows={5} spellCheck={false} className={`${fieldClass} font-mono text-xs`} placeholder={'{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}'} value={schemas[index]} onChange={(e) => setSchemas(schemas.map((s, i) => i === index ? e.target.value : s))} /></Field>}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("custom_apis.response")}><select className={fieldClass} value={action.response} onChange={(e) => updateAction(index, { ...action, response: e.target.value as ApiAction["response"] })}>{["auto", "json", "text", "file"].map((v) => <option key={v} value={v}>{t(`custom_apis.response_${v}`)}</option>)}</select></Field>
-          <Field label={t("custom_apis.permission")}><select className={fieldClass} value={action.risk_tier} onChange={(e) => updateAction(index, { ...action, risk_tier: e.target.value as ApiAction["risk_tier"] })}>{["monitor", "ask", "block"].map((v) => <option key={v} value={v}>{t(`custom_apis.permission_${v}`)}</option>)}</select></Field>
+          <Field label={t("custom_apis.response")}><BrandedSelect ariaLabel={t("custom_apis.response")} disabled={busy} className={fieldClass} value={action.response}
+            onValueChange={(value) => updateAction(index, { ...action, response: value as ApiAction["response"] })}
+            options={["auto", "json", "text", "file"].map((value) => ({ value, label: t(`custom_apis.response_${value}`) }))} /></Field>
+          <Field label={t("custom_apis.permission")}><BrandedSelect ariaLabel={t("custom_apis.permission")} disabled={busy} className={fieldClass} value={action.risk_tier}
+            onValueChange={(value) => updateAction(index, { ...action, risk_tier: value as ApiAction["risk_tier"] })}
+            options={["monitor", "ask", "block"].map((value) => ({ value, label: t(`custom_apis.permission_${value}`) }))} /></Field>
         </div>
       </section>)}</div>
       <SoftButton onClick={() => {
@@ -195,7 +201,9 @@ function ApiRunner({ definition, onBack }: { definition: ApiDefinition; onBack: 
     <SoftButton disabled={busy} onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4" />{t("custom_apis.title")}</SoftButton>
     <h2 className="text-xl font-semibold text-foreground">{definition.name}</h2>
     <p className="text-sm text-muted-foreground">{t("custom_apis.run_hint")}</p>
-    <Field label={t("custom_apis.action")}><select disabled={busy} className={fieldClass} value={action} onChange={(e) => { setAction(e.target.value); setResult(""); setError(""); setDownloadUrl(""); }}>{definition.actions.map((a) => <option key={a.id} value={a.id}>{a.method} {a.description}</option>)}</select></Field>
+    <Field label={t("custom_apis.action")}><BrandedSelect ariaLabel={t("custom_apis.action")} disabled={busy} className={fieldClass} value={action}
+      onValueChange={(value) => { setAction(value); setResult(""); setError(""); setDownloadUrl(""); }}
+      options={definition.actions.map((a) => ({ value: a.id, label: `${a.method} ${a.description}` }))} /></Field>
     <Field label={t("custom_apis.arguments")}><textarea disabled={busy} className={`${fieldClass} font-mono`} rows={8} value={argumentsText} onChange={(e) => setArgumentsText(e.target.value)} /></Field>
     <SoftButton disabled={busy} onClick={async () => {
       setBusy(true); setError(""); setResult(""); setDownloadUrl("");
