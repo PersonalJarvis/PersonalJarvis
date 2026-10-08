@@ -149,11 +149,15 @@ async def test_native_request_mapping_audio_artifact_and_no_boot_probe(store, tm
 
 
 @pytest.mark.asyncio
-async def test_json_escaped_credentials_are_redacted_after_decoding(store):
-    store.save(definition(), "test-secret-key")
+@pytest.mark.parametrize("response_mode", ["auto", "file"])
+async def test_json_escaped_credentials_are_redacted_after_decoding(store, tmp_path, response_mode):
+    spec = definition()
+    spec.actions[0].response = response_mode
+    store.save(spec, "test-secret-key")
     response = b'{"echo":"test-secret-\\u006bey"}'
     runtime = CustomApiRuntime(
         store,
+        output_dir=tmp_path / "outputs",
         transport=httpx.MockTransport(
             lambda request: httpx.Response(
                 200, content=response, headers={"Content-Type": "application/json"}
@@ -163,7 +167,13 @@ async def test_json_escaped_credentials_are_redacted_after_decoding(store):
     await runtime.refresh()
     result = await next(iter(runtime.tools.values())).execute(args(), context())
     assert result.success
-    assert result.output == {"echo": "[redacted]"}
+    if response_mode == "file":
+        from pathlib import Path
+
+        raw = await asyncio.to_thread(Path(result.artifacts[0]).read_text)
+        assert json.loads(raw) == {"echo": "[redacted]"}
+    else:
+        assert result.output == {"echo": "[redacted]"}
     await runtime.stop()
 
 

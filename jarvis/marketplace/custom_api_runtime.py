@@ -157,23 +157,26 @@ class CustomApiTool:
                     )
             raw = bytes(content)
             mode = self.action.response
-            is_text = mode in ("json", "text") or (
-                mode == "auto" and (mime.startswith("text/") or "json" in mime or "xml" in mime)
+            is_text = (
+                mode in ("json", "text")
+                or mime.startswith("text/")
+                or "json" in mime
+                or "xml" in mime
             )
             if is_text:
                 text = raw.decode("utf-8", errors="replace")
-                if mode == "json" or (mode == "auto" and "json" in mime):
+                if mode == "json" or (mode in ("auto", "file") and "json" in mime):
                     try:
                         parsed = _redact(json.loads(text) if text else None, key)
                     except ValueError:
                         log.warning("Custom API %s returned invalid JSON", current.id)
                         return ToolResult(False, None, "API returned invalid JSON")
                     text = json.dumps(parsed, ensure_ascii=False)
-                    if len(text) <= 64_000:
+                    if mode != "file" and len(text) <= 64_000:
                         return ToolResult(True, parsed)
                 else:
                     text = _redact(text, key)
-                if len(text) <= 64_000:
+                if mode != "file" and len(text) <= 64_000:
                     return ToolResult(True, text)
                 raw = text.encode("utf-8")
             if not raw:
