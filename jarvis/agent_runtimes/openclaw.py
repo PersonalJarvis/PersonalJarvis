@@ -306,6 +306,13 @@ class OpenClawRuntime:
                 }
             },
             "session": {"reset": {"mode": "none"}},
+            # Jarvis owns scheduling and memory. The native memory plugin
+            # can create its own jobs even with heartbeat disabled.
+            "cron": {"enabled": False},
+            "plugins": {
+                "slots": {"memory": "none"},
+                "entries": {"memory-core": {"enabled": False}},
+            },
             # Jarvis' tools offered directly, never behind OpenClaw's tool search
             # (on by default for local models; smaller models miss deferred tools).
             "tools": {"deny": denied, "exec": {"mode": exec_mode}, "toolSearch": False},

@@ -206,6 +206,19 @@ class TaskRunner:
             )
             return
         except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, RoutineDeferred) and "autonomous" in spec.tags:
+                # No provider turn or effect started. Keep the work visible
+                # and resumable without falling back to a paid provider.
+                await self._store.update_state(task_id, "paused", error=str(exc))
+                await self._store.append_step(
+                    task_id, "log", {"event": "waiting", "reason": str(exc)}
+                )
+                if self._result_sink is not None:
+                    try:
+                        await self._result_sink(spec.tags, str(exc), "waiting")
+                    except Exception:
+                        log.warning("task %s: waiting notice failed", task_id, exc_info=True)
+                return
             if isinstance(exc, RoutineDeferred) and ctx.get("hook_delivery_id"):
                 await self._store.update_state(task_id, "scheduled")
                 await self._store.append_step(
