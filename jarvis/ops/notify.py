@@ -213,9 +213,7 @@ def notifications_from_briefing(briefing: Briefing) -> list[Notification]:
                 "high" if entry.get("short_notice") else "normal",
             )
         )
-    for entry in briefing.section("calendar").items:
-        if not entry.get("moved_from"):
-            continue
+    for entry in briefing.section("calendar_moved").items:
         line = event_line(entry, table, day=day)[2:]
         out.append(
             Notification(

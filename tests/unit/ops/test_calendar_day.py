@@ -222,3 +222,84 @@ def test_the_text_marks_changes_in_german() -> None:
 def test_no_cancelled_heading_without_cancellations() -> None:
     text = _render("en", _ev("sync", "2026-10-07T11:00:00+02:00"))
     assert "Cancelled appointments" not in text
+
+
+# --- Three separate groups in the briefing ----------------------------------------
+
+
+def _briefing_sections(*events: dict[str, Any]) -> tuple[Any, ...]:
+    from jarvis.ops.briefing import build_sections
+    from jarvis.ops.calendar_day import CalendarDay
+    from jarvis.ops.ranking import build_agenda
+
+    upcoming, cancelled = _classify(*events)
+    agenda = build_agenda([], [], today=TODAY, now_ms=int(NOW.timestamp() * 1000))
+    return build_sections(agenda, CalendarDay("ok", upcoming, cancelled), now=NOW)
+
+
+def _ids_of(sections: tuple[Any, ...], key: str) -> list[str]:
+    return [e["id"] for s in sections if s.key == key for e in s.items]
+
+
+PLAIN = _ev("sync", "2026-10-07T11:00:00+02:00")
+
+
+def test_each_appointment_is_in_exactly_one_group() -> None:
+    sections = _briefing_sections(PLAIN, MOVED_SHORT, CANCELLED_SHORT)
+    assert _ids_of(sections, "calendar") == ["sync"]
+    assert _ids_of(sections, "calendar_moved") == ["standup"]
+    assert _ids_of(sections, "calendar_cancelled") == ["call"]
+
+
+def test_the_text_has_three_separate_headings_in_order() -> None:
+    from jarvis.ops.briefing import render_text
+
+    text = render_text(
+        _briefing_sections(PLAIN, MOVED_SHORT, CANCELLED_SHORT),
+        day=TODAY,
+        language="en",
+        address=None,
+    )
+    upcoming = text.index("Upcoming appointments:")
+    moved = text.index("Moved appointments (1):")
+    cancelled = text.index("Cancelled appointments (1):")
+    assert upcoming < moved < cancelled
+    assert "- (!) 10:00 Standup (moved from 09:00; short-notice change)" in text[moved:cancelled]
+    assert "Standup" not in text[upcoming:moved]
+
+
+def test_only_moved_appointments_today_have_no_empty_upcoming_heading() -> None:
+    from jarvis.ops.briefing import render_text
+
+    text = render_text(_briefing_sections(MOVED_SHORT), day=TODAY, language="de", address=None)
+    assert "Anstehende Termine" not in text  # i18n-allow: asserts German output
+    assert "Verschobene Termine (1):" in text  # i18n-allow
+    nothing = render_text(_briefing_sections(), day=TODAY, language="en", address=None)
+    assert "No upcoming appointments today." in nothing
+
+
+async def test_a_move_is_notified_once_and_a_new_move_again(tmp_path: Any) -> None:
+    from jarvis.ops.briefing import Briefing, render_text
+    from jarvis.ops.notify import (
+        NotifyStore,
+        OwnerNotifier,
+        SimulatedTelegramTransport,
+        notifications_from_briefing,
+    )
+
+    def _briefing(event: dict[str, Any]) -> Briefing:
+        sections = _briefing_sections(event)
+        return Briefing(
+            TODAY, "en", sections, render_text(sections, day=TODAY, language="en", address=None)
+        )
+
+    store = NotifyStore(tmp_path / "ops.sqlite")
+    await store.save_settings(enabled=True, kinds=["appointment_moved"])
+    transport = SimulatedTelegramTransport()
+    notifier = OwnerNotifier(store, transport)
+    for _ in range(3):  # the briefing runs again and again the same day
+        await notifier.deliver(notifications_from_briefing(_briefing(MOVED_SHORT)))
+    moved_again = dict(MOVED_SHORT, start="2026-10-07T11:30:00+02:00")
+    await notifier.deliver(notifications_from_briefing(_briefing(moved_again)))
+    assert [m.split(":")[0] for m in transport.sent] == ["Appointment moved"] * 2
+    assert "11:30" in transport.sent[1] and "10:00" in transport.sent[0]
