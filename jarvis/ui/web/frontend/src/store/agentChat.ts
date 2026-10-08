@@ -178,7 +178,7 @@ export interface AgentChatStore {
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
-  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[]) => Promise<void | "sent" | "failed" | "stale">;
+  send: (text: string, attachments?: ChatAttachment[], toolChoices?: string[], onSessionCreated?: (session: AgentChatSession) => void) => Promise<void | "sent" | "failed" | "stale">;
   /** Stop the running turn; `via` names the control that asked, for the log. */
   cancel: (via?: string) => Promise<void>;
   /**
@@ -801,7 +801,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         void get().loadSessions();
       },
 
-      send: async (text, attachments = [], toolChoices = []) => {
+      send: async (text, attachments = [], toolChoices = [], onSessionCreated) => {
         const content = text.trim();
         // A message may be files alone — dropping a screenshot and pressing
         // Enter is a complete gesture — but never nothing at all.
@@ -841,6 +841,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
             lane.sessionId = session.session_id;
             sendLanes.set(session.session_id, lane);
             set({ sessions: [session, ...get().sessions] });
+            onSessionCreated?.(session);
             if (visible) {
               set({ activeSessionId: session.session_id, activeSession: session, timeline: EMPTY_TIMELINE });
               bindVoice(session.session_id);

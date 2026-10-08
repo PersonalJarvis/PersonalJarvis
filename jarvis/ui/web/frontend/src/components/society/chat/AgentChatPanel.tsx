@@ -38,7 +38,7 @@ import { notifyRoutineChanged } from "../cardData";
 import { routineTaskId } from "./routineExecution";
 import { RoutineChatHost } from "./RoutineChatHost";
 import { AgentConversationsBar } from "./AgentConversations";
-import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send } from "lucide-react";
+import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
 import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
@@ -1139,7 +1139,7 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
   const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
@@ -1467,6 +1467,11 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
+        {(busy || live) && <button type="button" onClick={() => void onCancel()}
+          aria-label={t("society.chat.stop")} data-testid="composer-cancel"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background hover:bg-foreground/90">
+          <Square className="h-3.5 w-3.5" aria-hidden />
+        </button>}
         {(
           <button
             type="button"

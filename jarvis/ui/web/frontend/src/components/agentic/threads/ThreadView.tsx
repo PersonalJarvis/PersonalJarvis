@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, FolderPlus } from "lucide-react";
 import { prepareGit } from "@/lib/gitApi";
+import type { AgentChatSession } from "@/lib/agentChatApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
@@ -60,6 +61,10 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     ?? fallbackProject;
   const folder = session?.cwd || project?.path || "";
   const isDraft = selection.sessionId === null;
+  const originatingProject = project?.id;
+  const rememberCreated = useCallback((created: AgentChatSession) => {
+    if (originatingProject) useIdeThreadsStore.getState().rememberProject(created.session_id, originatingProject);
+  }, [originatingProject]);
 
   // The terminal drawer and its caption toggle open shells in this folder.
   useEffect(() => { useThreadTerminalsStore.getState().setFolder(folder); }, [folder]);
@@ -253,7 +258,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
           </div>
         </ThreadPopover>
         <div className="mt-7 w-full">
-          <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce + (onScreen ? 1 : 0)} strip={strip} onScreen={onScreen} />
+          <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} onSessionCreated={rememberCreated} autoFocusNonce={focusNonce + (onScreen ? 1 : 0)} strip={strip} onScreen={onScreen} />
         </div>
       </div>
       : <OpenSubagent.Provider value={setOpenAgent}>
@@ -264,7 +269,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
           : <ThreadTimeline items={items} sessionId={selection.sessionId} bottomInset={composerHeight} folder={folder} />}
         <div ref={composerBox} className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-70% to-transparent px-5 pb-4 pt-6">
           <div className="pointer-events-auto">
-            <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce} strip={strip} onScreen={onScreen} />
+            <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} onSessionCreated={rememberCreated} autoFocusNonce={focusNonce} strip={strip} onScreen={onScreen} />
           </div>
         </div>
       </OpenSubagent.Provider>}

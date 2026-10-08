@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import type { AppshotRecording, AppshotSettings, AppshotSettingsPatch } from "@/lib/appshotApi";
 
@@ -39,21 +40,23 @@ export function AppshotRecordingSettings({ settings, recording, disabled, onSave
         <legend className="sr-only">{t("appshots.recording_quality")}</legend>
         <label htmlFor={`${id}-resolution`} className="text-sm text-foreground">
           {t("appshots.recording_resolution")}
-          <select id={`${id}-resolution`} className={fieldClass} value={draft.resolution}
-            onChange={(event) => setDraft({ ...draft, resolution: event.target.value as typeof resolution })}>
-            <option value="720p">720p · HD</option>
-            <option value="1080p">1080p · Full HD</option>
-            <option value="1440p">1440p · QHD</option>
-            <option value="2160p">2160p · 4K</option>
-            <option value="native">{t("appshots.recording_native")}</option>
-          </select>
+          <BrandedSelect id={`${id}-resolution`} className={fieldClass} value={draft.resolution}
+            ariaLabel={t("appshots.recording_resolution")} disabled={disabled}
+            onValueChange={(value) => setDraft({ ...draft, resolution: value as typeof resolution })}
+            options={[
+              { value: "720p", label: "720p · HD" },
+              { value: "1080p", label: "1080p · Full HD" },
+              { value: "1440p", label: "1440p · QHD" },
+              { value: "2160p", label: "2160p · 4K" },
+              { value: "native", label: t("appshots.recording_native") },
+            ]} />
         </label>
         <label htmlFor={`${id}-fps`} className="text-sm text-foreground">
           {t("appshots.recording_fps")}
-          <select id={`${id}-fps`} className={fieldClass} value={draft.fps}
-            onChange={(event) => setDraft({ ...draft, fps: Number(event.target.value) as typeof fps })}>
-            {[30, 60, 120].map((value) => <option key={value} value={value}>{value} FPS</option>)}
-          </select>
+          <BrandedSelect id={`${id}-fps`} className={fieldClass} value={String(draft.fps)}
+            ariaLabel={t("appshots.recording_fps")} disabled={disabled}
+            onValueChange={(value) => setDraft({ ...draft, fps: Number(value) as typeof fps })}
+            options={[30, 60, 120].map((value) => ({ value: String(value), label: `${value} FPS` }))} />
         </label>
         <label htmlFor={`${id}-bitrate`} className="text-sm text-foreground">
           {t("appshots.recording_bitrate")}

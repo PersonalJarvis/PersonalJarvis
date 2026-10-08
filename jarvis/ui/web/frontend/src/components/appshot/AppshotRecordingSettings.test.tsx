@@ -21,11 +21,13 @@ describe("Recording quality preferences", () => {
     const save = setup();
     const start = screen.getByTestId("appshots-recording-control");
     await waitFor(() => expect(start.hasAttribute("disabled")).toBe(false));
-    expect((screen.getByLabelText("Resolution") as HTMLSelectElement).value).toBe("1080p");
-    expect((screen.getByLabelText("Frame rate") as HTMLSelectElement).value).toBe("60");
+    expect(screen.getByLabelText("Resolution").textContent).toContain("1080p");
+    expect(screen.getByLabelText("Frame rate").textContent).toContain("60");
     expect((screen.getByLabelText("Video bitrate (Mbps)") as HTMLInputElement).value).toBe("12");
-    fireEvent.change(screen.getByLabelText("Resolution"), { target: { value: "native" } });
-    fireEvent.change(screen.getByLabelText("Frame rate"), { target: { value: "120" } });
+    fireEvent.click(screen.getByLabelText("Resolution"));
+    fireEvent.click(screen.getByRole("option", { name: /Native/i }));
+    fireEvent.click(screen.getByLabelText("Frame rate"));
+    fireEvent.click(screen.getByRole("option", { name: "120 FPS" }));
     fireEvent.change(screen.getByLabelText("Video bitrate (Mbps)"), { target: { value: "37" } });
     fireEvent.click(screen.getByLabelText("Include system audio"));
     await waitFor(() => expect(start.hasAttribute("disabled")).toBe(true));

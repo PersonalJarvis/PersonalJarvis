@@ -9,7 +9,7 @@ import { releaseHeldFiles, useChatAttachments, type HeldFiles } from "@/componen
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { useT } from "@/i18n";
-import type { ApprovalDecision, ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
+import type { AgentChatSession, ApprovalDecision, ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
 import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
 import { effortLadder, snapEffort } from "@/lib/effortLadder";
@@ -44,22 +44,6 @@ interface SentMessage {
   afterSeq: number;
 }
 let lastSent: SentMessage | null = null;
-// DEBUG-RECALL (temporary): report every stop request this window sends, with its caller.
-const debugReport = (at: string, detail: string) => void window.fetch("/api/diagnostics/ui-stall", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ blocked_ms: 0, at, panes: 0, detail: detail.slice(0, 1500) }) });
-if (typeof window !== "undefined" && !(window as unknown as { __recallDebug?: boolean }).__recallDebug) {
-  (window as unknown as { __recallDebug?: boolean }).__recallDebug = true;
-  const original = window.fetch.bind(window);
-  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes("/cancel")) debugReport("recall-fetch-cancel", `${url} ${new Error().stack ?? ""}`);
-    return original(input, init);
-  };
-  window.addEventListener("keyup", (event) => { if (event.key === "Escape") debugReport("recall-esc-up", `focus=${document.hasFocus()} active=${document.activeElement?.tagName}`); }, true);
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape") debugReport("recall-esc-doc", `active=${document.activeElement?.tagName}`); }, true);
-  window.addEventListener("blur", () => { if (lastSent && Date.now() - lastSent.sentMs < 15_000) debugReport("recall-blur", `active=${document.activeElement?.tagName} ${document.activeElement?.className ?? ""}`); });
-  document.addEventListener("visibilitychange", () => { if (lastSent && Date.now() - lastSent.sentMs < 15_000) debugReport("recall-visibility", document.visibilityState); });
-}
-
 /** How long after sending Escape still takes a message back once the agent started thinking. */
 export const RECALL_WINDOW_MS = 15_000;
 
@@ -294,6 +278,7 @@ function QuestionPanel({ timeline }: { timeline: Timeline }) {
 export function ThreadComposer({
   threadKey,
   prepareDraft,
+  onSessionCreated,
   placeholder = "Ask for changes, send follow-ups, or attach images",
   autoFocusNonce,
   strip,
@@ -302,6 +287,7 @@ export function ThreadComposer({
   /** Which thread the box is typing for — the session id, or `draft:<project>`. */
   threadKey: string;
   prepareDraft: () => Promise<string | null>;
+  onSessionCreated?: (session: AgentChatSession) => void;
   placeholder?: string;
   autoFocusNonce: number;
   /** The strip that hangs under the card — where the agent works and on which branch. */
@@ -433,9 +419,9 @@ export function ThreadComposer({
         setStarting(false);
       }
     }
-    await useThreadChatStore.getState().send(text, attachments);
+    await useThreadChatStore.getState().send(text, attachments, [], onSessionCreated);
     return !useThreadChatStore.getState().lastError;
-  }, [prepareDraft]);
+  }, [prepareDraft, onSessionCreated]);
 
   // A queued message goes out the moment the agent is free again.
   useEffect(() => {
@@ -478,7 +464,6 @@ export function ThreadComposer({
       return;
     }
     const before = useThreadChatStore.getState();
-    void fetch("/api/diagnostics/ui-stall", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ blocked_ms: 0, at: "recall-send", panes: 0, detail: `onScreen=${onScreen} running=${running} busy=${busy} focus=${document.hasFocus()} active=${document.activeElement?.tagName}` }) });
     keepSent({ text, files: held, sentMs: Date.now(), sessionId: before.activeSessionId, afterSeq: before.timeline.lastSeq });
     const sent = await dispatch(text, attachments);
     if (!sent && !useThreadChatStore.getState().activeSessionId) {
@@ -492,9 +477,6 @@ export function ThreadComposer({
   const recall = useRef<() => boolean>(() => false);
   recall.current = () => {
     const asked = lastSent && recallableItem(timeline, lastSent, activeSessionId, Date.now());
-    void fetch("/api/diagnostics/ui-stall", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ blocked_ms: 0, at: "recall-debug", panes: 0,
-      detail: JSON.stringify({ hasSent: Boolean(lastSent), sentSession: lastSent?.sessionId, afterSeq: lastSent?.afterSeq, active: activeSessionId, lastSeq: timeline.lastSeq,
-        items: timeline.items.slice(-4).map((item) => item.type === "turn" ? `turn:${item.status}:${item.blocks.map((b) => b.kind).join("/")}` : `${item.type}:${item.id}`), asked: asked ? asked.id : null }).slice(0, 900) }) });
     if (!lastSent || !asked) return false;
     const { text, files: held } = lastSent;
     lastSent = null;
@@ -513,7 +495,6 @@ export function ThreadComposer({
     // not swallow the Escape first. It only takes the key in the seconds
     // after a send, when the message is still recallable.
     const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") void fetch("/api/diagnostics/ui-stall", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ blocked_ms: 0, at: "recall-esc", panes: 0, detail: `prevented=${event.defaultPrevented} composing=${event.isComposing}` }) });
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
       if (!recall.current()) return;
       event.preventDefault();

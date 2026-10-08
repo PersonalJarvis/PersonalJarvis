@@ -225,7 +225,8 @@ describe("AppshotLibrary", () => {
     const transfer = new FakeDataTransfer();
     fireEvent.dragStart(tile, { dataTransfer: transfer });
     expect(transfer.getData("DownloadURL")).toMatch(/^video\/mp4:.*\.mp4:http/);
-    expect(transfer.getData(WORKSPACE_PATH_TYPE)).toBe(RECORDING.path);
+    expect(transfer.getData(WORKSPACE_PATH_TYPE)).toMatch(/^[a-f0-9]{64}$/);
+    expect(extractPaneDrop(transfer as unknown as DataTransfer).paths).toEqual([RECORDING.path]);
     fireEvent.dragEnd(tile);
     fireEvent.click(screen.getAllByTestId("appshot-library-delete")[0]);
     await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(1));
