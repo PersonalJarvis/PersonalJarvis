@@ -609,21 +609,20 @@ def test_a_subscription_overflow_mid_stream_keeps_its_code(fake, guarded, monkey
     assert failed[0]["response"]["error"]["code"] == "context_length_exceeded"
 
 
-async def test_an_expired_claude_login_says_how_to_renew_it(monkeypatch) -> None:
-    import jarvis.agent_runtimes.model_map as model_map
-    import jarvis.core.config as config
-    from jarvis.agent_runtimes.provider_errors import ProviderRefusal
+async def test_a_stale_http_grant_never_spends_a_claude_subscription(monkeypatch) -> None:
+    from jarvis.agent_runtimes import model_map
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
-    monkeypatch.setattr(model_map, "login_route", lambda provider, account: (True, None))
-    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    monkeypatch.setattr(model_map, "uses_native_claude", lambda provider, account: True)
+    def no_brain(*args):
+        raise AssertionError("Subscription grants must never build an HTTP provider")
+    monkeypatch.setattr(gateway, "_new_brain", no_brain)
     request = BrainRequest(messages=(BrainMessage("user", "Hi"),), max_tokens=16)
-    with pytest.raises(ProviderRefusal) as caught:
-        async for _ in gateway._deltas(gateway.Grant("a", "claude-api"), "claude-x", request):
+    with pytest.raises(gateway.GatewayError) as caught:
+        grant = gateway.Grant("a", "claude-api", "subscription")
+        async for _ in gateway._deltas(grant, "sonnet", request):
             pass
-    failure = gateway._failure("claude-api", caught.value)
-    assert (failure.status, failure.code) == (401, "claude_login_expired")
-    assert "Open Claude Code" in str(failure)
+    assert (caught.value.status, caught.value.code) == (409, "native_runtime_required")
 
 
 async def test_a_request_the_subscription_client_refuses_is_a_400_not_a_retry():

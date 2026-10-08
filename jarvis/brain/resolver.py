@@ -37,7 +37,7 @@ from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
 from jarvis.brain.provider_registry import BrainProviderRegistry
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
     from jarvis.core.bus import EventBus
     from jarvis.core.config import JarvisConfig
@@ -811,7 +811,8 @@ def _local_tail(
 # ----------------------------------------------------------------------
 
 def resolve_browser_brain(
-    config: JarvisConfig, provider: str, model: str = "", *, runner: str = ""
+    config: JarvisConfig, provider: str, model: str = "", *, runner: str = "",
+    spawn_env: Mapping[str, str] | None = None, cli_binary: str = "",
 ) -> Brain:
     """Resolve an agent's existing access with a structured-output contract.
 
@@ -834,6 +835,10 @@ def resolve_browser_brain(
     cls = registry.get_class(name)
     parameters = inspect.signature(cls).parameters
     kwargs: dict[str, Any] = {}
+    if spawn_env is not None:
+        if "spawn_env" not in parameters or "cli_binary" not in parameters:
+            raise RuntimeError("This subscription provider cannot preserve its selected account")
+        kwargs.update(spawn_env=dict(spawn_env), cli_binary=cli_binary)
     if model:
         kwargs["model"] = model
     if "structured_prompts" in parameters:

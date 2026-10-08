@@ -353,59 +353,81 @@ def test_a_missing_key_is_reported_in_plain_words(gateway_up):
 def test_a_claude_login_is_not_an_api_key(gateway_up, monkeypatch):
     import jarvis.agent_runtimes.model_map as model_map
 
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    monkeypatch.setattr(model_map, "claude_subscription_status", lambda account_id="": None)
     login = "sk-ant-" + "oat01-" + "x" * 20
     with override_provider_secrets({"claude-api": login}), pytest.raises(RouteUnavailable):
         route_for(_cfg(), "claude-api", "claude-sonnet-5")
     with override_provider_secrets({"claude-api": _SECRET}):
         assert route_for(_cfg(), "claude-api", "claude-sonnet-5").transport == "chat_completions"
-        assert model_map.login_token_for("claude-api") is None
+        assert not model_map.uses_native_claude("claude-api")
 
 
-def test_claude_without_a_key_runs_on_the_claude_code_login(gateway_up, monkeypatch):
-    import jarvis.agent_runtimes.model_map as model_map
+def test_claude_native_route_ignores_http_extra_usage(gateway_up, monkeypatch):
+    from jarvis.agent_runtimes import model_map, provider_errors
 
-    live = "sk-ant-" + "oat01-" + "y" * 20
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: live)
+    monkeypatch.setattr(
+        model_map, "claude_subscription_status",
+        lambda account_id="": SimpleNamespace(binary_path="claude", config_dir="")
+    )
+    monkeypatch.setattr(gateway_up, "base_url", lambda: None)
+    def no_bearer(*args):
+        raise AssertionError("Native subscription must not inspect HTTP billing or credentials")
+    monkeypatch.setattr(provider_errors, "login_blocked", no_bearer)
     with override_provider_secrets({"claude-api": None}):
         route = route_for(_cfg(), "claude-api", "claude-sonnet-5", agent_id="agent-1")
-        assert model_map.login_token_for("claude-api") == live
+        assert model_map.uses_native_claude("claude-api")
         assert model_map.login_providers() == ["claude-api"]
-    # The runtime only ever holds Jarvis' gateway token, never the login.
-    assert route.transport == "chat_completions" and route.base_url == _GATEWAY
-    assert route.api_key != live
-    assert gateway_up.verify(route.api_key or "") == gateway_up.Grant("agent-1", "claude-api", "")
-    # Every other provider keeps needing its own key.
-    assert model_map.login_token_for("openai") is None
+        assert model_map.access_blocked() == {}
+    assert route.transport == "claude_cli" and route.base_url == ""
+    assert route.api_key is None and route.claude_binary == "claude"
+    assert not model_map.uses_native_claude("openai")
 
 
-def test_an_agent_can_pin_claude_to_the_key_or_the_login(gateway_up, monkeypatch):
-    import jarvis.agent_runtimes.model_map as model_map
+def test_an_agent_can_pin_claude_to_the_key_or_the_native_subscription(gateway_up, monkeypatch):
     from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+    from jarvis.agent_runtimes import model_map
 
-    live = "sk-ant-" + "oat01-" + "z" * 20
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: live)
+    monkeypatch.setattr(
+        model_map, "claude_subscription_status",
+        lambda account_id="": SimpleNamespace(binary_path="claude", config_dir="")
+    )
     with override_provider_secrets({"claude-api": _SECRET}):
-        # Both ways work: the dialog offers both, the key stays the default.
         assert model_map.access_choices() == {"claude-api": ["api", "subscription"]}
-        assert model_map.login_token_for("claude-api") is None
-        assert model_map.login_token_for("claude-api", API_KEY_ACCOUNT) is None
-        assert model_map.login_token_for("claude-api", SUBSCRIPTION_ACCOUNT) == live
-        route = route_for(
-            _cfg(), "claude-api", "claude-sonnet-5", agent_id="a", account_id=SUBSCRIPTION_ACCOUNT
-        )
-        grant = gateway_up.verify(route.api_key or "")
-        assert grant == gateway_up.Grant("a", "claude-api", SUBSCRIPTION_ACCOUNT)
+        assert not model_map.uses_native_claude("claude-api")
+        assert not model_map.uses_native_claude("claude-api", API_KEY_ACCOUNT)
+        assert model_map.uses_native_claude("claude-api", SUBSCRIPTION_ACCOUNT)
+        route = route_for(_cfg(), "claude-api", "sonnet", account_id=SUBSCRIPTION_ACCOUNT)
+        assert route.transport == "claude_cli" and route.api_key is None
+        api = route_for(_cfg(), "claude-api", "claude-sonnet-5", account_id=API_KEY_ACCOUNT)
+        assert api.transport == "chat_completions"
     with override_provider_secrets({"claude-api": None}):
         assert model_map.access_choices() == {"claude-api": ["subscription"]}
-        assert model_map.login_token_for("claude-api", API_KEY_ACCOUNT) is None
         with pytest.raises(RouteUnavailable, match="API key"):
             route_for(_cfg(), "claude-api", "claude-sonnet-5", account_id=API_KEY_ACCOUNT)
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    monkeypatch.setattr(model_map, "claude_subscription_status", lambda account_id="": None)
     with override_provider_secrets({"claude-api": _SECRET}):
         assert model_map.access_choices() == {"claude-api": ["api"]}
-        with pytest.raises(RouteUnavailable, match="Claude Code login"):
+        with pytest.raises(RouteUnavailable, match="Claude Code subscription"):
             route_for(_cfg(), "claude-api", "claude-sonnet-5", account_id=SUBSCRIPTION_ACCOUNT)
+
+
+async def test_prepare_native_route_never_refreshes_an_http_catalog(monkeypatch, gateway_up):
+    from jarvis.agent_runtimes import model_map
+
+    monkeypatch.setattr(
+        model_map, "claude_subscription_status",
+        lambda account_id="": SimpleNamespace(binary_path="claude", config_dir="")
+    )
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/selected/native-account")
+    def no_gateway(*args):
+        raise AssertionError("Native routes must not allocate an HTTP grant")
+    monkeypatch.setattr(gateway_up, "grant_token", no_gateway)
+    with override_provider_secrets({"claude-api": None}):
+        route = await model_map.prepare_route(
+            _cfg(), "claude-api", "sonnet", account_id="subscription"
+        )
+    assert route.env() == {}  # the fake selected account uses native platform credentials
+    assert route.api_key is None
 
 
 def test_the_claude_login_brain_sends_a_bearer_not_an_api_key():

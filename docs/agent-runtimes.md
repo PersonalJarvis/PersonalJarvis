@@ -89,10 +89,9 @@ call with its own provider plugins (`gateway.py`,
   (the Agents-tier key wins, as for Jarvis' own agents), a local server with
   an address, or Vertex AI on a Google Cloud project without a key. The
   runtimes can use the providers listed in `model_map._ENDPOINTS`; a new
-  provider plugin needs an entry there too. A way of paying that exists but
-  is refused right now (a Claude login whose Extra Usage is off or spent) is
-  reported in `access_blocked` on `/api/agent-runtimes` with its reason code,
-  so the dialog shows it disabled.
+  provider plugin needs an entry there too. Claude subscription availability
+  comes from the selected official CLI account, independently of HTTP Extra
+  Usage settings. Actual native quota errors surface from user-started turns.
 - **Keys and logins stay in Jarvis.** The runtime gets a per-agent token
   (`jrg_…`, process environment only); `SurfaceSecurity` accepts it on
   `/api/runtime-gateway/` and nowhere else. Hermes finds it again on session
@@ -172,25 +171,28 @@ call with its own provider plugins (`gateway.py`,
   offers (from the account's catalog, no inference), and a `system` or
   `developer` input message moves into the instructions, which ChatGPT's
   backend requires.
-- **Claude subscription: billed as extra usage.** Claude runs on an
-  Anthropic API key when one is saved. Without one, the gateway answers on
-  the person's live Claude Code login (read-only: only the Claude CLI renews
-  it, so an expired login fails with `claude_login_expired` and says to open
-  Claude Code once). Anthropic bills
-  a subscription used outside Claude Code as extra usage, not from the plan's
-  limits, so the model picker labels that seat "billed as extra usage"
-  (`login_providers` on `/api/agent-runtimes`). A Claude login (`sk-ant-oat…`)
-  saved in the Anthropic API-key slot is never sent as an API key.
-  Measured 2026-10-07: Anthropic serves a subscription to Hermes and
-  OpenClaw only from the account's Extra Usage ("Third-party apps now draw
-  from your extra usage, not your plan limits", HTTP 400; Sonnet, Opus and
-  Fable sometimes answer a bare 429 instead), for every model including
-  Haiku. Before the runtime starts, `route_for` reads the account's usage
-  report (`/api/oauth/usage`, no inference, cached two minutes) and refuses
-  the turn at once when Extra Usage is off or its monthly limit is spent;
-  a refusal that still arrives is reported as 402 with the same reason. The
-  gateway sends Anthropic the agent's own request; it never presents itself
-  as Claude Code.
+- **Claude subscription through the official CLI.** An explicitly selected
+  subscription uses each runtime's native Claude Code adapter, even when an
+  Anthropic API key is saved. Existing unpinned agents keep their API-key route
+  when one exists. Jarvis probes `claude auth status --json` against the selected
+  or active account and passes only its account directory to the runtime; the
+  official CLI owns credentials and renewal. Native requests do not use the
+  HTTP gateway, read OAuth bearers, or fall back to a paid API key.
+  Hermes uses the official
+  [Claude Subscription DirectSDK plugin](https://hermes-agent.nousresearch.com/docs/plugins/claude-subscription-directsdk),
+  pinned to `4bc79c78031d1a042b5d8a7314ceea283db5c5e2` and installed inside the
+  agent's profile on first use. It requires Hermes 0.21.4 or newer. The plugin
+  keeps Hermes' tools, approvals and conversation history; it remains an
+  experimental upstream transport. OpenClaw uses its bundled `claude-cli`
+  backend on the canonical `anthropic/<model>` route. Both retain Jarvis' MCP
+  tools and selected permissions. Restored Hermes sessions explicitly select
+  the current model before the next prompt, so an older HTTP session does not
+  continue with stale credentials.
+  [Anthropic's plan guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
+  describes native SDK/CLI subscription usage. Model entitlement, quota and
+  any account-enabled overage remain controlled by the account; a CLI cost
+  estimate is not an invoice. A login copied into an API-key slot is never
+  accepted as an API key.
 
 `scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
 runs two real turns through the gateway (route built by `route_for`, the real

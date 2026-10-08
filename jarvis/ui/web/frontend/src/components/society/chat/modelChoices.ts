@@ -50,14 +50,8 @@ export function modelSeats(options: ProviderOption[], providers: SocietyProvider
   });
 }
 
-/**
- * The seats a Hermes / OpenClaw agent can sit on: an API key, a local model or
- * a subscription Jarvis' model gateway serves (`gateway`); never a
- * subscription CLI's own loop. A dual row (Claude: subscription CLI or API
- * key) runs on its API key there — or, without one, on the Claude Code login
- * (`login`), billed as extra usage — so the CLI's own aliases ("opusplan",
- * "default") are not models to offer. A gateway subscription keeps its
- * accounts: the login decides who pays.
+/** Runtime seats use the gateway or the official native Claude subscription adapter.
+ * API seats keep real model ids; native subscriptions retain CLI model aliases.
  */
 export function runtimeSeats(
   all: BrainSeat[],
@@ -73,17 +67,17 @@ export function runtimeSeats(
       ...seat,
       kind: onLogin.has(seat.provider.id) ? "subscription" as const : "api" as const,
       accounts: [],
-      extraUsage: onLogin.has(seat.provider.id),
-      provider: { ...seat.provider, curated_models: apiModels(seat.provider.curated_models) },
+      extraUsage: false,
+      provider: { ...seat.provider, curated_models: onLogin.has(seat.provider.id)
+        ? seat.provider.curated_models : apiModels(seat.provider.curated_models) },
     } : seat);
 }
 
 /**
  * Why a Hermes / OpenClaw seat cannot answer right now ("" when it can): the
  * provider refuses the way this seat pays (`/api/agent-runtimes` →
- * `access_blocked`). Claude's login is refused while its Extra Usage is off;
- * the seat pays that way when it is the login seat (`extraUsage`) or the
- * agent is pinned to its subscription (`account_id` "subscription").
+ * `access_blocked`). Older backends can report direct-HTTP subscription
+ * restrictions; native CLI availability does not depend on Extra Usage.
  */
 export function seatBlocked(
   seat: BrainSeat,

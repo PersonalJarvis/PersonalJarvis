@@ -257,42 +257,6 @@ def test_the_gateway_reports_the_refusal_not_a_rate_limit() -> None:
     assert (failure.status, failure.code) == (402, "billing")
 
 
-async def test_a_claude_login_429_is_explained_from_the_usage_report(monkeypatch) -> None:
-    """The gateway's own plugin path: login answers, Anthropic says 429."""
-    import jarvis.agent_runtimes.model_map as model_map
-    import jarvis.core.config as config
-    import jarvis.plugins.brain.claude_api as claude_api
-    from jarvis.core.protocols import BrainMessage, BrainRequest
-
-    class RefusingBrain:
-        def __init__(self, model: str | None = None, *, auth_token: str | None = None) -> None:
-            assert auth_token == _BEARER
-
-        async def complete(self, request: Any) -> AsyncIterator[Any]:
-            raise ProviderStatusError(429, {"error": {"type": "rate_limit_error"}})
-            yield  # pragma: no cover — makes this an async generator
-
-    seen: list[str] = []
-
-    def usage(token: str) -> dict[str, Any]:
-        seen.append(token)
-        return {**_USAGE_ROOM, "extra_usage": {"is_enabled": False}}
-
-    monkeypatch.setattr(model_map, "login_route", lambda provider, account: (True, _BEARER))
-    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
-    monkeypatch.setattr(claude_api, "ClaudeAPIBrain", RefusingBrain)
-    monkeypatch.setattr(provider_errors, "_claude_usage", usage)
-    grant = gateway.Grant("agent-1", "claude-api", "subscription")
-    request = BrainRequest(messages=(BrainMessage("user", "Hi"),), max_tokens=16)
-
-    with pytest.raises(provider_errors.ProviderRefusal) as caught:
-        async for _ in gateway._deltas(grant, "claude-sonnet-5-5", request):
-            pass
-    assert seen == [_BEARER]
-    failure = gateway._failure("claude-api", caught.value)
-    assert (failure.status, failure.code) == (402, "extra_usage_off")
-
-
 async def test_a_non_streaming_subscription_answer_keeps_its_output(monkeypatch) -> None:
     """ChatGPT's backend streams the items and completes with an empty output."""
     item = {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}
@@ -312,23 +276,6 @@ async def test_a_non_streaming_subscription_answer_keeps_its_output(monkeypatch)
     finally:
         gateway.reset()
     assert answer["output"] == [item]
-
-
-def test_a_route_refuses_a_blocked_claude_login_before_the_runtime_starts(monkeypatch) -> None:
-    import jarvis.agent_runtimes.model_map as model_map
-
-    monkeypatch.setattr(model_map, "login_token_for", lambda provider, account: _BEARER)
-    blocked = provider_errors._extra_usage_off
-    monkeypatch.setattr(provider_errors, "login_blocked", lambda token, model: blocked(model))
-    with pytest.raises(model_map.RouteUnavailable, match="Extra Usage"):
-        model_map._check_login_billing("claude-api", "claude-haiku-4-5", "")
-
-
-def test_an_api_key_route_never_reads_the_login(monkeypatch) -> None:
-    import jarvis.agent_runtimes.model_map as model_map
-
-    monkeypatch.setattr(model_map, "login_token_for", lambda provider, account: None)
-    model_map._check_login_billing("claude-api", "claude-haiku-4-5", "api-key")
 
 
 def test_a_system_message_moves_into_the_instructions() -> None:

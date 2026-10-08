@@ -892,7 +892,7 @@ def _profile(provider: str, *, temperature_given: bool) -> Any:
     )
 
 
-def _brain_key(grant: Grant, model: str, login: str | None) -> tuple[str, ...]:
+def _brain_key(grant: Grant, model: str) -> tuple[str, ...]:
     """The cache key: the session, the model and the credential in use.
 
     Blocking (keyring); run in a thread under the key override, so a changed
@@ -900,37 +900,26 @@ def _brain_key(grant: Grant, model: str, login: str | None) -> tuple[str, ...]:
     """
     import hashlib
 
-    if login:
-        material = f"login:{login}"
-    else:
-        from jarvis.core.config import resolve_provider_endpoint
+    from jarvis.core.config import resolve_provider_endpoint
 
-        try:
-            endpoint = resolve_provider_endpoint(grant.provider)
-            material = f"{endpoint.base_url or ''}|{endpoint.credential or ''}"
-        except Exception as exc:  # noqa: BLE001 — no fingerprint just means no reuse
-            log.debug(
-                "runtime gateway: no credential fingerprint for %s (%s)",
-                grant.provider,
-                type(exc).__name__,
-            )
-            material = uuid.uuid4().hex
+    try:
+        endpoint = resolve_provider_endpoint(grant.provider)
+        material = f"{endpoint.base_url or ''}|{endpoint.credential or ''}"
+    except Exception as exc:  # noqa: BLE001 ? no fingerprint just means no reuse
+        log.debug(
+            "runtime gateway: no credential fingerprint for %s (%s)",
+            grant.provider, type(exc).__name__,
+        )
+        material = uuid.uuid4().hex
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
     return (grant.agent_id, grant.scope, grant.provider, grant.account_id, model, digest)
 
 
-def _new_brain(provider: str, model: str, login: str | None) -> Any:
+def _new_brain(provider: str, model: str) -> Any:
     from jarvis.agent_chat.runner_api import build_brain
     from jarvis.brain.usage_meter import meter_brain
 
-    if login:
-        # No API key: the person's Claude Code login answers, which
-        # Anthropic bills as extra usage.
-        from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
-
-        brain = ClaudeAPIBrain(model=model or None, auth_token=login)
-    else:
-        brain = build_brain(provider, model)
+    brain = build_brain(provider, model)
     # Every call the agent makes lands in the cost ledger, under the caller
     # tag of the call.
     return meter_brain(brain, provider)
@@ -1006,8 +995,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     reset (``ValueError``). The task copies the caller's context, so the
     profile the caller set (:func:`_with_profile`) reaches the plugin.
     """
-    from jarvis.agent_runtimes.model_map import login_route
-    from jarvis.agent_runtimes.provider_errors import login_expired
+    from jarvis.agent_runtimes.model_map import uses_native_claude
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
     from jarvis.costs.model import RUNTIME_CALLER
@@ -1015,20 +1003,21 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
 
     async def pump() -> None:
-        login: str | None = None
         try:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context(RUNTIME_CALLER):
-                on_login, login = await asyncio.to_thread(
-                    login_route, grant.provider, grant.account_id
+                on_login = await asyncio.to_thread(
+                    uses_native_claude, grant.provider, grant.account_id
                 )
-                if on_login and not login:
-                    # Only the Claude CLI renews the login; without it the
-                    # API-key path would only say "no key".
-                    raise login_expired()
-                key = await asyncio.to_thread(_brain_key, grant, model, login)
-                slot = _acquire_brain(key, lambda: _new_brain(grant.provider, model, login))
+                if on_login:
+                    raise GatewayError(
+                        "Claude subscriptions run through the native Claude Code adapter. "
+                        "Start a new agent turn to refresh its route; no API key was used.",
+                        status=409, code="native_runtime_required",
+                    )
+                key = await asyncio.to_thread(_brain_key, grant, model)
+                slot = _acquire_brain(key, lambda: _new_brain(grant.provider, model))
                 try:
                     brain = slot.brain
                     configure_context = getattr(brain, "set_context_window", None)
@@ -1041,12 +1030,6 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     _release_brain(slot)
             await queue.put(_DONE)
         except Exception as exc:  # noqa: BLE001 — handed to the reader, which reports it
-            if login:
-                # Anthropic answers a Claude login it will not serve with a
-                # bare 429; the account's usage report says why.
-                from jarvis.agent_runtimes.provider_errors import explain_login_refusal
-
-                exc = await explain_login_refusal(exc, login, model)
             await queue.put(exc)
 
     task = asyncio.get_running_loop().create_task(pump())

@@ -79,13 +79,14 @@ describe("providerChoices", () => {
     expect(choice.options.map((o) => o.kind)).toEqual(["api"]);
   });
 
-  it("marks Claude's login on Hermes / OpenClaw as extra usage", () => {
+  it("offers native Claude subscription on Hermes / OpenClaw without extra billing", () => {
     const seats = runtimeSeats([claude, openai], ["claude-api", "openai"], [], ["claude-api"]);
     const [first] = providerChoices(seats, { "claude-api": ["api", "subscription"] }, true);
     expect(first.options.map((o) => [o.kind, o.accountId, o.extraUsage])).toEqual([
-      ["subscription", SUBSCRIPTION_ACCOUNT, true],
+      ["subscription", SUBSCRIPTION_ACCOUNT, false],
       ["api", API_KEY_ACCOUNT, false],
     ]);
+    expect(first.options[0].seat.provider.curated_models).toEqual(claude.provider.curated_models);
   });
 
   it("keeps a single seat as is when the backend names no ways (an older backend)", () => {

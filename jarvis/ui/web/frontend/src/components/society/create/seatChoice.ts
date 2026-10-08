@@ -14,8 +14,7 @@
  * Only what is connected on this machine is listed (maintainer, 2026-09-02):
  * an access that does not work is not shown, never greyed out. The one
  * exception is an access the provider is known to refuse right now although
- * it is connected (`access_blocked`: Claude's login on Hermes / OpenClaw
- * while the account's Extra Usage is off or spent). It is listed with its
+ * it is connected (`access_blocked`, retained for older backends). It is listed with its
  * reason and cannot be picked, so the person learns why before the first
  * message fails.
  *
@@ -38,7 +37,7 @@ export interface AccessOption {
   /** The `account_id` this access is stored as: a reserved value on a dual
    *  row, else "" (the CLI's active login, or no login at all). */
   accountId: string;
-  /** Billed per use outside the plan (Claude on Hermes / OpenClaw). */
+  /** Legacy gateway billing annotation; native Claude subscriptions leave it false. */
   extraUsage: boolean;
   /** Why the provider refuses this access right now (a refusal code such as
    *  `extra_usage_off`); a blocked access is shown but cannot be picked. */
@@ -97,11 +96,9 @@ function optionsFor(
     provider: { ...seat.provider, curated_models: apiModels(seat.provider.curated_models) },
   };
   const options: AccessOption[] = [];
-  // On Jarvis' own loop the subscription is the vendor CLI, which must be installed.
+  // Native subscription adapters require the installed vendor CLI.
   if (ways.includes("subscription") && (external || seat.provider.cli_installed !== false)) {
-    options.push(external
-      ? { kind: "subscription", seat: { ...viaKey, kind: "subscription", extraUsage: true }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: true }
-      : { kind: "subscription", seat: { ...seat, kind: "subscription" }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: false });
+    options.push({ kind: "subscription", seat: { ...seat, kind: "subscription", extraUsage: false }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: false });
   }
   if (ways.includes("api")) options.push({ kind: "api", seat: viaKey, accountId: API_KEY_ACCOUNT, extraUsage: false });
   for (const option of options) {

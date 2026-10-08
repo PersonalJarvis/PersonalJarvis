@@ -39,6 +39,7 @@ class _IO:
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self.proc = proc
         self.events: list[dict[str, Any]] = []
+        self.asks: list[dict[str, Any]] = []
 
     async def write(self, frame: dict[str, Any]) -> None:
         assert self.proc.stdin is not None
@@ -49,6 +50,7 @@ class _IO:
         self.events.append(event)
 
     async def ask(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+        self.asks.append({"call_id": call_id, "name": name, "args": args, "summary": summary})
         return "allow"
 
 
@@ -61,11 +63,15 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
         prompt_text=text,
         resume=launch.acp_resume,
         mcp_servers=launch.mcp_servers,
-        auto_allow=True,
+        auto_allow=turn.auto_approve,
+        auto_deny=turn.read_only,
         report_session=launch.vendor_session,
+        model_id=launch.acp_model,
+        approval_source=launch.approval_source,
     )
     tree = make_process_tree("runtime-e2e")
     proc = None
+    terminal_watcher = None
     try:
         with (turn.workspace.parent / "runtime-stderr.log").open("ab") as stderr:
             proc = await asyncio.create_subprocess_exec(
@@ -85,6 +91,17 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
             proc.stdin.write(acp.opening_frame().encode("utf-8"))
             await proc.stdin.drain()
 
+            async def end_terminal() -> None:
+                await acp.wait_terminal()
+                if proc.stdin is not None and not proc.stdin.is_closing():
+                    proc.stdin.close()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10)
+                except TimeoutError:
+                    proc.kill()
+
+            terminal_watcher = asyncio.create_task(end_terminal())
+
             async def pump() -> None:
                 assert proc.stdout is not None and proc.stdin is not None
                 while raw := await proc.stdout.readline():
@@ -101,6 +118,14 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
             await asyncio.wait_for(proc.wait(), timeout=30)
             return acp, io
     finally:
+        if terminal_watcher is not None:
+            terminal_watcher.cancel()
+            await asyncio.gather(terminal_watcher, return_exceptions=True)
+        if launch.approval_source is not None:
+            try:
+                await asyncio.wait_for(launch.approval_source.close(), timeout=10)
+            except Exception as exc:
+                print("approval cleanup:", type(exc).__name__)
         tree.close()
         try:
             if proc is not None:

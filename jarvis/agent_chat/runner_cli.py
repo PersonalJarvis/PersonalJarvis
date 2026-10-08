@@ -3787,18 +3787,7 @@ async def _drive_cli(
                     continue
                 await plan.acp.on_message(obj, acp_io)
                 if plan.acp.saw_result:
-                    if tracker is not None:
-                        # Last look at its children while the runtime still
-                        # lives: once it exits, detached ones are orphans.
-                        tracker.snapshot()
-                    # The prompt answered; closing stdin lets the runtime exit.
-                    # One that keeps running anyway (a child holding the pipe)
-                    # is ended so the chat is not held busy by a finished turn.
-                    _close_stdin()
-                    if grace_kill is None:
-                        grace_kill = asyncio.get_running_loop().call_later(
-                            _ACP_EXIT_GRACE_S, _kill, proc
-                        )
+                    _finish_acp_io()
                 continue
             if plan.control_init is not None:
                 if obj.get("type") == "control_request":
@@ -3821,6 +3810,23 @@ async def _drive_cli(
             proc.stdin.close()
         except OSError as exc:
             log.debug("agent chat %s: stdin close failed: %s", handle.turn_id, exc)
+
+    def _finish_acp_io() -> None:
+        nonlocal grace_kill
+        if grace_kill is not None:
+            return
+        if tracker is not None:
+            tracker.snapshot()
+        _close_stdin()
+        grace_kill = asyncio.get_running_loop().call_later(_ACP_EXIT_GRACE_S, _kill, proc)
+
+    async def _watch_acp_terminal() -> None:
+        if plan.acp is None or hosted:
+            return
+        await plan.acp.wait_terminal()
+        # A separate approval socket can fail while stdout stays silent.
+        # That terminal result owns exactly the same bounded shutdown path.
+        _finish_acp_io()
 
     async def _write_stdin(text: str) -> None:
         if proc.stdin is None or proc.stdin.is_closing():
@@ -4102,6 +4108,7 @@ async def _drive_cli(
     watcher = asyncio.create_task(_watch_cancel())
     provider_watcher = asyncio.create_task(_watch_provider_failure())
     stall_watcher = asyncio.create_task(_watch_stall())
+    terminal_watcher = asyncio.create_task(_watch_acp_terminal())
     try:
         # EOF is not process exit: a CLI may close both pipes and keep
         # running. The deadline must also cover waiting for the process.
@@ -4134,11 +4141,17 @@ async def _drive_cli(
         watcher.cancel()
         provider_watcher.cancel()
         stall_watcher.cancel()
+        terminal_watcher.cancel()
+        if plan.acp is not None and plan.acp.approval_source is not None:
+            try:
+                await asyncio.wait_for(plan.acp.approval_source.close(), timeout=10)
+            except Exception as exc:
+                log.warning("Runtime approval cleanup failed (%s)", type(exc).__name__)
         for task in (pump, drain, feeder):
             if not task.done():
                 task.cancel()
         await asyncio.gather(
-            watcher, provider_watcher, stall_watcher, pump, drain, feeder,
+            watcher, provider_watcher, stall_watcher, terminal_watcher, pump, drain, feeder,
             return_exceptions=True,
         )
         if tracker is not None:
