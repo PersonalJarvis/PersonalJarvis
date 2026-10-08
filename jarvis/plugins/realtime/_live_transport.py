@@ -24,6 +24,28 @@ _TLS_MAX_AGE_S = 300.0
 _cleanup_tasks: set[asyncio.Task] = set()
 
 
+def startup_websocket_options(mark: Callable[[str], Any]) -> dict[str, Any]:
+    """Time the supported connection lifecycle without reading wire content.
+
+    For WSS, connection_made runs after TCP/proxy and TLS setup. Separating it
+    from the opening handshake exposes whether the wait is local transport or
+    the provider's HTTP upgrade. Optional WebSocket imports remain call-owned.
+    """
+    from websockets.asyncio.client import ClientConnection
+
+    class StartupConnection(ClientConnection):
+        def connection_made(self, transport: Any) -> None:
+            super().connection_made(transport)
+            mark("control_transport_connected")
+
+        async def handshake(self, *args: Any, **kwargs: Any) -> None:
+            mark("control_handshake_started")
+            await super().handshake(*args, **kwargs)
+            mark("control_handshake_complete")
+
+    return {"create_connection": StartupConnection}
+
+
 def _trust_key() -> tuple:
     # Replacing an explicitly configured bundle must invalidate the context.
     # OS trust-store edits are picked up within the bounded refresh interval.

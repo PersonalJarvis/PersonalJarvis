@@ -117,7 +117,11 @@ class OpenAILiveProvider:
 
         from websockets.asyncio.client import connect
 
-        from ._live_transport import preparing_http_client, websocket_options
+        from ._live_transport import (
+            preparing_http_client,
+            startup_websocket_options,
+            websocket_options,
+        )
 
         if not self._api_key:
             raise ValueError("Connect OpenAI in API Keys before starting voice.")
@@ -180,9 +184,11 @@ class OpenAILiveProvider:
             options = await websocket_options()
             mark("control_tls_ready")
             attach_started_at = time.monotonic()
+            mark("control_connect_started")
             socket = await connect(
                 url, additional_headers=headers, open_timeout=25, max_size=8_000_000,
                 **options,
+                **startup_websocket_options(mark),
             )
             log.info(
                 "OpenAI Live transport attached in %.0f ms.",
