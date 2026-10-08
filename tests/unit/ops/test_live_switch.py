@@ -249,3 +249,19 @@ async def test_the_test_route_is_marked_dangerous_and_validates_text() -> None:
     route = next(r for r in ops_routes.router.routes if r.path == "/api/ops/notify/telegram/test")
     assert route.openapi_extra == {"x-jarvis-dangerous": True}
     assert TEXT and len(TEXT) <= delivery.TEST_TEXT_MAX
+
+
+def test_voice_and_agents_can_never_reach_the_live_switch_or_the_test_message() -> None:
+    """Like the consent to spend money, the consent to send real messages is
+    the person's alone: run-app-action never offers it (prompt injection)."""
+    from jarvis.app_actions.catalog import build_catalog, is_excluded
+    from jarvis.ui.web import ops_routes
+
+    assert is_excluded("/api/ops/notify/live")
+    assert is_excluded("/api/ops/notify/telegram/test")
+    application = FastAPI()
+    application.include_router(ops_routes.router)
+    paths = {(e.method, e.path) for e in build_catalog(application.openapi()).values()}
+    assert ("PUT", "/api/ops/notify/live") not in paths
+    assert ("POST", "/api/ops/notify/telegram/test") not in paths
+    assert ("GET", "/api/ops/agenda") in paths  # reading stays reachable
