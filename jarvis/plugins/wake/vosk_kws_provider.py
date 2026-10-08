@@ -363,6 +363,7 @@ _COOLDOWN_S = 5.0
 # listening during this window and latches one retry; otherwise a user's
 # immediate second call would land in a two-second deaf period.
 _REJECTED_CANDIDATE_BACKOFF_S = 2.0
+_INFERENCE_SHUTDOWN_BUDGET_S = 0.02
 
 # How much audio to let land in the ring AFTER a PARTIAL candidate before the
 # confirm pass runs. A partial fires DURING the phrase (that is its virtue),
@@ -678,6 +679,7 @@ class _StreamingVerify:
             max_workers=1, thread_name_prefix="vosk-verify-free"
         )
         self._pending: list[Any] = []
+        self._closed = False
         self.feed(ring)
 
     def _normalise(self, audio: np.ndarray) -> tuple[np.ndarray, bytes]:
@@ -720,10 +722,16 @@ class _StreamingVerify:
         window = np.concatenate(self._parts) if self._parts else np.zeros(0, np.float32)
         return window, b"".join(self._pcm_parts), gres, fres
 
-    def close(self) -> None:
+    def close(self, *, wait: bool = False) -> None:
         """Discard (early fire, superseded candidate, teardown)."""
-        self._g_pool.shutdown(wait=False, cancel_futures=True)
-        self._f_pool.shutdown(wait=False, cancel_futures=True)
+        self._closed = True
+        self._g_pool.shutdown(wait=wait, cancel_futures=True)
+        self._f_pool.shutdown(wait=wait, cancel_futures=True)
+
+    @property
+    def ready_to_reap(self) -> bool:
+        """A closed decoder with no running feeds can be joined off-loop."""
+        return self._closed and all(future.done() for future in self._pending)
 
 
 class VoskKwsProvider:
@@ -870,6 +878,9 @@ class VoskKwsProvider:
         self._early_active = False
         self._early_task: asyncio.Task[bool] | None = None
         self._pending_gen = 0
+        self._detect_guard = threading.Lock()
+        self._inference_reaper: threading.Thread | None = None
+        self._inference_cleanup: asyncio.Task[None] | None = None
         # Instance-local clock hook keeps reject/backpressure state-machine
         # tests deterministic without replacing Python's process-global
         # monotonic clock (which asyncio itself also consumes).
@@ -1222,7 +1233,8 @@ class VoskKwsProvider:
             log.debug("early-candidate listener failed: %s", exc)
 
     async def _run_early_check(
-        self, window: np.ndarray, gen: int, model_path: str | None = None
+        self, window: np.ndarray, gen: int, model_path: str | None,
+        run_verify: Callable[..., Awaitable[Any]],
     ) -> bool:
         """Strictly verify the candidate prefix and optionally show the bar.
 
@@ -1231,7 +1243,7 @@ class VoskKwsProvider:
         it must not overwrite a clean verdict over the candidate audio itself.
         """
         try:
-            ok = await asyncio.to_thread(self._early_check, window, model_path)
+            ok = await run_verify(self._early_check, window, model_path)
         except Exception as exc:  # noqa: BLE001 — fallback verify remains
             log.debug("early-candidate check errored: %s", exc)
             return False
@@ -1892,24 +1904,130 @@ class VoskKwsProvider:
         # would deafen the ear permanently (AP-24 — a timeout bounds a hang, it
         # never recovers it). The pool lives exactly as long as this detect()
         # session, so a wake-plan reload rebuilds it.
+        if not self._detect_guard.acquire(blocking=False):
+            raise RuntimeError("The previous wake detector is still running or retiring")
         infer_pool = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="vosk-wake-infer"
         )
+        # Verification must not queue behind unrelated application workers or
+        # take either of stage one's reserved slots. Sibling rescues still run
+        # concurrently, each with its own one-shot recognizers.
+        verify_pool = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="vosk-wake-confirm"
+        )
         loop = asyncio.get_running_loop()
+        streams: set[_StreamingVerify] = set()
+        stream_lock = threading.Lock()
+
+        def invoke(fn: Callable[..., Any], args: tuple[Any, ...]) -> Any:
+            # A long-lived detector may reject many candidates. Release finished
+            # decoder pairs on a worker instead of retaining all of them until
+            # the next wake, and never join a native worker on the audio loop.
+            with stream_lock:
+                finished = [stream for stream in streams if stream.ready_to_reap]
+                streams.difference_update(finished)
+            for stream in finished:
+                stream.close(wait=True)
+            result = fn(*args)
+            if isinstance(result, _StreamingVerify):
+                # Register before the future publishes its result: cancellation
+                # cannot hide a successfully constructed decoder pair.
+                with stream_lock:
+                    streams.add(result)
+            return result
+
+        async def _run(pool: ThreadPoolExecutor, fn: Callable[..., Any], *args: Any) -> Any:
+            future = pool.submit(invoke, fn, args)
+            wrapped = asyncio.wrap_future(future)
+            try:
+                return await wrapped
+            except asyncio.CancelledError:
+                # Pending obsolete work must never occupy a verifier slot.
+                # Running native work remains owned by the retirement thread.
+                future.cancel()
+
+                def consume_late(done: Any) -> None:
+                    if done.cancelled():
+                        return
+                    exc = done.exception()
+                    if exc is not None:
+                        log.debug("Cancelled wake inference finished with %s", type(exc).__name__)
+                future.add_done_callback(consume_late)
+                raise
 
         async def _in_pool(fn: Callable[..., Any], *args: Any) -> Any:
-            return await loop.run_in_executor(infer_pool, fn, *args)
+            return await _run(infer_pool, fn, *args)
 
+        async def _verify_pool(fn: Callable[..., Any], *args: Any) -> Any:
+            return await _run(verify_pool, fn, *args)
+
+        inner = self._detect_inner(chunks, _in_pool, _verify_pool)
         try:
-            async for keyword in self._detect_inner(chunks, _in_pool):
+            async for keyword in inner:
                 yield keyword
         finally:
-            infer_pool.shutdown(wait=False)
+            try:
+                await inner.aclose()
+            finally:
+                self._pending_gen += 1
+                early, self._early_task = self._early_task, None
+                if early is not None:
+                    early.cancel()
+                retired = loop.create_future()
+
+                def notify_retired() -> None:
+                    if not retired.done():
+                        retired.set_result(None)
+
+                def reap() -> None:
+                    try:
+                        infer_pool.shutdown(wait=True, cancel_futures=True)
+                        verify_pool.shutdown(wait=True, cancel_futures=True)
+                        # Both owning pools have joined. No constructor can add
+                        # another stream or prune this set after this point.
+                        for streaming in streams:
+                            streaming.close(wait=True)
+                    except Exception:
+                        # Retain the guard when retirement cannot be confirmed.
+                        log.exception("Wake inference retirement failed")
+                    else:
+                        self._detect_guard.release()
+                    finally:
+                        try:
+                            loop.call_soon_threadsafe(notify_retired)
+                        except RuntimeError:
+                            # The loop may close first; this thread still joined
+                            # the native workers and owns their last references.
+                            pass
+
+                async def retire() -> None:
+                    # Finish coroutine cancellation before joining its workers;
+                    # the shielded coordinator survives repeated caller cancels.
+                    try:
+                        if early is not None:
+                            await asyncio.gather(early, return_exceptions=True)
+                    finally:
+                        reaper = threading.Thread(
+                            target=reap, name="vosk-wake-retire", daemon=True,
+                        )
+                        self._inference_reaper = reaper
+                        reaper.start()
+                    await retired
+
+                cleanup = asyncio.create_task(retire(), name="vosk-wake-retirement")
+                self._inference_cleanup = cleanup
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(cleanup), timeout=_INFERENCE_SHUTDOWN_BUDGET_S,
+                    )
+                except TimeoutError:
+                    log.warning("Wake inference is still retiring; detector re-entry is blocked")
 
     async def _detect_inner(
         self,
         chunks: AsyncIterator[AudioChunk],
         _in_pool: Callable[..., Awaitable[Any]],
+        _verify_pool: Callable[..., Awaitable[Any]],
     ) -> AsyncIterator[str]:
         """The detection loop proper; ``_in_pool`` runs native decode work."""
         for path in self._model_paths:
@@ -2060,7 +2178,9 @@ class VoskKwsProvider:
                         # a negative still falls through to the later full window.
                         self._pending_gen += 1
                         self._early_task = asyncio.create_task(
-                            self._run_early_check(ring_now, self._pending_gen, hit_path)
+                            self._run_early_check(
+                                ring_now, self._pending_gen, hit_path, _verify_pool,
+                            )
                         )
                         continue
                 # The candidate-prefix check and fallback decision must not fan out
@@ -2095,11 +2215,11 @@ class VoskKwsProvider:
                     # The decode already ran during the tail; this is the
                     # finalize + judgement (~0.1 s) — the spawn-latency win.
                     finishing, streaming = streaming, None
-                    confirmed = await asyncio.to_thread(
+                    confirmed = await _verify_pool(
                         self._finish_streaming_verify, finishing, window
                     )
                 else:
-                    confirmed = await asyncio.to_thread(
+                    confirmed = await _verify_pool(
                         self._verify_candidate, window, hit_path
                     )
                 if not confirmed:
@@ -2126,7 +2246,7 @@ class VoskKwsProvider:
                     if others:
                         rescues = await asyncio.gather(
                             *(
-                                asyncio.to_thread(self._early_check, window, other)
+                                _verify_pool(self._early_check, window, other)
                                 for other in others
                             )
                         )
