@@ -343,6 +343,30 @@ class NativeWindow:
             self._sync_windows()
 
     def _start_capture(self, hwnd: int) -> None:
+        if not self._parked:
+            self._create_capture(hwnd)
+            return
+        if not self._owned(hwnd):
+            raise RuntimeError("Chrome window ownership changed before capture")
+        # Windows must create the capture item before desktop transparency is
+        # applied. Keep the no-activate state and stacking order throughout.
+        u = self.user32
+        style = u.GetWindowLongW(hwnd, -20)
+        capture_style = style & ~0x00080000  # WS_EX_LAYERED
+        u.SetWindowLongW(hwnd, -20, capture_style)
+        if u.GetWindowLongW(hwnd, -20) != capture_style:
+            raise RuntimeError("The Chrome window could not be prepared for capture")
+        try:
+            self._create_capture(hwnd)
+        finally:
+            if self._owned(hwnd):
+                try:
+                    self._hide_from_desktop(hwnd)
+                except BaseException:
+                    self._stop_capture(hwnd)
+                    raise
+
+    def _create_capture(self, hwnd: int) -> None:
         capture = self._capture_factory(
             window_hwnd=hwnd,
             cursor_capture=False,

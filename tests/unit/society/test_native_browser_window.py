@@ -321,8 +321,8 @@ def test_parked_windows_remain_eligible_for_capture_creation(scene):
     factory = window._capture_factory
 
     def captureable(**kwargs):
-        # The capture library excludes WS_EX_TOOLWINDOW at item creation.
-        assert not desktop.styles.get(kwargs["window_hwnd"], 0) & 0x80
+        # Capture item creation precedes the parked desktop transparency.
+        assert not desktop.styles.get(kwargs["window_hwnd"], 0) & 0x80080
         return factory(**kwargs)
 
     window._capture_factory = captureable
@@ -333,6 +333,23 @@ def test_parked_windows_remain_eligible_for_capture_creation(scene):
     desktop.styles[2] = 0x80
     popup(window, desktop)
     assert desktop.alpha == {1: 0, 2: 0}
+    assert all(desktop.styles[hwnd] & 0x80000 for hwnd in (1, 2))
+
+
+def test_failed_capture_creation_restores_desktop_transparency(scene):
+    window, desktop, _codec = scene
+    window.park()
+    assert window._stop_capture(1)
+
+    def refused(**_kwargs):
+        raise RuntimeError("capture item unavailable")
+
+    window._capture_factory = refused
+    with pytest.raises(RuntimeError, match="capture item unavailable"):
+        window._start_capture(1)
+    assert desktop.alpha[1] == 0
+    assert desktop.styles[1] & 0x80000
+    assert 1 not in window._captures and 1 not in window._capture_keys
 
 
 def test_parking_preserves_captured_pixels_and_manual_input(scene):
