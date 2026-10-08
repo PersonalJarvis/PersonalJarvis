@@ -1255,6 +1255,19 @@ def set_background_keep_running(enabled: bool, *, path: Path = DEFAULT_CONFIG_FI
     _patch_table(path, "background", "keep_agents_running", bool(enabled))
 
 
+def set_agent_server(
+    *, persistent: bool, server_url: str = "", path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Select independent server ownership for the next desktop launch."""
+    from jarvis.core.server_endpoint import server_endpoint
+
+    origin = server_endpoint(server_url) if server_url.strip() else ""
+    _patch_table(
+        path, "background", "persistent_server", bool(persistent),
+        extra={"server_url": origin},
+    )
+
+
 def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[wiki_integration] vault_root`` in jarvis.toml (AP-7).
 

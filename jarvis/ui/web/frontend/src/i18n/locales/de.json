@@ -2937,6 +2937,12 @@
       "instant_start_declined_toast": "Berechtigung abgelehnt — {name} startet weiterhin über die Verknüpfung (evtl. verzögert)."
     },
     "background_agents": {
+      "server_title": "Unabhängiger Agentenserver",
+      "server_description": "Jarvis, Hermes und OpenClaw laufen auf einem Server weiter, auch wenn alle Clients geschlossen sind. Gilt ab dem nächsten Desktop-Start.",
+      "server_active": "Dieser unabhängige Server hält die Agenten am Laufen. Das Schließen dieses Clients beendet ihn nicht.",
+      "server_url_label": "Serveradresse (leer lassen für diesen Computer)",
+      "server_save": "Adresse speichern",
+      "server_hint": "Entfernte Server verwenden HTTPS und ihre eigene Anmeldung. Der Client nutzt Sprache über den Browser; lokales Aktivierungswort, Overlays und Gerätesteuerung benötigen den integrierten Desktop oder ein verfügbares Gerät.",
       "title": "Agenten nach dem Schließen weiterlaufen lassen",
       "description": "Wenn du {name} schließt, hält ein kleiner Hintergrund-Dienst deine Routinen und Chat-Kanäle (Telegram, Discord) am Laufen. Öffnest du die App, übernimmt sie wieder. Er startet nur, wenn es etwas weiterzuführen gibt.",
       "keeps_now": "Beim Schließen laufen weiter: {what}.",

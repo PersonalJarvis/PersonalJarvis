@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun, Zap } from "lucide-react";
 import { SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useBackgroundAgents, type BackgroundAgentsPatch } from "@/hooks/useBackgroundAgents";
@@ -255,6 +256,7 @@ function BackgroundAgentsRows() {
   const { config, loading, error, save } = useBackgroundAgents();
   const pushToast = useEventStore((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
+  const [serverDraft, setServerDraft] = useState<string | null>(null);
 
   if (config && !config.supported) return null;
 
@@ -280,7 +282,7 @@ function BackgroundAgentsRows() {
 
   return (
     <>
-      <SettingsRow
+      {!config?.persistent_server && <SettingsRow
         title={t("settings_view.background_agents.title")}
         description={t("settings_view.background_agents.description")}
         control={
@@ -298,7 +300,9 @@ function BackgroundAgentsRows() {
 
             {config?.running_as_service && (
               <p className="text-sm text-foreground">
-                {t("settings_view.background_agents.service_active")}
+                {t(config.running_as_server
+                  ? "settings_view.background_agents.server_active"
+                  : "settings_view.background_agents.service_active")}
               </p>
             )}
 
@@ -311,7 +315,7 @@ function BackgroundAgentsRows() {
             )}
           </>
         )}
-      </SettingsRow>
+      </SettingsRow>}
       <SettingsRow
         title={t("settings_view.background_agents.login_title")}
         description={t("settings_view.background_agents.login_description")}
@@ -324,6 +328,51 @@ function BackgroundAgentsRows() {
           />
         }
       />
+      <SettingsRow
+        title={t("settings_view.background_agents.server_title")}
+        description={t("settings_view.background_agents.server_description")}
+        control={
+          <Switch
+            checked={config?.persistent_server ?? false}
+            disabled={loading || saving}
+            aria-label={t("settings_view.background_agents.server_title")}
+            onCheckedChange={(next) => void apply({ persistent_server: next })}
+          />
+        }
+      >
+        {config?.running_as_server && (
+          <p className="text-sm text-foreground">
+            {t("settings_view.background_agents.server_active")}
+          </p>
+        )}
+        {config?.persistent_server && (
+          <form className="space-y-2" onSubmit={(event) => {
+            event.preventDefault();
+            void apply({ server_url: (serverDraft ?? config.server_url).trim() });
+          }}>
+            <label className="text-sm text-muted-foreground" htmlFor="agent-server-url">
+              {t("settings_view.background_agents.server_url_label")}
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id="agent-server-url"
+                type="url"
+                autoComplete="off"
+                value={serverDraft ?? config.server_url ?? ""}
+                placeholder="https://jarvis.example.com"
+                className="min-w-56 flex-1"
+                onChange={(event) => setServerDraft(event.target.value)}
+              />
+              <Button type="submit" variant="outline" disabled={saving}>
+                {t("settings_view.background_agents.server_save")}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {t("settings_view.background_agents.server_hint")}
+            </p>
+          </form>
+        )}
+      </SettingsRow>
     </>
   );
 }

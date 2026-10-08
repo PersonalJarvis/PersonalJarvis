@@ -1726,3 +1726,19 @@ Agent notebook migration explicitly normalizes the final `USER.md` and
 `MEMORY.md` filename spelling on case-insensitive filesystems. The migration
 journal and backups continue to preserve the original content on every OS.
 The inherited-lock and migration recovery contracts run in the OS test shards.
+
+## Independent agent server and clients
+
+The opt-in independent server uses the existing headless backend on Windows,
+macOS and Linux. Its lifetime no longer depends on a desktop client, an idle
+timer or a desktop handover. Windows runs it in the user session rather than
+as a SYSTEM service. The client uses pywebview where installed; the same server
+also serves ordinary browsers. Remote origins require HTTPS or a local tunnel.
+
+Windows evidence covers the real headless process, readiness and explicit stop,
+the startup budget, and scripted disconnect/reconnect contracts for Jarvis,
+Hermes and OpenClaw. The shared lifecycle and configuration tests are portable;
+native macOS/GTK client windows and live remote-host/provider execution have
+not been verified by these checks. Device capture, wake word and overlays keep
+their existing device and permission requirements; opening a client does not
+grant the server access to that client's desktop.

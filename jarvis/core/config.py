@@ -2382,6 +2382,19 @@ class BackgroundConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     keep_agents_running: bool = True
+    # Independent server ownership is opt-in for existing integrated desktops.
+    # A client never stops this server or inherits its provider credentials.
+    persistent_server: bool = False
+    server_url: str = ""
+
+    @field_validator("server_url")
+    @classmethod
+    def validate_server_url(cls, value: str) -> str:
+        if not value.strip():
+            return ""
+        from jarvis.core.server_endpoint import server_endpoint
+
+        return server_endpoint(value)
 
 
 class TelemetryConfig(BaseModel):
