@@ -52,7 +52,7 @@ async def test_fresh_agent_applies_its_first_identity_from_the_user_turn(world):
     rt, svc = world
     fresh, _ = await rt.roster.create()
     placeholder = fresh.name
-    assert placeholder == "New Bot"
+    assert placeholder == "New Agent"
     tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
     token = _user_turn(fresh.session_id, "You handle my Gmail inbox.")
     try:
