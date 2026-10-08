@@ -149,7 +149,11 @@ async def main() -> None:
             await asyncio.sleep(0.3)
             value = await page.get_by_label("Name").input_value()
             assert value == "Typed through the preview", value
-            assert native.input_hwnd != native.hwnd
+            # Chromium may route the page's keyboard input through its main
+            # HWND on ARM. Check ownership and the real input value above.
+            input_pid = wintypes.DWORD()
+            u.GetWindowThreadProcessId(native.input_hwnd, ctypes.byref(input_pid))
+            assert input_pid.value == int(pid)
             assert badge
             # Focus the address bar through Chrome's own location command, not
             # a click at a guessed toolbar position: on a slow runner the URL
