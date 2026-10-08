@@ -132,7 +132,7 @@ def test_every_runner_has_a_ladder_with_its_default_on_it():
         ("agy-cli", "ask", "accept-edits"),
         ("grok-cli", "accept-edits", "acceptEdits"),
         ("grok-cli", "bypass", "bypassPermissions"),
-        ("jarvis", "", "ask"),
+        ("jarvis", "", "bypass"),
         ("jarvis", "acceptEdits", "accept-edits"),
         ("jarvis", "bypassPermissions", "bypass"),
         ("jarvis", "plan", "plan"),
