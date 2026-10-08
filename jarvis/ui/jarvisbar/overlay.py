@@ -438,7 +438,6 @@ class JarvisBarOverlay:
         startup_gated: bool = False,
         size_scale: float = 1.0,
         follow_cursor_monitor: bool = True,
-        user_hidden: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
@@ -456,8 +455,6 @@ class JarvisBarOverlay:
         # bar advertise a voice stack that is still warming. Runtime-created
         # surfaces leave the opt-in gate off and retain their immediate behavior.
         self._startup_gated = bool(startup_gated)
-        self._user_hidden = bool(user_hidden)
-        self._on_visibility_changed: Callable[[bool], None] | None = None
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -587,25 +584,6 @@ class JarvisBarOverlay:
         if self._root is None:
             return
         self._enqueue_ui(self._do_hide)
-
-    def set_visible(self, visible: bool) -> None:
-        """Remember an explicit visibility choice until the user changes it."""
-        self._user_hidden = not bool(visible)
-        if self._root is not None:
-            self._enqueue_ui(self._do_hide if self._user_hidden else self._do_show)
-        callback = self._on_visibility_changed
-        if callback is not None:
-            try:
-                callback(not self._user_hidden)
-            except Exception:  # noqa: BLE001
-                log.debug("jarvisbar visibility callback failed", exc_info=True)
-
-    def toggle_visible(self) -> None:
-        """Restore a dismissed bar, or dismiss it until the next shortcut."""
-        self.set_visible(self._user_hidden)
-
-    def set_on_visibility_changed(self, callback: Callable[[bool], None] | None) -> None:
-        self._on_visibility_changed = callback
 
     def reassert_z_order(self) -> None:
         """Re-pin an already-visible bar without treating it as a reveal.
@@ -759,7 +737,8 @@ class JarvisBarOverlay:
         self._feedback_publisher = callback
 
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
-        """Register the compose action's main-window fallback callback."""
+        """Register the right-click → raise-main-window callback (set by
+        OrbBusBridge, which publishes ``ShowWindowRequested`` on fire)."""
         self._on_show_window = callback
 
     # ------------------------------------------------------------------ #
@@ -772,11 +751,7 @@ class JarvisBarOverlay:
         withdrawn, then mapped by ``release_startup_gate`` once voice is usable.
         Other persistent bars keep their immediate-map behavior.
         """
-        return (
-            (not self._persistent)
-            or getattr(self, "_startup_gated", False)
-            or getattr(self, "_user_hidden", False)
-        )
+        return (not self._persistent) or getattr(self, "_startup_gated", False)
 
     def start_in_thread(self, timeout: float = 3.0) -> None:
         if sys.platform == "darwin":
@@ -1194,11 +1169,7 @@ class JarvisBarOverlay:
             log.debug("jarvisbar geometry resize failed", exc_info=True)
 
     def _do_show(self) -> None:
-        if (
-            self._root is None
-            or getattr(self, "_startup_gated", False)
-            or getattr(self, "_user_hidden", False)
-        ):
+        if self._root is None:
             return
         # A persistent bar is already mapped when wake/state events arrive.
         # Re-running deiconify/topmost/transparentcolor is not a harmless no-op
@@ -1977,8 +1948,16 @@ class JarvisBarOverlay:
         self._hovered = False
 
     def _on_right_click(self, _event: Any = None) -> None:
-        """Dismiss the whole bar; the global visibility shortcut restores it."""
-        self.set_visible(False)
+        """Right-click → raise the main desktop window via the injected
+        callback (OrbBusBridge publishes ``ShowWindowRequested``). No callback
+        wired (boot race / no bridge) → safe no-op."""
+        callback = self._on_show_window
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar show-window callback failed", exc_info=True)
 
     def _on_click(
         self, click_x: float | None = None, *, click_y: float | None = None, hovered: bool = False
