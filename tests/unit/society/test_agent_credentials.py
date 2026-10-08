@@ -18,7 +18,7 @@ from jarvis.agent_chat.credential_requests import (
 )
 from jarvis.agent_chat.service import AgentChatService, _Running
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.society import credential_tool, credentials
+from jarvis.society import credentials
 from jarvis.society.credential_tool import CREDENTIAL_TOOL_NAME, RequestCredentialTool
 from jarvis.society.credentials import CredentialError, CredentialVault, validate_env_name
 from jarvis.society.shell import ShellResult
@@ -282,10 +282,11 @@ _ARGS = {
 async def test_the_tool_asks_and_the_agent_only_learns_the_name(tmp_path: Path, vault) -> None:
     svc, sid, task = await _service_with_turn(tmp_path)
     q = svc.subscribe(sid)
-    call = asyncio.create_task(_tool(sid, svc).execute(dict(_ARGS), None))
+    first = await asyncio.wait_for(_tool(sid, svc).execute(dict(_ARGS), None), timeout=1)
+    assert first.success and first.output["status"] == "waiting"
     card = await _next(q, "credential_required")
     assert await svc.submit_credential(sid, card["request_id"], SECRET)
-    result = await call
+    result = await _tool(sid, svc).execute({"wait_for": card["request_id"]}, None)
     assert result.success and result.output["status"] == "saved"
     assert "$GITHUB_TOKEN" in result.output["note"] and "society_shell" in result.output["note"]
     assert SECRET not in json.dumps(result.output) + (result.error or "")
@@ -296,15 +297,15 @@ async def test_the_tool_asks_and_the_agent_only_learns_the_name(tmp_path: Path, 
     task.cancel()
 
 
-async def test_a_slow_paste_is_polled_in_slices(
-    tmp_path: Path, vault, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(credential_tool, "WAIT_SLICE_S", 0.01)
+async def test_checking_a_pending_field_returns_without_waiting(tmp_path: Path, vault) -> None:
     svc, sid, task = await _service_with_turn(tmp_path)
     tool = _tool(sid, svc)
-    first = await tool.execute(dict(_ARGS), None)
+    first = await asyncio.wait_for(tool.execute(dict(_ARGS), None), timeout=1)
     assert first.success and first.output["status"] == "waiting"
     rid = first.output["request_id"]
+    pending = await asyncio.wait_for(tool.execute({"wait_for": rid}, None), timeout=1)
+    assert pending.output["status"] == "waiting"
+    assert svc.pending_credential_requests(sid) == [rid]
     assert await svc.decline_credential(sid, rid)
     second = await tool.execute({"wait_for": rid}, None)
     assert not second.success and second.output["status"] == "declined"
@@ -312,6 +313,59 @@ async def test_a_slow_paste_is_polled_in_slices(
     gone = await tool.execute({"wait_for": "nope"}, None)
     assert not gone.success
     task.cancel()
+
+
+async def test_followup_finishes_before_the_token_is_saved(
+    tmp_path: Path, vault, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.agent_chat import service as service_module
+    from jarvis.agent_chat.events import make_event
+    from jarvis.agent_chat.send_queue import send_or_queue
+
+    svc = AgentChatService(AgentChatStore(":memory:"), assistant_name=lambda: "Testo")
+    session = svc.store.create_session(
+        provider="fakeprov", model="m", effort="", cwd=str(tmp_path), session_id=SID,
+        surface="society",
+    )
+    results = []
+    replies = []
+
+    async def bind(_sid, **_kwargs):
+        return session
+
+    async def run(handle, prompt):
+        if not results:
+            results.append(await _tool(SID, svc).execute(dict(_ARGS), None))
+        else:
+            replies.append(prompt)
+            assert svc.pending_credential_requests(SID) == [results[0].output["request_id"]]
+            await handle.emit(make_event("assistant_text", {
+                "turn_id": handle.turn_id, "text": "It allows me to open the pull request.",
+            }))
+        await handle.emit(make_event("turn_finished", {
+            "turn_id": handle.turn_id, "status": "done",
+        }))
+
+    monkeypatch.setattr(svc, "bind_society_session", bind)
+    monkeypatch.setattr(service_module, "resolve_runner", lambda *a, **k: "api")
+    monkeypatch.setattr(service_module, "supports_api_runner", lambda _provider: True)
+    monkeypatch.setattr(service_module, "run_api_turn", run)
+    try:
+        await svc.send(SID, "Open the pull request")
+        await asyncio.wait_for(svc.wait_turn(SID), timeout=2)
+        assert results[0].output["status"] == "waiting"
+        rid = results[0].output["request_id"]
+        turn_id, queue_id = await send_or_queue(svc, SID, "What do you need it for?")
+        assert turn_id and not queue_id
+        await asyncio.wait_for(svc.wait_turn(SID), timeout=2)
+        assert replies == ["What do you need it for?"]
+        assert not vault.has("ada", "GITHUB_TOKEN")
+        assert await svc.submit_credential(SID, rid, SECRET)
+        assert vault.values("ada") == {"GITHUB_TOKEN": SECRET}
+        assert (await _tool(SID, svc).execute({"wait_for": rid}, None)).output["status"] == "saved"
+        assert SECRET not in _logged(svc, SID)
+    finally:
+        await svc.cancel(SID)
 
 
 async def test_routines_and_bad_requests_never_open_a_field(vault) -> None:
@@ -323,6 +377,8 @@ async def test_routines_and_bad_requests_never_open_a_field(vault) -> None:
     assert not bad.success and "invalid request" in (bad.error or "")
     nameless = await _tool(SID, service).execute({**_ARGS, "label": " "}, None)
     assert not nameless.success
+    unexplained = await _tool(SID, service).execute({**_ARGS, "description": " "}, None)
+    assert not unexplained.success and "explain why" in unexplained.error
     assert opened == []
 
 
