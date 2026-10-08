@@ -297,6 +297,8 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     agent = await rt.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         return None
+    if getattr(agent, "execution_environment", "local") == "sandbox":
+        return None
     read_only = str(agent.permission_ceiling) == "safe" or session.permission_mode in (
         "plan", "read-only"
     )
@@ -386,6 +388,19 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     if rt is None or agent_id is None:
         return {}
     workspace = Path(getattr(session, "cwd", "") or _workspace_fallback(cfg, agent_id))
+    agent = rt.cached_agent(agent_id)
+    if agent is not None and getattr(agent, "execution_environment", "local") == "sandbox":
+        from .sandbox import SandboxTool
+
+        sandbox_tools: dict[str, Tool] = {
+            SandboxTool.name: cast(Tool, SandboxTool(rt, agent_id, workspace)),
+        }
+        session_id = str(getattr(session, "session_id", "") or "")
+        if not is_routine_session(session_id):
+            sandbox_tools[ASK_USER_TOOL_NAME] = cast(
+                Tool, AskUserTool(rt, agent_id, session_id=session_id)
+            )
+        return sandbox_tools
     tools: dict[str, Tool] = {}
     # The folder tools of the chat surface, contained: on the society surface the
     # kit's tools REPLACE the folder tools (runner_brain.build_override), so the
@@ -472,6 +487,7 @@ class _GatedTool:
     ) -> None:
         self._inner = inner
         self._agent = agent
+        self._execution_environment = getattr(agent, "execution_environment", "local")
         self._capability_id = capability_id
         self._approval_mode = approval_mode
         self._runtime = runtime
@@ -565,6 +581,8 @@ class _GatedTool:
             return ToolResult(
                 False, {"reason": "blocked_by_policy"}, "caller is not an active agent"
             )
+        if getattr(live, "execution_environment", "local") != self._execution_environment:
+            return ToolResult(False, None, "Execution environment changed; start a new turn.")
         if self._session_id and (
             session is None
             or str(getattr(session, "session_id", "")) != self._session_id
@@ -666,6 +684,27 @@ async def remember_always_allow(session: Any, tool_name: str, args: dict[str, An
     return True
 
 
+class _LocalReportingTool:
+    """A cache miss may not expose host reporting tools to a sandbox identity."""
+
+    def __init__(self, inner: Any, runtime: Any, agent_id: str) -> None:
+        self._inner, self._runtime, self._agent_id = inner, runtime, agent_id
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
+        agent = await self._runtime.roster.get(self._agent_id)
+        if agent is None or str(agent.state) != "active":
+            return ToolResult(False, None, "Agent execution environment is unavailable.")
+        if (
+            getattr(agent, "execution_environment", "local") == "sandbox"
+            and not isinstance(self._inner, AskUserTool)
+        ):
+            return ToolResult(False, None, "Host tools are unavailable in the sandbox.")
+        return await self._inner.execute(args, ctx)
+
+
 class _ContainedTool:
     """A folder tool whose path arguments must stay inside the workspace."""
 
@@ -752,13 +791,34 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # neither report back nor ask the user, and the job stalls silently
         # (#255).
         return lambda tools: {
-            n: t
+            n: cast(Tool, _LocalReportingTool(t, rt, agent_id))
             for n, t in tools.items()
             if n.startswith(_OWN_PREFIX) and getattr(t, "risk_tier", "monitor") == "safe"
         }
     approval_mode = _effective_approval_mode(agent, session, _permission_override(rt, session))
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
+        if getattr(agent, "execution_environment", "local") == "sandbox":
+            from .sandbox import SandboxTool
+
+            # Only our bound implementation and information questions cross this
+            # boundary. Tool names or society prefixes cannot grant host access.
+            return {
+                name: cast(Tool, _GatedTool(
+                    tool, agent, "core:sandbox", approval_mode, rt,
+                    session=session, requires_grant=True,
+                ))
+                for name, tool in tools.items()
+                if isinstance(tool, SandboxTool)
+                and tool.agent_id == agent.agent_id and tool.runtime is rt
+                and name in select_tools(
+                    {name: tool}, grant_mode=str(agent.grant_mode), grants=agent.grants,
+                    focus=agent.focus, denies=agent.denies,
+                )
+            } | {
+                name: tool for name, tool in tools.items()
+                if name == ASK_USER_TOOL_NAME and isinstance(tool, AskUserTool)
+            }
         own = {
             n: t
             for n, t in tools.items()
@@ -847,6 +907,16 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     # The briefing is built once per turn: this is where the island learns that a
     # turn started, whoever started it (a typed message never passes the scheduler).
     rt.checkpoints.note_turn_started(agent.agent_id, str(getattr(session, "session_id", "")))
+    if getattr(agent, "execution_environment", "local") == "sandbox":
+        return (
+            f"You are {agent.name}. {agent.description}\n"
+            "Execution environment: isolated Linux code sandbox, Python 3.12. "
+            "Use society_sandbox for ALL files and commands. No host tools, network, "
+            "credentials, browser, plugins or delegation are available. "
+            "Files under /workspace persist; use relative paths. Run tests and report "
+            "actual results. Give output paths for download in the agent settings. "
+            "Do not claim to have accessed the host. Answer in the user's language."
+        )
     catalog = rt.catalog()
     roster = await rt.roster.list()
     browser = await asyncio.to_thread(rt.browser.status_for, agent)

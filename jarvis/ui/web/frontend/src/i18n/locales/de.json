@@ -5548,6 +5548,19 @@
     "mode_pipeline": "Stimme rein und raus"
   },
   "society": {
+    "sandbox": {
+      "environment": "Ausführungsumgebung",
+      "local": "Dieser Computer",
+      "code": "Code-Sandbox",
+      "scope": "Jarvis mit API- oder lokalem Modell. Python-Code und Dateien bleiben in einem Linux-Container. Netzwerk, Desktop, Plugins und Host-Dateien sind nicht verfügbar.",
+      "storage": "Dateien bleiben in der Sandbox. Downloads sind auf 1 MB begrenzt; Befehle enden mit dem Stoppen-Knopf im Chat.",
+      "checking": "Sandbox wird geprüft…",
+      "prepare": "Laufzeit herunterladen",
+      "refresh": "Dateien aktualisieren",
+      "root": "Arbeitsverzeichnis",
+      "loading": "Dateien werden geladen…",
+      "empty": "Noch keine Dateien."
+    },
     "groups": {
       "create": "Neues Agent-Team",
       "edit": "Agent-Team bearbeiten",

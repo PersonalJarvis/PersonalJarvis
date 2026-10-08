@@ -25,6 +25,9 @@ export type MsgType = (typeof MSG_TYPES)[number];
 export const TIERS = ["lead", "orchestrator", "specialist"] as const;
 export type Tier = (typeof TIERS)[number];
 
+export const EXECUTION_ENVIRONMENTS = ["local", "sandbox"] as const;
+export type ExecutionEnvironment = (typeof EXECUTION_ENVIRONMENTS)[number];
+
 export const AGENT_STATES = ["active", "paused", "archived"] as const;
 export type AgentState = (typeof AGENT_STATES)[number];
 
@@ -170,6 +173,7 @@ export interface SocietyAgentRow {
   browser_allowed_domains: string[];
   /** Where the agent runs: null = this computer, else a connected computer id. */
   computer_id: string | null;
+  execution_environment?: ExecutionEnvironment;
   /** The agent loop that runs its turns: Jarvis, Hermes or OpenClaw. */
   runtime: AgentRuntime;
   session_id: string;

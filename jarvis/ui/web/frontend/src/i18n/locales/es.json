@@ -5548,6 +5548,19 @@
     "mode_pipeline": "voz de entrada y salida"
   },
   "society": {
+    "sandbox": {
+      "environment": "Entorno de ejecución",
+      "local": "Este ordenador",
+      "code": "Sandbox de código",
+      "scope": "Jarvis con API o modelo local. El código Python y los archivos permanecen en un contenedor Linux. Sin red, escritorio, plugins ni archivos del equipo.",
+      "storage": "Los archivos permanecen en el sandbox. Descargas de hasta 1 MB; detén los comandos con el botón Detener del chat.",
+      "checking": "Comprobando sandbox…",
+      "prepare": "Descargar entorno",
+      "refresh": "Actualizar archivos",
+      "root": "Directorio de trabajo",
+      "loading": "Cargando archivos…",
+      "empty": "Todavía no hay archivos."
+    },
     "groups": {
       "create": "Nuevo equipo de agentes",
       "edit": "Editar equipo de agentes",

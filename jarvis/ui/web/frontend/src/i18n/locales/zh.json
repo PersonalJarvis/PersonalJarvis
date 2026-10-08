@@ -5554,6 +5554,19 @@
     "mode_pipeline": "语音输入和输出"
   },
   "society": {
+    "sandbox": {
+      "environment": "执行环境",
+      "local": "此电脑",
+      "code": "代码沙箱",
+      "scope": "适用于 Jarvis API 或本地模型。Python 代码和文件保留在 Linux 容器中，无法使用网络、桌面、插件或主机文件。",
+      "storage": "文件保留在沙箱中。下载上限为 1 MB；可用聊天中的停止按钮结束命令。",
+      "checking": "正在检查沙箱…",
+      "prepare": "下载运行环境",
+      "refresh": "刷新文件",
+      "root": "工作目录",
+      "loading": "正在加载文件…",
+      "empty": "暂无文件。"
+    },
     "groups": {
       "create": "新建智能体团队",
       "edit": "编辑智能体团队",
