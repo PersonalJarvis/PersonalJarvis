@@ -135,6 +135,31 @@ async def test_continue_preserves_a_rate_limited_question_and_its_approval_mode(
     assert session.permission_mode == "ask" and session.provider == "openai"
 
 
+async def test_continue_names_why_a_delegated_failure_cannot_be_resumed():
+    svc = FakeService()
+    sid = seat(svc)
+    # A teammate's message: delivered without a user_message, then rate limited.
+    svc.store.append_event(sid, make_event("turn_started", {"turn_id": "incoming"}))
+    svc.store.append_event(
+        sid,
+        make_event("turn_finished", {"turn_id": "incoming", "status": "error", "error": "429"}),
+    )
+    controls = ChatControls(svc, adapters=[])
+    result = await controls.execute(sid, request("continue"))
+    assert result.status == "failed"
+    assert "not from you" in result.error
+    assert svc.sent == []
+
+
+async def test_continue_without_any_failure_says_there_is_nothing_to_continue():
+    svc = FakeService()
+    sid = seat(svc)
+    controls = ChatControls(svc, adapters=[])
+    result = await controls.execute(sid, request("continue"))
+    assert result.status == "failed"
+    assert result.error == "There is no interrupted task to continue"
+
+
 def test_plan_build_and_review_preserve_original_permissions_and_history() -> None:
     async def scenario() -> None:
         svc = FakeService()

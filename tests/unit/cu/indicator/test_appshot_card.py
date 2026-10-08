@@ -143,4 +143,4 @@ def test_the_card_hint_follows_the_app_language() -> None:
     assert card_hint(Cfg) == _CARD_HINTS["de"]
     Cfg.ui.language = "auto"
     assert card_hint(Cfg) == _CARD_HINTS["en"]
-    assert set(_CARD_HINTS) == {"de", "en", "es"}
+    assert set(_CARD_HINTS) == {"de", "en", "es", "zh"}

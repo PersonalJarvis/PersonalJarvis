@@ -48,6 +48,9 @@ class _Endpoint:
     #: Without an API key, the person's Claude Code login answers instead
     #: (billed by Anthropic as extra usage, not from the plan's limits).
     claude_login: bool = False
+    #: May authenticate without a key: Google Cloud Application Default
+    #: Credentials for a configured project (Vertex AI).
+    cloud_project: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
@@ -58,6 +61,7 @@ _ENDPOINTS: Final[dict[str, _Endpoint]] = {
     "openrouter": _Endpoint("https://openrouter.ai/api/v1"),
     "nvidia": _Endpoint("https://integrate.api.nvidia.com/v1"),
     "gemini": _Endpoint("https://generativelanguage.googleapis.com/v1beta/openai"),
+    "vertex": _Endpoint("https://aiplatform.googleapis.com", cloud_project=True),
     "ollama": _Endpoint(None, keyless=True, local_server=True),
     "local-openai": _Endpoint(None, keyless=True, local_server=True),
     "openai-codex": _Endpoint(None, subscription=True),
@@ -127,19 +131,26 @@ def _saved_key(provider: str, endpoint: _Endpoint) -> str | None:
     return _api_key(provider, resolved.credential)
 
 
-def login_token_for(provider: str, account_id: str = "") -> str | None:
-    """The Claude login ``provider`` answers on, or ``None`` when it runs on
-    an API key (or cannot use a login at all). ``account_id`` may pin the
-    agent to its key or to the login (``catalog.ACCESS_ACCOUNTS``); without a
-    pin the API key wins. Blocking (keyring)."""
+def login_route(provider: str, account_id: str = "") -> tuple[bool, str | None]:
+    """Whether ``provider`` answers on the person's Claude Code login for
+    ``account_id``, and that login's live bearer (``None`` once it expired).
+    ``account_id`` may pin the agent to its key or to the login
+    (``catalog.ACCESS_ACCOUNTS``); without a pin the API key wins. Blocking
+    (keyring)."""
     from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
 
     endpoint = _ENDPOINTS.get(provider)
     if endpoint is None or not endpoint.claude_login or account_id == API_KEY_ACCOUNT:
-        return None
+        return False, None
     if account_id != SUBSCRIPTION_ACCOUNT and _saved_key(provider, endpoint) is not None:
-        return None
-    return claude_login_token()
+        return False, None
+    return True, claude_login_token()
+
+
+def login_token_for(provider: str, account_id: str = "") -> str | None:
+    """The Claude login ``provider`` answers on, or ``None`` when it runs on
+    an API key (or cannot use a login at all). Blocking (keyring)."""
+    return login_route(provider, account_id)[1]
 
 
 def login_providers() -> list[str]:
@@ -175,8 +186,34 @@ def access_choices() -> dict[str, list[str]]:
     return choices
 
 
+def access_blocked() -> dict[str, dict[str, str]]:
+    """Per provider that can pay two ways, the ways that exist but are refused
+    right now, with the refusal's code: a live Claude Code login whose Extra
+    Usage is off (``extra_usage_off``) or spent (``extra_usage_spent``) — the
+    only way Anthropic serves a subscription to Hermes and OpenClaw. The
+    "New agent" dialog shows such a way disabled with its reason. Blocking
+    (keyring, one cached usage GET, no inference)."""
+    from jarvis.agent_runtimes.provider_errors import login_blocked
+
+    blocked: dict[str, dict[str, str]] = {}
+    for name, endpoint in _ENDPOINTS.items():
+        if not endpoint.claude_login:
+            continue
+        token = claude_login_token()
+        refusal = login_blocked(token, "") if token else None
+        if refusal is not None:
+            blocked[name] = {"subscription": refusal.code}
+    return blocked
+
+
 def supports(provider: str) -> bool:
     return provider in _ENDPOINTS
+
+
+def is_local(provider: str) -> bool:
+    """Whether ``provider`` is a model server the person runs themselves."""
+    endpoint = _ENDPOINTS.get(provider)
+    return endpoint is not None and endpoint.local_server
 
 
 def usable_providers(config: Any) -> list[str]:
@@ -279,6 +316,11 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
             "Claude needs an Anthropic API key or a live Claude Code login. Connect "
             "one in Settings → API keys, or open Claude Code once to renew its login."
         )
+    if key is None and endpoint.cloud_project:
+        from jarvis.core.config import vertex_credential_configured
+
+        if vertex_credential_configured():
+            key = ""  # the Cloud project signs the requests (no key)
     if key is None and not endpoint.keyless and not endpoint.claude_login:
         raise RouteUnavailable(
             f"No API key is saved for {provider}. Connect it in Settings → API keys."

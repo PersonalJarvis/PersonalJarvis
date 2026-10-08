@@ -99,7 +99,7 @@ def _ms(value: Any) -> int:
     text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError:
+    except ValueError:  # an unparsable timestamp sorts as the oldest
         return 0
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -137,7 +137,7 @@ def _first_line(path: Path) -> dict[str, Any] | None:
         return None
     try:
         obj = json.loads(line)
-    except ValueError:
+    except ValueError:  # a non-JSON first line is not a session header
         return None
     return obj if isinstance(obj, dict) and obj.get("type") == "session_meta" else None
 
@@ -161,7 +161,7 @@ def _arguments(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
-        except ValueError:
+        except ValueError:  # plain-text tool input is kept as text
             return {"input": raw}
         return parsed if isinstance(parsed, dict) else {"input": parsed}
     return {}
@@ -262,7 +262,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
     )
     try:
         start = int(payload.get("subagent_history_start_ordinal") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # a missing or bad ordinal means read from the start
         start = 0
     seen: set[str] = set()
     last_text = ""
@@ -278,7 +278,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
                 continue
             try:
                 obj = json.loads(line)
-            except ValueError:
+            except ValueError:  # a torn or partial transcript line is skipped
                 continue
             if not isinstance(obj, dict):
                 continue

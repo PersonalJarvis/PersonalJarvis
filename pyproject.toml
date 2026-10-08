@@ -892,6 +892,9 @@ jarvis = [
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
     "society/mars/definition.json",
+    # The Hermes / OpenClaw releases setup installs and accepts
+    # (agent_runtimes/versions.py); without it setup falls back to latest.
+    "agent_runtimes/runtime-versions.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named
     # explicitly rather than a repo-wide "**/*.json" glob, which would also
     # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,
@@ -978,3 +981,14 @@ explicit = true
 
 [tool.uv.sources]
 cryptography = { index = "native-crypto" }
+
+# sherpa-onnx wheels disagree on their metadata: the linux_armv7l wheel bundles
+# the native core, every other wheel requires sherpa-onnx-core of the same
+# version. The universal lock read the armv7l metadata and dropped the core, so
+# an install from uv.lock left the speech runtime without its native library.
+# CI installs from the lock (scripts/ci/install_locked.py) and refuses the
+# unpinned core, so a sherpa-onnx bump without updating this entry fails loudly.
+[[tool.uv.dependency-metadata]]
+name = "sherpa-onnx"
+version = "1.13.4"
+requires-dist = ["sherpa-onnx-core==1.13.4"]

@@ -6,7 +6,7 @@ from jarvis.agent_runtimes import gateway
 from jarvis.agent_runtimes.model_limits import ModelLimits, resolve_limits
 from jarvis.brain.model_catalog import ModelInfo
 from jarvis.core.config import OllamaModelOptions
-from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 from jarvis.plugins.brain.ollama import OllamaBrain
 
 
@@ -135,3 +135,28 @@ async def test_gateway_configures_capable_brain_before_inference(monkeypatch):
         assert result[0].content == "ok"
     finally:
         gateway.reset()
+
+
+def test_an_omitted_limit_never_asks_for_more_than_the_context_leaves():
+    """OpenRouter declares max_completion_tokens == context_length for many
+    models; asking for all of it beside any prompt is refused upstream."""
+    limits = ModelLimits(163_840, 163_840)
+    prompt = "x" * 300_000  # about 100k tokens at three characters per token
+    # max_tokens=0: what chat_request builds when the runtime named no limit.
+    req = BrainRequest(messages=(BrainMessage("user", prompt),), max_tokens=0)
+    budget = gateway._with_output_capacity(req, limits).max_tokens
+    assert budget <= 163_840 - 100_000 - 1024
+    assert budget > 50_000
+
+
+def test_an_explicit_limit_is_the_runtimes_choice():
+    limits = ModelLimits(163_840, 163_840)
+    req = BrainRequest(messages=(BrainMessage("user", "x" * 300_000),), max_tokens=120_000)
+    assert gateway._with_output_capacity(req, limits).max_tokens == 120_000
+
+
+def test_a_nearly_full_window_still_sends_a_small_budget():
+    limits = ModelLimits(32_768, None)
+    req = BrainRequest(messages=(BrainMessage("user", "x" * 120_000),), max_tokens=0)
+    assert gateway._with_output_capacity(req, limits).max_tokens == 1024
+

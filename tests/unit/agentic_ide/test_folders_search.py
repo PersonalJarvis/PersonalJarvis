@@ -90,14 +90,33 @@ def test_device_name_is_never_empty() -> None:
     assert device.device_name().strip()
 
 
-def test_device_name_falls_back_to_the_hostname(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Every per-OS lookup failing must still yield something readable."""
+@pytest.mark.parametrize("host_platform", ["darwin", "linux", "win32"])
+def test_device_name_falls_back_to_the_hostname(
+    monkeypatch: pytest.MonkeyPatch, host_platform: str
+) -> None:
+    """Every per-OS lookup failing must still yield something readable.
+
+    The platform is pinned and every per-OS source is made to fail, including
+    the Linux ``/etc/hostname`` file, so the runner's own hostname can never
+    answer instead of the fallback under test.
+    """
+    real_read_text = Path.read_text
+
+    def no_etc_hostname(self: Path, *args: object, **kwargs: object) -> str:
+        if self.as_posix() == "/etc/hostname":
+            raise FileNotFoundError(self)
+        return real_read_text(self, *args, **kwargs)
+
     device.reset_cache()
+    monkeypatch.setattr(device.sys, "platform", host_platform)
     monkeypatch.setattr(device, "_run", lambda argv: None)
+    monkeypatch.setattr(Path, "read_text", no_etc_hostname)
     monkeypatch.setattr(device.platform, "node", lambda: "Rubens-MacBook-Pro.local")
     monkeypatch.delenv("COMPUTERNAME", raising=False)
-    assert device.device_name() == "Rubens MacBook Pro"
-    device.reset_cache()
+    try:
+        assert device.device_name() == "Rubens MacBook Pro"
+    finally:
+        device.reset_cache()
 
 
 def test_device_name_prefers_the_friendly_macos_name(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -192,16 +192,22 @@ async def test_live_models_answers_within_budget_while_a_slow_cli_keeps_loading(
 ) -> None:
     """A cold ``agy models`` took over a minute on a real box; the picker must
     not wait for it. The fast readers answer, the slow one is left out (its
-    curated fallback stands) and finishes in the background."""
+    curated fallback stands) and finishes in the background.
+
+    Proven by behaviour, not wall-clock: the slow read cannot finish before the
+    test releases it, so an answer at all means the picker did not wait for
+    it. The budget is wide enough for the fast readers' pool threads to start
+    on a loaded runner; the timeout is only a hang guard.
+    """
+    import asyncio
     import threading
-    import time
 
     from jarvis.agent_chat import runner_cli
 
     release = threading.Event()
 
     def slow_agy() -> list[dict[str, str]]:
-        release.wait(5.0)
+        release.wait(60.0)
         return [{"id": "late"}]
 
     monkeypatch.setattr(runner_cli, "read_agy_models", slow_agy)
@@ -213,11 +219,9 @@ async def test_live_models_answers_within_budget_while_a_slow_cli_keeps_loading(
         "_installed",
         lambda r: r in {"agy-cli", "codex-cli", "grok-cli", "opencode-cli"},
     )
-    monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 0.2)
+    monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 2.0)
     try:
-        started = time.monotonic()
-        out = await launch_picks.live_models()
-        assert time.monotonic() - started < 2.0
+        out = await asyncio.wait_for(launch_picks.live_models(), 30.0)
         assert out == {"codex-cli": [{"id": "gpt"}], "opencode-cli": []}
     finally:
         release.set()
@@ -227,17 +231,23 @@ async def test_live_models_does_not_wait_again_for_a_read_an_earlier_request_sta
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The slow read left running by one picker open must not cost the next
-    open its budget again; the second request answers at once."""
+    open its budget again; the second request answers at once.
+
+    Proven by behaviour, not wall-clock: the second request runs with a budget
+    longer than the slow read itself, so waiting for the read again (or
+    starting a second one) would return its late rows instead of ``{}``.
+    """
     import threading
-    import time
 
     from jarvis.agent_chat import runner_cli
 
     release = threading.Event()
+    read_started = threading.Event()
     calls = []
 
     def slow_agy() -> list[dict[str, str]]:
         calls.append(1)
+        read_started.set()
         release.wait(5.0)
         return [{"id": "late"}]
 
@@ -246,9 +256,11 @@ async def test_live_models_does_not_wait_again_for_a_read_an_earlier_request_sta
     monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 0.2)
     try:
         assert await launch_picks.live_models() == {}
-        started = time.monotonic()
+        # The read runs in a pool thread; on a busy runner it may not have
+        # begun within the first request's budget. Wait for it explicitly.
+        assert read_started.wait(5.0)
+        monkeypatch.setattr(launch_picks, "_LIVE_MODELS_BUDGET_S", 30.0)
         assert await launch_picks.live_models() == {}
-        assert time.monotonic() - started < 0.15
         assert len(calls) == 1  # joined, not started twice
     finally:
         release.set()

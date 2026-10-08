@@ -19,7 +19,18 @@ What a prompt does depends on its text:
 * contains ``FAIL`` — the prompt request answers a JSON-RPC error;
 * contains ``HANG`` — answers, then keeps running after stdin closes (a
   runtime whose child holds the pipe);
+* contains ``SLOW`` — streams "working", then waits; a ``session/cancel``
+  ends the prompt with ``stopReason: cancelled`` (and is logged), unless
+  ``FAKE_ACP_IGNORE_CANCEL`` is set;
+* contains ``TOOLWAIT`` — starts a tool call and never finishes it;
+* contains ``SETSID`` — starts a child in its own session (POSIX ``setsid``)
+  that sleeps, writes its pid to ``FAKE_ACP_CHILD_FILE``, then answers;
+* contains ``BIG`` — first sends one line of ``FAKE_ACP_BIG_BYTES`` bytes;
+* contains ``EXIT`` — exits with status 3 without answering;
+* contains ``MAXTOK`` — answers text, then ``stopReason: max_tokens``;
 * otherwise — ``echo: <text>`` streamed in two chunks plus a thought.
+
+``FAKE_ACP_MODE=hang-after-init`` answers ``initialize`` and then nothing.
 
 ``session/load`` of an unknown id answers ``{}`` (Hermes' behaviour).
 """
@@ -136,6 +147,49 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
     if "FAIL" in text:
         _send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "model down"}})
         return
+    if "EXIT" in text:
+        sys.exit(3)
+    if "BIG" in text:
+        size = int(os.environ.get("FAKE_ACP_BIG_BYTES", str(17 * 1024 * 1024)))
+        sys.stdout.write("x" * size + "\n")
+        sys.stdout.flush()
+    if "SLOW" in text or "TOOLWAIT" in text:
+        if "TOOLWAIT" in text:
+            _update(
+                session_id,
+                {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "tc-wait",
+                    "title": "terminal",
+                    "kind": "execute",
+                    "status": "in_progress",
+                    "rawInput": {"command": "sleep 600"},
+                },
+            )
+        else:
+            _text(session_id, "working")
+        while True:
+            frame = _read()
+            if frame is None:
+                return
+            if frame.get("method") == "session/cancel" and not os.environ.get(
+                "FAKE_ACP_IGNORE_CANCEL"
+            ):
+                _send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "cancelled"}})
+                return
+    if "SETSID" in text:
+        import subprocess
+
+        child = subprocess.Popen(  # noqa: S603 — a sleeping copy of this interpreter
+            [sys.executable, "-c", "import time; time.sleep(600)"],
+            start_new_session=os.name != "nt",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        child_file = os.environ.get("FAKE_ACP_CHILD_FILE")
+        if child_file:
+            Path(child_file).write_text(str(child.pid), encoding="utf-8")
     if "ASK" in text:
         _send(
             {
@@ -188,7 +242,7 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
             "jsonrpc": "2.0",
             "id": rid,
             "result": {
-                "stopReason": "max_tokens" if "TRUNCATE" in text else "end_turn",
+                "stopReason": "max_tokens" if ("TRUNCATE" in text or "MAXTOK" in text) else "end_turn",
                 "usage": {"inputTokens": 11, "outputTokens": 7, "totalTokens": 18},
             },
         }
@@ -206,6 +260,11 @@ def main() -> int:
         method = frame.get("method")
         rid = frame.get("id")
         params = frame.get("params") or {}
+        if method == "initialize" and os.environ.get("FAKE_ACP_MODE") == "hang-after-init":
+            _send({"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": 1}})
+            while _read() is not None:
+                pass  # never opens a session; ends with stdin
+            return 0
         if method == "initialize":
             _send(
                 {

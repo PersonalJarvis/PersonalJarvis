@@ -7,7 +7,7 @@
  * up to date on its own. The UI only says whether it is ready or still being
  * set up — never a version number.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { RuntimeMark } from "@/components/society/RuntimeBadge";
@@ -74,6 +74,11 @@ function RuntimeSetupNote({ status, onRetry, error }: {
 }) {
   const t = useT();
   const state = setupState(status);
+  if (state === "ready" && status?.untested) {
+    return <p className="text-xs text-muted-foreground" data-testid="runtime-untested">
+      {fill(t("society.runtime.untested_hint"), t(`society.runtime.${status.runtime}`))}
+    </p>;
+  }
   if (state === "ready" || !status) return null;
   const label = t(`society.runtime.${status.runtime}`);
   const failure = error ?? (state === "failed" ? status.job?.message || status.job?.log_tail.at(-1) || status.problem : null);
@@ -110,6 +115,8 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
   const chosen = value === "jarvis" ? undefined : byName.get(value);
   const chosenState = value === "jarvis" ? "ready" : setupState(chosen);
 
+  const id = useId();
+  const cards = useRef<Partial<Record<AgentRuntime, HTMLButtonElement | null>>>({});
   const asked = useRef(new Set<string>());
   const loaded = Boolean(runtimes.data);
   useEffect(() => {
@@ -120,23 +127,41 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
     void ensure(value);
   }, [value, loaded, chosenState, ensure]);
 
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>, runtime: AgentRuntime) {
+    // One tab stop; arrow keys move the choice (the WAI-ARIA radio pattern).
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    const index = AGENT_RUNTIMES.indexOf(runtime);
+    const next = AGENT_RUNTIMES[(index + step + AGENT_RUNTIMES.length) % AGENT_RUNTIMES.length];
+    onChange(next);
+    cards.current[next]?.focus();
+  }
+
   return (
     <div className="flex flex-col gap-2" data-testid="runtime-choice">
-      <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label={t("society.runtime.title")}>
+      <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label={t("society.runtime.title")}
+        aria-describedby={`${id}-hint`}>
         {AGENT_RUNTIMES.map((runtime) => {
           const label = t(`society.runtime.${runtime}`);
           const state = runtime === "jarvis" ? null : setupState(byName.get(runtime));
+          const untested = state === "ready" && Boolean(byName.get(runtime)?.untested);
           return (
             <button
               key={runtime}
+              ref={(node) => { cards.current[runtime] = node; }}
               type="button"
               role="radio"
               aria-checked={value === runtime}
               aria-label={label}
+              // The name stays the runtime; its setup state is read as the description.
+              aria-describedby={`${id}-state-${runtime}`}
+              tabIndex={value === runtime ? 0 : -1}
               disabled={disabled}
               onClick={() => onChange(runtime)}
+              onKeyDown={(event) => onKeyDown(event, runtime)}
               className={cn(
-                "flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50",
+                "flex flex-col items-start gap-1 rounded-lg border p-2.5 text-left transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 value === runtime
                   ? "border-border-strong bg-secondary text-foreground"
                   : "border-border text-muted-foreground hover:bg-secondary",
@@ -146,13 +171,13 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
                 <RuntimeMark runtime={runtime} label={label} />
                 {label}
               </span>
-              <span className="inline-flex items-center gap-1 text-[11px] leading-snug">
+              <span id={`${id}-state-${runtime}`} className="inline-flex items-center gap-1 text-[11px] leading-snug">
                 {state === "setting_up" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
                 {t(
                   state === null
                     ? "society.runtime.built_in"
                     : state === "ready"
-                      ? "society.runtime.ready"
+                      ? untested ? "society.runtime.ready_untested" : "society.runtime.ready"
                       : state === "setting_up"
                         ? "society.runtime.setting_up"
                         : "society.runtime.auto_setup",
@@ -162,7 +187,7 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
           );
         })}
       </div>
-      <p className="text-xs text-muted-foreground">{t(`society.runtime.${value}_hint`)}</p>
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">{t(`society.runtime.${value}_hint`)}</p>
       {value !== "jarvis" ? (
         <RuntimeSetupNote status={chosen} error={error} onRetry={() => void ensure(value)} />
       ) : null}

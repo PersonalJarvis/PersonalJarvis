@@ -5,7 +5,7 @@ Why this exists: one monolithic ``pytest tests/`` process took 75-95 minutes
 on a 4-core runner and routinely hit the job timeout. A single wedged test ate
 the whole budget, and module state leaked across the ~2 000 test files.
 
-How it works (the idea is borrowed from Hermes Agent's per-file runner):
+How it works (a per-file runner):
 
 1. **Discover** every ``test_*.py`` / ``*_test.py`` under the roots.
 2. **Shard** (``--shard 2/6``): longest-processing-time bin packing over the

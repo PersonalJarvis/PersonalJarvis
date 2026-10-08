@@ -1413,6 +1413,21 @@ _CLAUDE_CODE_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "glm-cli"
 #: How long an ACP runtime may keep running after it answered the prompt.
 _ACP_EXIT_GRACE_S: Final[float] = 10.0
 
+#: An ACP runtime gets this long after ``session/cancel`` to end its turn
+#: itself (an OpenClaw run lives in its Gateway, so killing the bridge alone
+#: would leave it working and billing) before the process is killed.
+_ACP_CANCEL_GRACE_S: Final[float] = 5.0
+
+#: Stall watchdog for ACP turns (AP-19), checked every tick:
+#: * the runtime must open its session within the handshake limit — generous,
+#:   since a runtime may finish its own setup first (Hermes after an update);
+#: * afterwards, the model must say something within the idle limit. The
+#:   counter resets on every frame, and pauses while a tool runs or the
+#:   person has an approval card open (both take as long as they take).
+_ACP_HANDSHAKE_TIMEOUT_S: Final[float] = 420.0
+_ACP_IDLE_TIMEOUT_S: Final[float] = 300.0
+_ACP_WATCH_TICK_S: Final[float] = 2.0
+
 
 def _release_plan(plan: CliPlan | None) -> None:
     """Run a plan's ``after_turn`` once (an external runtime's turn slot)."""
@@ -3619,6 +3634,14 @@ async def _spawn_child(
     plan: CliPlan, cwd: Path, tree: Any, runner: str
 ) -> asyncio.subprocess.Process | _Outcome:
     """Start the CLI as this process's own child (no turn host)."""
+    if plan.acp is not None and plan.env is not None and os.name != "nt":
+        # Every descendant inherits this mark, so the turn's tracker finds a
+        # detached one even when no snapshot saw it (POSIX; Windows: the job).
+        from uuid import uuid4
+
+        from jarvis.core.process_tree import TURN_MARKER_ENV
+
+        plan.env[TURN_MARKER_ENV] = uuid4().hex
     try:
         proc = await asyncio.create_subprocess_exec(
             *plan.argv,
@@ -3692,7 +3715,11 @@ async def _drive_cli(
     async def _drain_stderr() -> None:
         assert proc.stderr is not None
         while True:
-            line = await proc.stderr.readline()
+            try:
+                line = await proc.stderr.readline()
+            except ValueError:
+                # A diagnostic line past the read limit: dropped, never fatal.
+                continue
             if not line:
                 return
             text = line.decode("utf-8", errors="replace").rstrip()
@@ -3712,10 +3739,25 @@ async def _drive_cli(
         )
 
     async def _pump_stdout() -> None:
-        nonlocal grace_kill
+        nonlocal grace_kill, status, error_text
         assert proc.stdout is not None
         while True:
-            raw = await proc.stdout.readline()
+            try:
+                raw = await proc.stdout.readline()
+            except ValueError:
+                # One line past _READLINE_LIMIT. For an ACP runtime that is a
+                # broken frame of the turn itself: end it with a plain reason
+                # instead of an unhandled error. Other CLIs: skip the line.
+                if plan.acp is None:
+                    continue
+                status = "error"
+                error_text = (
+                    f"{runner} sent a message larger than "
+                    f"{_READLINE_LIMIT // (1024 * 1024)} MB; the turn was stopped."
+                )
+                _kill(proc)
+                return
+            activity[0] = time.monotonic()
             if hosted and getattr(proc, "handed_over", False):
                 return
             if not raw:
@@ -3749,6 +3791,10 @@ async def _drive_cli(
                     continue
                 await plan.acp.on_message(obj, acp_io)
                 if plan.acp.saw_result:
+                    if tracker is not None:
+                        # Last look at its children while the runtime still
+                        # lives: once it exits, detached ones are orphans.
+                        tracker.snapshot()
                     # The prompt answered; closing stdin lets the runtime exit.
                     # One that keeps running anyway (a child holding the pipe)
                     # is ended so the chat is not held busy by a finished turn.
@@ -3942,24 +3988,33 @@ async def _drive_cli(
             if not plan.keep_stdin:
                 _close_stdin()
 
-    async def _cancel_acp() -> None:
+    async def _acp_cancel() -> None:
+        """Ask an ACP runtime to end its turn (``session/cancel``), then wait briefly.
+
+        Killing the process alone is not a stop for every runtime: an OpenClaw
+        run lives in its Gateway and keeps calling the model and running
+        tools after its bridge dies. The caller kills afterwards either way.
+        """
         if plan.provider_failure is not None:
-            # Revoke this turn before waiting for the bridge's abort frame.
+            # Revoke inference before waiting for the runtime to acknowledge stop.
             plan.provider_failure.cancel()
-        if plan.acp is None or plan.acp.saw_result:
+        if plan.acp is None or hosted or proc.returncode is not None:
             return
-        try:
-            # OpenClaw's gateway outlives the stdio child. Give the bridge a
-            # bounded chance to abort its upstream run before killing it.
-            await asyncio.wait_for(plan.acp.cancel(acp_io), timeout=1)
-            _close_stdin()
-            await asyncio.wait_for(proc.wait(), timeout=1)
-        except (TimeoutError, BrokenPipeError, ConnectionResetError, OSError):
-            log.debug("agent chat %s: ACP cancellation needs forced cleanup", handle.turn_id)
+        frame = plan.acp.cancel_frame()
+        if frame is None:
+            return
+        from jarvis.agent_runtimes.acp import frame_line
+
+        await _write_stdin(frame_line(frame))
+        deadline = time.monotonic() + _ACP_CANCEL_GRACE_S
+        while time.monotonic() < deadline:
+            if plan.acp.saw_result or proc.returncode is not None:
+                return
+            await asyncio.sleep(0.1)
 
     async def _watch_cancel() -> None:
         await handle.cancel.wait()
-        await _cancel_acp()
+        await _acp_cancel()
         _kill(proc)
 
     async def _watch_provider_failure() -> None:
@@ -3968,11 +4023,46 @@ async def _drive_cli(
             return
         error_text = await asyncio.wrap_future(plan.provider_failure)
         status = "error"
-        await _cancel_acp()
+        await _acp_cancel()
         if tree is not None:
             # Descendants can hold stdout open after the runtime exits. Reap
             # the containment group now, before waiting for either pipe.
             tree.close()
+        _kill(proc)
+
+    async def _watch_stall() -> None:
+        """End an ACP turn whose runtime stopped making progress (AP-19)."""
+        nonlocal status, error_text
+        acp = plan.acp
+        if acp is None or hosted:
+            return
+        started = time.monotonic()
+        reason = ""
+        while not acp.saw_result and proc.returncode is None:
+            await asyncio.sleep(_ACP_WATCH_TICK_S)
+            now = time.monotonic()
+            if approval_pending[0] or acp.tool_running():
+                activity[0] = now  # a person or a tool sets this pace
+                continue
+            if not acp.handshaken:
+                if now - started > _ACP_HANDSHAKE_TIMEOUT_S:
+                    reason = (
+                        f"{runner} did not open its session within "
+                        f"{int(_ACP_HANDSHAKE_TIMEOUT_S // 60)} minutes; the turn was stopped."
+                    )
+                    break
+                continue
+            if now - activity[0] > _ACP_IDLE_TIMEOUT_S:
+                reason = (
+                    f"{runner} stopped responding (nothing for "
+                    f"{int(_ACP_IDLE_TIMEOUT_S // 60)} minutes); the turn was stopped."
+                )
+                break
+        if not reason or acp.saw_result:
+            return
+        log.warning("agent chat %s: %s", handle.turn_id, reason)
+        status, error_text = "error", reason
+        await _acp_cancel()
         _kill(proc)
 
     class _AcpIO:
@@ -3987,7 +4077,12 @@ async def _drive_cli(
             await handle.emit(event)
 
         async def ask(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
-            decision = await handle.request_approval(call_id, name, args, summary)
+            approval_pending[0] = True
+            try:
+                decision = await handle.request_approval(call_id, name, args, summary)
+            finally:
+                approval_pending[0] = False
+                activity[0] = time.monotonic()
             if decision in {"allow", "allow_always"} and bridge is not None:
                 # A Jarvis tool the runtime just asked about reaches the
                 # executor's own gate over MCP next; the person answered once.
@@ -3996,12 +4091,24 @@ async def _drive_cli(
 
     acp_io = _AcpIO()
     grace_kill: asyncio.TimerHandle | None = None
+    # Stall watchdog state: the last stdout frame, and an open approval card.
+    activity = [time.monotonic()]
+    approval_pending = [False]
+    # POSIX: descendants that leave the process group (setsid) are remembered
+    # while the runtime runs and reaped with it (Windows: the job object).
+    tracker = None
+    if plan.acp is not None and tree is not None and not hosted and placement is None:
+        from jarvis.core.process_tree import TURN_MARKER_ENV, DescendantTracker
+
+        tracker = DescendantTracker(proc.pid, marker=(plan.env or {}).get(TURN_MARKER_ENV))
+        tracker.start()
 
     pump = asyncio.create_task(_pump_stdout())
     drain = asyncio.create_task(_drain_stderr())
     feeder = asyncio.create_task(_feed_stdin())
     watcher = asyncio.create_task(_watch_cancel())
     provider_watcher = asyncio.create_task(_watch_provider_failure())
+    stall_watcher = asyncio.create_task(_watch_stall())
     try:
         # EOF is not process exit: a CLI may close both pipes and keep
         # running. The deadline must also cover waiting for the process.
@@ -4018,7 +4125,7 @@ async def _drive_cli(
             proc.returncode,
             pump.done(),
         )
-        await _cancel_acp()
+        await _acp_cancel()
         _kill(proc)
         status = "error"
         error_text = f"{runner} did not finish within {int(_TURN_TIMEOUT_S)} s."
@@ -4034,10 +4141,16 @@ async def _drive_cli(
     finally:
         watcher.cancel()
         provider_watcher.cancel()
+        stall_watcher.cancel()
         for task in (pump, drain, feeder):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(watcher, provider_watcher, pump, drain, feeder, return_exceptions=True)
+        await asyncio.gather(
+            watcher, provider_watcher, stall_watcher, pump, drain, feeder,
+            return_exceptions=True,
+        )
+        if tracker is not None:
+            tracker.close()
         if tree is not None:
             tree.close()
         if proc.returncode is None and not getattr(proc, "detached", False):

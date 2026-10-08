@@ -124,7 +124,7 @@ def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
     """
     try:
         return asyncio.get_running_loop(), True
-    except RuntimeError:
+    except RuntimeError:  # no loop on this thread: fall through to the dispatching loop
         pass
     known = _KNOWN_LOOP
     if known is not None and known.is_running():

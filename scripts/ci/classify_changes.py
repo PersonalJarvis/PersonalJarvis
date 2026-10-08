@@ -36,6 +36,12 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.ci import agent_runtime_suite  # noqa: E402
+
 # Trees the Python suite never reads (verified by grepping tests/ for each).
 # Everything NOT listed keeps the python lane on — unknown means relevant.
 _PY_IRRELEVANT_PREFIXES = (
@@ -233,6 +239,7 @@ LANES = (
     "macos_desktop",
     "installer",
     "updater",
+    "agent_runtimes",
 )
 
 
@@ -276,6 +283,10 @@ def classify(paths: Iterable[str], *, full: bool = False) -> dict[str, bool]:
         "macos_desktop": _any(changed, _MACOS_PREFIXES, _MACOS_FILES),
         "installer": _any(changed, _INSTALLER_PREFIXES, _INSTALLER_FILES),
         "updater": _any(changed, _UPDATER_PREFIXES, _UPDATER_FILES),
+        # Hermes / OpenClaw agents, proven on all three OSes and with the
+        # real runtimes (scripts/ci/agent_runtime_suite.py owns the table).
+        "agent_runtimes": any(agent_runtime_suite.touches(p) for p in changed)
+        or _any(changed, (), _DEPS_FILES),
         "full": False,
     }
 

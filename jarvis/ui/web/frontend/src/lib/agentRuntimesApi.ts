@@ -9,7 +9,8 @@ export type ExternalRuntime = Exclude<AgentRuntime, "jarvis">;
 
 export interface AgentRuntimeJob {
   runtime: ExternalRuntime;
-  kind: "install" | "update";
+  /** `prepare` is Hermes' one-time first start after its install. */
+  kind: "install" | "update" | "prepare";
   state: "running" | "done" | "failed";
   started_ms: number;
   finished_ms: number | null;
@@ -31,6 +32,9 @@ export interface AgentRuntimeStatus {
   /** The same as a key the UI translates. */
   problem_kind: "" | "not_installed" | "outdated" | "node" | "no_version";
   install_hint: string;
+  /** Ready, but newer than the release Jarvis' canary tested (it still runs).
+   *  Absent on an older backend. */
+  untested?: boolean;
   job: AgentRuntimeJob | null;
 }
 
@@ -50,6 +54,11 @@ export interface AgentRuntimesResponse {
   /** Per provider that can pay two ways (Claude: API key or Claude Code
    *  login), the ways that work right now: "api" and/or "subscription". */
   access?: Record<string, string[]>;
+  /** Per provider and way of paying, the refusal code of an access that is
+   *  connected but refused right now (Claude's login while its Extra Usage
+   *  is off: `{"claude-api": {"subscription": "extra_usage_off"}}`). Absent
+   *  on an older backend. */
+  access_blocked?: Record<string, Record<string, string>>;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {

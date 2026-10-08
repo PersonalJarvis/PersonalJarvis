@@ -284,10 +284,11 @@ async def test_ollama_catalog_carries_declared_capabilities(tmp_path, monkeypatc
     text-only install came to advertise vision to Screen Context.
     """
     client = _FakeOllamaClient(
-        {"models": [{"name": "qwen3.5:9b"}, {"name": "qwen3-vl:8b"}]},
+        {"models": [{"name": "qwen3.5:9b"}, {"name": "qwen3-vl:8b"}, {"name": "deepseek-r1:14b"}]},
         {
             "qwen3.5:9b": ["completion", "tools"],
             "qwen3-vl:8b": ["completion", "tools", "vision"],
+            "deepseek-r1:14b": ["completion", "thinking"],
         },
     )
     _local_env(monkeypatch)
@@ -297,7 +298,9 @@ async def test_ollama_catalog_carries_declared_capabilities(tmp_path, monkeypatc
     caps = {m.id: (m.input_modalities, m.supported_parameters) for m in result.models}
     assert caps["qwen3.5:9b"] == (("text",), ("tools",))
     assert caps["qwen3-vl:8b"] == (("text", "image"), ("tools",))
-    assert sorted(client.shown) == ["qwen3-vl:8b", "qwen3.5:9b"]
+    # Ollama's "thinking" is the catalogs' "reasoning" (runtimes read it).
+    assert caps["deepseek-r1:14b"] == (("text",), ("reasoning",))
+    assert sorted(client.shown) == ["deepseek-r1:14b", "qwen3-vl:8b", "qwen3.5:9b"]
 
 
 async def test_ollama_catalog_drops_embedding_only_downloads(tmp_path, monkeypatch) -> None:

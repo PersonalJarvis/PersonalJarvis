@@ -84,7 +84,7 @@ def _write_json(target: Path, payload: dict[str, Any]) -> None:
 def _read_json(source: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(source.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError:  # no backup yet is the normal case
         return None
     except (OSError, ValueError) as exc:
         # A damaged backup must not keep the editor from starting.
@@ -107,7 +107,7 @@ def save_tabs(
         clean.append({"path": path, "mode": mode, "preview": bool(tab.get("preview"))})
     try:
         active_path = _normalise_relative(active) if active else None
-    except EditError:
+    except EditError:  # an unusable active tab just leaves none active
         active_path = None
     _write_json(_folder_dir(folder) / "tabs.json", {"tabs": clean, "active": active_path})
 
@@ -141,7 +141,7 @@ def drop_backup(folder: str | os.PathLike[str], path: str) -> None:
     target = _backup_file(folder, _normalise_relative(path))
     try:
         target.unlink()
-    except FileNotFoundError:
+    except FileNotFoundError:  # already gone is what forgetting wants
         return
 
 

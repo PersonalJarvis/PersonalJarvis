@@ -851,7 +851,8 @@ def test_update_blocker_explains_app_translocation() -> None:
     app = Path("/private/var/folders/xy/T/AppTranslocation/0A1B/d/Personal Jarvis.app")
     reason = update_blocker("darwin", app_path=app)
     assert reason is not None
-    assert "Applications folder" in reason
+    assert reason.code == "app_translocated"
+    assert "Applications folder" in reason.message
 
 
 def test_update_blocker_refuses_a_read_only_app_location(
@@ -861,14 +862,16 @@ def test_update_blocker_refuses_a_read_only_app_location(
     app = tmp_path / "Volumes" / "Personal Jarvis" / "Personal Jarvis.app"
     reason = update_blocker("darwin", app_path=app)
     assert reason is not None
-    assert str(app.parent) in reason
+    assert reason.code == "app_read_only"
+    assert str(app.parent) in reason.message
 
 
 def test_update_blocker_without_an_app_bundle_says_so() -> None:
     # A source run has no bundle; the real lookup must answer, not raise.
     reason = update_blocker("darwin")
     assert reason is not None
-    assert "app bundle" in reason
+    assert reason.code == "no_app_bundle"
+    assert "app bundle" in str(reason)
 
 
 def test_update_blocker_lets_a_writable_appimage_update(tmp_path: Path) -> None:
@@ -883,7 +886,8 @@ def test_update_blocker_outside_an_appimage_points_to_the_download(
     monkeypatch.delenv("APPIMAGE", raising=False)
     reason = update_blocker("linux")
     assert reason is not None
-    assert "AppImage" in reason
+    assert reason.code == "no_appimage"
+    assert "AppImage" in reason.message
 
 
 def test_update_blocker_refuses_an_appimage_in_a_protected_folder(
@@ -893,7 +897,8 @@ def test_update_blocker_refuses_an_appimage_in_a_protected_folder(
     appimage = tmp_path / "opt" / "PersonalJarvis.AppImage"
     reason = update_blocker("linux", appimage_path=appimage)
     assert reason is not None
-    assert "folder you own" in reason
+    assert reason.code == "appimage_read_only"
+    assert "folder you own" in reason.message
 
 
 @pytest.mark.skipif(
@@ -914,6 +919,35 @@ def test_update_blocker_sees_a_real_read_only_folder(tmp_path: Path) -> None:
 
 def test_update_blocker_never_blocks_windows() -> None:
     assert update_blocker("win32") is None
+
+
+def test_every_blocker_code_is_translated_in_every_locale() -> None:
+    """The UI explains a blocked update by code; a missing string would fall
+    back to English mid-sentence for every non-English user."""
+    import json
+
+    locales = Path(__file__).resolve().parents[3] / "jarvis/ui/web/frontend/src/i18n/locales"
+    files = sorted(locales.glob("*.json"))
+    assert files, "no locale files found"
+    for locale in files:
+        topbar = json.loads(locale.read_text(encoding="utf-8"))["topbar"]
+        for code in iu.UPDATE_BLOCKER_CODES:
+            assert topbar.get(f"update_blocked_{code}"), f"{locale.name} lacks {code}"
+
+
+def test_every_blocker_answer_uses_a_declared_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(iu, "_can_write", lambda _folder: False)
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    answers = [
+        update_blocker("darwin"),
+        update_blocker("darwin", app_path=Path("/x/AppTranslocation/y/Personal Jarvis.app")),
+        update_blocker("darwin", app_path=tmp_path / "Personal Jarvis.app"),
+        update_blocker("linux"),
+        update_blocker("linux", appimage_path=tmp_path / "PersonalJarvis.AppImage"),
+    ]
+    assert sorted(a.code for a in answers if a is not None) == sorted(iu.UPDATE_BLOCKER_CODES)
 
 
 # --------------------------------------------------------------------------- #

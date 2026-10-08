@@ -43,7 +43,7 @@ function replay(events: Array<[string, Record<string, unknown>]>): ThinkingStep[
   return steps.map((s) => (s.status === "active" ? { ...s, status: "done" } : s));
 }
 
-describe("trace timeline (Codex-style)", () => {
+describe("trace timeline", () => {
   it("alternates the model's words with one line per stretch of calls", () => {
     const line = buildTimeline([
       text("n1", "I'll look at the blog first."),

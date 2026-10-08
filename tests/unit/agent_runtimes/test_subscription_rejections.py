@@ -18,16 +18,18 @@ from jarvis.ui.web.runtime_gateway_routes import router
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
-    ("status", "code", "hint"),
+    ("status", "code", "hint", "expected"),
     [
-        (400, "invalid_function_parameters", "tool schema"),
-        (400, "context_length_exceeded", "context"),
-        (404, "model_not_found", "model"),
-        (422, "invalid_request_error", "HTTP 422"),
-        (400, "private-code-must-not-leak", "HTTP 400"),
+        (400, "invalid_function_parameters", "tool schema", (400, "invalid_tool_schema")),
+        (400, "context_length_exceeded", "context", (400, "context_length_exceeded")),
+        (404, "model_not_found", "model", (404, "model_not_found")),
+        (422, "invalid_request_error", "HTTP 422", (400, "invalid_request")),
+        (400, "private-code-must-not-leak", "HTTP 400", (400, "invalid_request")),
     ],
 )
-def test_rejection_preserves_status_and_safe_reason(monkeypatch, stream, status, code, hint):
+def test_rejection_preserves_status_and_safe_reason(
+    monkeypatch, stream, status, code, hint, expected
+):
     requests = []
 
     async def credentials(**kwargs):
@@ -56,9 +58,8 @@ def test_rejection_preserves_status_and_safe_reason(monkeypatch, stream, status,
         )
     gateway.reset()
 
-    assert response.status_code == status
     error = response.json()["error"]
-    assert error["code"] == ("invalid_request_error" if code.startswith("private-") else code)
+    assert (response.status_code, error["code"]) == expected
     assert hint in error["message"]
     assert "private-provider-body" not in response.text
     assert "private-code-must-not-leak" not in response.text

@@ -718,7 +718,14 @@ class AudioPlayer:
             return 0.0
         return min(latency, _MAX_REPORTED_OUTPUT_LATENCY_S)
 
-    def invalidate_device_cache(self) -> None:
+    @property
+    def audio_backend_busy(self) -> bool:
+        """Whether a topology refresh must wait for this player's output."""
+        lock = getattr(self, "_play_lock", None)
+        return bool(lock is not None and lock.locked()) or self._native_playback_poisoned()
+
+    @topology.native_stream_operation()
+    def invalidate_device_cache(self) -> bool:
         """Forget every cached device_rate and tear down the active stream.
 
         Call this on USB hot-swap / device-disconnect / device-reset events
@@ -739,12 +746,17 @@ class AudioPlayer:
             self._active_source_rate = None
             self._active_device_rate = None
         if stream is not None:
-            self._close_output_stream(stream)
+            if self._close_output_stream(stream) is False:
+                with self._get_stream_state_lock():
+                    self._active_stream = stream
+                    self._unclean_stream = stream
+                return False
         self._device_rate_cache.clear()
         self._device_rate_failed.clear()
         # A swapped device also invalidates the played-envelope record: echo
         # correlation against a vanished device's output is meaningless.
         echo_reference.reset()
+        return True
 
     def set_device(self, device: int | str | None) -> None:
         """Re-resolve the output device and drop any cached state tied to
@@ -829,6 +841,7 @@ class AudioPlayer:
         """Invalidate queued PCM on both mute edges, independently of stop()."""
         return getattr(self, "_output_generation", 0)
 
+    @topology.native_stream_operation()
     def set_muted(self, muted: bool) -> None:
         """Discard native buffered speech without cancelling its producer or mic."""
         with self._get_stream_state_lock():
@@ -946,6 +959,7 @@ class AudioPlayer:
             except _PlaybackSuperseded:  # stop() won; its generation owns cleanup
                 return
 
+    @topology.native_stream_operation()
     def _play_blob(
         self, pcm: bytes, source_rate: int, playback_generation: int,
         output_generation: int | None = None,
@@ -1022,6 +1036,7 @@ class AudioPlayer:
                     elif closed is False:
                         self._unclean_stream = stream
 
+    @topology.native_stream_operation()
     def _open_output_stream(self, source_rate: int) -> tuple[sd.OutputStream, int]:
         """Open a persistent ``sd.OutputStream`` (float32 stereo or mono).
 
@@ -1126,7 +1141,12 @@ class AudioPlayer:
                         blocksize=0,
                         latency=self._output_buffer_seconds(),
                     )
-                    stream.start()
+                    topology.register_native_stream(stream)
+                    try:
+                        stream.start()
+                    except BaseException:
+                        self._close_output_stream(stream)
+                        raise
                 self._stream_channels = stream_channels
                 self._device_rate_cache[cache_key] = target_rate
                 log.info(
@@ -1160,6 +1180,7 @@ class AudioPlayer:
             raise last_exc
         raise RuntimeError("No supported sample rate found")
 
+    @topology.native_stream_operation()
     def _write_samples(
         self,
         stream: sd.OutputStream,
@@ -1316,6 +1337,7 @@ class AudioPlayer:
                     out.shape[0] / device_rate,
                 )
 
+    @topology.native_stream_operation()
     def _close_output_stream(self, stream: sd.OutputStream) -> bool:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""
         try:
@@ -1327,6 +1349,7 @@ class AudioPlayer:
         except Exception:  # noqa: BLE001
             log.debug("Output stream close failed", exc_info=True)
             return False
+        topology.unregister_native_stream(stream)
         return True
 
     async def play_chunks(
@@ -1437,6 +1460,7 @@ class AudioPlayer:
             # the main answer is dropped here rather than queued behind it.
             if should_play is not None and not should_play():
                 return False
+            @topology.native_stream_operation()
             def _ensure_stream(
                 needed_rate: int, output_generation: int,
             ) -> tuple[sd.OutputStream, int]:
@@ -1673,6 +1697,7 @@ class AudioPlayer:
                 if next_pull is not None:
                     next_pull.cancel()
 
+    @topology.native_stream_operation()
     def abort_active(self) -> None:
         """Force-abort the live OutputStream to unblock a wedged ``stream.write``.
 
@@ -1706,6 +1731,7 @@ class AudioPlayer:
                 log.debug("abort_active: stream.abort() failed: %s", exc)
             try:
                 stream.close()
+                topology.unregister_native_stream(stream)
             except Exception as exc:  # noqa: BLE001
                 log.warning("abort_active: stream.close() failed: %s", exc)
                 # Preserve ownership so the worker's ``finally`` retries the

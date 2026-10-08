@@ -55,7 +55,10 @@ on:
 # Wave 1 (keyless) needs no secrets — it uses OIDC. Wave 2 (Ed25519) and
 # Wave 4 (ML-DSA-65) read their PRIVATE KEYS from the WAVE2_OFFLINE_KEY_B64
 # and WAVE4_MLDSA65_KEY_B64 secrets (base64 of the PEM); the keys never live
-# in the repo, not even encrypted.
+# in the repo, not even encrypted. Those secrets belong to the
+# `release-signing` environment, which only `v*` tags may deploy to (and only
+# the release bot or an admin may create one), so no branch workflow can read
+# them.
 # id-token=write is required by both Sigstore Fulcio (Wave 1) and by the
 # slsa-github-generator reusable workflow (Wave 3 — it mints its OWN OIDC
 # token inside the isolated `provenance` job, but the caller workflow must
@@ -179,6 +182,9 @@ jobs:
 
   sign:
     needs: cross-runner-hash
+    # The only job that reads the offline signing keys. The environment admits
+    # `v*` tags only; the `release tags` ruleset limits who may create one.
+    environment: release-signing
     permissions:
       contents: read
       id-token: write

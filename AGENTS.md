@@ -110,7 +110,9 @@ Describe our features and interactions directly. Do not present another product
 as a design reference or say our UI or behavior is inspired by, modeled on,
 copied from, or made to match it. Preserve required copyright, license and
 attribution notices and factual dependency, integration and compatibility
-references; this rule never authorizes concealing code provenance.
+references; this rule never authorizes concealing code provenance. Competitor
+research stays out of the repo. `scripts/ci/check_design_references.py` checks
+staged lines at commit time and the whole tree in CI.
 
 **Proportionality.** You own the validation plan: the smallest set of checks
 that can detect a plausible regression from the diff. State the scope, what
@@ -202,7 +204,9 @@ tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
 asked — an ordinary push is not a release. A release is ONE command:
 `gh workflow run release-cut.yml -f bump=patch|minor|major` (pick the bump from
 the commits since the last tag), then watch the run and report the Release URL.
-That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
+There is no approval pause: only the release bot (and admins) may create a
+`v*` tag, and the signing keys and PyPI (environments `release-signing`,
+`pypi`) are reachable only from `v*` tag runs. That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
 never bump, tag or `gh release create` by hand.
 
 Every frontend change works in BOTH light and dark mode, and on the terminal
@@ -236,7 +240,10 @@ unless it is listed in `scripts/ci/test-baseline-<os>.json`. Finished work in
 your own worktree lands with `python scripts/agent_land.py` (rebase onto main,
 auto-resolve generated files, gates, relevant tests, push); a `codex/`,
 `claude/`, `agent/` branch or an `auto-merge` label puts a PR on the merge
-train, which keeps it current with main and squash-merges it once green.
+train, which resolves its conflicts with main and adds it to main's merge
+queue once green; the queue squash-merges it after `CI gate` passes again on
+the PR merged with the newest main. Direct pushes to main are blocked for
+everyone but admins.
 Triage any red job against the exact base; never add to a baseline to hide a
 new failure.
 Run `check_boot_budget.py` after touching startup; CI cannot measure the live

@@ -1,0 +1,120 @@
+# Flaky-test tracking for main.
+#
+# After every CI run on main (push, nightly, manual dispatch) this reads the
+# shard reports that scripts/ci/run_tests_parallel.py uploaded, writes flaky
+# files plus new and known failures per OS to the step summary, and keeps ONE
+# issue, "Flaky tests on main", updated with a rolling table (test file, OS,
+# count, last seen run). Logic: scripts/ci/flaky_report.py.
+#
+# Why a separate workflow: the issue needs `issues: write`, and job permissions
+# cannot depend on the event. Keeping it out of ci.yml means no pull-request
+# run, and no fork, ever holds a token that can write issues. This workflow
+# always runs main's own code and treats the downloaded reports as data only.
+name: Flaky tests
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "CI run id on main to record (empty = the latest completed main run)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Issue updates are read-modify-write; never let two run at once.
+concurrency:
+  group: flaky-tests
+  cancel-in-progress: false
+
+jobs:
+  record:
+    name: record flaky tests
+    # A fork pull request can be named `main` too: the repository and event
+    # checks, not the branch filter alone, keep its runs out.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main' &&
+       contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event) &&
+       github.event.workflow_run.conclusion != 'cancelled' &&
+       github.event.workflow_run.conclusion != 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Resolve and vet the CI run
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+        run: |
+          mkdir -p out
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main \
+              --status completed --limit 1 --json databaseId --jq '.[0].databaseId')"
+          fi
+          case "$RUN_ID" in (''|*[!0-9]*) echo "::error::not a run id: $RUN_ID"; exit 1 ;; esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > out/run.json
+          python scripts/ci/flaky_report.py vet-run out/run.json --repo "$GITHUB_REPOSITORY"
+      - name: Download the run's shard reports
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+          pattern: tests-*
+          path: reports
+          merge-multiple: true
+      - name: Flaky files and failures (step summary)
+        run: python scripts/ci/flaky_report.py summary reports
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.run.outputs.id }}
+          RUN_URL: ${{ steps.run.outputs.url }}
+          RUN_AT: ${{ steps.run.outputs.at }}
+        run: |
+          # The label lists issues without the search index, which lags behind
+          # a freshly created issue and would invite a duplicate.
+          gh issue list --repo "$GITHUB_REPOSITORY" --label flaky-tests --state all \
+            --limit 50 --json number,title,state,body > out/issues.json
+          python scripts/ci/flaky_report.py issue --issues out/issues.json --out out/issue.md \
+            --run-id "$RUN_ID" --run-url "$RUN_URL" --run-at "$RUN_AT" reports \
+            | tee out/plan.txt
+          action="$(sed -n 's/^action=//p' out/plan.txt)"
+          number="$(sed -n 's/^number=//p' out/plan.txt)"
+          case "$action" in
+            create)
+              gh label create flaky-tests --repo "$GITHUB_REPOSITORY" --force \
+                --color FBCA04 --description "Tracking test-order flakiness on main"
+              url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "Flaky tests on main" \
+                --label flaky-tests --body-file out/issue.md)"
+              echo "Created $url" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            reopen)
+              gh issue reopen "$number" --repo "$GITHUB_REPOSITORY"
+              gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file out/issue.md
+              echo "Reopened and updated issue #$number" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            edit)
+              gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file out/issue.md
+              echo "Updated issue #$number" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            none)
+              echo "Tracking issue unchanged." | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            *)
+              echo "::error::unknown plan '$action'"; exit 1 ;;
+          esac

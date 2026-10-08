@@ -8,7 +8,9 @@ import type { BrainSeat } from "./brainPicker";
 import {
   accessModels,
   API_KEY_ACCOUNT,
+  blockedReasonKey,
   defaultModel,
+  pickableOption,
   providerChoices,
   SUBSCRIPTION_ACCOUNT,
 } from "./seatChoice";
@@ -113,6 +115,49 @@ describe("providerChoices", () => {
 
   it("lists providers with a subscription before key-only and local ones", () => {
     expect(providerChoices([ollama, openai, claude]).map((c) => c.id)).toEqual(["claude", "openai", "ollama"]);
+  });
+
+  it("shows a refused Claude login with its reason but never picks it", () => {
+    const seats = runtimeSeats([claude, openai], ["claude-api", "openai"], [], ["claude-api"]);
+    const choices = providerChoices(
+      seats, { "claude-api": ["api", "subscription"] }, true,
+      { "claude-api": { subscription: "extra_usage_off" } },
+    );
+    const claudeChoice = choices.find((c) => c.id === "claude")!;
+    expect(claudeChoice.options.map((o) => [o.kind, o.blocked ?? ""])).toEqual([
+      ["subscription", "extra_usage_off"],
+      ["api", ""],
+    ]);
+    expect(pickableOption(claudeChoice, "subscription")?.kind).toBe("api");
+  });
+
+  it("lists a refused access the backend no longer names as working", () => {
+    const seats = runtimeSeats([claude], ["claude-api"], [], ["claude-api"]);
+    const [choice] = providerChoices(seats, {}, true, { "claude-api": { subscription: "extra_usage_spent" } });
+    expect(choice.options.map((o) => [o.kind, o.blocked])).toEqual([["subscription", "extra_usage_spent"]]);
+    expect(pickableOption(choice)).toBeNull();
+  });
+
+  it("sorts a provider whose every access is refused last", () => {
+    const seats = runtimeSeats([claude, openai], ["claude-api", "openai"], [], ["claude-api"]);
+    const order = providerChoices(seats, { "claude-api": ["subscription"] }, true, {
+      "claude-api": { subscription: "extra_usage_off" },
+    }).map((c) => c.id);
+    expect(order).toEqual(["openai", "claude"]);
+  });
+
+  it("tolerates a backend without access_blocked", () => {
+    const seats = runtimeSeats([claude], ["claude-api"], [], ["claude-api"]);
+    const [choice] = providerChoices(seats, { "claude-api": ["subscription"] }, true);
+    expect(choice.options.every((o) => !o.blocked)).toBe(true);
+  });
+});
+
+describe("blockedReasonKey", () => {
+  it("explains known refusals and falls back to a plain sentence", () => {
+    expect(blockedReasonKey("extra_usage_off")).toBe("society.create_agent.access_blocked_extra_usage_off");
+    expect(blockedReasonKey("extra_usage_spent")).toBe("society.create_agent.access_blocked_extra_usage_spent");
+    expect(blockedReasonKey("something_new")).toBe("society.create_agent.access_blocked");
   });
 });
 

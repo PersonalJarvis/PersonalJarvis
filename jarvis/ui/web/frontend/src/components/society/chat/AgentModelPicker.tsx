@@ -9,10 +9,11 @@ import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
-import { useUpdateAgentModel, type SocietyAgent } from "../data";
+import { RuntimeProviderUnsupported, useUpdateAgentModel, type SocietyAgent } from "../data";
 import { rankModels } from "@/lib/modelRanking";
 import { orderBy, useProviderOrder } from "@/lib/providerOrder";
-import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, visibleModels } from "./modelChoices";
+import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, seatBlocked, visibleModels } from "./modelChoices";
+import { blockedReasonKey } from "../create/seatChoice";
 
 import { useModelMenuData } from "./useModelMenuData";
 import { RuntimeStatusRow, useAgentRuntimes } from "../card/RuntimePicker";
@@ -82,8 +83,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     return runtimeSeats(all, list(supportedKey), list(gatewayKey), list(loginKey));
   }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey]);
   const accessKey = JSON.stringify(runtimes.data?.access ?? {});
-  const choices = useMemo(() => providerChoices(seats, JSON.parse(accessKey), external).sort((a, b) =>
-    Math.min(...a.options.map((option) => modelGroupOrder(option.seat))) - Math.min(...b.options.map((option) => modelGroupOrder(option.seat)))), [seats, accessKey, external]);
+  const blockedKey = JSON.stringify(external ? runtimes.data?.access_blocked ?? {} : {});
+  const choices = useMemo(() => providerChoices(seats, JSON.parse(accessKey), external, JSON.parse(blockedKey)).sort((a, b) =>
+    Math.min(...a.options.map((option) => modelGroupOrder(option.seat))) - Math.min(...b.options.map((option) => modelGroupOrder(option.seat)))), [seats, accessKey, blockedKey, external]);
   const accessSeats = useMemo<PickerSeat[]>(() => choices.flatMap((choice) => choice.options.map((option) => ({
     ...option.seat, key: `${option.seat.provider.id}:${option.kind}`, family: choice.id, accessAccount: option.accountId,
   }))), [choices]);
@@ -92,6 +94,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     const stored = agent.provider === seat.provider.id ? agent.accountId ?? "" : "";
     return accounts[seat.key] ?? (stored && stored !== API_KEY_ACCOUNT && stored !== SUBSCRIPTION_ACCOUNT ? stored : seat.accessAccount);
   };
+  const blockedFor = (seat: PickerSeat) => external ? seatBlocked(seat, runtimes.data?.access_blocked, currentAccount(seat)) : "";
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.
   const titleKey = JSON.stringify(accessSeats.map((seat) => providerTitle(seat, t)));
@@ -202,14 +205,16 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   }, [open]);
 
   async function save(seat: PickerSeat, model: CuratedModel, effort = preferredEffort(seat, model)) {
-    if (busy || inFlight.current) return;
+    if (busy || inFlight.current || blockedFor(seat)) return;
     inFlight.current = true; setSaving(true); onSavingChange(true); setError(null);
     try {
       await update(agent.agentId, { provider: seat.provider.id, model: model.id, effort, account_id: currentAccount(seat) });
       rememberAccess(seat.family, seat.kind);
       setOpen(false); setSubmenu(null); trigger.current?.focus();
     } catch (err) {
-      setError(`${t("society.chat.model_save_failed")} (${err instanceof Error ? err.message : String(err)})`);
+      setError(err instanceof RuntimeProviderUnsupported
+        ? t("society.runtime.provider_unsupported")
+        : `${t("society.chat.model_save_failed")} (${err instanceof Error ? err.message : String(err)})`);
     } finally {
       inFlight.current = false; setSaving(false); onSavingChange(false);
     }
@@ -251,7 +256,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     const isFavorite = favorites.includes(value);
     const starLabel = t(isFavorite ? "agent_chat.favorite_remove" : "agent_chat.favorite_add");
     return <div key={value} className={cn("group flex items-center", selected && "bg-secondary/70")}>
-      <button type="button" role="menuitemradio" aria-checked={selected} disabled={busy || saving} data-menu-choice
+      <button type="button" role="menuitemradio" aria-checked={selected} disabled={busy || saving || Boolean(blockedFor(seat))} data-menu-choice
         onKeyDown={(event) => {
           if (event.key === "ArrowRight" && effortsFor(seat, model.id).length) {
             event.preventDefault(); event.stopPropagation();
@@ -362,6 +367,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                 <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
               </button> : null}
             </div>
+            {blockedFor(seat) ? <p role="note" className="px-3 pb-1 text-xs text-warning" data-testid={`agent-model-blocked-${seat.provider.id}`}>
+              {t(blockedReasonKey(blockedFor(seat)))}
+            </p> : null}
             <div id={choicesId}>
               {lineup.map(toRow)}
               {folded.length ? <button type="button" data-menu-choice disabled={busy || saving} aria-expanded={olderOpen} onClick={toggleOlder}

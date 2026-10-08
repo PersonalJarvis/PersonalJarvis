@@ -15,6 +15,7 @@ number of matches and the time spent are capped. A capped answer says so
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 import time
@@ -29,6 +30,8 @@ from .file_editing import (
     read_text_file,
     write_text_file,
 )
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_MATCHES",
@@ -155,7 +158,7 @@ def _read_searchable(base: Path, path: str) -> str | None:
         if target.stat().st_size > MAX_SEARCH_BYTES:
             return None
         data = target.read_bytes()
-    except OSError:
+    except OSError:  # an unreadable file is left out of the search results
         return None
     # Read it exactly the way the editor opens it (UTF-8, UTF-16, Windows code
     # pages, …), so a search finds what the editor shows; binaries stay out.
@@ -323,10 +326,10 @@ def replace_in_files(
                 expected_version=loaded.version,
                 encoding=loaded.encoding,
             )
-        except EditConflict:
+        except EditConflict:  # reported to the person in the skipped list
             skipped.append({"path": path, "reason": "changed while replacing"})
             continue
-        except (EditError, re.error) as exc:
+        except (EditError, re.error) as exc:  # reported to the person in the skipped list
             skipped.append({"path": path, "reason": str(exc)})
             continue
         replaced_files.append(loaded.path)

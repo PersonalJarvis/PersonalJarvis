@@ -14,9 +14,9 @@
 #   * Every PR ran every job (~20 runners, three 45-min macOS jobs on most),
 #     and pushes to main cancelled each other, so main was never proven.
 #     -> `detect` classifies the diff into lanes (scripts/ci/classify_changes.py,
-#        fail-open); only affected lanes run. Every push to main runs the whole
-#        test suite and is never cancelled; the nightly run and manual
-#        dispatches run every lane.
+#        fail-open); only affected lanes run. Every merge-queue group and every
+#        push to main runs the whole test suite and is never cancelled; the
+#        nightly run and manual dispatches run every lane.
 #   * Branch protection listed five job names; renaming a job meant a settings
 #     change. -> `CI gate` aggregates every job (scripts/ci/required_results.py)
 #     and is the ONLY required check, for humans and for the merge train.
@@ -24,8 +24,16 @@
 #     runs them in one job, all of them report, and agents run the same command
 #     locally.
 #
-# Windows: the full sharded suite on main / nightly / dispatch; on a pull
-# request only the tests the diff can reach (scripts/ci/select_tests.py).
+# Merge queue: main requires a merge queue. A pull request's own run is the
+# admission ticket; the `merge_group` run tests the exact tree main will get
+# (the PR on top of main plus every entry ahead of it) with the whole Linux +
+# Windows suite, and only a green `CI gate` there lands it. This is what keeps
+# main green when PRs that pass alone break together.
+#
+# Windows: the full suite in four shards on every run that has the python
+# lane, pull requests included, so a Windows-only failure blocks before the
+# merge instead of turning main red after it (the organisation runs on GitHub
+# Team: 60 concurrent jobs, 5 of them macOS).
 # macOS (~10x runner cost): nightly and manual dispatch, plus the path-gated
 # realtime contract and macOS desktop lanes.
 #
@@ -35,6 +43,8 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
@@ -59,9 +69,14 @@ on:
 # share one group: GitHub keeps a single PENDING run and drops older pending
 # ones, so a burst of agent pushes cannot stack a backlog behind the
 # organisation's concurrent-job limit — the newest run covers every commit
-# before it. The nightly run and manual dispatches get their own group.
+# before it. Every merge-queue entry gets its own group and is never
+# cancelled: the queue itself drops entries it no longer needs, and a dropped
+# pending run would leave `CI gate` unreported until the queue times out. A
+# macOS-free dispatch on main (the merge train's stand-in for a push its
+# GITHUB_TOKEN merge never fired) shares the push group. The nightly run and
+# other manual dispatches (release cuts included) get their own group.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'merge_group' && format('merge-group-{0}', github.event.merge_group.head_ref)) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || ((github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !inputs.include_macos)) && 'main-push') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main') }}
 
 permissions:
@@ -91,6 +106,7 @@ jobs:
       macos_desktop: ${{ steps.lanes.outputs.macos_desktop }}
       installer: ${{ steps.lanes.outputs.installer }}
       updater: ${{ steps.lanes.outputs.updater }}
+      agent_runtimes: ${{ steps.lanes.outputs.agent_runtimes }}
       macos: ${{ steps.mode.outputs.macos }}
       base: ${{ steps.mode.outputs.base }}
       pr_mode: ${{ steps.mode.outputs.pr_mode }}
@@ -114,15 +130,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           IN_FULL: ${{ inputs.full }}
           IN_MACOS: ${{ inputs.include_macos }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          # A push to main classifies its lanes like a pull request (the
-          # concurrent-job limit is shared by every agent's PR), but always
-          # runs the WHOLE test suite on Linux and Windows: post-merge proof
-          # is never narrowed. Nightly and manual full runs force everything.
+          # A merge-queue group and a push to main classify their lanes like a
+          # pull request (runners are shared by every agent's PR, and macOS
+          # has only five slots), and like a pull request they run the WHOLE
+          # test suite on Linux and Windows. A merge group's lanes are
+          # classified against the queue base (main or the entry ahead).
+          # Nightly and manual full runs force everything.
           full=false; macos=false; pr_mode=false; tests_full=false
           case "$EVENT" in
-            push) tests_full=true ;;
+            push|merge_group) tests_full=true ;;
             schedule) full=true; macos=true; tests_full=true ;;
             workflow_dispatch)
               [ "$IN_FULL" = "true" ] && full=true && tests_full=true
@@ -184,22 +202,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Linux always runs the whole suite in six shards. Windows runs the
-      # whole suite in four shards on main, nightly, full manual runs and
-      # pipeline changes; on a pull request one runner takes the tests the
-      # diff can reach. A push always runs the python lane's test jobs.
+      # The whole suite on both: six Linux shards, four Windows shards, on
+      # every run with the python lane. Pull requests used to get one Windows
+      # runner with only the tests the diff could reach, which let Windows-only
+      # failures through to main; the 60-job limit makes room for the full
+      # matrix. scripts/ci/select_tests.py stays for agent_land.py's local run.
       - name: Size the test matrices
         id: shards
         shell: bash
         run: |
           echo 'linux_shards=[1,2,3,4,5,6]' >> "$GITHUB_OUTPUT"
-          if [ "${{ steps.mode.outputs.tests_full }}" = "true" ] || [ "${{ steps.lanes.outputs.full }}" = "true" ]; then
-            echo 'windows_shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
-            echo 'tests_full=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'windows_shards=[1]' >> "$GITHUB_OUTPUT"
-            echo 'tests_full=false' >> "$GITHUB_OUTPUT"
-          fi
+          echo 'windows_shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
+          echo 'tests_full=true' >> "$GITHUB_OUTPUT"
 
   gates:
     name: static gates
@@ -215,10 +229,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Install the light gate dependencies (no torch, no audio)
-        run: |
-          python -m pip install -e . --no-deps
-          python -m pip install typer platformdirs click httpx rich pyyaml==6.0.3 pydantic loguru python-dotenv packaging
+      # Light on purpose (no torch, no audio), yet every version comes from
+      # uv.lock: an upstream release cannot turn the gates red on its own.
+      - name: Install the light gate dependencies from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: typer platformdirs click httpx rich pyyaml pydantic loguru python-dotenv packaging
       - name: Run every static gate
         env:
           PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
@@ -236,6 +253,79 @@ jobs:
           GOBIN="$RUNNER_TEMP/actionlint" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$RUNNER_TEMP/actionlint/actionlint" -shellcheck= -pyflakes=
 
+  # Workflow audit. A blocking part of the gate on every event, merge-queue
+  # groups included; security.yml keeps uploading the same audit to the
+  # Security tab from main. Accepted exceptions live in .github/zizmor.yml.
+  zizmor:
+    name: zizmor (workflow audit)
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.30.1"
+          min-severity: medium
+          advanced-security: false
+          annotations: true
+          # Explicit: auto-discovery did not apply every ignore in a local
+          # `zizmor .` run, and a blocking audit must read the same rules.
+          config: .github/zizmor.yml
+
+  # Fails when the diff ADDS a dependency with a known high or critical
+  # advisory. Only a pull request has a dependency diff; on every other
+  # event (merge queue, main, nightly) it skips and the gate accepts that.
+  dependency-review:
+    name: dependency review
+    needs: detect
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # Third-party websites the app parses (ollama.com's model library) change
+  # without notice. Those live checks are opt-in (JARVIS_LIVE_NETWORK_TESTS)
+  # and run only in the nightly: a redesign shows up as a failed step and a
+  # warning there, never as a red pull request, merge queue or nightly gate.
+  live-network:
+    name: live third-party sites (nightly, non-blocking)
+    needs: detect
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev
+      - name: Live ollama.com library checks
+        id: live
+        continue-on-error: true
+        env:
+          JARVIS_LIVE_NETWORK_TESTS: "1"
+        run: python -m pytest -m integration tests/integration/test_ollama_library_live.py -v
+      - name: Report a drifted site without failing the run
+        if: steps.live.outcome == 'failure'
+        run: echo "::warning title=Live site check failed::A third-party page the app parses changed (see the 'Live ollama.com library checks' step). Update its parser."
+
   release-qualification:
     name: release qualification
     needs: [detect, gates]
@@ -249,8 +339,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - run: python -m pip install -e . --no-deps
-      - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
+      - name: Install the light qualification dependencies from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: pyyaml pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
       - name: Qualify plugin auth and disclose preview plugins
         shell: bash
         run: |
@@ -274,16 +367,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Install base + dev (no platform extras - the VPS/base install)
-        run: python -m pip install -e ".[dev]"
+      - name: Install base + dev from uv.lock (no platform extras - the VPS/base install)
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev
       - name: Import-cleanliness gate (the bare install imports clean)
         run: python scripts/ci/check_import_clean.py
       - name: Test-only system deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
-          python -m pip install -e ".[telephony]"
+          python scripts/ci/install_locked.py --extra telephony
       # Blocking and outside the ratchet on purpose: these pin contracts that
       # are cheap to break and expensive to notice (ADR-0011 router, AP-11
       # scrubber, AP-4 enum parity, the one turn-language resolver, skill
@@ -328,12 +421,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+      - name: System libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2 libegl1 libopengl0
       - name: Install
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2 libegl1 libopengl0
-          python -m pip install -e ".[dev,telephony]"
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev telephony
       - name: Download the shared duration snapshot
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
@@ -380,8 +473,6 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: Pick the tests (full run, or what this diff can reach)
         id: pick
         env:
@@ -400,7 +491,9 @@ jobs:
           echo "total=$count" >> "$GITHUB_OUTPUT"
       - name: Install
         if: steps.pick.outputs.mode != 'none'
-        run: python -m pip install -e ".[dev,telephony]"
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev telephony
       - name: Download the shared duration snapshot
         if: steps.pick.outputs.mode != 'none'
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -449,10 +542,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - name: Install
-        run: python -m pip install -e ".[dev,telephony]"
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev telephony
       - name: Download the shared duration snapshot
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
@@ -495,6 +588,12 @@ jobs:
           merge-multiple: true
       - name: Min-passed floor across all Linux shards (BLOCKING)
         run: python scripts/ci/ratchet_tests.py summary --floor --expected-shards 6 --baseline scripts/ci/test-baseline-linux.json reports
+      # Report only: flaky files (failed in a batch, passed alone) and new vs
+      # known failures. On main the cross-OS view and the "Flaky tests on main"
+      # issue come from .github/workflows/flaky-tests.yml.
+      - name: Flaky files and failures (report only)
+        if: ${{ !cancelled() }}
+        run: python scripts/ci/flaky_report.py summary reports
       - name: Merge the duration cache (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python scripts/ci/ratchet_tests.py durations --out test_durations.json reports
@@ -549,19 +648,22 @@ jobs:
           python-version: "3.11"
       # --no-deps proves jarvis.cli_ctl imports and renders --help with only its
       # own light runtime deps: no torch, audio or GUI stack.
-      - name: Light install + import/--help smoke
+      - name: Light install from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: typer platformdirs click httpx rich pytest pytest-asyncio pyyaml pydantic loguru python-dotenv packaging
+      - name: Import/--help smoke
         shell: bash
         run: |
-          python -m pip install -e . --no-deps
-          python -m pip install typer platformdirs click httpx rich pytest pytest-asyncio pyyaml pydantic loguru python-dotenv packaging
           python -c "import jarvis.cli_ctl.__main__"
           python -m jarvis.cli_ctl --help
-      - name: Base install + jarvisctl unit suite
-        shell: bash
-        run: |
-          python -m pip install -e .
-          python -m pip install pytest pytest-asyncio hypothesis
-          python -m pytest tests/unit/cli_ctl/ -q -p no:cacheprovider
+      - name: Base install from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          with: pytest pytest-asyncio hypothesis
+      - name: jarvisctl unit suite
+        run: python -m pytest tests/unit/cli_ctl/ -q -p no:cacheprovider
 
   deps:
     name: deps-sync + portable install matrix
@@ -643,11 +745,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Portable base + focused runner
-        shell: bash
-        run: |
-          python -m pip install -e .
-          python -m pip install pytest pytest-asyncio
+      - name: Portable base + focused runner from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          with: pytest pytest-asyncio
       - name: Provider-neutral realtime contract
         run: >-
           python -m pytest
@@ -698,11 +799,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Portable base + focused runner
-        shell: bash
-        run: |
-          python -m pip install -e .
-          python -m pip install pytest pytest-asyncio
+      - name: Portable base + focused runner from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          with: pytest pytest-asyncio
       - name: Inno Setup for the real installer upgrade
         if: runner.os == 'Windows' && matrix.python == '3.12'
         shell: pwsh
@@ -752,10 +852,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Base install without system audio
-        run: |
-          python -m pip install -e .
-          python -m pip install pytest pytest-asyncio
+      - name: Base install without system audio, from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          with: pytest pytest-asyncio
       - name: The container really has no usable PortAudio
         run: |
           python - <<'PY'
@@ -798,7 +898,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - run: python -m pip install -e .
+      - name: Base install from uv.lock
+        uses: ./.github/actions/install-locked
       - run: python scripts/realtime_reliability_gate.py --contract-soak
 
   dragdrop:
@@ -856,6 +957,112 @@ jobs:
       force: ${{ needs.detect.outputs.full == 'true' }}
       include_macos: ${{ needs.detect.outputs.macos == 'true' }}
 
+  # Hermes / OpenClaw society agents on every OS a person runs them on. The
+  # lane (scripts/ci/agent_runtime_suite.py) covers the runtimes AND the chat
+  # and society code that drives them, so a pull request proves macOS too,
+  # not only the nightly run. Fakes only: no key, no network to a model.
+  agent-runtimes-unit:
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Portable base + focused runner
+        shell: bash
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: Runtimes, chat and society suite
+        run: python scripts/ci/agent_runtime_suite.py
+
+  # A downloader's headless Linux server: no GPU, audio or desktop stack.
+  agent-runtimes-headless:
+    name: agent runtimes on python:3.11-slim
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    runs-on: ubuntu-latest
+    container: python:3.11-slim
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Base install without system audio
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: The runtime package imports without any optional stack
+        run: python -c "import jarvis.agent_runtimes.gateway, jarvis.agent_runtimes.manager, jarvis.agent_chat.runner_acp"
+      - name: Runtime suite
+        run: python scripts/ci/agent_runtime_suite.py --headless
+      # The container has no curl: the app's own Hermes setup must stop with a
+      # plain reason instead of "succeeding" on an empty download.
+      - name: Setup without curl fails with a plain reason
+        run: python scripts/ci/agent_runtime_e2e.py hermes --timeout 600 --expect-setup-failure "Setup needs curl"
+
+  # The REAL runtimes, installed the way the desktop app installs them: the
+  # app's own setup job (manager.wait_ready) at the pinned release from
+  # jarvis/agent_runtimes/runtime-versions.json, with a desktop app's PATH,
+  # never npm or a manual installer. Then two turns per model-gateway protocol
+  # against scripted providers, the fake-model driver check with turn-1
+  # budgets, the runtime unit tests on the same machine, and proof that the
+  # user PATH and shell profiles stayed put (scripts/ci/agent_runtime_e2e.py).
+  # No key, no network to a model. The weekly canary does the same at
+  # upstream latest and raises the pin.
+  agent-runtimes-e2e:
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        runtime: [hermes, openclaw]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the base app
+        run: |
+          python scripts/pip_install.py -e "."
+          python -m pip install pytest pytest-asyncio
+      # Downloads only: the private OpenClaw copy and uv's cache. Never Hermes'
+      # own home, so its install and prepare run for real on every pin.
+      - name: Reuse the pinned runtime downloads
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.jarvis/agent_runtimes/openclaw-cli
+            ~/AppData/Local/Jarvis/agent_runtimes/openclaw-cli
+            ~/.cache/uv
+            ~/Library/Caches/uv
+            ~/AppData/Local/uv/cache
+          key: agent-runtimes-${{ matrix.runtime }}-${{ runner.os }}-${{ hashFiles('jarvis/agent_runtimes/runtime-versions.json') }}
+      - name: Set up through the app, drive it, prove nothing else changed
+        run: python scripts/ci/agent_runtime_e2e.py ${{ matrix.runtime }}
+      - name: Keep the setup and runtime logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: agent-runtimes-e2e-${{ matrix.runtime }}-${{ matrix.os }}
+          path: eval-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # The ONE required check. Branch protection and the merge train read only
   # this; a new job needs nothing but a line in `needs`.
   gate:
@@ -863,6 +1070,9 @@ jobs:
     needs:
       - detect
       - gates
+      - zizmor
+      - dependency-review
+      - live-network
       - python-fast
       - release-qualification
       - tests-linux
@@ -881,6 +1091,9 @@ jobs:
       - macos-desktop
       - installer
       - updater
+      - agent-runtimes-unit
+      - agent-runtimes-headless
+      - agent-runtimes-e2e
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

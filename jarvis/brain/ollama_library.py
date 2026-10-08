@@ -227,15 +227,20 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
         # The current catalog puts an SVG before title-cased badge labels.
         # Ignore icon markup while retaining the actual visible label, and
         # keep accepting the older text-only lowercase badges.
-        labels = re.sub(r"<svg\b[^>]*>.*?</svg>", "", block, flags=re.DOTALL | re.IGNORECASE)
-        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", labels)]
+        plain = re.sub(r"<svg\b[^>]*>.*?</svg>", "", block, flags=re.DOTALL | re.IGNORECASE)
+        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", plain)]
         spans = [s for s in spans if s]
-        badge_labels = {s.lower() for s in spans}
-        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in badge_labels]
+        # Every text node, not only whole spans: "Cloud" now sits beside a tooltip.
+        texts = (_text(m.group(1)) for m in re.finditer(r">([^<>]+)<", plain))
+        lowered = {t.lower() for t in texts if t}
+        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in lowered]
         sizes = [s for s in spans if re.fullmatch(r"\d+(?:\.\d+)?[bm]", s)]
 
         pulls_match = re.search(
-            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", block
+            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", plain
+        ) or re.search(
+            r'<span\b[^>]*title="[^"]*downloads"[^>]*>\s*<span\b[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
+            plain,
         )
         if pulls_match is None:
             pulls_match = re.search(
@@ -248,7 +253,7 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 "name": name,
                 "description": description,
                 "capabilities": capabilities,
-                "cloud": "cloud" in badge_labels,
+                "cloud": "cloud" in lowered,
                 "sizes": sizes,
                 "pulls": pulls_match.group(1) if pulls_match else "",
                 "updated": updated,

@@ -156,3 +156,48 @@ async def test_cancelling_routine_preserves_main_chat(world, monkeypatch, via_ch
         if not routine.done():
             routine.cancel()
             await asyncio.gather(routine, return_exceptions=True)
+
+
+async def test_a_run_that_leaves_its_owners_runtime_says_so(world, tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from jarvis.society import routine_runner
+    from jarvis.society.events import AgentRuntime
+
+    runtime, service, _, _ = world
+    store = TaskStore(tmp_path / "tasks.db")
+    await store.init()
+    runtime.task_services = lambda: (store, None)
+    hermes = replace(await runtime.roster.get("mailbox"), runtime=AgentRuntime.HERMES)
+    get = runtime.roster.get
+
+    async def roster_get(agent_id):
+        return hermes if agent_id == "mailbox" else await get(agent_id)
+
+    monkeypatch.setattr(runtime.roster, "get", roster_get)
+    # The run's seat is one Hermes cannot drive: it runs on Jarvis' own loop.
+    monkeypatch.setattr(routine_runner, "_run_runtime", lambda agent, provider: "")
+    spec = build_task_spec(hermes, title="Inbox", prompt="Read mail", schedule={"kind": "every"})
+    task_id = str(await store.insert(spec))
+    try:
+        await run_owned_routine(runtime, task_id, spec.tags, spec.action.prompt)
+        steps = [step["payload"] for step in (await store.get(task_id))["steps"]]
+        notes = [p for p in steps if p.get("event") == "routine_runtime_fallback"]
+        assert len(notes) == 1 and notes[0]["runtime"] == "hermes"
+        run = next(p["session_id"] for p in steps if p.get("event") == "routine_chat")
+        notices = [
+            e["payload"] for e in service.store.list_events(run) if e["kind"] == "notice"
+        ]
+        assert [n["kind"] for n in notices] == ["routine_runtime_fallback"]
+    finally:
+        await store.close()
+
+
+def test_only_a_run_off_its_owners_external_runtime_is_noted():
+    from types import SimpleNamespace
+
+    from jarvis.society.routine_runner import _left_runtime
+
+    assert _left_runtime(SimpleNamespace(runtime="hermes"), "") == "hermes"
+    assert _left_runtime(SimpleNamespace(runtime="openclaw"), "openclaw") == ""
+    assert _left_runtime(SimpleNamespace(runtime="jarvis"), "") == ""

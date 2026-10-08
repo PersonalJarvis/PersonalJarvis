@@ -1,0 +1,190 @@
+# Release smoke - does the release users can download today actually verify
+# and install? Read-only: it never edits, uploads to or re-publishes a release.
+#
+# For one PUBLISHED release it proves, on Linux, Windows and macOS:
+#   1. the complete asset set, both signed manifests and the source checksum
+#      match GitHub's server-side digests (release_assets.py verify - the same
+#      rules finalization applied to the draft),
+#   2. the native installers a user of that OS downloads match
+#      installers-SHA256SUMS.txt byte for byte, and carry a valid build
+#      provenance attestation from desktop-installers.yml on that tag,
+#   3. the released install-verify.sh / install-verify.ps1 verifies every
+#      signature axis and hands off to the installer in dry-run / no-launch
+#      mode (release-wrapper-smoke.yml, shared with installer-smoke.yml).
+#
+# Triggers:
+#   * release-cut.yml calls it after it publishes (its `smoke` job). That is
+#     the normal path: a release published with GITHUB_TOKEN fires no
+#     `release` event, so the trigger below never sees release-cut releases.
+#   * `release: published` covers a release a maintainer publishes by hand.
+#   * workflow_dispatch re-checks any published tag, e.g. before a rollback.
+#
+# Releases built before provenance existed have no attestation; that is a
+# notice unless `require_attestation` is set (release-cut sets it).
+
+name: Release smoke
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release tag (vX.Y.Z); empty = latest"
+        required: false
+        default: ""
+      require_attestation:
+        description: "Fail when an installer has no build provenance attestation"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      require_attestation:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  assets:
+    name: published assets and manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Resolve the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag="$(gh api "repos/$REPO/releases/latest" --jq .tag_name)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Not a release tag: $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Release under test: $tag"
+
+      - name: Verify the published asset set against GitHub's digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: python scripts/ci/release_assets.py verify --repo "$GITHUB_REPOSITORY" --tag "$TAG"
+
+  installers:
+    needs: assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+    # No explicit `name:` - an unevaluated matrix value renders raw in the
+    # check list whenever the job is skipped (see the dragdrop job in ci.yml).
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # `gh attestation verify` reads the repository's attestation store.
+      attestations: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.assets.outputs.tag }}
+      REQUIRE_ATTESTATION: ${{ inputs.require_attestation && '--require-attestation' || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Download installers, check checksums and build provenance
+        shell: bash
+        run: >-
+          python scripts/ci/release_assets.py verify
+          --repo "$GITHUB_REPOSITORY" --tag "$TAG"
+          --platform "${{ matrix.platform }}"
+          --directory "$RUNNER_TEMP/installers"
+          $REQUIRE_ATTESTATION
+
+      # The checksum proves the bytes; these prove the container opens the way
+      # the OS will open it. Signatures are reported, not required, while the
+      # publisher certificates are optional (see desktop-installers.yml).
+      - name: Inspect the Linux packages
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/installers"
+          for deb in personal-jarvis_*_amd64.deb; do
+            [ -e "$deb" ] || continue
+            dpkg-deb --info "$deb" > /dev/null
+            echo "$deb: package metadata OK"
+          done
+          # An AppImage is an executable ELF runtime with the squashfs appended.
+          python - <<'PYEOF'
+          import sys
+          with open("PersonalJarvis-Linux-x86_64.AppImage", "rb") as stream:
+              if stream.read(4) != b"\x7fELF":
+                  sys.exit("::error::PersonalJarvis-Linux-x86_64.AppImage is not an ELF executable")
+          print("PersonalJarvis-Linux-x86_64.AppImage: ELF runtime OK")
+          PYEOF
+
+      - name: Inspect the Windows installer signature
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'installers\PersonalJarvis-Setup-x64.exe'
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          Write-Host "Authenticode: $($signature.Status) $($signature.SignerCertificate.Subject)"
+          if ($signature.Status -ne 'Valid') {
+            Write-Host "::notice::PersonalJarvis-Setup-x64.exe Authenticode status: $($signature.Status)"
+          }
+
+      - name: Inspect the macOS disk images
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/installers"
+          for dmg in PersonalJarvis-macOS-arm64.dmg PersonalJarvis-macOS-x64.dmg; do
+            hdiutil verify "$dmg"
+            if ! spctl --assess --type open --context context:primary-signature -v "$dmg" 2>&1; then
+              echo "::notice::$dmg is not accepted by Gatekeeper (unsigned or not notarized)"
+            fi
+          done
+
+  wrapper:
+    needs: assets
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-wrapper-smoke.yml
+    with:
+      tag: ${{ needs.assets.outputs.tag }}
+      platforms: '["ubuntu-latest","windows-latest","macos-latest"]'

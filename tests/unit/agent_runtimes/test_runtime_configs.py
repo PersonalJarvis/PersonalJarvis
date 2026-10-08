@@ -166,7 +166,22 @@ def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):
 
 def test_hermes_denied_shell_disables_its_terminal(tmp_path):
     config = HermesRuntime().config_for(_turn(tmp_path, denied_native=frozenset({"shell"})))
-    assert set(config["agent"]["disabled_toolsets"]) == {"terminal", "code_execution"}
+    assert {"terminal", "code_execution"} <= set(config["agent"]["disabled_toolsets"])
+
+
+def test_hermes_never_gets_a_headless_browser_desktop_control_or_own_scheduler(tmp_path):
+    """Jarvis' visible browser and routines only; never an invisible Chromium."""
+    config = HermesRuntime().config_for(_turn(tmp_path))
+    assert {"browser", "computer_use", "cronjob"} <= set(config["agent"]["disabled_toolsets"])
+    assert "terminal" not in config["agent"]["disabled_toolsets"]
+
+
+def test_hermes_config_never_exposes_the_data_root_and_carries_its_schema(tmp_path):
+    from jarvis.agent_runtimes import versions
+
+    config = HermesRuntime().config_for(_turn(tmp_path))
+    assert config["cli"]["expose_on_path"] is False
+    assert config["_config_version"] == versions.pin("hermes").config_version
 
 
 def test_a_keyless_local_model_writes_no_key_reference(tmp_path):
@@ -201,6 +216,9 @@ def test_openclaw_config_keeps_both_keys_out_of_the_file(tmp_path):
 
 def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    assert config["cron"]["enabled"] is False
+    assert config["plugins"]["slots"]["memory"] == "none"
+    assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
     defaults = config["agents"]["defaults"]
     assert defaults["heartbeat"] == {"every": "0m"}
     assert defaults["skipBootstrap"] is True
@@ -213,6 +231,24 @@ def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     assert config["cron"]["enabled"] is False
     assert config["plugins"]["slots"]["memory"] == "none"
     assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
+
+
+def test_openclaw_loads_no_browser_desktop_or_device_plugins(tmp_path):
+    config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    denied = set(config["plugins"]["deny"])
+    assert {"browser", "cua-computer", "device-pair", "file-transfer"} <= denied
+    # The provider adapters stay: Jarvis' gateway speaks their wire formats.
+    assert not denied & {"openai", "anthropic", "ollama"}
+    assert "browser" in config["tools"]["deny"]
+
+
+def test_openclaw_logs_into_the_agents_own_folder(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path / "rt")
+    config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    log_file = Path(config["logging"]["file"])
+    assert log_file.is_relative_to(tmp_path / "rt" / "openclaw" / "hermit")
 
 
 def test_openclaw_exec_mode_follows_grants_not_the_stance(tmp_path):
@@ -321,6 +357,25 @@ def test_the_chatgpt_subscription_speaks_responses(gateway_up, monkeypatch):
     assert gateway.verify(route.api_key or "") == gateway.Grant(
         "agent-1", "openai-codex", "acct", require_active_turn=True,
     )
+
+
+def test_chat_and_routine_routes_have_stable_separate_failure_scopes(gateway_up):
+    with override_provider_secrets({"openai": _SECRET}):
+        routes = [route_for(_cfg(), "openai", "m", agent_id="a", session_id=sid)
+                  for sid in ("society:a", "society:a:routine:r1", "society:a:routine:r2")]
+    assert routes[0].api_key != routes[1].api_key
+    assert routes[1].api_key == routes[2].api_key
+
+
+def test_a_rate_limited_route_refuses_before_starting_a_runtime(gateway_up):
+    gateway = gateway_up
+    grant = gateway.Grant("a", "openai")
+    gateway._report_failure(
+        grant, "m", gateway.GatewayError("limited", status=429, retry_after=60), None,
+    )
+    with override_provider_secrets({"openai": _SECRET}):
+        with pytest.raises(RouteUnavailable, match="HTTP 429"):
+            route_for(_cfg(), "openai", "m", agent_id="a", session_id="society:a")
 
 
 def test_chat_and_routine_routes_have_stable_separate_failure_scopes(gateway_up):
@@ -475,3 +530,68 @@ async def test_turn_slots_run_one_turn_at_a_time():
     second = await asyncio.wait_for(waiting, timeout=1)
     second()
     other()
+
+
+# ------------------------------------------------- effort and capabilities
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    [("high", "high"), ("none", "none"), ("xhigh", "xhigh"), ("", None), ("bogus", None)],
+)
+def test_hermes_writes_the_agents_effort(tmp_path, effort, expected):
+    config = HermesRuntime().config_for(_turn(tmp_path, effort=effort))
+    assert config["agent"].get("reasoning_effort") == expected
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    [("high", "high"), ("none", "off"), ("minimal", "minimal"), ("", None), ("bogus", None)],
+)
+def test_openclaw_writes_the_agents_thinking_default(tmp_path, effort, expected):
+    config = OpenClawRuntime().config_for(_turn(tmp_path, effort=effort), port=1, token=_TOKEN)
+    assert config["agents"]["defaults"].get("thinkingDefault") == expected
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "vision", "inputs", "reasons"),
+    [
+        (True, True, ["text", "image"], True),
+        (False, False, ["text"], None),
+        (None, None, ["text"], None),  # unknown: OpenClaw's own defaults stand
+    ],
+)
+def test_openclaw_declares_only_capabilities_the_catalog_names(
+    tmp_path, reasoning, vision, inputs, reasons
+):
+    turn = _turn(tmp_path, reasoning=reasoning, vision=vision)
+    model = OpenClawRuntime().config_for(turn, port=1, token=_TOKEN)["models"]["providers"][
+        "jarvis"
+    ]["models"][0]
+    assert model["input"] == inputs
+    assert model.get("reasoning") is reasons
+
+
+def test_capabilities_come_from_the_catalog_never_the_name(monkeypatch):
+    from jarvis.agent_chat import runner_acp
+    from jarvis.brain import model_catalog
+    from jarvis.brain.model_catalog import ModelInfo
+
+    rows = {
+        ("openrouter", "a/thinks-sees"): ModelInfo(
+            id="a/thinks-sees",
+            label="x",
+            input_modalities=("text", "image"),
+            supported_parameters=("tools", "reasoning"),
+        ),
+        ("ollama", "plain"): ModelInfo(
+            id="plain", label="x", input_modalities=("text",), supported_parameters=("tools",)
+        ),
+    }
+    monkeypatch.setattr(
+        model_catalog.ModelCatalog, "cached_model", lambda self, p, m: rows.get((p, m))
+    )
+    assert runner_acp.model_capabilities("openrouter", "a/thinks-sees") == (True, True)
+    assert runner_acp.model_capabilities("ollama", "plain") == (False, False)
+    # A name that "sounds" capable but has no catalog entry stays unknown.
+    assert runner_acp.model_capabilities("openai", "gpt-vision-reasoner") == (None, None)

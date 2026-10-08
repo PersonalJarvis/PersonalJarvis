@@ -239,7 +239,13 @@
     "close": "关闭",
     "nav_back": "后退",
     "nav_forward": "前进",
-    "nav_home": "主页"
+    "nav_home": "主页",
+    "update_blocked_app_read_only": "{name} 无法在此文件夹中替换自身。请将它移到“应用程序”文件夹，然后再更新。",
+    "update_blocked_app_translocated": "macOS 正在从临时副本运行 {name}。请将它移到“应用程序”文件夹，从那里打开，然后再更新。",
+    "update_blocked_appimage_read_only": "{name} 无法写入 AppImage 所在的文件夹。请将 AppImage 移到你拥有的文件夹（例如 ~/Applications），然后再更新。",
+    "update_blocked_no_app_bundle": "{name} 找不到自己的应用，因此无法替换自身。请从发布页面下载新版本。",
+    "update_blocked_no_appimage": "此副本不是从其 AppImage 文件启动的，因此没有可替换的内容。请改为下载新的 AppImage。",
+    "update_open_release": "打开下载页面"
   },
   "nav": {
     "chat_workspace": "对话",
@@ -4527,6 +4533,7 @@
     "close": "关闭",
     "cancel": "取消",
     "save": "保存",
+    "save_add": "添加 CLI",
     "saving": "正在保存…",
     "name": "名称",
     "name_placeholder": "Antigravity",
@@ -4536,17 +4543,24 @@
     "command_hint": "就是你在终端里启动它时输入的内容。",
     "command_shell_hint": "因为这条命令不止一个程序，所以会通过 shell 运行。整行执行完后窗格会关闭。",
     "description_label": "描述",
+    "optional": "可选",
     "description_placeholder": "用一句话说明这个 CLI 是什么。",
     "at_reference": "将拖入的文件写成 @path",
     "at_reference_hint": "大多数现代编程 CLI 会把 @path 当作要打开的文件。关闭此项则会把路径加引号粘贴。",
     "pick_logo": "选择图标",
     "remove_logo": "移除图标",
+    "remove_logo_short": "移除",
+    "logo_label": "图标",
     "edit_named": "编辑 {0}",
     "remove_named": "移除 {0}",
     "gone": "该 CLI 已不在列表中。",
     "add_title": "你自己的 CLI",
     "add_hint": "列表里没有？用启动命令添加任意终端 CLI。",
-    "add_button": "添加 CLI"
+    "add_button": "添加 CLI",
+    "logo_label": "图标",
+    "optional": "可选",
+    "remove_logo_short": "移除",
+    "save_add": "添加 CLI"
   },
   "workspace_launcher": {
     "wizard": {
@@ -5716,6 +5730,9 @@
       "coding_thread_author": "由 {0} 撰写",
       "message_not_sent": "未发送：{0}",
       "context_rollover": "已换用新的工作上下文——记忆和最近的消息已带过来",
+      "stop_reason_max_tokens": "回答在模型的输出上限处停止，可能不完整。",
+      "stop_reason_max_turn_requests": "智能体已达到单轮的步骤上限，工作可能尚未完成。",
+      "stop_reason_cancelled": "本轮在完成前被取消。",
       "allow_always": "始终允许",
       "history_chats": "对话",
       "history_voice": "语音",
@@ -5866,6 +5883,9 @@
       "access_hint_api": "按使用量从你的 API 密钥计费。",
       "access_hint_local": "使用这台电脑上的模型运行，每条消息无费用。",
       "access_extra_usage": "使用你的 Claude Code 登录运行。Anthropic 将其按额外用量计费，不计入你的套餐额度。",
+      "access_blocked": "提供商目前拒绝这种付费方式。请选择其他方式。",
+      "access_blocked_extra_usage_off": "不可用：此 Claude 账户已关闭额外用量，而 Anthropic 只按额外用量为 Hermes 和 OpenClaw 计费。请在 claude.ai 的“设置 → 用量”中开启，或使用 API 密钥。",
+      "access_blocked_extra_usage_spent": "不可用：此 Claude 账户本月的额外用量额度已用完。请在 claude.ai 的“设置 → 用量”中提高额度，或使用 API 密钥。",
       "account_label": "账号",
       "active_account": "当前账号",
       "model_label": "模型",
@@ -5893,7 +5913,11 @@
       "setting_up_hint": "正在这台电脑上安装 {0}。你现在就可以创建智能体，安装完成后它就会回复。",
       "auto_setup_hint": "Jarvis 会自动安装 {0} 并保持更新。",
       "setup_failed": "安装未完成：{0}",
+      "provider_unsupported": "Hermes 和 OpenClaw 需要使用 API 密钥、本地模型服务器或 ChatGPT 订阅运行。请为此智能体选择其中一种。",
       "setting_up_chat": "正在这台电脑上安装 {0}。第一次需要几分钟，准备好后会立即回复你的消息。",
+      "routine_fallback": "本次运行使用 Jarvis 自己的运行时，而不是 {0}：为此例行任务选择的模型无法由 {0} 驱动。",
+      "ready_untested": "就绪 · 比已测试版本更新",
+      "untested_hint": "{0} 比 Jarvis 测试过的版本更新，仍可运行。",
       "retry": "重试"
     },
     "approval_mode": {
@@ -6149,6 +6173,19 @@
       "submit": "创建智能体",
       "name_required": "请先给智能体取个名字。",
       "error": "无法创建智能体。"
+    },
+    "meeting": {
+      "title": "共享会议",
+      "individual": "单独聊天",
+      "you": "你",
+      "description": "每条消息会按顺序给每位成员一次发言机会。他们可以回应之前的回复，也可以保持沉默。这一轮结束后不会自动继续讨论。",
+      "empty": "发送一个话题来开始讨论。如需让 {name} 参与，请通过“编辑群组”添加。",
+      "answering": "{0} 正在发言…",
+      "failed": "这一轮未能完成。请打开该智能体的单独聊天查看详情。之前的发言已保存。",
+      "limit": "会议支持二到六个智能体。请编辑此群组以减少成员。",
+      "message": "你发给群组的消息",
+      "stop": "停止本轮",
+      "send": "询问群组"
     }
   },
   "chat_tools": {

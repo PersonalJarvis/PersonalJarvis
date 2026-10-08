@@ -36,7 +36,7 @@ export function AgentTimeline({
   /** Sender faces by agent id, where the caller has a roster. */
   agentsById?: Record<string, InternalParticipant>;
   /**
-   * The front page's conversation look (2026-10-01, after the Claude app):
+   * The front page's conversation look (2026-10-01):
    * your words in a soft rounded bubble on the right, the assistant's answer
    * as plain text with no name-and-model header above it, and a quiet
    * centred time stamp wherever the conversation paused. The Agentic IDE
@@ -296,7 +296,7 @@ function Prose({ block }: { block: TextBlock }) {
     <div
       data-testid="agent-text"
       className={cn(
-        // Compact reading size, like the Claude app: headings stay close to body
+        // Compact reading size: headings stay close to body
         // size and set apart by weight and spacing, not by scale.
         "prose prose-neutral max-w-none text-[15px] leading-[25px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
         "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",

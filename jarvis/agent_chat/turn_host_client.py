@@ -675,7 +675,8 @@ def read_spool() -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     try:
         paths = sorted(spool_dir().glob("*.json"))
-    except OSError:
+    except OSError as exc:
+        log.warning("turn host spool could not be listed; spooled turns stay on disk: %s", exc)
         return records
     for path in paths:
         try:

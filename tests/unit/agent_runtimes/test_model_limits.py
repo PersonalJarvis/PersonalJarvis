@@ -28,8 +28,13 @@ def config(context=None, output=None):
         (65536, 16384, 16384),
         (65536, None, 65536),
         (None, 8192, 8192),
-        (None, 131072, 131072),
+        # No num_ctx chosen: a bounded default, never the whole native window
+        # (Ollama allocates it up front; 256k froze a 32 GB desktop).
+        (None, 262144, 65536),
+        (None, 131072, 65536),
         (None, None, 32768),
+        # A larger window chosen on the model card is honoured.
+        (131072, 262144, 131072),
     ],
 )
 def test_local_allocation_is_bounded_by_native_context(allocated, native, expected):
