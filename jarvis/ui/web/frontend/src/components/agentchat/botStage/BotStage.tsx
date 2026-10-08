@@ -16,8 +16,8 @@ import "./botStage.css";
  * A scene never flashes: it plays at least MIN_SCENE_MS before the next one
  * takes over, so a call that lasts 80 ms does not flicker. A long think
  * rotates through the thinking expressions every THINK_ROTATE_MS. Changing
- * scene remounts the set, which restarts its animations from their first
- * frame instead of jumping mid-way.
+ * scene never cuts: the outgoing face, prop and word stay mounted, still
+ * playing their scene, and fade off over the incoming ones (Crossfade).
  */
 export function BotStage({ presence, seed, avatar, color }: {
   presence: Presence;
@@ -35,13 +35,55 @@ export function BotStage({ presence, seed, avatar, color }: {
   const ink = bubbleTint(color)?.color ?? "#ffffff";
   return <div className="bot-stage" data-scene={scene} style={{ "--bot": color, "--bot-ink": ink } as CSSProperties}
     role="status" aria-label={label} data-testid="messenger-presence" data-presence={presence}>
-    <span className="bs-set" key={scene} aria-hidden>
-      <span className="bs-body">{avatar}</span>
-      {OVER[scene] && <svg className="bs-over" viewBox="0 0 28 28" width="28" height="28">{OVER[scene]}</svg>}
+    <span className="bs-set" aria-hidden>
+      <Crossfade id={scene} className="bs-face">
+        <span className="bs-body">{avatar}</span>
+        {OVER[scene] && <svg className="bs-over" viewBox="0 0 28 28" width="28" height="28">{OVER[scene]}</svg>}
+      </Crossfade>
     </span>
-    {PROP[scene] && <svg className="bs-prop" key={`prop:${scene}`} viewBox="0 0 20 20" width="20" height="20" aria-hidden>{PROP[scene]}</svg>}
-    <span className="bs-label" key={`label:${scene}`}>{label}</span>
+    <span className="bs-props" data-empty={PROP[scene] ? undefined : ""} aria-hidden>
+      <Crossfade id={scene}>
+        {PROP[scene] && <svg className="bs-prop" viewBox="0 0 20 20" width="20" height="20">{PROP[scene]}</svg>}
+      </Crossfade>
+    </span>
+    <span className="bs-label"><Crossfade id={scene} className="bs-word">{label}</Crossfade></span>
   </div>;
+}
+
+/** How long an outgoing layer stays mounted; the CSS fades it within `--bs-swap`. */
+const SWAP_MS = 480;
+
+interface Layer { id: string; node: ReactNode }
+
+/**
+ * Renders `children` as the layer for `id`, and keeps the layers of the last
+ * ids mounted for SWAP_MS after `id` changes, marked `is-out`, so the CSS can
+ * fade them over the incoming one. The outgoing layer keeps its element (one
+ * keyed list), so its animations play on instead of restarting. The incoming
+ * layer is marked `is-in` only after the first change: the stage's own entry
+ * already covers its first scene.
+ */
+function Crossfade({ id, className, children }: { id: string; className?: string; children: ReactNode }) {
+  const [current, setCurrent] = useState(id);
+  const [leaving, setLeaving] = useState<Layer[]>([]);
+  const [swapped, setSwapped] = useState(false);
+  const shown = useRef(children);
+  if (current !== id) {
+    // Adjusting state while rendering: the outgoing layer must be in this very
+    // frame, or it would vanish for one paint before the fade begins.
+    setCurrent(id);
+    setSwapped(true);
+    setLeaving((gone) => [...gone.filter((layer) => layer.id !== id && layer.id !== current), { id: current, node: shown.current }].slice(-2));
+  }
+  useEffect(() => { shown.current = children; });
+  useEffect(() => {
+    if (leaving.length === 0) return;
+    const timer = window.setTimeout(() => setLeaving([]), SWAP_MS);
+    return () => window.clearTimeout(timer);
+  }, [leaving]);
+  const layers = [...leaving.filter((layer) => layer.id !== id).map((layer) => ({ ...layer, out: true })), { id, node: children, out: false }];
+  return <>{layers.map((layer) => <span key={layer.id} data-scene={layer.id} aria-hidden={layer.out || undefined}
+    className={["bs-scene", className, layer.out ? "is-out" : swapped ? "is-in" : ""].filter(Boolean).join(" ")}>{layer.node}</span>)}</>;
 }
 
 /** Holds each scene long enough to read, and rotates a long think. */

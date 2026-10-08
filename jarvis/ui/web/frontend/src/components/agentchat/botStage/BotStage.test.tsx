@@ -54,6 +54,20 @@ describe("BotStage", () => {
     expect(SCENES.thinking).toContain(sceneName());
   });
 
+  it("crossfades a scene change instead of cutting to an empty frame", () => {
+    render(<BotStage presence="thinking" seed="t" avatar={face} color="#7ab6ef" />);
+    const first = sceneName()!;
+    act(() => { vi.advanceTimersByTime(THINK_ROTATE_MS + 10); });
+    const next = sceneName()!;
+    const faces = () => Array.from(document.querySelectorAll(".bs-face")).map((el) => [el.getAttribute("data-scene"), el.classList.contains("is-out")]);
+    const words = () => Array.from(document.querySelectorAll(".bs-word")).map((el) => el.classList.contains("is-out"));
+    expect(faces()).toEqual([[first, true], [next, false]]);
+    expect(words()).toEqual([true, false]);
+    act(() => { vi.advanceTimersByTime(600); });
+    expect(faces()).toEqual([[next, false]]);
+    expect(words()).toEqual([false]);
+  });
+
   it("plays the agent's own face", () => {
     render(<BotStage presence="typing" seed="t" avatar={face} color="#7ab6ef" />);
     expect(screen.getByTestId("face")).toBeTruthy();
