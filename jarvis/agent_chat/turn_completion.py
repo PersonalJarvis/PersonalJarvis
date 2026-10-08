@@ -65,7 +65,8 @@ def offer_instead_of_action(request: str, response: str) -> bool:
         return False
     answer = response.strip().lstrip("* ")
     if re.match(
-        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar)\b", answer, re.I  # i18n-allow: detect localized confirmation replies
+        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar)\b",  # i18n-allow
+        answer, re.I,
     ):  # i18n-allow
         return False
     blocking_question = (
@@ -109,6 +110,9 @@ class TurnCompletion:
         self.calls: dict[str, tuple[str, dict[str, Any]]] = {}
         self.receipts = ToolRecovery()
         self.did_work = False
+        self.background_corrected = False
+        self.background_unregistered = False
+        self.background_tasks: set[str] = set()
 
     async def emit(self, event: dict[str, Any]) -> None:
         payload = event.get("payload") or {}
@@ -126,11 +130,36 @@ class TurnCompletion:
         self.receipts.observe(event)
         if kind == "assistant_text":
             self.last_text = str(payload.get("text") or "")
+            from .background_work import has_scheduled_work, promises_background_work
+
+            self.background_unregistered = (
+                promises_background_work(self.request, self.last_text)
+                and not await has_scheduled_work(
+                    self.handle.session.session_id, self.background_tasks,
+                )
+            )
+            if self.background_unregistered:
+                from .background_work import without_background_promises
+
+                # Preserve findings; remove only unsupported future commitments.
+                await self.handle.emit({**event, "payload": {
+                    **payload, "text": without_background_promises(self.last_text),
+                }})
+                return
         elif kind == "tool_call":
             name = str(payload.get("name") or "").rsplit("__", 1)[-1].lower()
             self.calls[str(payload.get("call_id") or "")] = (name, payload.get("input") or {})
         elif kind == "tool_result":
             name, _ = self.calls.pop(str(payload.get("call_id") or ""), ("", {}))
+            if name == "society_propose_change" and not payload.get("is_error"):
+                output = payload.get("output")
+                if isinstance(output, str):
+                    try:
+                        output = json.loads(output)
+                    except ValueError:
+                        output = None  # Non-JSON output cannot certify a stored task.
+                if isinstance(output, dict) and output.get("applied") and output.get("task_id"):
+                    self.background_tasks.add(str(output["task_id"]))
             if name and name not in _READS and not payload.get("is_error"):
                 self.did_work = True
         await self.handle.emit(event)
@@ -181,6 +210,28 @@ class TurnCompletion:
                     + "\nOriginal request:\n"
                     + self.context
                 )
+        if self.background_unregistered:
+            if (
+                self.allow_correction and not self.background_corrected
+                and not self.receipts.declined and not self.receipts.blocked
+                and not self.service.pending_approvals(sid)
+            ):
+                self.background_corrected = True
+                return (
+                    "Your last answer promised future work without a registered task. "
+                    "Finish the work now, or register the goal-derived follow-up with "
+                    "society_propose_change(kind=routine, mode=autonomous), quoting the "
+                    "current user goal. Use a one-time trigger unless the goal needs "
+                    "recurrence. Inspect existing routines first and preserve completed "
+                    "effects. Confirm only the saved task's actual state and next run. "
+                    "If scheduling is unavailable or excluded, explain that blocker "
+                    "without promising future execution.\nOriginal request:\n" + self.context
+                )
+            self.finish_event["payload"].update(
+                status="error",
+                error="Future work was not registered; no later execution is confirmed",
+            )
+            return None
         if (
             self.allow_correction
             and not self.corrected
