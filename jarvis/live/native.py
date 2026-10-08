@@ -149,7 +149,12 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     + "Use your tools directly "
                     "for actions, private information and current facts. Use discover_tools and "
                     "call_tool for any tool not declared directly. "
-                    + COMPUTER_CONTROL_RULES
+                    + (
+                        # Only when Computer Use is on: the tool is then in the catalog.
+                        COMPUTER_CONTROL_RULES
+                        if any(d.name == "computer" for d in self._tools.catalog())
+                        else ""
+                    )
                     + " When the user asks for an appshot, call take_appshot. "
                     "Request confirmation for pending approvals. Use confirm_action only after "
                     "explicit approval. A started job is not complete. Never invent tool results. "
