@@ -7,8 +7,85 @@ import ctypes
 import faulthandler
 import json
 import sys
+import tempfile
 from ctypes import wintypes
 from pathlib import Path
+
+
+async def capture_styles() -> None:
+    """Report capture support for individual window styles on a CI desktop."""
+    root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root / "jarvis" / "society" / "browser"))
+    from native_window import NativeWindow
+    from playwright.async_api import async_playwright
+
+    original = NativeWindow._hide_from_desktop
+    original_park = NativeWindow.park
+    variants = [
+        ("unchanged", 0, 0, None, False),
+        ("background-only", 0, 0, None, True),
+        ("no-activate", 0x08000000, 0x40000, None, False),
+        ("layered-opaque", 0x80000, 0, 255, False),
+        ("layered-minimum", 0x80000, 0, 1, False),
+        ("parked-minimum", 0x08080000, 0x40080, 1, False),
+        ("positioned-minimum", 0x08080000, 0x40080, 1, True),
+        ("parked-click-through", 0x08080020, 0x40080, 1, False),
+        ("layered-zero", 0x80000, 0, 0, False),
+    ]
+    try:
+        async with async_playwright() as pw:
+            for label, add, remove, alpha, reposition in variants:
+                def apply_style(self, hwnd, add=add, remove=remove, alpha=alpha):
+                    if not self._owned(hwnd):
+                        raise RuntimeError("Probe window ownership changed")
+                    u = self.user32
+                    u.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+                    u.GetWindowLongW.restype = ctypes.c_long
+                    u.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+                    u.SetWindowLongW.restype = ctypes.c_long
+                    style = u.GetWindowLongW(hwnd, -20)
+                    wanted = (style | add) & ~remove
+                    if wanted != style:
+                        u.SetWindowLongW(hwnd, -20, wanted)
+                    if alpha is not None:
+                        u.SetLayeredWindowAttributes.argtypes = [wintypes.HWND, wintypes.DWORD, wintypes.BYTE, wintypes.DWORD]
+                        u.SetLayeredWindowAttributes.restype = wintypes.BOOL
+                        if not u.SetLayeredWindowAttributes(hwnd, 0, alpha, 2):
+                            raise RuntimeError("Probe opacity was refused")
+
+                NativeWindow._hide_from_desktop = apply_style
+                def styles_only(self):
+                    self._hide_from_desktop(self.hwnd)
+                    self._parked = True
+
+                NativeWindow.park = original_park if reposition else styles_only
+                with tempfile.TemporaryDirectory(prefix="jarvis-capture-style-") as profile:
+                    context = await pw.chromium.launch_persistent_context(
+                        profile, executable_path=sys.argv[1], headless=False, no_viewport=True,
+                    )
+                    native = None
+                    try:
+                        page = context.pages[0]
+                        await page.set_content('<h1 style="background:#f00">Capture fixture</h1>')
+                        cdp = await context.browser.new_browser_cdp_session()
+                        processes = await cdp.send("SystemInfo.getProcessInfo")
+                        pid = next(p["id"] for p in processes["processInfo"] if p["type"] == "browser")
+                        native = NativeWindow(int(pid))
+                        ready = await asyncio.to_thread(native.ready.wait, 5)
+                        await asyncio.sleep(0.2)
+                        result = {"ready": ready, "failed": native.failed}
+                        if ready and not native.failed:
+                            result["frame"] = bool(native.frame())
+                        print(json.dumps({"capture_style": label, **result}), flush=True)
+                    except Exception as exc:
+                        print(json.dumps({"capture_style": label, "error": str(exc)}), flush=True)
+                    finally:
+                        if native:
+                            native.close()
+                        await context.close()
+    finally:
+        NativeWindow._hide_from_desktop = original
+        NativeWindow.park = original_park
 
 
 async def main() -> None:
@@ -90,4 +167,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     faulthandler.enable()
-    asyncio.run(main())
+    asyncio.run(capture_styles() if "--capture-styles" in sys.argv else main())

@@ -948,10 +948,11 @@ class NativeWindow:
         ]
         u.GetLayeredWindowAttributes.restype = w.BOOL
         style = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE is a 32-bit style, not a pointer.
-        # Layered + no-activate hides the window without a taskbar entry.
+        # Layered + no-activate avoids a taskbar entry. Mouse transparency
+        # prevents the nearly invisible surface from intercepting desktop clicks.
         # Tool windows are excluded from native capture; clear that bit too,
         # including on an owned popup that Chrome created with it already set.
-        hidden_style = (style | 0x08080000) & ~0x00040080
+        hidden_style = (style | 0x08080020) & ~0x00040080
         if style != hidden_style:
             u.SetWindowLongW(hwnd, -20, hidden_style)
             if u.GetWindowLongW(hwnd, -20) != hidden_style:

@@ -1748,7 +1748,8 @@ no-activate styles, but clear tool-window and app-window flags before creating
 a capture item; a tool-window flag makes native capture reject the target.
 Parked windows use the lowest nonzero opacity before capture starts and
 throughout streaming: zero opacity makes Windows close the capture item.
-They remain non-activating and behind the application, including popup recovery.
+They remain non-activating, mouse-transparent, and behind the application,
+including popup recovery.
 Input waits for the replacement's first
 frame. A repeated failure, failed restart, or unfinished capture cleanup reports
 an error instead of retaining an unusable preview or starting overlapping captures.

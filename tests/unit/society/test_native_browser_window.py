@@ -299,7 +299,7 @@ def test_parking_preserves_monitor_geometry_and_does_not_activate(scene):
     assert args[:2] == (1, 1)  # Owned Chrome, HWND_BOTTOM.
     assert args[-1] & 0x13 == 0x13  # No move, no size, no activation.
     assert desktop.alpha[1] == 1
-    assert desktop.styles[1] & 0x08080000 == 0x08080000
+    assert desktop.styles[1] & 0x08080020 == 0x08080020
     assert not desktop.styles[1] & 0x00040080
 
 
