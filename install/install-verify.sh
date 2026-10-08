@@ -597,7 +597,16 @@ fi
 PEM_FOR_OPENSSL="$PEM"
 if ! head -c 11 "$PEM" | grep -q '^-----BEGIN'; then
     PEM_FOR_OPENSSL="$STAGING/install.sh.pem.decoded"
-    if ! base64 -d "$PEM" > "$PEM_FOR_OPENSSL" 2>/dev/null; then
+    # Decode from stdin: GNU base64 takes a file operand, but the macOS
+    # base64 does not, and older macOS spells the flag -D instead of
+    # --decode. The cert blob may also be line-wrapped, so drop line breaks.
+    if base64 --decode </dev/null >/dev/null 2>&1; then
+        B64_DECODE="base64 --decode"
+    else
+        B64_DECODE="base64 -D"
+    fi
+    if ! tr -d '\r\n' < "$PEM" | $B64_DECODE > "$PEM_FOR_OPENSSL" 2>/dev/null \
+        || ! head -c 11 "$PEM_FOR_OPENSSL" | grep -q '^-----BEGIN'; then
         err "  Fulcio cert is neither raw PEM nor base64-of-PEM — refusing."
         exit 1
     fi
