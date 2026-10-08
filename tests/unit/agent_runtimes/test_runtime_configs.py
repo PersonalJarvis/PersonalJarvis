@@ -103,9 +103,47 @@ def test_hermes_self_learning_extras_stay_off(tmp_path):
     assert config["skills"]["creation_nudge_interval"] == 0
 
 
-def test_hermes_offers_jarvis_tools_directly(tmp_path):
-    """Never deferred behind Hermes' tool search (a 9B model missed them live)."""
-    assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
+def test_hermes_discovers_connected_tools_with_explicit_persona_guidance(tmp_path):
+    """Large catalogs stay lazy, and the persona explains how to reach them."""
+    runtime = HermesRuntime()
+    turn = _turn(tmp_path)
+    runtime._write_profile(tmp_path, turn)
+    config = json.loads((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    search = config["tools"]["tool_search"]
+    assert search["enabled"] == "on"
+    assert search["listing_max_tokens"] <= 2000
+    persona = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert "tool_search" in persona and "tool_describe" in persona and "tool_call" in persona
+    assert "reply directly without searching" in persona
+    assert "Search before concluding a capability is missing" in persona
+
+
+def test_hermes_profiles_share_installation_but_keep_agent_state_separate(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    first = base.agent_home("hermes", "first")
+    second = base.agent_home("hermes", "second")
+    routine = base.agent_home("hermes", base.home_key("first", "society:first:routine:1"))
+    assert first.parent == second.parent == routine.parent == tmp_path / "hermes" / "profiles"
+    assert len({first, second, routine}) == 3
+    (first / "state.db").write_bytes(b"private conversation")
+    assert not (second / "state.db").exists()
+    assert not (routine / "state.db").exists()
+    assert base.agent_home("hermes", "first") == first
+    assert base.agent_home("hermes", "profiles") == first.parent / "profiles"
+
+
+def test_existing_runtime_homes_keep_their_native_sessions(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    legacy = tmp_path / "hermes" / "existing"
+    legacy.mkdir(parents=True)
+    (legacy / "state.db").write_bytes(b"existing session")
+    assert base.agent_home("hermes", "existing") == legacy
+    assert (legacy / "state.db").read_bytes() == b"existing session"
+    assert base.agent_home("openclaw", "first") == tmp_path / "openclaw" / "first"
 
 
 def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):
