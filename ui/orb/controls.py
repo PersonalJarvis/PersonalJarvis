@@ -433,32 +433,43 @@ PET_THINK_BASE_V = 0.21
 PET_THINK_PEAK_V = 0.93
 PET_THINK_DIM = 0.5
 
-#: Connecting: a comet runs round a faint track around the three strokes —
-#: the loading loop — in ``PET_CONNECT_PHASES`` steps per turn of
-#: ``PET_CONNECT_PERIOD_S``, while the strokes, shrunk to dots, hop one after
-#: another. The comet's tail covers ``PET_CONNECT_TAIL_DEG`` of the track.
-PET_CONNECT_PHASES = 24
-PET_CONNECT_PERIOD_S = 1.2
-PET_CONNECT_TAIL_DEG = 150.0
-#: The track's radius and the comet's stroke, as shares of the pill's height.
-PET_CONNECT_RING_R = 0.39
-PET_CONNECT_RING_W = 0.065
-#: How high a hopping dot rises, as a share of the stroke range.
-PET_CONNECT_HOP = 0.42
-#: Connected: once the provider takes the call, the track closes into a full
-#: ring that flares and fades while the strokes stand up — a one-shot of
+#: Connecting: the three strokes themselves BECOME the loading loop. Each one
+#: bends into an arc of one ring and the three arcs spin round the talk
+#: control. The bend plays over ``PET_MORPH_STEPS`` steps of
+#: ``PET_MORPH_S`` seconds; the spin repeats every third of a turn (the arcs
+#: are interchangeable), in ``PET_SPIN_STEPS`` steps of ``PET_SPIN_PERIOD_S``.
+PET_MORPH_STEPS = 8
+PET_MORPH_S = 0.34
+PET_SPIN_STEPS = 12
+PET_SPIN_PERIOD_S = 0.4
+#: The ring the arcs lie on (centreline radius, share of the pill's height),
+#: each arc's span in degrees, how far it breathes per third of a turn, and
+#: how much a live voice lengthens it (the opening words are being captured).
+PET_LOOP_R = 0.27
+PET_ARC_SPAN_DEG = 62.0
+PET_ARC_BREATH_DEG = 12.0
+PET_ARC_VOICE_DEG = 18.0
+#: Where each stroke's arc sits once bent (clockwise from 12 o'clock): the
+#: left stroke curls to 9 o'clock, the others follow a third of a turn apart.
+PET_ARC_HOME_DEG: tuple[float, ...] = (270.0, 30.0, 150.0)
+#: Points per stroke centreline; enough for a round arc after the downscale.
+PET_STROKE_POINTS = 10
+#: Connected: once the provider takes the call the arcs turn on to the next
+#: rest position, unbend and slide back into the row, flashing green on the
+#: way, and the strokes pop up once and settle - a one-shot of
 #: ``PET_CONNECTED_PHASES`` steps over ``PET_CONNECTED_S`` seconds.
-PET_CONNECTED_PHASES = 12
+PET_CONNECTED_PHASES = 14
 PET_CONNECTED_S = 0.72
-#: The faint track under the comet, and the "connected" flare's colour.
-PET_CONNECT_TRACK = (30, 40, 58)
-PET_CONNECTED_RING = (134, 239, 172)
+PET_CONNECTED_GREEN = (134, 239, 172)
+#: The strokes' glow in the silent voice look (``indicator_bars`` at level 0).
+PET_VOICE_SILENT_GLOW = 0.62
 
 #: What the indicator is showing. ``rest``: nothing running. ``voice``: the
 #: microphone or Jarvis's voice is live and the strokes follow its level.
 #: ``think``: work is in flight with no signal to measure, so a highlight
 #: travels — motion, never a fake level. ``connect``: the call is accepted
-#: and the realtime transport is still negotiating (the loading loop).
+#: and the realtime transport is still negotiating (the strokes bend into
+#: the loading loop).
 #: ``connected``: the one-shot flourish when that negotiation succeeded.
 PET_MOTIONS: tuple[str, ...] = ("rest", "voice", "think", "connect", "connected")
 
@@ -651,11 +662,15 @@ class PetStripState:
     #: A conversation is running — the talk control and the phone hang up
     #: instead of starting one.
     active: bool = False
-    #: The voice level step (``quantize_level``); drawn in ``voice`` and ``connect``.
+    #: The voice level step (``quantize_level``); drawn in ``voice`` and
+    #: ``connect`` (where it lengthens the loop's arcs).
     level: int = 0
     #: What the indicator shows (``PET_MOTIONS``) and its animation step.
     motion: str = "rest"
     phase: int = 0
+    #: ``connect``: the spin step (``PET_SPIN_STEPS`` per third of a turn).
+    #: ``connected``: the spin step the loop had when the call connected.
+    spin: int = 0
     #: Which control the pointer is over, if any.
     hovered: str | None = None
     #: The user switched notifications off with the bell (this run only).
@@ -949,8 +964,8 @@ def indicator_phase(motion: str, t: float) -> int:
         cycle = (t % PET_THINK_PERIOD_S) / PET_THINK_PERIOD_S
         return int(cycle * PET_THINK_PHASES) % PET_THINK_PHASES
     if motion == "connect":
-        cycle = (t % PET_CONNECT_PERIOD_S) / PET_CONNECT_PERIOD_S
-        return int(cycle * PET_CONNECT_PHASES) % PET_CONNECT_PHASES
+        # ``t`` is the time since connecting began: the bend, then done.
+        return min(PET_MORPH_STEPS, int(max(0.0, t) / PET_MORPH_S * PET_MORPH_STEPS))
     if motion == "connected":
         # ``t`` is the time since the call connected; the flourish plays once.
         step = int(max(0.0, t) / PET_CONNECTED_S * PET_CONNECTED_PHASES)
@@ -958,33 +973,68 @@ def indicator_phase(motion: str, t: float) -> int:
     return 0
 
 
-def connected_flourish_running(elapsed: float | None) -> bool:
-    """Is the "connected" one-shot still on screen ``elapsed`` s after connecting?"""
-    return elapsed is not None and 0.0 <= elapsed < PET_CONNECTED_S
+def spin_step(t: float) -> int:
+    """The loading loop's spin step ``t`` seconds after connecting began."""
+    cycle = (max(0.0, t) % PET_SPIN_PERIOD_S) / PET_SPIN_PERIOD_S
+    return int(cycle * PET_SPIN_STEPS) % PET_SPIN_STEPS
 
 
-def connected_stamp(
-    previous_mode: str, new_mode: str, now: float, current: float | None
-) -> float | None:
-    """When the "connected" flourish started, after a mode change at ``now``.
+@dataclass(frozen=True)
+class ConnectLook:
+    """What the talk control shows for a connecting or just-connected call."""
 
-    Pure, shared by every bar surface: leaving ``connect`` for a live call mode
-    starts the flourish; entering ``connect`` again, or leaving the call, drops
-    it; any other change keeps the running one.
+    motion: str
+    phase: int
+    spin: int
+
+
+class ConnectTimeline:
+    """The clock behind the loading loop and its "connected" flourish.
+
+    One per surface (the Tk bar, the Qt bar, the pet strip). The surface
+    reports every coarse-mode change with :meth:`note_mode` and asks
+    :meth:`look` when it paints; times are the surface's own clock.
     """
-    if new_mode in CONNECT_MODES or new_mode not in ACTIVE_VOICE_MODES:
-        return None
-    if previous_mode in CONNECT_MODES:
-        return now
-    return current
 
+    def __init__(self) -> None:
+        self._connect_t0: float | None = None
+        self._connected_t0: float | None = None
+        self._spin_from = 0
 
-def connected_elapsed(stamp: float | None, now: float) -> float | None:
-    """Seconds into the running flourish, or ``None`` once it is over."""
-    if stamp is None:
-        return None
-    elapsed = now - stamp
-    return elapsed if connected_flourish_running(elapsed) else None
+    def note_mode(self, previous: str, new: str, now: float) -> None:
+        if new in CONNECT_MODES:
+            if previous not in CONNECT_MODES or self._connect_t0 is None:
+                self._connect_t0 = now
+            self._connected_t0 = None
+            return
+        if new not in ACTIVE_VOICE_MODES:
+            # Hung up, or the call ended: no flourish for a call that is gone.
+            self._connect_t0 = None
+            self._connected_t0 = None
+            return
+        if previous in CONNECT_MODES and self._connect_t0 is not None:
+            self._spin_from = spin_step(now - self._connect_t0)
+            self._connected_t0 = now
+        self._connect_t0 = None
+
+    def look(self, mode: str, now: float) -> ConnectLook | None:
+        """The connect look due at ``now``, or ``None`` for the plain look."""
+        if mode in CONNECT_MODES:
+            if self._connect_t0 is None:
+                self._connect_t0 = now
+            elapsed = now - self._connect_t0
+            return ConnectLook(
+                "connect", indicator_phase("connect", elapsed), spin_step(elapsed)
+            )
+        if self._connected_t0 is None or mode not in ACTIVE_VOICE_MODES:
+            return None
+        elapsed = now - self._connected_t0
+        if not 0.0 <= elapsed < PET_CONNECTED_S:
+            self._connected_t0 = None
+            return None
+        return ConnectLook(
+            "connected", indicator_phase("connected", elapsed), self._spin_from
+        )
 
 
 def _sweep_gain(index: int, phase: int) -> float:
@@ -1012,7 +1062,8 @@ def indicator_bars(state: PetStripState) -> list[tuple[float, float]]:
         out = []
         for i in range(PET_INDICATOR_BARS):
             wobble = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(angle + i * 2.1))
-            out.append((lo + (hi - lo) * level * wobble, 0.62 + 0.38 * level))
+            glow = PET_VOICE_SILENT_GLOW + (1.0 - PET_VOICE_SILENT_GLOW) * level
+            out.append((lo + (hi - lo) * level * wobble, glow))
         return out
     if state.motion == "think":
         out = []
@@ -1021,52 +1072,102 @@ def indicator_bars(state: PetStripState) -> list[tuple[float, float]]:
             v = PET_THINK_BASE_V + (PET_THINK_PEAK_V - PET_THINK_BASE_V) * g
             out.append((lo + (hi - lo) * v, PET_THINK_DIM + (1.0 - PET_THINK_DIM) * g))
         return out
-    if state.motion == "connect":
-        # Dots that hop one after another, like a message being typed. The
-        # opening words are already captured while the transport negotiates,
-        # so a live voice still lifts the strokes: the meter stays honest
-        # inside the loading loop, which says the provider is not there yet.
-        cycle = (state.phase % PET_CONNECT_PHASES) / PET_CONNECT_PHASES
-        level = max(0.0, min(1.0, state.level / PET_LEVEL_STEPS))
-        dot = PET_INDICATOR_HALF_W * 2.0
-        out = []
-        for i in range(PET_INDICATOR_BARS):
-            local = (cycle * 2.0 - i * 0.22) % 2.0
-            hop = math.sin(math.pi * local) if local < 1.0 else 0.0
-            height = max(dot + (hi - lo) * PET_CONNECT_HOP * hop, lo + (hi - lo) * level)
-            out.append((height, 0.55 + 0.45 * max(hop, level)))
-        return out
-    if state.motion == "connected":
-        # The strokes stand up together and settle back to the listening
-        # row's resting height by the last step, so nothing jumps after it.
-        p = (state.phase + 1) / PET_CONNECTED_PHASES
-        rise = math.sin(math.pi * p) ** 0.8
-        shape = (0.62, 1.0, 0.62)
-        out = []
-        for i in range(PET_INDICATOR_BARS):
-            peak = lo + (hi - lo) * 0.7 * shape[i % len(shape)]
-            glow = PET_INDICATOR_REST_GLOW + (1.0 - PET_INDICATOR_REST_GLOW) * rise
-            out.append((lo + (peak - lo) * rise, glow))
-        return out
+    if state.motion in ("connect", "connected"):
+        # Straight (the first bend step, the flourish's last): the silent
+        # voice look, so the loop leaves and rejoins the listening row exactly.
+        return [(h, PET_VOICE_SILENT_GLOW) for h in PET_INDICATOR_REST_H]
     return [(h, PET_INDICATOR_REST_GLOW) for h in PET_INDICATOR_REST_H]
 
 
-def connect_ring(state: PetStripState) -> tuple[float, float, float] | None:
-    """The loading loop around the strokes: ``(head angle deg, tail deg, flare 0..1)``.
+def _ease(x: float) -> float:
+    x = max(0.0, min(1.0, x))
+    return x * x * (3.0 - 2.0 * x)
 
-    ``None`` when no ring is drawn. Angles run clockwise from 12 o'clock. While
-    connecting the comet turns and keeps its tail; once connected the tail
-    grows to the full circle and ``flare`` fades from 1 to 0.
+
+@dataclass(frozen=True)
+class MorphStroke:
+    """One stroke on its way between the row and the loop.
+
+    ``points`` is the centreline from top (leading end) to bottom, in shares
+    of the pill's height relative to the talk control's centre; ``glow`` per
+    point (0 night .. 1 sky, above 1 toward cloud white); ``green`` 0..1 is
+    the "connected" flash.
     """
+
+    points: tuple[tuple[float, float], ...]
+    glow: tuple[float, ...]
+    green: float
+
+
+def morph_amount(state: PetStripState) -> float:
+    """How far the strokes are bent into the loop (0 row .. 1 ring)."""
     if state.motion == "connect":
-        head = 360.0 * (state.phase % PET_CONNECT_PHASES) / PET_CONNECT_PHASES
-        return head, PET_CONNECT_TAIL_DEG, 0.0
+        return _ease(state.phase / PET_MORPH_STEPS)
     if state.motion == "connected":
         p = (state.phase + 1) / PET_CONNECTED_PHASES
-        close = min(1.0, p * 2.5)
-        tail = PET_CONNECT_TAIL_DEG + (360.0 - PET_CONNECT_TAIL_DEG) * close
-        return 0.0, tail, max(0.0, 1.0 - p)
-    return None
+        return 1.0 - _ease((p - 0.12) / 0.58)
+    return 0.0
+
+
+def morph_strokes(state: PetStripState) -> list[MorphStroke] | None:
+    """The three strokes bent toward the loading loop, or ``None`` when straight.
+
+    Pure in the state, so every frame is testable and cacheable. Each stroke's
+    centreline is blended point by point between its straight form in the row
+    and an arc of the ring; the arcs turn with ``spin``.
+    """
+    if state.motion not in ("connect", "connected"):
+        return None
+    m = morph_amount(state)
+    level = max(0.0, min(1.0, state.level / PET_LEVEL_STEPS))
+    third = 120.0
+    if state.motion == "connect":
+        cycle = (state.spin % PET_SPIN_STEPS) / PET_SPIN_STEPS
+        spin = third * cycle
+        breath = math.sin(2.0 * math.pi * cycle)
+        span = PET_ARC_SPAN_DEG + PET_ARC_BREATH_DEG * breath + PET_ARC_VOICE_DEG * level
+        green = 0.0
+        pop = 0.0
+        relabel = 0
+    else:
+        p = (state.phase + 1) / PET_CONNECTED_PHASES
+        start = third * (state.spin % PET_SPIN_STEPS) / PET_SPIN_STEPS
+        rest = (third - start) % third
+        # Turn on to the next rest position while unbending, never backwards.
+        spin = start + rest * _ease(p / 0.6)
+        span = PET_ARC_SPAN_DEG
+        green = 0.0 if p >= 1.0 else math.sin(math.pi * min(1.0, p / 0.85)) ** 1.5 * 0.9
+        pop = 0.0 if p >= 1.0 else math.sin(math.pi * _ease((p - 0.45) / 0.55))
+        # A third of a turn lands every arc on its neighbour's home, so it
+        # straightens into that neighbour's slot in the row.
+        relabel = 1 if rest > 1e-6 else 0
+    if m <= 1e-3 and green <= 1e-3 and pop <= 1e-3:
+        return None
+    n = PET_STROKE_POINTS
+    half_w = PET_INDICATOR_HALF_W
+    grow = PET_INDICATOR_MAX_H * 0.62 - PET_INDICATOR_MIN_H
+    out = []
+    for i in range(PET_INDICATOR_BARS):
+        slot = (i + relabel) % PET_INDICATOR_BARS
+        x = (slot - (PET_INDICATOR_BARS - 1) / 2.0) * PET_INDICATOR_SPACING
+        shape = (0.62, 1.0, 0.62)[slot % 3]
+        straight_h = PET_INDICATOR_REST_H[slot] + grow * shape * pop
+        half_len = max(0.0, straight_h / 2.0 - half_w)
+        centre = PET_ARC_HOME_DEG[i % len(PET_ARC_HOME_DEG)] + spin
+        points = []
+        glow = []
+        for k in range(n):
+            u = k / (n - 1)
+            sx, sy = x, -half_len + 2.0 * half_len * u
+            a = math.radians(centre + span / 2.0 - span * u - 90.0)
+            ax, ay = PET_LOOP_R * math.cos(a), PET_LOOP_R * math.sin(a)
+            points.append((sx + (ax - sx) * m, sy + (ay - sy) * m))
+            # Along the arc the head is bright and the tail fades to night.
+            arc_glow = 1.25 - 0.85 * u
+            rest_glow = PET_VOICE_SILENT_GLOW + 0.3 * pop
+            glow.append(rest_glow + (arc_glow - rest_glow) * m)
+        out.append(MorphStroke(tuple(points), tuple(glow), green))
+    return out
 
 
 def _cloud_cover(u: float, v: float, w: float, h: float, puffs) -> float:
@@ -1141,8 +1242,13 @@ def _draw_indicator(
     Drawn on the supersampled pill layer, so the clouds keep their feathered
     edges after the downscale. The frame is RGB (the colour key needs it), so
     "dim" is a mix toward a night blue, which keeps a resting stroke reading
-    as sky instead of turning grey.
+    as sky instead of turning grey. While a call connects the same strokes
+    bend into the loading loop (``morph_strokes``).
     """
+    strokes = morph_strokes(state)
+    if strokes is not None:
+        _draw_morph_strokes(ImageDraw.Draw(layer), cx, cy, pill_h, strokes)
+        return
     width = max(2, int(round(2.0 * pill_h * PET_INDICATOR_HALF_W)))
     tallest = max(width, int(round(pill_h * PET_INDICATOR_MAX_H)))
     step = pill_h * PET_INDICATOR_SPACING
@@ -1160,50 +1266,34 @@ def _draw_indicator(
         layer.paste(stroke, (x0, y0), _stroke_mask(width, h))
 
 
-def _draw_connect_ring(
-    d: ImageDraw.ImageDraw,
-    cx: float,
-    cy: float,
-    pill_h: float,
-    state: PetStripState,
-    backdrop: _Rgb,
-) -> None:
-    """The loading loop (``connect_ring``) on the supersampled pill layer.
+def _morph_colour(glow: float, green: float) -> _Rgb:
+    base = _lerp(PET_INDICATOR_NIGHT, PET_INDICATOR_SKY, min(1.0, glow))
+    if glow > 1.0:
+        base = _lerp(base, PET_INDICATOR_CLOUD, min(1.0, (glow - 1.0) / 0.3) * 0.8)
+    return _lerp(base, PET_CONNECTED_GREEN, green)
 
-    The frame carries no alpha, so the comet's tail fades by mixing its colour
-    into the slot's backdrop, segment by segment, never by transparency.
+
+def _draw_morph_strokes(
+    d: ImageDraw.ImageDraw, cx: float, cy: float, pill_h: float, strokes: list[MorphStroke]
+) -> None:
+    """Strokes bent toward the loop, as thick round-capped polylines.
+
+    Drawn on the supersampled pill layer; the downscale smooths the curve.
+    The frame has no alpha, so the tail fades by its colour sinking toward
+    night blue, never by transparency.
     """
-    ring = connect_ring(state)
-    if ring is None:
-        return
-    head, tail, flare = ring
-    width = max(2, int(round(pill_h * PET_CONNECT_RING_W)))
-    radius = pill_h * PET_CONNECT_RING_R
-    if state.motion == "connected":
-        # The closed ring breathes out a little as it fades.
-        radius *= 1.0 + 0.1 * (1.0 - flare)
-        color = _lerp(backdrop, PET_CONNECTED_RING, flare**0.7)
-        box = (cx - radius, cy - radius, cx + radius, cy + radius)
-        start = head - tail - 90.0
-        d.arc(box, start, start + tail, fill=color, width=width)
-        return
-    box = (cx - radius, cy - radius, cx + radius, cy + radius)
-    d.ellipse(box, outline=PET_CONNECT_TRACK, width=max(1, width // 2))
-    segments = 30
-    span = tail / segments
-    for k in range(segments):
-        t = (k + 1) / segments
-        color = _lerp(PET_CONNECT_TRACK, PET_INDICATOR_SKY, t**1.6)
-        if t > 0.85:
-            color = _lerp(color, PET_INDICATOR_CLOUD, (t - 0.85) / 0.15 * 0.7)
-        # Each segment overlaps the next by a hair so no seam shows.
-        start = head - tail + k * span - 90.0
-        d.arc(box, start, start + span + 1.0, fill=color, width=width)
-    # A round, bright head, so the comet reads as moving, not as a gap.
-    rad = math.radians(head - 90.0)
-    hx, hy = cx + radius * math.cos(rad), cy + radius * math.sin(rad)
-    hr = width * 0.62
-    d.ellipse((hx - hr, hy - hr, hx + hr, hy + hr), fill=PET_INDICATOR_CLOUD)
+    width = max(2, int(round(2.0 * pill_h * PET_INDICATOR_HALF_W)))
+    r = width / 2.0
+    for stroke in strokes:
+        pts = [(cx + x * pill_h, cy + y * pill_h) for x, y in stroke.points]
+        cols = [_morph_colour(g, stroke.green) for g in stroke.glow]
+        # Tail first, so the bright head is painted on top.
+        for k in range(len(pts) - 1, 0, -1):
+            d.line([pts[k], pts[k - 1]], fill=_lerp(cols[k], cols[k - 1], 0.5), width=width)
+            x, y = pts[k]
+            d.ellipse((x - r, y - r, x + r, y + r), fill=cols[k])
+        x, y = pts[0]
+        d.ellipse((x - r, y - r, x + r, y + r), fill=cols[0])
 
 
 def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
@@ -1263,10 +1353,8 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
             # The pet and the Jarvis Bar share one talk control: the three
-            # strokes that rest, follow the voice and run while Jarvis thinks
-            # — ringed by the loading loop while a call is connecting.
-            backdrop = PET_FILL_HOVER if state.hovered == action else PET_FILL
-            _draw_connect_ring(d, cx, cy, h_ss, state, backdrop)
+            # strokes that rest, follow the voice, run while Jarvis thinks
+            # and bend into the loading loop while a call connects.
             _draw_indicator(layer, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)

@@ -11,6 +11,7 @@ orb circles a comet, and the connecting call can still be hung up.
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -142,62 +143,139 @@ def test_no_audio_signal_can_repaint_the_loading_loop() -> None:
             assert look == "connect"
 
 
-def test_the_loading_loop_turns() -> None:
+def _arc_spread(stroke: controls.MorphStroke) -> float:
+    """Distance from the talk control's centre, averaged over a stroke."""
+    return sum((x * x + y * y) ** 0.5 for x, y in stroke.points) / len(stroke.points)
+
+
+def test_the_strokes_themselves_bend_into_the_loop() -> None:
+    """No extra ring: the three strokes become the loading loop."""
+    assert controls.morph_strokes(controls.PetStripState(motion="voice")) is None
+    first = controls.morph_strokes(controls.PetStripState(motion="connect", phase=0))
+    assert first is None  # the very first step is still the plain row
+    bent = controls.morph_strokes(
+        controls.PetStripState(motion="connect", phase=controls.PET_MORPH_STEPS)
+    )
+    assert bent is not None and len(bent) == controls.PET_INDICATOR_BARS
+    for stroke in bent:
+        # Every point of a fully bent stroke lies on the loop's ring.
+        for x, y in stroke.points:
+            assert (x * x + y * y) ** 0.5 == pytest.approx(controls.PET_LOOP_R, abs=1e-6)
+    half = controls.morph_strokes(
+        controls.PetStripState(motion="connect", phase=controls.PET_MORPH_STEPS // 2)
+    )
+    assert half is not None
+    assert 0.0 < controls.morph_amount(
+        controls.PetStripState(motion="connect", phase=controls.PET_MORPH_STEPS // 2)
+    ) < 1.0
+
+
+def test_the_bent_loop_spins_and_repeats_every_third_of_a_turn() -> None:
     frames = {
         controls.render_pet_strip(
             controls.PetStripState(
                 jarvis_bar=True,
                 active=True,
                 motion="connect",
-                phase=controls.indicator_phase("connect", t),
+                phase=controls.PET_MORPH_STEPS,
+                spin=step,
             )
         ).tobytes()
-        for t in (0.0, 0.3, 0.6, 0.9)
+        for step in (0, 3, 6, 9)
     }
     assert len(frames) == 4
-    assert controls.connect_ring(controls.PetStripState(motion="connect")) is not None
-    assert controls.connect_ring(controls.PetStripState(motion="voice")) is None
+    period = controls.PET_SPIN_PERIOD_S
+    assert controls.spin_step(0.15) == controls.spin_step(0.15 + period)
 
 
-def test_the_loop_is_a_closed_cycle_of_cached_frames() -> None:
-    period = controls.PET_CONNECT_PERIOD_S
-    assert controls.indicator_phase("connect", 0.1) == controls.indicator_phase(
-        "connect", 0.1 + period
+def test_a_live_voice_lengthens_the_loop_arcs_without_closing_the_ring() -> None:
+    quiet = controls.morph_strokes(
+        controls.PetStripState(motion="connect", phase=controls.PET_MORPH_STEPS, level=0)
     )
+    loud = controls.morph_strokes(
+        controls.PetStripState(
+            motion="connect", phase=controls.PET_MORPH_STEPS, level=controls.PET_LEVEL_STEPS
+        )
+    )
+    assert quiet is not None and loud is not None
+
+    def span(stroke: controls.MorphStroke) -> float:
+        """The arc's angular length in degrees, from its centreline."""
+        pts = stroke.points
+        length = sum(
+            math.dist(pts[k], pts[k + 1]) for k in range(len(pts) - 1)
+        )
+        return math.degrees(length / controls.PET_LOOP_R)
+
+    assert span(loud[0]) > span(quiet[0])
+    assert span(loud[0]) < 115.0  # three arcs still read as a loop with gaps
 
 
-def test_the_connected_flourish_settles_into_the_resting_strokes() -> None:
-    """Its last step stands where the listening look starts, so nothing jumps."""
-    last = controls.PetStripState(motion="connected", phase=controls.PET_CONNECTED_PHASES - 1)
+def test_the_connected_flourish_flashes_green_and_ends_as_the_plain_row() -> None:
+    mid = controls.morph_strokes(
+        controls.PetStripState(
+            motion="connected", phase=controls.PET_CONNECTED_PHASES // 2, spin=5
+        )
+    )
+    assert mid is not None and max(s.green for s in mid) > 0.5
+    last = controls.PetStripState(
+        motion="connected", phase=controls.PET_CONNECTED_PHASES - 1, spin=5
+    )
+    # The last step is exactly the resting row, so nothing jumps after it.
+    assert controls.morph_strokes(last) is None
     rest = controls.PetStripState(motion="voice", level=0)
-    for (h_last, _g), (h_rest, _r) in zip(
-        controls.indicator_bars(last), controls.indicator_bars(rest), strict=True
-    ):
-        assert h_last == pytest.approx(h_rest, abs=1e-6)
-    _head, tail, flare = controls.connect_ring(last)
-    assert tail == pytest.approx(360.0)
-    assert flare < 0.2
+    assert controls.indicator_bars(last) == controls.indicator_bars(rest)
 
 
-def test_the_flourish_starts_only_when_connect_hands_over_to_the_call() -> None:
-    stamp = controls.connected_stamp
-    assert stamp("connect", "listen", 5.0, None) == 5.0
-    assert stamp("connect", "idle", 5.0, None) is None  # hung up while connecting
-    assert stamp("listen", "connect", 5.0, 4.0) is None  # a rebuild reconnects
-    assert stamp("listen", "think", 5.0, 4.0) == 4.0  # a running flourish keeps its clock
-    assert stamp("idle", "listen", 5.0, None) is None  # no handshake, no flourish
-    assert controls.connected_elapsed(4.0, 4.3) == pytest.approx(0.3)
-    assert controls.connected_elapsed(4.0, 4.01 + controls.PET_CONNECTED_S) is None
+def test_the_flourish_unbends_from_where_the_loop_stopped_spinning() -> None:
+    """The arcs turn on from their handover angle; they never snap back."""
+    for spin in (0, 4, 11):
+        state = controls.PetStripState(motion="connected", phase=0, spin=spin)
+        before = controls.morph_strokes(
+            controls.PetStripState(motion="connect", phase=controls.PET_MORPH_STEPS, spin=spin)
+        )
+        after = controls.morph_strokes(state)
+        assert before is not None and after is not None
+        for a, b in zip(before, after, strict=True):
+            assert _arc_spread(b) == pytest.approx(_arc_spread(a), abs=0.03)
+
+
+def test_the_timeline_bends_spins_and_flourishes_on_the_surface_clock() -> None:
+    tl = controls.ConnectTimeline()
+    assert tl.look("listen", 0.0) is None
+    tl.note_mode("listen", "connect", 1.0)
+    early = tl.look("connect", 1.05)
+    assert early is not None and early.motion == "connect"
+    assert early.phase < controls.PET_MORPH_STEPS
+    later = tl.look("connect", 2.0)
+    assert later is not None and later.phase == controls.PET_MORPH_STEPS
+    tl.note_mode("connect", "listen", 2.0)
+    flourish = tl.look("listen", 2.1)
+    assert flourish is not None and flourish.motion == "connected"
+    assert flourish.spin == controls.spin_step(1.0)
+    assert tl.look("listen", 2.01 + controls.PET_CONNECTED_S) is None
+
+
+def test_hanging_up_while_connecting_plays_no_flourish() -> None:
+    tl = controls.ConnectTimeline()
+    tl.note_mode("listen", "connect", 0.0)
+    tl.note_mode("connect", "idle", 0.5)
+    assert tl.look("idle", 0.6) is None
+    tl.note_mode("idle", "listen", 0.7)
+    assert tl.look("listen", 0.8) is None
 
 
 def test_the_bar_renders_the_flourish_then_the_plain_listening_look() -> None:
     bar = renderer.JarvisBarRenderer()
-    flourish = bar.render(0.0, "listen", 0.0, surface_mode="listen", connected_elapsed=0.2)
+    tl = controls.ConnectTimeline()
+    tl.note_mode("listen", "connect", 0.0)
+    tl.note_mode("connect", "listen", 1.0)
+    flourish = bar.render(
+        0.0, "listen", 0.0, surface_mode="listen", connect_look=tl.look("listen", 1.3)
+    )
     plain = bar.render(0.0, "listen", 0.0, surface_mode="listen")
     assert flourish.tobytes() != plain.tobytes()
-    late = bar.render(
-        0.0, "listen", 0.0, surface_mode="listen", connected_elapsed=controls.PET_CONNECTED_S
-    )
+    late = bar.render(0.0, "listen", 0.0, surface_mode="listen", connect_look=tl.look("listen", 9))
     assert late.tobytes() == plain.tobytes()
 
 
@@ -242,15 +320,3 @@ def test_the_voice_orb_sends_one_ring_out_when_the_call_connects() -> None:
         t += 0.05
         orb.render(t, "listen", 0.0)
     assert orb._connected_age == float("inf")  # noqa: SLF001
-
-
-def test_a_live_voice_still_moves_the_strokes_inside_the_loading_loop() -> None:
-    quiet = controls.PetStripState(motion="connect", phase=0, level=0)
-    loud = controls.PetStripState(motion="connect", phase=0, level=controls.PET_LEVEL_STEPS)
-    for (h_quiet, _g), (h_loud, _l) in zip(
-        controls.indicator_bars(quiet), controls.indicator_bars(loud), strict=True
-    ):
-        assert h_loud >= h_quiet
-    assert max(h for h, _ in controls.indicator_bars(loud)) == pytest.approx(
-        controls.PET_INDICATOR_MAX_H
-    )
