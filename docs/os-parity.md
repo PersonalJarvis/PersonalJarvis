@@ -27,7 +27,9 @@ close or zoom command.
 
 Windows and Linux use the existing resizable frameless desktop window path;
 macOS retains its native frame. Browser-only clients open named tabs without
-controlling the desktop application's windows. Automated tests cover section
+controlling the desktop application's windows. The IDE window action requires
+the native shell so a second browser tab cannot compete for terminal streams.
+Automated tests cover section
 ownership, family reuse, failure handling and the three platform frame options.
 Real Windows WebView2 checks opened Settings, Agents and Agentic IDE windows
 simultaneously against a local test page, reused the Settings window for an API

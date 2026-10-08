@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppWindow, PanelLeftClose } from "lucide-react";
-import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
+import { hasEmbeddedDesktopBridge } from "@/lib/embeddedDesktop";
 import { useT } from "@/i18n";
 import { DETACHABLE_SECTIONS, detachedWindowFor, sectionWindow, windowIdentity } from "@/lib/sectionWindows";
 import { useEventStore } from "@/store/events";
@@ -13,8 +13,22 @@ export function SectionWindowButton() {
   const detached = useEventStore((s) => s.detachedViews);
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [embedded, setEmbedded] = useState(hasEmbeddedDesktopBridge);
+  useEffect(() => {
+    const ready = () => setEmbedded(hasEmbeddedDesktopBridge());
+    window.addEventListener("jarvis-token-ready", ready);
+    window.addEventListener("pywebviewready", ready);
+    ready();
+    return () => {
+      window.removeEventListener("jarvis-token-ready", ready);
+      window.removeEventListener("pywebviewready", ready);
+    };
+  }, []);
   const owner = sectionWindow(section);
   if (!DETACHABLE_SECTIONS.includes(owner)) return null;
+  // Only the native registry can hand off the IDE's single PTY subscription.
+  // A browser tab cannot safely keep a second terminal view alive.
+  if (owner === "agentic-ide" && !embedded) return null;
   const existing = detachedWindowFor(section, detached);
   const label = t(solo ? "topbar.detach_bring_back" : existing ? "topbar.detach_focus" : "topbar.detach_hint");
 

@@ -4,7 +4,7 @@ import { SectionWindowButton } from "./SectionWindowButton";
 import { useEventStore, type SectionId } from "@/store/events";
 
 const bridge = vi.hoisted(() => ({ native: true }));
-vi.mock("@/components/voice/BrowserRealtimeControl", () => ({ hasEmbeddedDesktopBridge: () => bridge.native }));
+vi.mock("@/lib/embeddedDesktop", () => ({ hasEmbeddedDesktopBridge: () => bridge.native }));
 
 beforeEach(() => {
   bridge.native = true;
@@ -14,6 +14,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("section windows", () => {
+  it("waits for the desktop bridge before offering the IDE handoff", () => {
+    bridge.native = false;
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    render(<SectionWindowButton />);
+    expect(screen.queryByRole("button")).toBeNull();
+    bridge.native = true;
+    act(() => window.dispatchEvent(new Event("jarvis-token-ready")));
+    expect(screen.getByRole("button")).toBeTruthy();
+  });
   it.each(["chats", "dictation", "dictionary", "voice-shortcuts", "voice-language", "voice-api-keys"] as SectionId[])(
     "leaves %s in the main window", (activeSection) => {
       useEventStore.setState({ activeSection });

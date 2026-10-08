@@ -258,8 +258,8 @@ export function MainView() {
     isOverlaySection(active) ? "chats" : active,
   );
   if (!isOverlaySection(active) && backgroundSection !== active) setBackgroundSection(active);
-  const displayed = isOverlaySection(active) ? backgroundSection : active;
   const activeDetached = !solo ? detachedWindowFor(active, detachedViews) : undefined;
+  const displayed = isOverlaySection(active) && !activeDetached ? backgroundSection : active;
   const displayedDetached = !solo ? detachedWindowFor(displayed, detachedViews) : undefined;
   const soloOverlay = solo && isOverlaySection(active);
 
@@ -330,11 +330,6 @@ export function MainView() {
               : <SwitchOnActiveSection active={displayed} />}
           </Suspense>
         </ViewErrorBoundary>
-      )}
-      {activeDetached && isOverlaySection(active) && (
-        <div className="jarvis-nav-surface fixed inset-x-0 bottom-0 top-8 z-40">
-          <DetachedViewPlaceholder view={activeDetached} />
-        </div>
       )}
       {isPluginArea(active) && !activeDetached && (
         <ViewErrorBoundary viewName="plugins" resetKey="plugins" onRecover={() => setActive(backgroundSection)}>

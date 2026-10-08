@@ -30,7 +30,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar caption buttons", () => {
   it("offers a section window without theme or restart controls", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
+    useEventStore.setState({ activeSection: "agents" });
     render(<TopBar />);
     expect(screen.queryByTestId("theme-toggle")).toBeNull();
     expect(screen.getByTestId("detach-view-button")).toBeTruthy();
