@@ -18,11 +18,16 @@ exactly the locked set instead:
 4. ``--with`` installs extra test tools (``pytest`` ...) for jobs that keep a
    slim base install. Their versions, and every dependency they pull, are
    constrained to the lock; a tool that is not in the lock is refused.
+5. ``--tools-only`` skips step 2 for the light jobs (static gates, the
+   jarvisctl import smoke) that deliberately avoid the heavy base install:
+   the project goes in without dependencies and only the ``--with`` packages
+   are installed, still pinned through the lock.
 
 Usage::
 
     python scripts/ci/install_locked.py --extra dev --extra telephony
     python scripts/ci/install_locked.py --with pytest --with pytest-asyncio
+    python scripts/ci/install_locked.py --tools-only --with typer --with httpx
     python scripts/ci/install_locked.py --extra dev --dry-run
 """
 
@@ -83,13 +88,22 @@ def install_commands(
     find_links: Sequence[str] = (),
     tools: Sequence[str] = (),
     constraints: Path | None = None,
+    base: bool = True,
 ) -> list[list[str]]:
-    """Locked set with hashes enforced, then the editable project, then tools."""
-    commands = [
-        _uv(python, "pip", "install", "--python", python, "--require-hashes", "-r", str(locked))
-        + list(find_links),
-        _uv(python, "pip", "install", "--python", python, "--no-deps", "-e", str(ROOT)),
-    ]
+    """Locked set with hashes enforced, then the editable project, then tools.
+
+    ``base=False`` leaves the locked set out: only the project (without
+    dependencies) and the lock-pinned tools are installed.
+    """
+    commands = []
+    if base:
+        commands.append(
+            _uv(python, "pip", "install", "--python", python, "--require-hashes", "-r", str(locked))
+            + list(find_links)
+        )
+    elif not tools:
+        raise ValueError("a tools-only install needs at least one tool")
+    commands.append(_uv(python, "pip", "install", "--python", python, "--no-deps", "-e", str(ROOT)))
     if tools:
         if constraints is None:
             raise ValueError("test tools need the lock as constraints")
@@ -133,15 +147,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=[],
         help="extra test tool, pinned through the lock",
     )
+    parser.add_argument(
+        "--tools-only",
+        action="store_true",
+        help="skip the locked base set: the project without deps plus the --with tools",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the commands only")
     args = parser.parse_args(argv)
+    if args.tools_only and (args.extra or not args.tools):
+        parser.error("--tools-only takes --with tools and no --extra")
 
     python = sys.executable
     find_links = pip_options()
     with tempfile.TemporaryDirectory(prefix="locked-install-") as tmp:
         locked = Path(tmp) / "locked.txt"
         constraints = Path(tmp) / "constraints.txt" if args.tools else None
-        _run(export_command(python, locked, extras=args.extra), args.dry_run)
+        if not args.tools_only:
+            _run(export_command(python, locked, extras=args.extra), args.dry_run)
         if constraints is not None:
             _run(export_command(python, constraints, all_extras=True), args.dry_run)
             if not args.dry_run:
@@ -150,7 +172,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"error: not pinned by uv.lock: {', '.join(missing)}", file=sys.stderr)
                     return 1
         for command in install_commands(
-            python, locked, find_links=find_links, tools=args.tools, constraints=constraints
+            python,
+            locked,
+            find_links=find_links,
+            tools=args.tools,
+            constraints=constraints,
+            base=not args.tools_only,
         ):
             _run(command, args.dry_run)
     return 0
