@@ -63,7 +63,7 @@ export function StatusLight({ tone, className }: { tone: Tone; className?: strin
 }
 
 /** Colour of a fill level: ink until it gets tight, then status hues. */
-function fillClass(pct: number): string {
+export function fillClass(pct: number): string {
   if (pct >= 90) return "bg-destructive";
   if (pct >= 75) return "bg-warning";
   return "bg-foreground-secondary";
@@ -222,3 +222,15 @@ export function Field({
 
 export const inputClass =
   "h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base text-foreground placeholder:text-foreground-faint transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring";
+
+/** The icon tile the two all-computers settings share. */
+export function SettingIcon({ children }: { children: ReactNode }) {
+  return (
+    <span
+      aria-hidden
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary [&>svg]:h-4 [&>svg]:w-4"
+    >
+      {children}
+    </span>
+  );
+}

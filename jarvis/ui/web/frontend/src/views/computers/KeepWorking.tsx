@@ -12,6 +12,7 @@ import { Panel } from "@/components/extensions/primitives";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { Computer } from "@/lib/computersApi";
+import { SettingIcon } from "./parts";
 
 const ENDPOINT = "/api/agentic-ide/offload-on-quit";
 
@@ -69,16 +70,18 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
   ];
 
   return (
-    <Panel className="p-5">
-      <div className="flex items-start gap-3">
-        <MoonStar className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+    <Panel className="rounded-xl p-5">
+      <div className="flex items-start gap-4">
+        <SettingIcon>
+          <MoonStar />
+        </SettingIcon>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-base font-semibold text-foreground-strong">{t("computers.keep_title")}</span>
             {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.keep_body")}</p>
-          <div role="radiogroup" aria-label={t("computers.keep_title")} className="mt-4 flex flex-wrap gap-1.5" data-testid="computers-keep-working">
+          <div role="radiogroup" aria-label={t("computers.keep_title")} className="mt-4 inline-flex max-w-full flex-wrap gap-1 rounded-lg border border-border bg-secondary/40 p-1" data-testid="computers-keep-working">
             {options.map((option) => {
               const active = loaded && option.id === value;
               return (
@@ -90,11 +93,11 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
                   disabled={!loaded || saving}
                   onClick={() => void choose(option.id)}
                   className={cn(
-                    "h-8 rounded-md border px-3 text-sm font-medium transition-colors",
+                    "h-7 rounded-md px-3 text-sm font-medium transition-colors",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
                     active
-                      ? "border-accent bg-accent-soft text-foreground-strong"
-                      : "border-border text-muted-foreground hover:border-border-strong hover:text-foreground",
+                      ? "bg-card text-foreground-strong shadow-sm ring-1 ring-inset ring-border-strong"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
                   )}
                 >
                   {option.label}
