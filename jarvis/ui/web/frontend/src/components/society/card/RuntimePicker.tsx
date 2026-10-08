@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { RuntimeMark } from "@/components/society/RuntimeBadge";
 import { useT } from "@/i18n";
 import {
   ensureAgentRuntime,
@@ -50,14 +50,6 @@ function setupState(status: AgentRuntimeStatus | undefined): SetupState {
   if (status.job?.state === "running") return "setting_up";
   if (status.ready) return "ready";
   return status.job?.state === "failed" ? "failed" : "pending";
-}
-
-function RuntimeMark({ runtime, label }: { runtime: AgentRuntime; label: string }) {
-  // The built-in runtime carries the Jarvis app logo, not the user's pet:
-  // here it names a product beside Hermes and OpenClaw, not the companion.
-  return runtime === "jarvis"
-    ? <img src="/jarvis-gigi-256.png" alt="" aria-hidden="true" width={16} height={16} className="size-4 shrink-0 rounded-[4px]" data-testid="runtime-mark-jarvis" />
-    : <ProviderLogo providerId={runtime} label={label} size="sm" />;
 }
 
 /** Ask the backend to set a runtime up; refreshes the status either way. */
