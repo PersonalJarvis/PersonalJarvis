@@ -30,8 +30,10 @@
 # Windows suite, and only a green `CI gate` there lands it. This is what keeps
 # main green when PRs that pass alone break together.
 #
-# Windows: the full sharded suite on merge groups / main / nightly / dispatch;
-# on a pull request only the tests the diff can reach (scripts/ci/select_tests.py).
+# Windows: the full suite in four shards on every run that has the python
+# lane, pull requests included, so a Windows-only failure blocks before the
+# merge instead of turning main red after it (the organisation runs on GitHub
+# Team: 60 concurrent jobs, 5 of them macOS).
 # macOS (~10x runner cost): nightly and manual dispatch, plus the path-gated
 # realtime contract and macOS desktop lanes.
 #
@@ -128,10 +130,10 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
           # A merge-queue group and a push to main classify their lanes like a
-          # pull request (the concurrent-job limit is shared by every agent's
-          # PR), but always run the WHOLE test suite on Linux and Windows: the
-          # proof that lands on main is never narrowed. A merge group's lanes
-          # are classified against the queue base (main or the entry ahead).
+          # pull request (runners are shared by every agent's PR, and macOS
+          # has only five slots), and like a pull request they run the WHOLE
+          # test suite on Linux and Windows. A merge group's lanes are
+          # classified against the queue base (main or the entry ahead).
           # Nightly and manual full runs force everything.
           full=false; macos=false; pr_mode=false; tests_full=false
           case "$EVENT" in
@@ -197,22 +199,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # Linux always runs the whole suite in six shards. Windows runs the
-      # whole suite in four shards on main, nightly, full manual runs and
-      # pipeline changes; on a pull request one runner takes the tests the
-      # diff can reach. A push always runs the python lane's test jobs.
+      # The whole suite on both: six Linux shards, four Windows shards, on
+      # every run with the python lane. Pull requests used to get one Windows
+      # runner with only the tests the diff could reach, which let Windows-only
+      # failures through to main; the 60-job limit makes room for the full
+      # matrix. scripts/ci/select_tests.py stays for agent_land.py's local run.
       - name: Size the test matrices
         id: shards
         shell: bash
         run: |
           echo 'linux_shards=[1,2,3,4,5,6]' >> "$GITHUB_OUTPUT"
-          if [ "${{ steps.mode.outputs.tests_full }}" = "true" ] || [ "${{ steps.lanes.outputs.full }}" = "true" ]; then
-            echo 'windows_shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
-            echo 'tests_full=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'windows_shards=[1]' >> "$GITHUB_OUTPUT"
-            echo 'tests_full=false' >> "$GITHUB_OUTPUT"
-          fi
+          echo 'windows_shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
+          echo 'tests_full=true' >> "$GITHUB_OUTPUT"
 
   gates:
     name: static gates
