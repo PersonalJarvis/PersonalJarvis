@@ -258,7 +258,7 @@ replayed during `session/load` is swallowed because the chat already shows it.
 - **Nothing outlives the turn.** The runtime runs in the turn's process
   container (Job Object on Windows, process group on POSIX). On POSIX its
   descendants are also recorded while it runs, so a shell command it started
-  under `setsid` (Hermes does that for every command) is reaped with the turn.
+  under `setsid` (Hermes does that for every command) is reaped with the turn: the tree is walked while the runtime lives, and every descendant inherits a per-turn `JARVIS_TURN_MARK`, so one that detached between two walks is still found by its environment.
   A frame larger than the 16 MB read limit ends the turn with a plain error.
 
 ## Hermes

@@ -322,6 +322,11 @@ def make_process_tree(name: str) -> ProcessTree:
     return _NoContainment(name)
 
 
+#: Environment variable a tracked process and all its descendants inherit; a
+#: descendant that detached before any snapshot saw it is still found by it.
+TURN_MARKER_ENV = "JARVIS_TURN_MARK"
+
+
 class DescendantTracker:
     """Remember every descendant of a process while it runs; kill survivors at close.
 
@@ -339,9 +344,16 @@ class DescendantTracker:
     """
 
     def __init__(
-        self, pid: int, *, interval_s: float = 1.0, enabled: bool | None = None
+        self,
+        pid: int,
+        *,
+        interval_s: float = 1.0,
+        enabled: bool | None = None,
+        marker: str | None = None,
     ) -> None:
         self.pid = pid
+        #: Value of :data:`TURN_MARKER_ENV` in the tracked process' environment.
+        self.marker = marker
         self.interval_s = interval_s
         self.seen: dict[int, float] = {}
         self._task: Any = None
@@ -397,9 +409,42 @@ class DescendantTracker:
                 killed.append(pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue  # already gone, or not ours to kill: the good outcome
+        killed.extend(self._reap_marked(set(killed)))
         if killed:
             logger.info("Reaped {} detached descendant(s) of pid {}", len(killed), self.pid)
         return killed
 
+    def _reap_marked(self, done: set[int]) -> list[int]:
+        """Kill processes that still carry this turn's marker in their environment.
 
-__all__ = ["GRACE_S", "DescendantTracker", "ProcessTree", "make_process_tree"]
+        A child that called ``setsid`` between two snapshots and whose parent
+        then exited is an orphan no tree walk can reach (CI 2026-10-08); it
+        still inherited the marker. Processes another user owns are skipped.
+        """
+        if not self.marker:
+            return []
+        import os
+
+        import psutil
+
+        killed: list[int] = []
+        for proc in psutil.process_iter():
+            if proc.pid in done or proc.pid == os.getpid():
+                continue
+            try:
+                if proc.environ().get(TURN_MARKER_ENV) != self.marker:
+                    continue
+                proc.kill()
+                killed.append(proc.pid)
+            except (psutil.Error, OSError):
+                continue  # gone, a zombie, or not ours to read: nothing to reap
+        return killed
+
+
+__all__ = [
+    "GRACE_S",
+    "TURN_MARKER_ENV",
+    "DescendantTracker",
+    "ProcessTree",
+    "make_process_tree",
+]

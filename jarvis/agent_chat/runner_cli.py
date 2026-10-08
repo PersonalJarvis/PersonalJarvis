@@ -3630,6 +3630,14 @@ async def _spawn_child(
     plan: CliPlan, cwd: Path, tree: Any, runner: str
 ) -> asyncio.subprocess.Process | _Outcome:
     """Start the CLI as this process's own child (no turn host)."""
+    if plan.acp is not None and plan.env is not None and os.name != "nt":
+        # Every descendant inherits this mark, so the turn's tracker finds a
+        # detached one even when no snapshot saw it (POSIX; Windows: the job).
+        from uuid import uuid4
+
+        from jarvis.core.process_tree import TURN_MARKER_ENV
+
+        plan.env[TURN_MARKER_ENV] = uuid4().hex
     try:
         proc = await asyncio.create_subprocess_exec(
             *plan.argv,
@@ -4083,9 +4091,9 @@ async def _drive_cli(
     # while the runtime runs and reaped with it (Windows: the job object).
     tracker = None
     if plan.acp is not None and tree is not None and not hosted and placement is None:
-        from jarvis.core.process_tree import DescendantTracker
+        from jarvis.core.process_tree import TURN_MARKER_ENV, DescendantTracker
 
-        tracker = DescendantTracker(proc.pid)
+        tracker = DescendantTracker(proc.pid, marker=(plan.env or {}).get(TURN_MARKER_ENV))
         tracker.start()
 
     pump = asyncio.create_task(_pump_stdout())

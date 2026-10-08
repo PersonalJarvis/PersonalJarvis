@@ -150,3 +150,46 @@ async def test_turns_and_setup_jobs_share_one_gate():
     with pytest.raises(TimeoutError):
         async with gate.exclusive(0.1):
             await gate.acquire_turn(0.1)  # no turn starts while setup holds it
+
+
+def test_a_detached_child_no_snapshot_saw_is_found_by_its_turn_mark():
+    """CI 2026-10-08: a setsid child appeared between two snapshots, its parent
+    exited, and the tree walk could no longer reach it. It still carries the
+    turn's inherited environment mark."""
+    import os
+    import uuid
+
+    from jarvis.core.process_tree import TURN_MARKER_ENV
+
+    mark = uuid.uuid4().hex
+    env = {**os.environ, TURN_MARKER_ENV: mark}
+    orphan = subprocess.Popen(  # noqa: S603 — started and ended by this test
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        env=env,
+        start_new_session=os.name != "nt",
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    try:
+        tracker = DescendantTracker(999_999_999, enabled=True, marker=mark)  # parent long gone
+        assert orphan.pid in tracker.close()
+        orphan.wait(timeout=10)
+    finally:
+        if orphan.poll() is None:
+            orphan.kill()
+
+
+def test_an_unmarked_process_is_never_touched():
+    import os
+
+    bystander = subprocess.Popen(  # noqa: S603 — started and ended by this test
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    try:
+        tracker = DescendantTracker(999_999_999, enabled=True, marker="not-this-turn")
+        assert bystander.pid not in tracker.close()
+        assert bystander.poll() is None
+    finally:
+        bystander.kill()
+        bystander.wait(timeout=10)
+    assert os.getpid()  # this process is never a candidate either
