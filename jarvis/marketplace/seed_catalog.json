@@ -470,6 +470,7 @@
     },
     {
       "id": "atlassian",
+      "acceptance": "verified",
       "display_name": "Atlassian (Jira & Confluence)",
       "description": "Jira issues and Confluence pages",
       "category": "Lists & Tasks",
