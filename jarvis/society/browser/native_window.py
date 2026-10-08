@@ -18,6 +18,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 _capture_mta_lock = threading.Lock()
 _capture_mta: tuple[Any, Any] | None = None
+# Zero opacity removes the window from DWM capture. Keep its surface alive
+# at the lowest nonzero opacity, behind the app and without activation.
+_PARKED_ALPHA = 1
 
 
 def _release_capture_mta() -> None:
@@ -178,6 +181,7 @@ class NativeWindow:
         if not self.hwnd:
             raise RuntimeError("The owned Chrome window is unavailable")
         self.input_hwnd = self.hwnd
+        self.park()
         self._event_task = self._loop.create_task(self._consume_window_events())
         self._hook_thread = threading.Thread(
             target=self._watch_windows, name="jarvis-chrome-window-events", daemon=True
@@ -187,7 +191,6 @@ class NativeWindow:
             if not self._hook_ready.wait(2) or self._hook_error:
                 raise RuntimeError("Chrome window events are unavailable") from self._hook_error
             self._start_capture(self.hwnd)
-            self.park()
             self._sync_windows()
         except BaseException:
             self.close()
@@ -298,6 +301,9 @@ class NativeWindow:
             return True
 
         self.user32.EnumWindows(visit, 0)
+        if self._parked:
+            for hwnd in popups:
+                self._hide_from_desktop(hwnd)
         # EnumWindows enumerates front to back; painting uses the reverse order.
         popups.reverse()
         with self.lock:
@@ -333,10 +339,6 @@ class NativeWindow:
                     # Native menus can close between the show event and WGC
                     # startup; the main browser stream remains usable.
                     log.debug("Chrome popup capture could not start", exc_info=True)
-        if self._parked:
-            for hwnd in popups:
-                if self._owned(hwnd) and self.user32.IsWindowVisible(hwnd):
-                    self._hide_from_desktop(hwnd)
 
     def _drain_window_events(self) -> None:
         if self._windows_dirty.is_set():
@@ -344,34 +346,6 @@ class NativeWindow:
             self._sync_windows()
 
     def _start_capture(self, hwnd: int) -> None:
-        if not self._parked:
-            self._create_capture(hwnd)
-            return
-        if not self._owned(hwnd):
-            raise RuntimeError("Chrome window ownership changed before capture")
-        # Windows must create the capture item before desktop transparency is
-        # applied. Keep the no-activate state and stacking order throughout.
-        u = self.user32
-        style = u.GetWindowLongW(hwnd, -20)
-        capture_style = style & ~0x00080080  # WS_EX_LAYERED | WS_EX_TOOLWINDOW
-        u.SetWindowLongW(hwnd, -20, capture_style)
-        if u.GetWindowLongW(hwnd, -20) != capture_style:
-            raise RuntimeError("The Chrome window could not be prepared for capture")
-        try:
-            # Commit cached non-client style changes without moving, resizing,
-            # activating, or changing the window's stacking order.
-            if not u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x37):
-                raise RuntimeError("The Chrome capture style could not be applied")
-            self._create_capture(hwnd)
-        finally:
-            if self._owned(hwnd):
-                try:
-                    self._hide_from_desktop(hwnd)
-                except BaseException:
-                    self._stop_capture(hwnd)
-                    raise
-
-    def _create_capture(self, hwnd: int) -> None:
         capture = self._capture_factory(
             window_hwnd=hwnd,
             cursor_capture=False,
@@ -952,11 +926,12 @@ class NativeWindow:
             self._stop_capture(hwnd)
 
     def _hide_from_desktop(self, hwnd: int) -> None:
-        """Keep an owned window captureable without drawing on the desktop.
+        """Park an owned window at the minimum captureable desktop opacity.
 
         Moving offscreen makes Chrome clamp its native menus onto a monitor.
         Hiding/minimizing stops window capture. Desktop alpha leaves the native
         surface and its coordinates intact; WGC captures the original pixels.
+        Alpha must stay above zero or Windows closes the capture item.
         The owning browser process retains this style until it exits.
         """
         if not self._owned(hwnd):
@@ -984,10 +959,10 @@ class NativeWindow:
         alpha, flags = w.BYTE(), w.DWORD()
         if (
             u.GetLayeredWindowAttributes(hwnd, None, c.byref(alpha), c.byref(flags))
-            and flags.value & 0x2 and alpha.value == 0
+            and flags.value & 0x2 and alpha.value == _PARKED_ALPHA
         ):
             return
-        if not u.SetLayeredWindowAttributes(hwnd, 0, 0, 0x2):  # LWA_ALPHA, fully transparent.
+        if not u.SetLayeredWindowAttributes(hwnd, 0, _PARKED_ALPHA, 0x2):  # LWA_ALPHA
             raise RuntimeError("The Chrome window could not be made transparent")
 
     def park(self) -> None:

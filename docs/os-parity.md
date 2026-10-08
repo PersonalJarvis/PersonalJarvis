@@ -1735,13 +1735,20 @@ sessions and releases it when the worker exits. This prevents the capture
 library's cached WinRT factories from outliving their apartment during manual
 handover. Each window still stops its capture and event threads on close.
 
+The shared turn-host client accepts a replacement reader's output only after
+the host acknowledges attachment. Earlier live frames remain in the host's
+replay buffer, so a fast process cannot displace the first replayed line.
+Failed attachments release their local reader and can retry with the host's
+authoritative process metadata. Socket tests exercise both paths without
+depending on Windows, macOS, or Linux scheduling speed.
+
 A stopped Windows popup capture discards its stale pixels and retries once while
 the same owned popup remains visible. Parked owned windows retain layered and
 no-activate styles, but clear tool-window and app-window flags before creating
 a capture item; a tool-window flag makes native capture reject the target.
-Capture creation temporarily removes the layered style while preserving the
-no-activate state and stacking order, then restores desktop transparency even
-when startup fails. The same sequence applies to popup capture recovery.
+Parked windows use the lowest nonzero opacity before capture starts and
+throughout streaming: zero opacity makes Windows close the capture item.
+They remain non-activating and behind the application, including popup recovery.
 Input waits for the replacement's first
 frame. A repeated failure, failed restart, or unfinished capture cleanup reports
 an error instead of retaining an unusable preview or starting overlapping captures.
