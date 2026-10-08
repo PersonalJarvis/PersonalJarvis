@@ -613,7 +613,11 @@ class OpenAISubscriptionLiveProvider:
         # Optional dependencies are loaded only for an explicitly started call.
         from websockets.asyncio.client import connect
 
-        from ._live_transport import preparing_http_client, websocket_options
+        from ._live_transport import (
+            preparing_http_client,
+            startup_websocket_options,
+            websocket_options,
+        )
 
         offer = str(cfg.offer_sdp or "")
         if not _audio_only_sdp(offer) or len(offer.encode("utf-8")) > _MAX_SDP_BYTES:
@@ -703,6 +707,7 @@ class OpenAISubscriptionLiveProvider:
                 options = await websocket_options()
                 mark("control_tls_ready")
                 attach_started_at = time.monotonic()
+                mark("control_connect_started")
                 socket = await connector(
                     SIDEBAND_BASE + call_id,
                     additional_headers=headers,
@@ -711,6 +716,7 @@ class OpenAISubscriptionLiveProvider:
                     max_size=_MAX_FRAME_BYTES,
                     max_queue=32,
                     **options,
+                    **startup_websocket_options(mark),
                 )
                 log.info(
                     "Subscription Live control attached in %.0f ms.",
