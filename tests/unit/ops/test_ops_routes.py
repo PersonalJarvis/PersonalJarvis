@@ -71,13 +71,16 @@ async def test_source_filter_and_unknown_source(app: FastAPI) -> None:
 
 
 async def test_only_the_priority_marks_are_writable() -> None:
-    """The ledger and agenda only read; the person's marks are the one write.
-    The briefing preview is a POST that writes nothing (proven below)."""
+    """The ledger and agenda only read. Writes: the person's marks and the
+    notification opt-in. The briefing preview writes nothing; the notify
+    simulation only records its own delivery log (both proven below)."""
     for route in ops_routes.router.routes:
         methods = set(getattr(route, "methods", ()))
         path = getattr(route, "path", "")
-        if path == "/api/ops/briefing/preview":
+        if path in ("/api/ops/briefing/preview", "/api/ops/notify/simulate"):
             assert methods == {"POST"}
+        elif path == "/api/ops/notify/settings":
+            assert methods <= {"GET", "HEAD", "PUT"}  # the person's opt-in
         elif methods - {"GET", "HEAD"}:
             assert path.startswith("/api/ops/priorities/"), path
         else:
@@ -234,3 +237,53 @@ async def test_briefing_preview_phrasing_without_a_subscription_is_refused(
 async def test_briefing_preview_rejects_unknown_fields(marks_app: FastAPI) -> None:
     res = await _send(marks_app, "POST", "/api/ops/briefing/preview", json={"send": True})
     assert res.status_code == 422
+
+
+# --- Notifications (simulated Telegram only) -------------------------------------
+
+
+@pytest.fixture
+def notify_app(marks_app: FastAPI, tmp_path: Path) -> FastAPI:
+    from jarvis.ops.notify import NotifyStore
+
+    marks_app.state.ops_notify_store = NotifyStore(tmp_path / "ops.sqlite")
+    return marks_app
+
+
+async def test_notifications_are_off_until_the_person_opts_in(notify_app: FastAPI) -> None:
+    settings = (await _get(notify_app, "/api/ops/notify/settings")).json()
+    assert settings["enabled"] is False and settings["transport"] == "simulated"
+
+    off = (await _send(notify_app, "POST", "/api/ops/notify/simulate", json={})).json()
+    assert off["simulated_messages"] == []
+    assert set(off["counts"]) == {"disabled"}
+    assert (await _get(notify_app, "/api/ops/notify/outbox")).json()["items"] == []
+
+
+async def test_opt_in_simulates_each_notification_once(notify_app: FastAPI) -> None:
+    put = await _send(notify_app, "PUT", "/api/ops/notify/settings", json={"enabled": True})
+    assert put.status_code == 200 and put.json()["enabled"] is True
+
+    first = (await _send(notify_app, "POST", "/api/ops/notify/simulate", json={})).json()
+    assert first["counts"] == {"simulated": 1}  # the daily briefing; nothing else is due
+    assert first["simulated_messages"][0].startswith("Briefing for ")
+
+    second = (await _send(notify_app, "POST", "/api/ops/notify/simulate", json={})).json()
+    assert second["counts"] == {"duplicate": 1} and second["simulated_messages"] == []
+
+    outbox = (await _get(notify_app, "/api/ops/notify/outbox")).json()["items"]
+    assert [(i["kind"], i["status"], i["transport"]) for i in outbox] == [
+        ("daily_briefing", "simulated", "telegram-simulated")
+    ]
+
+
+async def test_notify_settings_are_validated(notify_app: FastAPI) -> None:
+    bad = await _send(
+        notify_app, "PUT", "/api/ops/notify/settings", json={"enabled": True, "kinds": ["sms"]}
+    )
+    assert bad.status_code == 400
+    extra = await _send(
+        notify_app, "PUT", "/api/ops/notify/settings", json={"enabled": True, "chat_id": 1}
+    )
+    assert extra.status_code == 422  # no chat id or token is ever accepted here
+    assert (await _get(notify_app, "/api/ops/notify/settings")).json()["enabled"] is False

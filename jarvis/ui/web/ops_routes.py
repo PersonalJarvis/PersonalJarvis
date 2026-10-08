@@ -14,6 +14,11 @@ an explicit request. ``GET /api/ops/agenda`` ranks the ledger with those marks
 (``jarvis/ops/briefing.py``) and returns it — it sends nothing and schedules
 nothing. Phrasing by a model happens only when asked for, and only on a
 subscription or a local model; the deterministic text is always returned.
+
+``/api/ops/notify/*`` is the OwnerNotifier (``jarvis/ops/notify.py``): off
+until the person opts in, and for now a SIMULATED Telegram transport only —
+``POST /api/ops/notify/simulate`` records what would be sent and opens no
+connection, reads no token and needs no chat id.
 """
 
 from __future__ import annotations
@@ -34,6 +39,14 @@ from jarvis.ops.briefing import (
     phrase_briefing,
 )
 from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
+from jarvis.ops.notify import (
+    NOTIFICATION_KINDS,
+    NotifyStore,
+    OwnerNotifier,
+    SimulatedTelegramTransport,
+    notifications_from_briefing,
+    outbox_dicts,
+)
 from jarvis.ops.priority import NOTE_MAX, OpsPriorityStore, PriorityError, PriorityMark
 from jarvis.ops.ranking import build_agenda
 
@@ -53,17 +66,31 @@ def _ledger(request: Request) -> WorkLedger:
     )
 
 
+def _ops_db_path(request: Request, what: str) -> Path:
+    config = getattr(request.app.state, "config", None)
+    data_dir = getattr(getattr(config, "memory", None), "data_dir", None)
+    if not data_dir:
+        raise HTTPException(status_code=503, detail=f"{what} not available")
+    return Path(data_dir) / PRIORITY_DB_NAME
+
+
 def _priority_store(request: Request) -> OpsPriorityStore:
     """The marks store, created on first use (nothing opens on boot)."""
     state = request.app.state
     store = getattr(state, "ops_priority_store", None)
     if store is None:
-        config = getattr(state, "config", None)
-        data_dir = getattr(getattr(config, "memory", None), "data_dir", None)
-        if not data_dir:
-            raise HTTPException(status_code=503, detail="Priority store not available")
-        store = OpsPriorityStore(Path(data_dir) / PRIORITY_DB_NAME)
+        store = OpsPriorityStore(_ops_db_path(request, "Priority store"))
         state.ops_priority_store = store
+    return store
+
+
+def _notify_store(request: Request) -> NotifyStore:
+    """Opt-in settings and delivery log, created on first use."""
+    state = request.app.state
+    store = getattr(state, "ops_notify_store", None)
+    if store is None:
+        store = NotifyStore(_ops_db_path(request, "Notification store"))
+        state.ops_notify_store = store
     return store
 
 
@@ -225,3 +252,69 @@ async def preview_briefing(request: Request, body: BriefingPreviewBody) -> dict[
             briefing, brain=getattr(request.app.state, "brain", None), config=config
         )
     return {**briefing.to_dict(), "phrasing": phrasing.to_dict()}
+
+
+# ------------------------------------------------------------------ notify
+
+
+@router.get("/notify/settings")
+async def get_notify_settings(request: Request) -> dict[str, Any]:
+    """Whether the person opted in to notifications (off by default)."""
+    return (await _notify_store(request).settings()).to_dict()
+
+
+class NotifySettingsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    kinds: list[str] | None = Field(
+        default=None, description=f"Subset of {', '.join(NOTIFICATION_KINDS)}; default all"
+    )
+
+
+@router.put("/notify/settings")
+async def set_notify_settings(request: Request, body: NotifySettingsBody) -> dict[str, Any]:
+    """The person's explicit opt-in (or opt-out) for notifications."""
+    kinds = body.kinds if body.kinds is not None else list(NOTIFICATION_KINDS)
+    try:
+        saved = await _notify_store(request).save_settings(enabled=body.enabled, kinds=kinds)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return saved.to_dict()
+
+
+class NotifySimulateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = None
+    include_calendar: bool = True
+
+
+@router.post("/notify/simulate")
+async def simulate_notifications(request: Request, body: NotifySimulateBody) -> dict[str, Any]:
+    """Build today's notifications and run them through the SIMULATED Telegram
+    transport: what would be sent, deduplicated and prioritised. Nothing leaves
+    the machine; no model is called."""
+    config = getattr(request.app.state, "config", None)
+    language = normalize_language(
+        body.language or getattr(getattr(config, "ui", None), "language", None)
+    )
+    briefing = await _briefing_composer(request).compose(
+        now=datetime.now().astimezone(),
+        language=language,
+        include_calendar=body.include_calendar,
+    )
+    transport = SimulatedTelegramTransport()
+    report = await OwnerNotifier(_notify_store(request), transport).deliver(
+        notifications_from_briefing(briefing)
+    )
+    return {**report.to_dict(), "simulated_messages": list(transport.sent)}
+
+
+@router.get("/notify/outbox")
+async def notify_outbox(
+    request: Request, limit: int = Query(default=50, ge=1, le=500)
+) -> dict[str, Any]:
+    """What was (simulated as) sent, failed or given up — newest first."""
+    rows = await _notify_store(request).outbox(limit)
+    return {"items": outbox_dicts(rows)}
