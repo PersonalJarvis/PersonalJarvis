@@ -29,11 +29,11 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar caption buttons", () => {
-  it("carries no theme, restart or own-window toggles", () => {
+  it("offers a section window without theme or restart controls", () => {
     useEventStore.setState({ activeSection: "agentic-ide" });
     render(<TopBar />);
     expect(screen.queryByTestId("theme-toggle")).toBeNull();
-    expect(screen.queryByTestId("detach-view-button")).toBeNull();
+    expect(screen.getByTestId("detach-view-button")).toBeTruthy();
     expect(screen.queryByTestId("section-nav-sidebar")).toBeNull();
     expect(screen.queryByRole("button", { name: /restart/i })).toBeNull();
   });

@@ -235,6 +235,7 @@
     "detach": "Own window",
     "detach_hint": "Open this view in its own window",
     "detach_failed": "Could not open a separate window",
+    "reattach_failed": "Could not bring the view back",
     "detached_title": "This view is open in its own window",
     "detached_body": "Keep working there, or bring it back into this window.",
     "detach_focus": "Show window",

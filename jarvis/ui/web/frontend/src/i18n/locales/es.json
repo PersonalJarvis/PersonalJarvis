@@ -235,6 +235,7 @@
     "detach": "Ventana propia",
     "detach_hint": "Abrir esta vista en su propia ventana",
     "detach_failed": "No se pudo abrir una ventana separada",
+    "reattach_failed": "No se pudo devolver la vista a la ventana principal",
     "detached_title": "Esta vista está abierta en su propia ventana",
     "detached_body": "Sigue trabajando allí o tráela de vuelta aquí.",
     "detach_focus": "Mostrar ventana",

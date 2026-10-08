@@ -235,6 +235,7 @@
     "detach": "Eigenes Fenster",
     "detach_hint": "Diese Ansicht in einem eigenen Fenster öffnen",
     "detach_failed": "Eigenes Fenster konnte nicht geöffnet werden",
+    "reattach_failed": "Die Ansicht konnte nicht zurückgeholt werden",
     "detached_title": "Diese Ansicht ist in einem eigenen Fenster geöffnet",
     "detached_body": "Arbeite dort weiter oder hole sie hierher zurück.",
     "detach_focus": "Fenster zeigen",

@@ -4,7 +4,7 @@ import { AppWindow } from "lucide-react";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
-import type { SectionId } from "@/store/events";
+import { useEventStore, type SectionId } from "@/store/events";
 
 /**
  * What a section shows in the MAIN window while it lives in its own detached
@@ -26,15 +26,18 @@ export function DetachedViewPlaceholder({ view }: { view: SectionId }) {
     if (busy) return;
     setBusy(true);
     try {
-      await fetch(path, {
+      const response = await fetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ view }),
       });
+      const body = await response.json() as { ok?: boolean };
+      if (!response.ok || !body.ok) throw new Error("Window operation was rejected");
       // No local state flip: the DetachedViewClosed WS event is the single
       // source of truth for the remount, same as a manual window close.
-    } catch {
-      /* backend unreachable — the buttons stay, the user can retry */
+    } catch (error) {
+      console.warn("Detached window operation failed", error);
+      useEventStore.getState().pushToast("error", t(path.endsWith("reattach") ? "topbar.reattach_failed" : "topbar.detach_failed"));
     } finally {
       setBusy(false);
     }

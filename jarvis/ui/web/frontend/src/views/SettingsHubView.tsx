@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { SectionWindowButton } from "@/components/layout/SectionWindowButton";
 import { isTourEvent } from "@/components/onboarding/tourEvents";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
 import { Loader2, Search, X } from "lucide-react";
@@ -209,6 +210,7 @@ export function SettingsHubView() {
   const t = useT();
   const language = useUiLanguage();
   const active = useEventStore((s) => s.activeSection);
+  const solo = useEventStore((s) => s.solo);
   const setActive = useEventStore((s) => s.setActiveSection);
   const [query, setQuery] = useState("");
   const [searchTarget, setSearchTarget] = useState<string | null>(null);
@@ -302,9 +304,12 @@ export function SettingsHubView() {
         <div className="px-3 pb-1 pt-3">
           {/* No way-out row of its own: the caption's back arrow and Escape
               leave the page, so the heading opens the nav. */}
-          <p className="px-2.5 pb-3 pt-1 font-display text-lg font-semibold text-foreground-strong">
-            {t("nav.settings")}
-          </p>
+          <div className="flex items-center justify-between pb-3">
+            <p className="px-2.5 pt-1 font-display text-lg font-semibold text-foreground-strong">
+              {t("nav.settings")}
+            </p>
+            {!solo && <SectionWindowButton />}
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <input type="text" role="searchbox" data-testid="settings-hub-search" value={query} onChange={(event) => setQuery(event.target.value)}

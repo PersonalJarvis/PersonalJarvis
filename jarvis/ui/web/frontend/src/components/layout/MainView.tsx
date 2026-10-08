@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { ViewErrorBoundary } from "@/components/ViewErrorBoundary";
 import { DetachedViewPlaceholder } from "@/components/layout/DetachedViewPlaceholder";
 import { SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
+import { detachedWindowFor } from "@/lib/sectionWindows";
 // Type-only, so the section's chunk stays split out of the entry bundle.
 import type { AgenticIdeViewProps } from "@/views/AgenticIdeView";
 // The default section is the one view that must be on screen the moment React
@@ -65,6 +66,9 @@ function lazyPropView<P>(
 const SettingsHubDialog = lazyPropView<{ onClose: () => void }>(SETTINGS_HUB_IDS, () =>
   import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubDialog })),
 );
+const SettingsHubView = lazy(() =>
+  import("@/views/SettingsHubView").then((m) => ({ default: m.SettingsHubView })),
+);
 // The Agents section is the society (MASTERPLAN §4.1): stage + agents rail +
 // model cards. The board it replaced is the society's stage until the island
 // lands, loaded by SocietyView itself.
@@ -85,7 +89,7 @@ const isSettingsHub = (section: string) =>
 // replacing it.
 const isOverlaySection = (section: string) => isPluginArea(section) || isSettingsHub(section);
 
-const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAreaChange: (area: PluginArea) => void }>(["plugins", "mcps", "skills"], () =>
+const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; standalone?: boolean; onAreaChange: (area: PluginArea) => void }>(["plugins", "mcps", "skills"], () =>
   import("@/views/PluginsDialog").then((m) => ({ default: m.PluginsDialog })),
 );
 // The prop type is named rather than inferred: inferring it from the loader's
@@ -255,6 +259,9 @@ export function MainView() {
   );
   if (!isOverlaySection(active) && backgroundSection !== active) setBackgroundSection(active);
   const displayed = isOverlaySection(active) ? backgroundSection : active;
+  const activeDetached = !solo ? detachedWindowFor(active, detachedViews) : undefined;
+  const displayedDetached = !solo ? detachedWindowFor(displayed, detachedViews) : undefined;
+  const soloOverlay = solo && isOverlaySection(active);
 
   /*
    * While a coding view lives in a detached solo window, THIS (non-solo)
@@ -269,7 +276,7 @@ export function MainView() {
     detachedViews.some((v) => (CODING_SECTION_IDS as readonly string[]).includes(v));
 
   const stickyActive =
-    (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !codingDetached;
+    (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !codingDetached && !soloOverlay;
   const [stickyMounted, setStickyMounted] = useState(stickyActive);
   useEffect(() => {
     if (stickyActive) setStickyMounted(true);
@@ -280,13 +287,9 @@ export function MainView() {
     if (codingDetached) setStickyMounted(false);
   }, [codingDetached]);
 
-  if (codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed) && !isOverlaySection(active)) {
-    return <DetachedViewPlaceholder view={displayed} />;
-  }
-
   return (
     <>
-      {stickyMounted && (
+      {stickyMounted && !codingDetached && !soloOverlay && (
         <div
           className={cn("h-full w-full", !stickyActive && "hidden")}
           data-testid="sticky-agentic-ide"
@@ -313,7 +316,7 @@ export function MainView() {
           </ViewErrorBoundary>
         </div>
       )}
-      {!stickyActive && (
+      {!stickyActive && !soloOverlay && (
         <ViewErrorBoundary
           viewName={displayed}
           resetKey={displayed}
@@ -322,23 +325,28 @@ export function MainView() {
           {/* Keyed on the active section so switching away from a still-loading
               view cannot leave the previous section's fallback on screen. */}
           <Suspense key={displayed} fallback={<ViewLoadingFallback />}>
-            {codingDetached && (CODING_SECTION_IDS as readonly string[]).includes(displayed)
-              ? <DetachedViewPlaceholder view={displayed} />
+            {displayedDetached
+              ? <DetachedViewPlaceholder view={displayedDetached} />
               : <SwitchOnActiveSection active={displayed} />}
           </Suspense>
         </ViewErrorBoundary>
       )}
-      {isPluginArea(active) && (
+      {activeDetached && isOverlaySection(active) && (
+        <div className="jarvis-nav-surface fixed inset-x-0 bottom-0 top-8 z-40">
+          <DetachedViewPlaceholder view={activeDetached} />
+        </div>
+      )}
+      {isPluginArea(active) && !activeDetached && (
         <ViewErrorBoundary viewName="plugins" resetKey="plugins" onRecover={() => setActive(backgroundSection)}>
           <Suspense fallback={null}>
-            <PluginsDialog area={active} onAreaChange={setActive} onClose={() => setActive(backgroundSection)} />
+            <PluginsDialog standalone={solo} area={active} onAreaChange={setActive} onClose={() => setActive(backgroundSection)} />
           </Suspense>
         </ViewErrorBoundary>
       )}
-      {isSettingsHub(active) && (
+      {isSettingsHub(active) && !activeDetached && (
         <ViewErrorBoundary viewName="settings" resetKey="settings" onRecover={() => setActive(backgroundSection)}>
           <Suspense fallback={null}>
-            <SettingsHubDialog onClose={() => setActive(backgroundSection)} />
+            {solo ? <SettingsHubView /> : <SettingsHubDialog onClose={() => setActive(backgroundSection)} />}
           </Suspense>
         </ViewErrorBoundary>
       )}
