@@ -98,6 +98,8 @@ export function TopBar() {
         <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
       )}
       <SectionNavButtons />
+      {/* Modal hubs carry this action inside their own focus scope. */}
+      {(solo || !["settings", "plugins"].includes(section)) && <SectionWindowButton />}
       <div
         className="pywebview-drag-region min-w-0 flex-1"
         onDoubleClick={() => {
@@ -109,8 +111,6 @@ export function TopBar() {
         <CodingModeBadge />
         <IdeCaptionPanelToggle />
         <WikiCaptionPanelToggle />
-        {/* Modal hubs carry the button inside their focus scope. */}
-        {(solo || !["settings", "plugins"].includes(section)) && <SectionWindowButton />}
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}

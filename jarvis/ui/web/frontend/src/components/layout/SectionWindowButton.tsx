@@ -25,18 +25,29 @@ export function SectionWindowButton() {
     };
   }, []);
   const owner = sectionWindow(section);
-  if (!DETACHABLE_SECTIONS.includes(owner)) return null;
+  if (!solo && !DETACHABLE_SECTIONS.includes(owner)) return null;
   // Only the native registry can hand off the IDE's single PTY subscription.
   // A browser tab cannot safely keep a second terminal view alive.
-  if (owner === "agentic-ide" && !embedded) return null;
+  if (!solo && owner === "agentic-ide" && !embedded) return null;
   const existing = detachedWindowFor(section, detached);
-  const label = t(solo ? "topbar.detach_bring_back" : existing ? "topbar.detach_focus" : "topbar.detach_hint");
+  const label = t(solo ? "topbar.return_to_main" : existing ? "topbar.detach_focus" : "topbar.detach");
+  const hint = solo ? t("topbar.return_to_main_hint") : existing ? label : t("topbar.detach_hint");
 
   async function onClick() {
     if (pending.current) return;
     const native = hasEmbeddedDesktopBridge();
     if (!native) {
       if (solo) {
+        try {
+          const parent = window.opener as Window | null;
+          if (parent && !parent.closed && parent.location.origin === window.location.origin) {
+            parent.focus();
+            window.close();
+            return;
+          }
+        } catch {
+          // The opener may have navigated to another origin. Keep this tab as main.
+        }
         window.location.assign(`/?view=${encodeURIComponent(section)}`);
       } else {
         // Synchronous with the gesture so popup blockers do not eat the tab.
@@ -71,10 +82,11 @@ export function SectionWindowButton() {
 
   const Icon = solo ? PanelLeftClose : AppWindow;
   return (
-    <button type="button" title={label} aria-label={label} disabled={busy}
+    <button type="button" title={hint} aria-label={label} disabled={busy}
       data-testid="detach-view-button" onClick={() => void onClick()}
-      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <Icon aria-hidden className="h-4 w-4" />
+      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+      <Icon aria-hidden className="h-4 w-4 shrink-0" />
+      <span>{label}</span>
     </button>
   );
 }

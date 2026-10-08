@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SectionWindowButton } from "./SectionWindowButton";
 import { useEventStore, type SectionId } from "@/store/events";
+import { DETACHABLE_SECTIONS } from "@/lib/sectionWindows";
 
 const bridge = vi.hoisted(() => ({ native: true }));
 vi.mock("@/lib/embeddedDesktop", () => ({ hasEmbeddedDesktopBridge: () => bridge.native }));
@@ -14,6 +15,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("section windows", () => {
+  it.each([...DETACHABLE_SECTIONS, "profile", "apikeys", "mcps", "skills", "cli-test-hub", "agentic-ide-classic", "chat-workspace"] as SectionId[])(
+    "shows a text button on the detachable %s section", (activeSection) => {
+      useEventStore.setState({ activeSection });
+      render(<SectionWindowButton />);
+      expect(screen.getByRole("button", { name: "Detach window" }).textContent).toBe("Detach window");
+    },
+  );
   it("waits for the desktop bridge before offering the IDE handoff", () => {
     bridge.native = false;
     useEventStore.setState({ activeSection: "agentic-ide" });
@@ -56,10 +64,33 @@ describe("section windows", () => {
     const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
     vi.stubGlobal("fetch", fetcher);
     render(<SectionWindowButton />);
-    fireEvent.click(screen.getByRole("button", { name: "Bring it back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to main window" }));
     await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
     expect(fetcher.mock.calls[0][0]).toBe("/api/window/focus");
     expect(fetcher.mock.calls[1]).toEqual(["/api/window/reattach", expect.objectContaining({ body: '{"view":"settings"}' })]);
+  });
+
+  it("keeps return available after navigating to a section that cannot detach", async () => {
+    window.history.replaceState(null, "", "/?view=dictation&solo=1&window=settings");
+    useEventStore.setState({ activeSection: "dictation", solo: true });
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal("fetch", fetcher);
+    render(<SectionWindowButton />);
+    fireEvent.click(screen.getByRole("button", { name: "Back to main window" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith("/api/window/reattach", expect.objectContaining({ body: '{"view":"settings"}' })));
+  });
+
+  it("keeps the detached window open if main cannot be restored", async () => {
+    window.history.replaceState(null, "", "/?view=agents&solo=1");
+    useEventStore.setState({ activeSection: "agents", solo: true });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: false }) });
+    vi.stubGlobal("fetch", fetcher);
+    render(<SectionWindowButton />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Back to main window" })));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toBe("/api/window/focus");
+    expect(useEventStore.getState().toasts.at(-1)?.message).toBe("Could not bring the view back");
   });
 
   it("keeps the current view usable and reports a rejected operation", async () => {
@@ -82,5 +113,18 @@ describe("section windows", () => {
     fireEvent.click(screen.getByRole("button"));
     expect(open).toHaveBeenCalledWith("/?view=profile&solo=1&window=settings", "jarvis-section-settings");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("closes a browser pop-out and focuses its original main window", () => {
+    bridge.native = false;
+    useEventStore.setState({ solo: true });
+    const focus = vi.fn();
+    vi.stubGlobal("opener", { closed: false, location: { origin: window.location.origin }, focus });
+    const close = vi.spyOn(window, "close").mockImplementation(() => {});
+    render(<SectionWindowButton />);
+    fireEvent.click(screen.getByRole("button", { name: "Back to main window" }));
+    expect(focus).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
+    expect(focus.mock.invocationCallOrder[0]).toBeLessThan(close.mock.invocationCallOrder[0]);
   });
 });

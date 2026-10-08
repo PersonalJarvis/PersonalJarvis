@@ -304,7 +304,7 @@ export function SettingsHubView() {
         <div className="px-3 pb-1 pt-3">
           {/* No way-out row of its own: the caption's back arrow and Escape
               leave the page, so the heading opens the nav. */}
-          <div className="flex items-center justify-between pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-1 pb-3">
             <p className="px-2.5 pt-1 font-display text-lg font-semibold text-foreground-strong">
               {t("nav.settings")}
             </p>
