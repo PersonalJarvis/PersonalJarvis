@@ -17,6 +17,29 @@ function ev(kind: string, payload: Record<string, unknown>, persisted = true): A
 }
 
 describe("agent-chat reduce", () => {
+  it.each(["done", "error", "cancelled"])("preserves the first %s completion through live delivery and replay", (status) => {
+    const start = ev("turn_started", { turn_id: "settled" });
+    const answer = ev("assistant_text", { turn_id: "settled", text: "Fix committed locally." });
+    const finish = ev("turn_finished", { turn_id: "settled", status, duration_ms: 1993344, usage: { output_tokens: 12 }, cost_usd: 0.01 });
+    const late = ev("turn_finished", { turn_id: "settled", status: "error", duration_ms: 3604992, usage: {}, error: "claude-cli did not finish within 3600 s." });
+    const events = [start, answer, finish, late];
+    const live = events.reduce(reduceEvent, EMPTY_TIMELINE);
+    const replay = reduceEvents(EMPTY_TIMELINE, events);
+    expect(live).toEqual(replay);
+    expect(live.items[0]).toMatchObject({ status, error: null, durationMs: 1993344, usage: { output_tokens: 12 }, costUsd: 0.01 });
+    expect(live.lastSeq).toBe(late.seq);
+  });
+
+  it("shows a real timeout even when partial text sounds final", () => {
+    const partial = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "partial" }),
+      ev("assistant_text", { turn_id: "partial", text: "Fix committed locally." }),
+    ]);
+    expect(runningTurn(partial)?.id).toBe("partial");
+    const failed = reduceEvent(partial, ev("turn_finished", { turn_id: "partial", status: "error", error: "claude-cli did not finish within 3600 s." }));
+    expect(failed.items[0]).toMatchObject({ status: "error", error: "claude-cli did not finish within 3600 s." });
+  });
+
   it("folds a full turn: user line, deltas into one text block, tool call + result, finish", () => {
     const tl = reduceEvents(EMPTY_TIMELINE, [
       ev("user_message", { text: "hi" }),

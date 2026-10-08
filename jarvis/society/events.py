@@ -22,6 +22,7 @@ from jarvis.missions.ids import uuid7_str
 
 __all__ = [
     "AgentApprovalMode",
+    "AgentRuntime",
     "AgentState",
     "ApprovalState",
     "BrowserMode",
@@ -126,6 +127,19 @@ class AgentApprovalMode(StrEnum):
     BYPASS = "bypass"
     ASK = "ask"
     ALWAYS_ASK = "always_ask"
+
+
+class AgentRuntime(StrEnum):
+    """The agent loop that executes an agent's turns (``docs/agent-runtimes.md``).
+
+    ``jarvis`` = Jarvis' own brain or the CLI seat the model picks; ``hermes``
+    and ``openclaw`` = those external agents, driven over ACP with the same
+    briefing, memory and Jarvis tools.
+    """
+
+    JARVIS = "jarvis"
+    HERMES = "hermes"
+    OPENCLAW = "openclaw"
 
 
 class BrowserMode(StrEnum):

@@ -49,8 +49,21 @@ for an approval and a blue dot for news since it was last opened.
 - **Under the composer:** a strip that says where the agent works — the
   current checkout or a fresh git worktree for a new thread — and on which
   branch (the base of the worktree, or the branch to switch the checkout to).
-- Changes, files, git and terminals live in the IDE's side panel, as in the
-  grid layout.
+- **Caption buttons:** at the right end of the window caption, beside the
+  window buttons. In threads there are two: the terminal drawer, then the side
+  panel. The grid has only the side panel button, since its panes are
+  terminals already. A shut side panel leaves no rail on the window edge. Its
+  button gets an amber dot while an agent of the active workspace waits for
+  the person.
+- **Terminal drawer:** plain shells under the conversation, in the open
+  thread's folder, one tab each. The first press starts the folder's first
+  shell, the next one hides the drawer without ending anything, and the top
+  edge drags to resize. Threads that share a folder share its shells, and they
+  keep running while the person moves between threads or back to the grid.
+  Closing a tab ends that shell, and the drawer goes down with the folder's
+  last one.
+- Changes, files, git and more terminals live in the IDE's side panel, as in
+  the grid layout.
 
 ## Questions, approvals and plans
 
@@ -69,6 +82,25 @@ recommendations. **Keep planning** closes a plan card so the person can type
 what to change. A card nobody answered closes when the person sends another
 message instead. Cards are rebuilt from the session's event log, so they
 survive reopening the thread and restarting the app.
+
+## Threads a Jarvis agent starts
+
+A Jarvis agent can start a thread too ("let Opus 5.5 build this in the
+website project"). It picks the coding agent, model and folder the person
+named — looking into the folder first when it needs context — and writes the
+brief itself. The thread then appears under its project like any other; the
+agent's messages carry its name above the bubble, so the person sees exactly
+what it asked and what came back, and can step in at any time.
+
+The agent's own chat shows a line that opens the thread. When a turn the
+agent started finishes, asks a question, presents a plan or waits for an
+approval, the agent is woken with the result: it checks the work, answers the
+question or plan card, sends a follow-up, and tells the person the outcome.
+A thread an agent opens runs with full access (bypass permissions), so it does
+not stop for approvals; the person can lower that in the composer. A turn the
+person types into the thread is theirs and wakes no agent. After 25 automatic
+updates for one thread the agent stops following it until the person writes
+in the agent's chat again.
 
 ## Restarts do not stop a thread
 
@@ -102,6 +134,8 @@ attach to the host. Logs: `logs/turn_host.log` in the Jarvis data folder.
 ## Platforms
 
 Nothing in the thread layout is OS-specific: paths are compared
-case-insensitively only for Windows drive paths and the git calls run the same
-`git` everywhere. The layout choice and the last agent pick are kept in the
-browser's storage and fall back to defaults when storage is blocked.
+case-insensitively only for Windows drive paths, the terminal drawer opens the
+platform's default shell, and the git calls run the same `git` everywhere. The
+layout choice, the last agent pick and the drawer's height are kept in the
+browser's storage and fall back to defaults when storage is blocked. Drawer
+shells are never kept: a reload does not restart them.

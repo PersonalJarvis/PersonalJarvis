@@ -6,7 +6,7 @@ import { useReducedMotion } from "framer-motion";
 import companionModels from "@/assets/society/companions/companions.glb";
 import gigiModel from "@/assets/society/companions/gigi.glb";
 import accessoryModels from "@/assets/society/companions/accessories.glb";
-import { ACCESSORY_CATALOG, resolveFill, wornAccessories } from "./accessories";
+import { ACCESSORY_CATALOG, resolveFill, slotDepthM, wornAccessories } from "./accessories";
 import { companionEyeColors, type CompanionAppearance } from "./appearance";
 import { advancePetTrail, createPetTrail, petDisplayPosition, recordOwner, type PetTrail, type TrailPoint } from "./trail";
 
@@ -27,7 +27,8 @@ export function CompanionModel({ appearance, lead = false }: { appearance: Compa
     const materials: MeshStandardMaterial[] = [];
     if (!lead) {
       const ink = companionEyeColors(appearance.color);
-      const body = new MeshStandardMaterial({ color: appearance.color, roughness: 0.82 });
+      // A soft vinyl sheen lets the light show the volume of each body.
+      const body = new MeshStandardMaterial({ color: appearance.color, roughness: 0.62 });
       const eyes = new MeshStandardMaterial({ color: ink.eye, roughness: 1 });
       const shine = new MeshStandardMaterial({ color: ink.highlight, roughness: 1 });
       materials.push(body, eyes, shine);
@@ -95,11 +96,14 @@ function CompanionAccessories({ appearance }: { appearance: CompanionAppearance 
     const meta = ACCESSORY_CATALOG.shapes[appearance.shape];
     const unit = 1 / (meta.bottom - meta.top);
     for (const item of wornAccessories(appearance.accessories)) {
-      const free = scene.getObjectByName(`acc_${item.id}`);
+      // Items worn on the body come pre-fitted to each silhouette's curved surface.
+      const fitted = scene.getObjectByName(`acc_${item.id}__${appearance.shape}__fit`);
+      const free = fitted ? undefined : scene.getObjectByName(`acc_${item.id}`);
+      if (fitted) group.add(fitted.clone(true));
       if (free) {
         const [x, y, k] = meta.anchors[item.slot];
         const node = free.clone(true);
-        node.position.set((x - 20) * unit, (meta.bottom - y) * unit, ACCESSORY_CATALOG.slotDepth[item.slot] * ACCESSORY_CATALOG.frontDepthM);
+        node.position.set((x - 20) * unit, (meta.bottom - y) * unit, slotDepthM(appearance.shape, item.slot));
         node.rotation.set(0, 0, 0);
         node.scale.setScalar(k * (item.scale ?? 1) * unit);
         group.add(node);
@@ -125,7 +129,7 @@ function CompanionAccessories({ appearance }: { appearance: CompanionAppearance 
     for (const item of wornAccessories(appearance.accessories)) {
       const [x, y, k] = meta.anchors[item.slot];
       const size = k * (item.scale ?? 1) * unit;
-      const depth = ACCESSORY_CATALOG.slotDepth[item.slot] * ACCESSORY_CATALOG.frontDepthM;
+      const depth = slotDepthM(appearance.shape, item.slot);
       item.parts.forEach((part, index) => {
         if (part.t !== "smoke") return;
         plumes.push({

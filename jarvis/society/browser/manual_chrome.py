@@ -274,7 +274,17 @@ def _owned_windows(pid: int) -> list[int]:
     return windows
 
 
-async def _wait_for_window(pid: int, *, timeout: float = 15.0) -> None:  # noqa: ASYNC109
+#: How long the installed Chrome may take to show its first window. A cold
+#: first start on a fresh machine (new profile, first-run setup, antivirus
+#: scanning the binary) has taken longer than 15 s, which failed the start with
+#: a bare TimeoutError well inside the caller's 90 s start budget
+#: (``_START_TIMEOUT_S`` in live.py, CI run 37674355475).
+_WINDOW_ARRIVAL_TIMEOUT_S = 60.0
+
+
+async def _wait_for_window(
+    pid: int, *, timeout: float = _WINDOW_ARRIVAL_TIMEOUT_S  # noqa: ASYNC109
+) -> None:
     watcher = _WindowArrival(pid)
     watcher.thread.start()
     try:
@@ -282,9 +292,12 @@ async def _wait_for_window(pid: int, *, timeout: float = 15.0) -> None:  # noqa:
             raise RuntimeError("Chrome startup window listener did not start")
         if watcher.error:
             raise RuntimeError("Chrome startup window listener failed") from watcher.error
-        async with asyncio.timeout(timeout):
-            while not await asyncio.to_thread(_owned_windows, pid):
-                await watcher.events.get()
+        try:
+            async with asyncio.timeout(timeout):
+                while not await asyncio.to_thread(_owned_windows, pid):
+                    await watcher.events.get()
+        except TimeoutError as exc:
+            raise TimeoutError(f"Chrome showed no window within {timeout:.0f} s") from exc
     finally:
         await asyncio.to_thread(watcher.stop)
 
@@ -333,10 +346,16 @@ class PlainChrome:
                 raise RuntimeError("The login browser is already open; close it before reopening")
             _validate_executable(self.profile, Path(self.executable))
             # Keep spawn and ownership assignment atomic against cancellation.
+            # Chrome Sync installs the person's extensions into this profile;
+            # an AI browser extension would let outside tools drive the shared
+            # logged-in browser, so the sign-in window runs extension-free like
+            # the agent browser. The browser worker ends Chrome without a clean
+            # exit, which must not greet each sign-in with a restore prompt.
             self.process = subprocess.Popen(  # noqa: ASYNC220
                 [self.executable, f"--user-data-dir={self.profile.resolve()}", "--new-window",
                  "--no-first-run", "--disable-background-mode",
-                 "--disable-backgrounding-occluded-windows", "chrome://newtab/"],
+                 "--disable-backgrounding-occluded-windows", "--disable-extensions",
+                 "--hide-crash-restore-bubble", "chrome://newtab/"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=self.creationflags,
             )

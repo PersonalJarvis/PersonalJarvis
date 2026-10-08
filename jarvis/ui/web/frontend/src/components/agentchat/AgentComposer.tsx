@@ -668,6 +668,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         analyzing={files.analyzing}
         onRemove={files.remove}
         previews={files.previews}
+        // The picture alone, as in the thread composer: a card with the file
+        // name and a "not described" receipt crowded a strip whose only job
+        // is to show what goes in with the message (maintainer, 2026-10-06).
+        look="thumbnail"
       />
       <ComposerTypeahead
         anchorRef={cardRef}

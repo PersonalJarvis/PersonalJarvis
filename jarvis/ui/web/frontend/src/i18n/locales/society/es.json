@@ -219,6 +219,7 @@
       "model_group_chatgpt": "Suscripción de ChatGPT / Codex",
       "model_group_grok": "Suscripción de Grok",
       "model_group_google": "Suscripción de Google / Gemini",
+      "model_extra_usage": "se cobra como uso adicional",
       "model_scope": "Se aplica a los próximos mensajes y rutinas de este agente. Se conserva el historial.",
       "model_busy": "Espera a que termine la respuesta antes de cambiar el modelo.",
       "model_save_failed": "No se pudo guardar el modelo",
@@ -675,6 +676,12 @@
       "repair": "Reparar navegador",
       "off": "Navegador apagado",
       "off_hint": "El navegador solo se inicia cuando {0} lo necesita.",
+      "moved": "El navegador compartido está abierto ahora para {0}. Solo puede estar abierto para un agente a la vez.",
+      "moved_status": "Abierto para {0}",
+      "open_here": "Abrir aquí",
+      "waiting_for": "Esperando a {0}",
+      "busy_task": "{0} está usando el navegador compartido para una tarea. Se abrirá aquí en cuanto {0} termine.",
+      "stop_holder": "Detener la tarea de {0}",
       "open": "Abrir navegador"
     },
     "mars": {

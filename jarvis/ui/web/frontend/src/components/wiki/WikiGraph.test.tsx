@@ -162,7 +162,10 @@ describe("WikiGraph", () => {
     const nodeLabel = props.nodeLabel as (node: Record<string, unknown>) => string;
     const linkLabel = props.linkLabel as (link: Record<string, unknown>) => string;
 
-    expect(props.linkDirectionalArrowLength).toBe(4);
+    // Arrows are drawn only on the focused page's links; at rest the map
+    // carries none, and the open page's links carry them.
+    const arrowLength = props.linkDirectionalArrowLength as (link: unknown) => number;
+    expect(arrowLength(graphData.links[0])).toBe(0);
     expect(props.linkDirectionalArrowRelPos).toBe(0.82);
     expect(nodeLabel(graphData.nodes[0])).toContain("Example Parent (entity) · 1 backlink");
     expect(linkLabel(graphData.links[0])).toContain(

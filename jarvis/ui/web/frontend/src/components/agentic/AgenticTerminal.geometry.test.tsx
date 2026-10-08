@@ -6,6 +6,7 @@ const harness = vi.hoisted(() => ({
   terminal: null as Terminal | null,
   handlers: null as null | {
     onOutput(text: string): void;
+    onReplay(text: string, awaitRepaint?: boolean): void;
     onGeometry(size: { cols: number; rows: number }): void;
   },
   size: { cols: 80, rows: 24 },
@@ -48,7 +49,9 @@ vi.mock("@/lib/terminalFont", async (importOriginal) => ({
   syncTerminalFont: () => () => undefined,
 }));
 vi.mock("./paneSocket", () => ({
-  openPaneSocket: (_options: unknown, handlers: typeof harness.handlers) => {
+  openPaneSocket: (options: { cols: number; rows: number }, handlers: typeof harness.handlers) => {
+    // The real socket reads the handshake size into its URL on connect.
+    void [options.cols, options.rows];
     harness.handlers = handlers;
     return { send: () => true, close() {} };
   },
@@ -139,6 +142,72 @@ describe("pane geometry in the PTY output stream", () => {
     });
     expect(screenRows(term)[2]).toBe("Working");
     expect(screenRows(term)[3]).toBe("Tip: keep reading");
+    view.rerender(pane(true));
+    await act(async () => { await flush(term); });
+    expect(screenRows(term)[2]).toBe("Working");
+  });
+
+  /*
+   * Reported 2026-10-06: the window reloaded while the IDE was on the thread
+   * layout, so every pane of the grid behind it mounted in a display:none box
+   * and kept xterm's constructed 80x24. The server replays the agent's screen
+   * before it reports the size that screen was drawn at, and the replay was
+   * parsed into those 24 rows: every row below them landed on the last one,
+   * the status line over the prompt box. The size report then grew the grid to
+   * the agent's 40 rows with blank rows underneath, and nothing asked the
+   * agent to paint again, because the PTY already had that size.
+   */
+  const tallFrame = "\x1b[?1049h\x1b[2J\x1b[H" +
+    Array.from({ length: 36 }, (_, i) => `\x1b[${i + 1};1Hline ${i + 1}`).join("") +
+    "\x1b[38;1H" + "-".repeat(68) + "\x1b[39;1H> prompt\x1b[40;1H  footer";
+
+  it.each([
+    ["mounted off the stage", false],
+    ["in a window too small to measure", true],
+  ] as const)("draws a replay at the agent's size when the pane mounted unmeasured (%s)", async (_label, active) => {
+    const { Terminal: RealTerminal } = await vi.importActual<typeof import("@xterm/xterm")>("@xterm/xterm");
+    const reference = new RealTerminal({ cols: 68, rows: 40, allowProposedApi: true });
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+    const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(0);
+    try {
+      await flush(reference, tallFrame);
+      const view = render(pane(active));
+      const term = harness.terminal!;
+      term.options.windowsPty = { backend: "conpty" };
+      expect([term.cols, term.rows]).toEqual([80, 24]);
+      await act(async () => {
+        // The order the server sends them in: the screen, then its size.
+        harness.handlers!.onReplay(tallFrame);
+        harness.handlers!.onGeometry({ cols: 68, rows: 40 });
+        await flush(term);
+      });
+      expect([term.cols, term.rows]).toEqual([68, 40]);
+      expect(screenRows(term)).toEqual(screenRows(reference));
+
+      // Taking the stage at the same size keeps the screen as it is.
+      width.mockReturnValue(800);
+      height.mockReturnValue(500);
+      harness.size = { cols: 68, rows: 40 };
+      view.rerender(pane(true));
+      await act(async () => { await flush(term); });
+      expect(screenRows(term)).toEqual(screenRows(reference));
+    } finally {
+      reference.dispose();
+    }
+  });
+
+  it("keeps a measured hidden pane's old output at the size it already holds", async () => {
+    // Only a grid that never had a real size waits for the agent's: a pane
+    // that was measured drains what it holds first, then follows.
+    const view = render(pane(false));
+    const term = harness.terminal!;
+    await act(async () => {
+      harness.handlers!.onReplay(oldFrame);
+      harness.handlers!.onGeometry({ cols: 40, rows: 48 });
+      await flush(term);
+    });
+    expect([term.cols, term.rows]).toEqual([40, 48]);
+    expect(screenRows(term)[2]).toBe("Working");
     view.rerender(pane(true));
     await act(async () => { await flush(term); });
     expect(screenRows(term)[2]).toBe("Working");

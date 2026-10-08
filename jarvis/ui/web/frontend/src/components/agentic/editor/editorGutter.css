@@ -24,3 +24,26 @@
 .monaco-editor .jarvis-gutter-deleted-below::before {
   bottom: -4px;
 }
+
+/* The diff overview's "you are here" box. Monaco fills the whole 30 px column
+   with a grey slab; drawn as the app's thin pill thumb instead, so the change
+   marks in both lanes stay visible beside it. */
+.monaco-diff-editor .diffOverview .diffViewport,
+.monaco-diff-editor .diffOverview .diffViewport:hover,
+.monaco-diff-editor .diffOverview .diffViewport:active {
+  background: transparent;
+}
+.monaco-diff-editor .diffOverview .diffViewport::after {
+  content: "";
+  position: absolute;
+  inset: 2px auto 2px 12px;
+  width: 6px;
+  border-radius: 999px;
+  background: var(--vscode-scrollbarSlider-background);
+}
+.monaco-diff-editor .diffOverview .diffViewport:hover::after {
+  background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+.monaco-diff-editor .diffOverview .diffViewport:active::after {
+  background: var(--vscode-scrollbarSlider-activeBackground);
+}

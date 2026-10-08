@@ -1,15 +1,15 @@
 # Personal Jarvis agent rules
 
-The binding rules for every coding agent in this repo — Claude Code, Codex,
-Gemini CLI, whichever. This is the whole rulebook; there is no longer a fuller
-version to read first. Write everything here so it addresses ANY agent.
+The binding rules for every coding agent in this repo: Claude Code, Codex,
+Gemini CLI, whichever. Write everything here so it addresses ANY agent.
 
 **Source of truth:** `AGENTS.md` is the only instructions file; every agent
 reads it directly. Never add a `CLAUDE.md`, `.claude/CLAUDE.md` or
 `CLAUDE.local.md`: Claude Code then reads that file INSTEAD of this one
 (`scripts/ci/check_agents_md.py` blocks a tracked one). A Claude pane on a
 Jarvis account config dir sees `~/.claude/CLAUDE.md` as such a parent-dir file,
-so its Project instructions setting must be `claude-md-and-agents-md`.
+so its user settings need the agents-md built-in plugin's `instructionFiles`
+option set to `claude-md-and-agents-md`.
 Edit `.agents/{agents,skills}/`; `.claude/{agents,skills}/` are compatibility
 copies because Claude Code does not discover subagents or skills under
 `.agents/`, and `.codex/agents/*.toml` is generated from `.agents/agents/*.md`
@@ -54,6 +54,12 @@ These cost real bugs. Nothing catches them but you.
   machine can connect for two minutes. Frontend goes through
   `lib/connectBudget.ts`; a poll reuses a client from `jarvis/core/http_pool.py`.
   (AP-33)
+- **No invisible browsers.** UI checks, screenshots and scraping run in a tab of
+  the user's real Chrome: never a headless/private Chrome, Playwright, Puppeteer
+  or Selenium launch. Hidden Chromes once pinned the CPU at 100 % for hours. If
+  the real browser is unreachable, report the visual check as unverified. Only
+  a render job whose output is a file (video, HTML→PNG) may run headless: one
+  at a time, and kill its whole process tree when it ends.
 - **No Windows Service** — SYSTEM has no microphone. (AP-17)
 - **Never gate a CI check on `isinstance` against an unpinned library.** Green
   locally, red in CI on the next release. Discriminate by capability. (AP-28)
@@ -61,7 +67,8 @@ These cost real bugs. Nothing catches them but you.
   fix is `npm run build` in `jarvis/ui/web/frontend/` and nothing else; open
   windows reload themselves (`src/lib/bundleWatch.ts`). Never end a frontend
   change by asking for a restart.
-- **Read `MEMORY.md`** (`~/.claude/projects/.../memory/`) before larger decisions.
+- **Check your project memory before larger decisions** where your CLI keeps
+  one (Claude Code loads its `MEMORY.md` index automatically).
 
 ## 2. What the product is
 
@@ -97,12 +104,13 @@ Describe our features and interactions directly. Do not present another product
 as a design reference or say our UI or behavior is inspired by, modeled on,
 copied from, or made to match it. Preserve required copyright, license and
 attribution notices and factual dependency, integration and compatibility
-references; this rule never authorizes concealing code provenance.
+references; this rule never authorizes concealing code provenance. Competitor
+research stays out of the repo. `scripts/ci/check_design_references.py` checks
+staged lines at commit time and the whole tree in CI.
 
-**Proportionality.** The agent owns the validation plan and chooses the smallest
-set of checks that can detect a plausible regression from the diff. State the
-scope, what was run, and what remains unverified in the PR. Use these tiers as
-guidance, not as automatic checklists:
+**Proportionality.** You own the validation plan: the smallest set of checks
+that can detect a plausible regression from the diff. State the scope, what
+ran, and what remains unverified in the PR. Tiers are guidance, not checklists:
 
 - **T1 local:** for copy, styling, docs, one view, or an isolated refactor, run
   focused checks for that surface. A frontend change still needs a production
@@ -116,14 +124,12 @@ guidance, not as automatic checklists:
   behavior changes. A new provider or credential path needs a fresh-install,
   one-key proof; a schema-only change does not automatically owe that test.
 
-Escalate evidence when risk crosses a boundary, not because a label is
-ambiguous. Do not claim unrun platforms, devices, or providers were verified.
-If a required check is red on the exact base commit, compare failure identities
-and causes under the same environment. A failure already present on base may
-be reported as a separate backlog item; a new failure or an unexplained change
-in a failing test blocks completion. Counts alone are not a comparison. Do not
-silence a required check, raise a baseline, or bypass branch protection to make
-a PR appear green.
+Escalate evidence when risk crosses a boundary. Never claim an unrun platform,
+device or provider was verified. A check red on the exact base commit: compare
+failure identities and causes in the same environment (counts are not a
+comparison); a failure already on base is a backlog item, a new or changed
+failure blocks completion. Never silence a required check, raise a baseline,
+or bypass branch protection to look green.
 
 ## 3. Architecture you must respect
 
@@ -147,20 +153,10 @@ Two the gates catch but models still write: never swallow an exception without
 logging, re-raising, or saying why silence is right (AP-30), and never add a
 config field nothing reads (AP-31).
 
-Marketplace plugin auth follows the browser-auth standard
-(`docs/marketplace/browser-auth-standard.md`): a normal user connects with one
-browser approval and zero developer setup; the publisher provisions the shared
-OAuth client (`publisher_<family>_oauth_*` secrets), never the end user. A new
-auth-bearing plugin is not releasable while its default path needs pasted
-tokens, user-supplied client IDs/secrets, or self-registered developer apps —
-own-client stays an expert override only. Every catalog change keeps
-`docs/marketplace/plugin-auth-audit.md` and `scripts/ci/check_plugin_auth_contract.py`
-green; provider error bodies never reach logs, UI, or storage (AP-34).
-Keep `docs/marketplace/plugin-e2e-audit.json` backed by real browser evidence;
-new built-ins require PASS, and a plugin ships as `acceptance: "verified"` only
-with a completed PASS; every other one ships labeled "preview" in the app.
-Release qualification runs the auth gate with `--require-e2e-pass`, which also
-makes every PASS ship as verified. BLOCKED never means provider-verified or complete.
+Marketplace plugin auth: before touching a plugin or the catalog, read
+`docs/marketplace/browser-auth-standard.md` (one browser approval, zero
+developer setup, publisher-provisioned OAuth client, verified/preview
+acceptance from real browser evidence). BLOCKED never means verified.
 
 The rest of the register, one line each, because code comments cite these
 numbers: never hardcode an Anthropic/Claude client (AP-6); keep awareness and
@@ -172,8 +168,7 @@ it (AP-14); new `[phase6.*]` / `[memory.wiki.*]` keys need
 wake upgrade only on the out-of-process inference probe, never on CUDA presence
 (AP-25); verify a wake word on audio energy and candidate shape, never on
 transcript content (AP-27); a WebGL scene releases its context and survives
-losing it (AP-32); a reconnect without jitter and without a shared connect
-budget is an outage of the whole machine, not an app bug (AP-33); a macOS
+losing it (AP-32); a reconnect pays the jittered connect budget (AP-33, §1); a macOS
 feature asks the OS at first use, from a user gesture, through
 `jarvis/platform/permission_service.py` — no preflight refuses before the OS was
 asked, nothing is asked at launch, nothing acts without a live grant, an agent
@@ -182,11 +177,9 @@ Detail and history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
-**World and character art:** follow `docs/agent-society/game-art-pipeline.md`
-and the `game-art-pipeline` skill before creating/redesigning game assets.
-Author a small reference in Blender and verify it in the actual runtime before
-rolling its style out across asset families; no separate user approval of the
-reference is required. Existing runtime contracts stay binding.
+**World and character art:** use the `game-art-pipeline` skill
+(`docs/agent-society/game-art-pipeline.md`) before creating or redesigning
+game assets.
 
 Commit each finished step (Conventional Commits). Use the coding agent's
 standard Git workflow: do not artificially leave completed work local, and do
@@ -205,9 +198,9 @@ tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
 asked — an ordinary push is not a release. A release is ONE command:
 `gh workflow run release-cut.yml -f bump=patch|minor|major` (pick the bump from
 the commits since the last tag), then watch the run and report the Release URL.
-The PyPI and signing jobs then wait for the maintainer's approval in the
-Actions tab (environments `pypi`, `release-signing`); tell them, never bypass.
-That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
+There is no approval pause: only the release bot (and admins) may create a
+`v*` tag, and the signing keys and PyPI (environments `release-signing`,
+`pypi`) are reachable only from `v*` tag runs. That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
 never bump, tag or `gh release create` by hand.
 
 Every frontend change works in BOTH light and dark mode, and on the terminal
@@ -230,8 +223,8 @@ when changed; nothing a year old or older ships as a default.
 `run.bat` (`--headless` = API only). Choose focused `pytest` and lint targets
 for the diff; use fakes from `tests/fakes/`, never `unittest.mock`. Run the
 full suite when a change has broad reach or focused tests cannot bound its
-risk. New providers pass their `tests/contract/` family. Four guards remain
-required in CI: `test_routing`, `test_output_filter`,
+risk. New providers pass their `tests/contract/` family. Four guards always run
+inside `CI gate`: `test_routing`, `test_output_filter`,
 `test_hangup_reason_parity`, `test_turn_language`.
 
 The commit and push hooks block confirmed secret, private-key, withheld-path,
@@ -241,7 +234,10 @@ unless it is listed in `scripts/ci/test-baseline-<os>.json`. Finished work in
 your own worktree lands with `python scripts/agent_land.py` (rebase onto main,
 auto-resolve generated files, gates, relevant tests, push); a `codex/`,
 `claude/`, `agent/` branch or an `auto-merge` label puts a PR on the merge
-train, which keeps it current with main and squash-merges it once green.
+train, which resolves its conflicts with main and adds it to main's merge
+queue once green; the queue squash-merges it after `CI gate` passes again on
+the PR merged with the newest main. Direct pushes to main are blocked for
+everyone but admins.
 Triage any red job against the exact base; never add to a baseline to hide a
 new failure.
 Run `check_boot_budget.py` after touching startup; CI cannot measure the live

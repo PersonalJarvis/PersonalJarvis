@@ -119,6 +119,23 @@ describe("SubscriptionsTab", () => {
     expect(within(groups[0]).getByText("Seat c1 · Max 20x")).toBeTruthy();
   });
 
+  it("names every seat on a subscription row shared by two seats", async () => {
+    const shared = {
+      platforms: [
+        {
+          ...ACCOUNTS.platforms[0],
+          accounts: [account("c1", "claude"), account("c2", "claude", { email: "c1@example.com" })],
+        },
+      ],
+    };
+    vi.mocked(fetchAgentAccounts).mockResolvedValue(shared);
+    render(<SubscriptionsTab />);
+    const [group] = await screen.findAllByTestId("subscription-group");
+    const rows = within(group).getAllByTestId("subscription-row");
+    expect(rows.map((row) => row.dataset.account)).toEqual(["c2"]);
+    expect(within(group).getByText("Seat c1, Seat c2 · Max 20x")).toBeTruthy();
+  });
+
   it("shows plan usage only after a row is expanded", async () => {
     render(<SubscriptionsTab />);
     const [row] = await screen.findAllByTestId("subscription-row");
@@ -154,6 +171,32 @@ describe("subscriptionsModel", () => {
   it("drops tools without a signed-in subscription", () => {
     expect(groupSubscriptions(ACCOUNTS, []).map((group) => group.platform)).toEqual(["claude", "codex"]);
     expect(groupSubscriptions(null, [])).toEqual([]);
+  });
+
+  it("shows seats signed in as the same email as one subscription", () => {
+    const accounts = {
+      platforms: [
+        {
+          platform: "claude",
+          display_name: "Claude Code",
+          active_account: "c3",
+          accounts: [
+            account("c1", "claude", { email: "Me@example.com" }),
+            account("c2", "claude"),
+            account("c3", "claude", { email: "me@example.com", warning: "same subscription" }),
+            account("c4", "claude", { email: null }),
+            account("c5", "claude", { email: null }),
+          ],
+        },
+      ],
+    };
+    const usage = [{ ...USAGE.accounts[0], account_id: "c3" }];
+    const [group] = groupSubscriptions(accounts, usage);
+    expect(group.rows.map((row) => row.account.id)).toEqual(["c3", "c2", "c4", "c5"]);
+    expect(group.rows[0].seats.map((seat) => seat.id)).toEqual(["c1", "c3"]);
+    expect(group.rows[0].active).toBe(true);
+    expect(group.rows[0].usage?.account_id).toBe("c3");
+    expect(group.rows[0].account.warning).toBe("same subscription");
   });
 
   it("words reset times as a countdown inside a day", () => {

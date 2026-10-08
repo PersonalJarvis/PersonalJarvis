@@ -119,7 +119,7 @@ Custody model:
 
 | Property | Value | Why |
 |---|---|---|
-| At-rest location | GitHub Actions secret `WAVE2_OFFLINE_KEY_B64` of the `release-signing` environment | GitHub encrypts secrets at rest and injects them only into the tag-only, maintainer-approved signing job; the private key never appears in the repo tree, not even encrypted. |
+| At-rest location | GitHub Actions secret `WAVE2_OFFLINE_KEY_B64` of the `release-signing` environment | GitHub encrypts secrets at rest and injects them only into the signing job of a `v*` tag run; the private key never appears in the repo tree, not even encrypted. |
 | Encoding | base64 of the PKCS#8 PEM | Lets a multi-line PEM travel as a single secret value; the workflow base64-decodes it into a runner tempfile at sign time. |
 | Passphrase | none | There is no encrypted key file to unlock, so there is no passphrase to store, disclose, or rotate. |
 | Backup | maintainer's password manager | A single offline copy so the key can be re-set if the GitHub secret is ever lost. |

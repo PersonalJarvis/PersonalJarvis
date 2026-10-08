@@ -385,6 +385,76 @@ async def test_existing_appshot_stays_available_for_a_followup_without_recapture
     assert gateway.calls == []
 
 
+@pytest.fixture
+def image_store(monkeypatch):
+    from jarvis.core import image_references
+
+    now = [0.0]
+    store = image_references.ImageReferences(clock=lambda: now[0], schedule_expiry=False)
+    monkeypatch.setattr(image_references, "_STORE", store)
+    return store, now
+
+
+@pytest.mark.asyncio
+async def test_supplied_appshot_carries_a_forwardable_reference_for_the_call(
+    make_session, image_store,
+):
+    import re
+
+    from jarvis.core.image_references import ImageReferenceError
+
+    store, now = image_store
+    session, reasoning, _, _, _, _ = make_session([
+        completed_response("r1", [spoken_result("I can see the bug.")]),
+        completed_response("r2", [spoken_result("Starting a coding session.")]),
+    ])
+    await session.attach_appshot(b"\x89PNG-shot", "image/png", "A supplied screenshot")
+    scope = "live:" + session.session_id
+    for index, request in enumerate(("What is wrong here?", "Start a session to fix it.")):
+        await session._delegate(f"image-{index}", request)
+        sent = json.dumps(reasoning.requests[index]["input"])
+        ref = re.search(r"img_[0-9a-f]{32}", sent)[0]
+        assert "image_refs" in sent
+        # Talking past the capture budget must not orphan a picture still in context.
+        now[0] += 600
+        assert store.resolve(scope, [ref])[0].data == b"\x89PNG-shot"
+    assert [row["source"] for row in store.available(scope)] == ["appshot"]
+    with pytest.raises(ImageReferenceError):
+        store.resolve("live:another-call", [ref])
+    await session._tools.close()
+    with pytest.raises(ImageReferenceError):
+        store.resolve(scope, [ref])
+
+
+@pytest.mark.asyncio
+async def test_unforwardable_appshot_is_reported_instead_of_given_an_invented_reference(
+    make_session, image_store,
+):
+    session, _, _, _, _, _ = make_session([])
+    await session.attach_appshot(b"", "image/png", "An empty capture")
+    note = session._pending_images[0]["text"]
+    assert "Visual handoff unavailable" in note and "img_" not in note
+    assert image_store[0].available("live:" + session.session_id) == []
+
+
+@pytest.mark.asyncio
+async def test_tool_captured_appshot_keeps_its_reference_beside_the_pixels(make_session):
+    capture = {
+        "id": "fresh-shot", "type": "function_call", "call_id": "capture-1",
+        "name": "take_appshot", "arguments": '{"scope":"window"}',
+    }
+    handoff = "Visual reference IDs (same order as the attached images): img_fresh."
+    session, _, _, _, _, _ = make_session([
+        completed_response("r1", [capture]),
+        completed_response("r2", [spoken_result("Captured.")]),
+    ], gateway=AppshotSubscriptionGateway(handoff=handoff))
+    await session._delegate("fresh-request", "Take a new appshot.")
+    assert session._image_context == [
+        {"type": "input_text", "text": handoff},
+        {"type": "input_image", "image_url": "data:image/png;base64,TkVX"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_completion_report_uses_subscription_reasoning_without_new_tool_authority(
     make_session,

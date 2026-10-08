@@ -16,6 +16,7 @@
 
 import type { ReasoningBlock, TextBlock, ToolBlock, TurnBlock, TurnStatus } from "@/components/agentchat/reduce";
 import { buildTimeline, summarize, type Call, type CallKind, type Translate } from "@/components/agentchat/traceEntries";
+import { isSubagentCall } from "./subagents";
 
 /** One step of a group: a tool call, or the wordless thought a running turn is having. */
 export type WorkItem =
@@ -43,7 +44,9 @@ export type ThreadRow =
   /** A thought in the agent's own words, read as a paragraph between its work. */
   | { kind: "thought"; id: string; text: string; block: ReasoningBlock; live: boolean }
   /** A call that waits for the person: an approval or a question card. */
-  | { kind: "pending"; id: string; block: ToolBlock };
+  | { kind: "pending"; id: string; block: ToolBlock }
+  /** A sub-agent the turn spawned: a card of its own that opens its conversation. */
+  | { kind: "agent"; id: string; block: ToolBlock };
 
 export function isFailed(call: Call): boolean {
   return call.status === "failed" || call.status === "blocked" || call.status === "declined";
@@ -113,7 +116,14 @@ export function buildThreadRows(blocks: TurnBlock[], options: { t: Translate; la
 
   for (const entry of timeline.entries) {
     if (entry.kind === "activity") {
-      for (const call of entry.calls) items.push({ kind: "call", id: call.id, call, startedMs: started.get(call.id) ?? 0 });
+      for (const call of entry.calls) {
+        if (isSubagentCall(call.block)) {
+          flush();
+          rows.push({ kind: "agent", id: `agent:${call.id}`, block: call.block });
+        } else {
+          items.push({ kind: "call", id: call.id, call, startedMs: started.get(call.id) ?? 0 });
+        }
+      }
       continue;
     }
     const block = entry.block;
@@ -130,6 +140,8 @@ export function buildThreadRows(blocks: TurnBlock[], options: { t: Translate; la
     }
     flush();
     if (block.kind === "text") rows.push({ kind: "text", id: entry.id, text: block.text, block });
+    // A sub-agent waiting on an approval keeps its card; the card says it waits.
+    else if (isSubagentCall(block)) rows.push({ kind: "agent", id: `agent:${block.callId}`, block });
     else rows.push({ kind: "pending", id: entry.id, block });
   }
   flush();

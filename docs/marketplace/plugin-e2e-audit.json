@@ -2225,7 +2225,7 @@
     {
       "plugin_id": "figma",
       "result": "BLOCKED",
-      "config_fingerprint": "b644ba3d27855621fda403804c65157d0a46496e5eaa232d8f241ad6110a96cb",
+      "config_fingerprint": "d8ff5ecdffad01389f6e9c216fa2d77082cc6d6233ecdd70fc3d02c69f7a078e",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
@@ -2265,9 +2265,9 @@
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "reason": "Publisher OAuth client is not provisioned. The draft Figma OAuth app \"Personal Jarvis\" (client id RkG83E4jPtFsiRQZBku3SD) has the loopback redirect URL and the four read scopes since 2026-10-07, but its client secret is not stored anywhere; Figma's token endpoint requires the secret (HTTP Basic), so a shipped public client also needs a token broker.",
         "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "next_action": "Regenerate the client secret in the Figma developer console, add a figma route to the token broker and ship the client id, submit the app for public review, then repeat the full clean browser journey with a real read-only action.",
         "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
       }
     },

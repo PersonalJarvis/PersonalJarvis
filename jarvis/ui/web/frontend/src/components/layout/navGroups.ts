@@ -24,7 +24,6 @@ import {
   AssistantIcon,
   MarketplaceIcon,
   MicrophoneIcon,
-  PermissionsIcon,
   PetsIcon,
   ProfileIcon,
   SettingsIcon,
@@ -257,12 +256,6 @@ export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
   },
   { id: "appshots", labelKey: "nav.appshots", icon: CaptureIcon, fallbackLabel: "Appshots" },
   { id: "pets", labelKey: "nav.pets", icon: PetsIcon, fallbackLabel: "My Pets" },
-  {
-    id: "jarvis-actions",
-    labelKey: "nav.jarvis_actions",
-    icon: PermissionsIcon,
-    fallbackLabel: "Jarvis actions",
-  },
 ];
 
 /**
@@ -289,7 +282,6 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "appshots",
   "shortcuts",
   "pets",
-  "jarvis-actions",
   "costs",
   "feedback",
 ];

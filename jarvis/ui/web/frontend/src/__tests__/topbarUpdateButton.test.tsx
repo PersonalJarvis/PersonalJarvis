@@ -504,4 +504,85 @@ describe("TopBar update button", () => {
     expect(screen.queryByText("Restarting…")).toBeNull();
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
+
+  it("explains BEFORE any click why this install cannot update itself", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.startsWith("/api/update/status")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            managed: true,
+            kind: "frozen",
+            current: "1.5.3",
+            latest: "1.6.0",
+            update_available: true,
+            notes: null,
+            published_at: null,
+            release_url: "https://github.com/PersonalJarvis/PersonalJarvis/releases/tag/v1.6.0",
+            blocked_code: "app_translocated",
+            blocked_reason: "macOS is running Personal Jarvis from a temporary copy.",
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<UpdateButton placement="sidebar" />);
+    fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
+
+    // The translated sentence, not the server's English fallback.
+    const note = await screen.findByTestId("update-blocked");
+    expect(note.textContent).toContain("Applications folder");
+    expect(note.textContent).toContain("Assistant");
+    // No button that would download several hundred MB and then refuse...
+    expect(screen.queryByTestId("update-install")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Update & restart" })).toBeNull();
+    // ...but a way to the release page instead.
+    expect(screen.getByTestId("update-open-release")).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/update/apply"))).toBe(
+      false,
+    );
+  });
+
+  it("falls back to the server's sentence for a reason it cannot translate", async () => {
+    mockUpdateStatus({
+      managed: true,
+      current: "1.5.3",
+      latest: "1.6.0",
+      update_available: true,
+      notes: null,
+      published_at: null,
+      blocked_code: "some_future_reason",
+      blocked_reason: "A reason this build does not know yet.",
+    });
+
+    render(<UpdateButton placement="sidebar" />);
+    fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
+
+    expect((await screen.findByTestId("update-blocked")).textContent).toBe(
+      "A reason this build does not know yet.",
+    );
+    expect(screen.queryByTestId("update-install")).toBeNull();
+  });
+
+  it("keeps the normal install action when nothing blocks the update", async () => {
+    mockUpdateStatus({
+      managed: true,
+      current: "1.5.3",
+      latest: "1.6.0",
+      update_available: true,
+      notes: null,
+      published_at: null,
+      blocked_code: null,
+      blocked_reason: null,
+    });
+
+    render(<UpdateButton placement="sidebar" />);
+    fireEvent.click(await screen.findByRole("button", { name: /update available/i }));
+
+    expect(await screen.findByTestId("update-install")).toBeTruthy();
+    expect(screen.queryByTestId("update-blocked")).toBeNull();
+  });
 });

@@ -46,6 +46,7 @@ def _gates(base: str) -> list[Gate]:
         Gate("private-keys", ((PY, ci + "check_no_private_keys.py"),)),
         Gate("dist-consistency", ((PY, ci + "check_dist_consistency.py"),)),
         Gate("brand-logos", ((PY, ci + "check_brand_logos.py"),)),
+        Gate("design-references", ((PY, ci + "check_design_references.py"),)),
         Gate(
             "mirrors",
             (

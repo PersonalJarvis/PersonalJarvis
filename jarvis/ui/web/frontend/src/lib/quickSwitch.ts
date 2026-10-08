@@ -1,5 +1,5 @@
 /**
- * The quick switcher's destinations and ranking — the Spotlight-style "type a
+ * The quick switcher's destinations and ranking — the "type a
  * section's name, press Enter, be there" launcher.
  *
  * Pure on purpose: what the switcher lists and in which order is the whole
@@ -86,7 +86,6 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   docs: ["documentation", "help", "manual"],
   feedback: ["bug", "report", "issue"],
   appshots: ["screenshot", "capture"],
-  "jarvis-actions": ["permissions", "allow", "block", "actions"],
   dictation: ["voice", "speech", "microphone", "mic", "whisper"],
   shortcuts: ["hotkeys", "keybinds", "keyboard", "quick switcher"],
   "voice-shortcuts": ["dictation hotkeys", "dictation keys"],

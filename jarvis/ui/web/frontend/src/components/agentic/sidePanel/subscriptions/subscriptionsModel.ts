@@ -7,7 +7,10 @@ import type {
 
 /** One signed-in subscription, ready to draw. */
 export interface SubscriptionRow {
+  /** The seat the row speaks for: the active one when it is among them. */
   account: AgentAccount;
+  /** Every seat signed in to this subscription, in the backend's order. */
+  seats: AgentAccount[];
   /** Whether new terminals of this CLI start on this subscription. */
   active: boolean;
   usage: AccountUsage | null;
@@ -25,7 +28,9 @@ export interface SubscriptionGroup {
  *
  * A registered seat that never finished signing in is not a subscription the
  * user has, so it is left to the settings dialog that manages seats. A CLI with
- * no signed-in seat gets no block at all. The backend's order is kept — both
+ * no signed-in seat gets no block at all. Seats signed in as the same email are
+ * one subscription with one usage meter, so they share one row that names every
+ * seat; seats without a readable email are never merged. The backend's order is kept — both
  * for the blocks and inside them — so a row never jumps when another one
  * becomes the active seat.
  */
@@ -35,13 +40,25 @@ export function groupSubscriptions(
 ): SubscriptionGroup[] {
   const byId = new Map(usage.map((reading) => [reading.account_id, reading]));
   return (accounts?.platforms ?? []).flatMap((group) => {
-    const rows = (group.accounts ?? [])
-      .filter((account) => account.connected)
-      .map((account) => ({
-        account,
-        active: account.id === group.active_account,
-        usage: byId.get(account.id) ?? null,
-      }));
+    const rows: SubscriptionRow[] = [];
+    const byEmail = new Map<string, SubscriptionRow>();
+    for (const account of group.accounts ?? []) {
+      if (!account.connected) continue;
+      const active = account.id === group.active_account;
+      const usage = byId.get(account.id) ?? null;
+      const email = (account.email ?? "").trim().toLowerCase();
+      const same = email ? byEmail.get(email) : undefined;
+      if (same) {
+        same.seats.push(account);
+        if (active) Object.assign(same, { account, active: true, usage: usage ?? same.usage });
+        else if (!same.usage) same.usage = usage;
+        if (!same.account.warning && account.warning) same.account = { ...same.account, warning: account.warning };
+        continue;
+      }
+      const row: SubscriptionRow = { account, seats: [account], active, usage };
+      rows.push(row);
+      if (email) byEmail.set(email, row);
+    }
     if (rows.length === 0) return [];
     return [{ platform: group.platform, displayName: group.display_name || group.platform, rows }];
   });

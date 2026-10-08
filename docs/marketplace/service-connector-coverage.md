@@ -37,7 +37,7 @@ an original brand asset and an in-app connection flow.
 | Salesforce | Official sobject-all hosted MCP operations | Admin activation and own External Client App; production org endpoint |
 | Granola | Official MCP meeting notes and transcript tools | Granola account with access to the requested notes |
 | Zoom | List/create meetings, list recordings/transcript links | Own user-managed OAuth app; cloud recordings/transcripts must already exist; meeting creation returns a link |
-| Figma | Projects/files/design data/comments | Figma PAT with current_user:read, projects:read, file_content:read and file_comments:read |
+| Figma | Projects/files/design data/comments | Figma PAT with current_user:read, folders:read, file_content:read and file_comments:read |
 
 **Unresolved request:** "Datadoc (data catalog)" does not uniquely identify a
 provider. No invented endpoint or nonfunctional placeholder is shipped. A product

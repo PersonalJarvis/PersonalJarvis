@@ -366,6 +366,14 @@ def ensure_installed(
             probe = lines[-1]
             executable = Path(probe["executable"]).resolve()
             if not executable.is_relative_to(root):
+                # Local diagnostics only: which two paths disagreed. A flaky
+                # CI failure here (run 37674355475) left no way to tell a
+                # foreign binary from a path-normalisation difference.
+                log.error(
+                    "Browser probe executable %s is outside the managed root %s",
+                    executable,
+                    root,
+                )
                 raise RuntimeError("Browser verification used an unmanaged executable")
             manifest = {
                 "browser_use": BROWSER_USE_VERSION,

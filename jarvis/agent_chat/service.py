@@ -76,6 +76,25 @@ _ORPHANED_TURN_ERROR: Final = (
 Subscriber = asyncio.Queue[dict[str, Any]]
 
 
+#: The app's loop, resolved by the route layer BEFORE it takes its build lock
+#: (``remember_app_loop``). Asking the loop from inside that lock deadlocked
+#: the whole app (2026-10-07): the worker waited for the loop while the loop
+#: waited for the lock in an ``async`` route.
+_KNOWN_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def remember_app_loop() -> None:
+    """Find and record the app's loop, so building the service never asks it.
+
+    Call it without holding any lock the loop could be waiting for: from a
+    worker thread, finding the loop waits until the loop answers.
+    """
+    global _KNOWN_LOOP  # one process-wide reference, set before the service is built
+    loop, _on_loop = _app_loop()
+    if loop is not None:
+        _KNOWN_LOOP = loop
+
+
 def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
     """The app's event loop, and whether this code runs on it.
 
@@ -89,6 +108,9 @@ def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
         return asyncio.get_running_loop(), True
     except RuntimeError:  # no loop on this thread: fall through to the dispatching loop
         pass
+    known = _KNOWN_LOOP
+    if known is not None and known.is_running():
+        return known, False
     try:
         from anyio.from_thread import run_sync
 
@@ -131,7 +153,17 @@ def _claude_cli_installed() -> bool:
     return bool(shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"))
 
 
-def resolve_runner(provider: str, *, surface: str = "agent") -> str:
+#: Society agent runtimes that replace the provider's runner (``AgentRuntime``
+#: minus ``jarvis``), each answered by its ACP driver in ``runner_cli``.
+EXTERNAL_RUNTIME_RUNNERS: Final[dict[str, str]] = {
+    "hermes": "hermes-cli",
+    "openclaw": "openclaw-cli",
+}
+
+
+def resolve_runner(
+    provider: str, *, surface: str = "agent", runtime: str = "", account_id: str = ""
+) -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
     ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
@@ -144,7 +176,15 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     (``SurfaceKit.cli_seats``, maintainer 2026-08-26), so a vendor CLI never
     answers there — not even the dual Claude row, which runs on the Anthropic
     API behind its key like every other seat.
+
+    ``account_id`` is the seat's login, or a reserved access value
+    (``catalog.ACCESS_ACCOUNTS``) that pins the dual Claude row to its API key
+    or to its subscription for one agent, over the API Keys page's setting.
     """
+    if runtime in EXTERNAL_RUNTIME_RUNNERS and surface == "society":
+        # A Hermes / OpenClaw agent: that runtime's loop answers every turn and
+        # the provider only names the model it is configured with.
+        return EXTERNAL_RUNTIME_RUNNERS[runtime]
     kit = kit_for(surface)
     api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
@@ -159,13 +199,26 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
         # The API Keys page can set the agents' Claude to its key instead of
         # the subscription; that choice narrows the agents' surface only.
         from jarvis.agent_chat.agent_provider_prefs import forces_api
+        from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
 
-        if forces_api(row.id, surface):
+        if account_id == API_KEY_ACCOUNT:
+            return api_runner
+        if account_id != SUBSCRIPTION_ACCOUNT and forces_api(row.id, surface):
             return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner
     return row.runner
+
+
+def session_runner(session: Any) -> str:
+    """:func:`resolve_runner` for a stored chat session (its runtime included)."""
+    return resolve_runner(
+        session.provider,
+        surface=session.surface,
+        runtime=str(getattr(session, "runtime", "") or ""),
+        account_id=str(getattr(session, "account_id", "") or ""),
+    )
 
 
 #: ``AgentChatStore.data_version`` after the front page's chat gave up its
@@ -309,6 +362,8 @@ class AgentChatService:
         # started yet, but a competing send and Stop must both see this owner.
         self._preparing: dict[str, _Running] = {}
         self._subscribers: dict[str, set[Subscriber]] = {}
+        # Synchronous observers of every stored event (add_event_listener).
+        self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
         # Questions an agent is waiting on (questions.py), by question id.
@@ -666,7 +721,8 @@ class AgentChatService:
                 f"Provider {provider!r} is not offered on the {surface!r} chat. "
                 "That chat runs on a provider API behind a key, not on a vendor CLI."
             )
-        ladder = ladder_key(surface, resolve_runner(provider, surface=surface))
+        runner = resolve_runner(provider, surface=surface, account_id=account_id)
+        ladder = ladder_key(surface, runner)
         permission_mode = normalize_permission(ladder, permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:
@@ -762,6 +818,24 @@ class AgentChatService:
         if not subs:
             self._subscribers.pop(session_id, None)
 
+    def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
+        """Call ``listener(session_id, stored_event)`` after every stored event.
+
+        For coordinators that react to another chat's progress (an agent
+        steering a coding thread). The listener runs inline on the emitting
+        path, so it must only record and schedule — never await or do I/O.
+        """
+        listeners = getattr(self, "_event_listeners", None)
+        if listeners is None:  # a service built without __init__ (test doubles)
+            listeners = self._event_listeners = []
+        if listener not in listeners:
+            listeners.append(listener)
+
+    def remove_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
+        listeners = getattr(self, "_event_listeners", [])
+        if listener in listeners:
+            listeners.remove(listener)
+
     async def post_notice(self, session_id: str, payload: dict[str, Any]) -> None:
         """A system line in a session's timeline that is not a turn: the agent
         society posts learned skills, login requests and queued approvals here.
@@ -804,9 +878,19 @@ class AgentChatService:
         self._publish_event(session_id, event)
 
     def _publish_event(self, session_id: str, event: dict[str, Any]) -> None:
+        if event.get("kind") == "turn_finished":
+            turn_id = str((event.get("payload") or {}).get("turn_id") or "")
+            if turn_id and self.store.turn_terminal(session_id, turn_id) is not None:
+                log.warning("agent chat: ignored duplicate completion for turn %s", turn_id)
+                return
         stored = self.store.append_event(session_id, event)
         if event.get("kind") == "turn_finished":
             self._announce_jarvis_turn(session_id, event)
+        for listener in list(getattr(self, "_event_listeners", ())):
+            try:
+                listener(session_id, stored)
+            except Exception:  # noqa: BLE001 — an observer never breaks the chat it watches
+                log.warning("agent chat: event listener failed for %s", session_id, exc_info=True)
         for q in list(self._subscribers.get(session_id, ())):
             try:
                 q.put_nowait(stored)
@@ -908,8 +992,13 @@ class AgentChatService:
         native_goal: bool = False,
         display_text: str | None = None,
         routine_run: bool = False,
+        author: dict[str, str] | None = None,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
+
+        ``author`` marks a message another agent wrote on the person's behalf
+        (``{"agent_id", "name"}``, a Jarvis agent steering a coding thread):
+        it rides on the ``user_message`` so the thread shows who wrote it.
 
         ``attachments`` are what the composer already had read for this message
         (``jarvis.agent_chat.attachments``): a described screenshot, an
@@ -1143,6 +1232,7 @@ class AgentChatService:
                             # NEXT turn (runner_api.messages_from_events).
                             "text": prompt,
                             **({"origin": "control"} if control_owned and not direct_user else {}),
+                            **({"author": dict(author)} if author else {}),
                             **(
                                 {"tool_choices": [row.model_dump(mode="json") for row in selected]}
                                 if selected
@@ -1174,7 +1264,7 @@ class AgentChatService:
                         },
                     ),
                 )
-            runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
+            runner = selected_runner or session_runner(session)
             turn_started_emitted = True
             await self._emit(
                 session_id,
@@ -2111,6 +2201,7 @@ class AgentChatService:
         index: int = 0,
         option_index: int | None = None,
         text: str | None = None,
+        author: dict[str, str] | None = None,
     ) -> bool:
         """The person's answer to one question of an end-of-turn card.
 
@@ -2143,10 +2234,12 @@ class AgentChatService:
                 return True
             final = [a for a in answers if a is not None]
             await self._resolve_turn_question(session_id, card, final)
-        await self._send_turn_answer(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final, author=author)
         return True
 
-    async def skip_turn_question(self, session_id: str, question_id: str) -> bool:
+    async def skip_turn_question(
+        self, session_id: str, question_id: str, *, author: dict[str, str] | None = None
+    ) -> bool:
         """The person closed an end-of-turn card: the agent's recommendations stand."""
         async with self._turn_prompt_lock():
             card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
@@ -2154,7 +2247,7 @@ class AgentChatService:
                 return False
             final = turn_prompts.skipped(card)
             await self._resolve_turn_question(session_id, card, final)
-        await self._send_turn_answer(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final, author=author)
         return True
 
     async def _resolve_turn_question(
@@ -2173,15 +2266,28 @@ class AgentChatService:
         )
 
     async def _send_turn_answer(
-        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+        self,
+        session_id: str,
+        card: turn_prompts.OpenAsk,
+        answers: list[QuestionAnswer],
+        *,
+        author: dict[str, str] | None = None,
     ) -> None:
         await self.send(
             session_id,
             turn_prompts.answers_prompt(card.specs, answers),
             display_text=turn_prompts.answers_display(card.specs, answers),
+            author=author,
         )
 
-    async def resolve_turn_plan(self, session_id: str, turn_id: str, decision: str) -> bool:
+    async def resolve_turn_plan(
+        self,
+        session_id: str,
+        turn_id: str,
+        decision: str,
+        *,
+        author: dict[str, str] | None = None,
+    ) -> bool:
         """The person's answer to a plan card: ``build`` or ``keep``.
 
         ``build`` moves the session to the build mode the card offered and
@@ -2209,7 +2315,7 @@ class AgentChatService:
                     session_id,
                     make_event("session_updated", {"permission_mode": build}),
                 )
-        await self.send(session_id, turn_prompts.PLAN_GO_AHEAD)
+        await self.send(session_id, turn_prompts.PLAN_GO_AHEAD, author=author)
         return True
 
 
@@ -2221,4 +2327,5 @@ __all__ = [
     "SessionBusy",
     "Subscriber",
     "resolve_runner",
+    "session_runner",
 ]
