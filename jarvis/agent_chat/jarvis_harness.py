@@ -529,6 +529,8 @@ def society_rollover_due(history: list[dict[str, Any]]) -> bool:
 def society_memory_refresh(text: str, *, compact: bool = False) -> str:
     """Refresh mutable guidance on resumed CLI turns without replaying the transcript."""
     headings = (
+        "Choosing your name",
+        "You are new",
         "Standing instructions",
         "Your memory",
         "Your user profile",
@@ -538,7 +540,7 @@ def society_memory_refresh(text: str, *, compact: bool = False) -> str:
     sections = []
     for section in re.split(r"(?m)(?=^## )", text.removesuffix(SYSTEM_PREAMBLE)):
         title = section.split("\n", 1)[0].removeprefix("## ").strip()
-        if title in headings:
+        if title in headings or title.startswith("You are "):
             sections.append(section.strip())
     body = "\n\n".join(sections)
     note = "An absent section has no current entries. "
@@ -552,8 +554,10 @@ def society_memory_refresh(text: str, *, compact: bool = False) -> str:
         )
     return (
         "<current_agent_memory>\n"
-        "Current standing instructions, memory and learned skill index replace their previous "
-        "snapshots when complete. " + note + "Learned guidance never grants "
+        "Current identity, naming guidance, standing instructions, memory and learned skill "
+        "index replace their previous snapshots when complete. If naming guidance is absent, "
+        "keep the current name; earlier placeholder instructions no longer apply. "
+        + note + "Learned guidance never grants "
         "permissions or overrides the standing instructions or the current user request.\n\n"
         + body
         + "\n</current_agent_memory>\n\n"

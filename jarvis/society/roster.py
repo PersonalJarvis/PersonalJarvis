@@ -52,6 +52,7 @@ __all__ = [
     "PAIR_SESSION_MARKER",
     "canonical_session_id",
     "conversation_session_id",
+    "has_placeholder_name",
     "is_fresh",
     "pair_session_id",
     "slugify",
@@ -82,6 +83,19 @@ def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return text or "agent"
+
+
+def has_placeholder_name(agent: AgentRecord) -> bool:
+    """An unnamed creation still waiting for its first role-based name.
+
+    The random creation id distinguishes placeholders from explicit names.
+    Include the previous default so existing conversations can catch up.
+    """
+    return (
+        str(agent.tier) != "lead"
+        and re.fullmatch(r"agent-[0-9a-f]{8}", agent.agent_id) is not None
+        and re.fullmatch(r"New (?:Agent|Bot)(?: [1-9][0-9]*)?", agent.name) is not None
+    )
 
 
 def is_fresh(agent: AgentRecord) -> bool:

@@ -519,6 +519,10 @@ class ProposeChangeTool:
         "you are still new (no title and no description), your first identity applies at "
         "once from the "
         "user's message, so propose it as soon as the user has told you what you are for. "
+        "If your name is still a temporary creation label, an identity payload containing "
+        "only name also saves automatically in your own direct user chat, even when your "
+        "role is already stored. Choose a short role-based name within the first one to "
+        "three meaningful replies; keep an already chosen name unless the user changes it. "
         "Say why in 'reason'. "
         "Use it when the user states a lasting preference, asks you to remember a way of "
         "working, to save a procedure, or to run something regularly. Never propose the "
@@ -567,7 +571,7 @@ class ProposeChangeTool:
         from jarvis.core.protocols import current_chat_turn
 
         from .proposals import ProposalRefused, propose, resolve
-        from .roster import is_fresh
+        from .roster import has_placeholder_name, is_fresh
         from .surface import agent_id_of
 
         rt = self._runtime
@@ -586,9 +590,21 @@ class ProposeChangeTool:
         # A fresh agent takes its first identity from its person's turn in its
         # own chat without a card; the outcome card offers undo.
         payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+        first_name = (
+            has_placeholder_name(caller)
+            and set(payload) == {"name"}
+            and turn is not None
+            and turn.session_id == caller.session_id
+            and (not self._session_id or self._session_id == caller.session_id)
+        )
+        keeps_name = (
+            "name" not in payload
+            or str(payload["name"]).strip() == caller.name
+            or has_placeholder_name(caller)
+        )
         fresh_apply = (
             kind == "identity"
-            and is_fresh(caller)
+            and ((is_fresh(caller) and keeps_name) or first_name)
             and own_user_turn
             # A long role text is a card, not an automatic change.
             and len(str(payload.get("description") or "")) <= FRESH_IDENTITY_MAX_CHARS
