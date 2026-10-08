@@ -10,6 +10,7 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, SRGBColorSpace } from "three";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
+import { useCanvasInterval } from "@/hooks/useCanvasInterval";
 import type { PaneScreen } from "@/lib/paneScreensApi";
 import { usePaneTitle } from "@/store/paneRecaps";
 import { storedTerminalAppearance } from "@/components/agentic/terminalThemes";
@@ -132,10 +133,7 @@ export function TerminalMonitors({ desks, occupants, awake, onOpen }: {
   const appearance = storedTerminalAppearance() ?? appTheme;
   const palette = useMemo(() => monitorPalette(appearance), [appearance]);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), META_TICK_MS);
-    return () => clearInterval(timer);
-  }, []);
+  useCanvasInterval(() => setNowMs(Date.now()), META_TICK_MS, awake);
   return (
     <group>
       {desks.map((desk) => {

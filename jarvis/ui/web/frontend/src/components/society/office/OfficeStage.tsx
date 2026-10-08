@@ -13,7 +13,7 @@ import { useSyncCompanionPet } from "../companion/companionPetStore";
 import { useActivePet } from "@/hooks/usePets";
 import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
-import { useCanvasAwake } from "@/hooks/useCanvasAwake";
+import { CanvasActivity, useCanvasAwake } from "@/hooks/useCanvasAwake";
 import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useT } from "@/i18n";
@@ -100,6 +100,14 @@ export interface OfficeStageProps {
   initialFloor?: OfficeFloor;
   /** A narrow host (the IDE side panel): smaller HUD, no minimap or compass. */
   compact?: boolean;
+  /** A visited map keeps its renderer while its host shows chat. */
+  active?: boolean;
+}
+
+/** Visit-only subscriptions and sounds end when the retained world is hidden. */
+function OfficeVisit({ floor }: { floor: OfficeFloor }) {
+  useProgressionSync(true, floor);
+  return null;
 }
 
 function useRosterRefresh(awake: boolean) {
@@ -135,10 +143,13 @@ function useNewcomers(active: SocietyAgent[], floor: OfficeFloor): ReadonlySet<s
 }
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 
-export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpenGroup, initialFloor, compact = false }: OfficeStageProps) {
+export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpenGroup, initialFloor, compact = false, active: onScreen = true }: OfficeStageProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
-  const awake = useCanvasAwake(hostRef);
+  const visible = useCanvasAwake(hostRef);
+  const awake = onScreen && visible;
+  const onScreenRef = useRef(onScreen);
+  onScreenRef.current = onScreen;
   const reduced = useReducedMotion() ?? false;
   const { generation } = useWebglSurface(hostRef);
   const webgl = useWebglSupported();
@@ -148,13 +159,12 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const coding = floor === "coding";
   // The arcade floor has no agents: no roster, desks or chats, just the cabinets.
   const arcade = floor === "arcade";
-  const roster = useSocietyRoster();
+  const roster = useSocietyRoster(awake);
   useRosterRefresh(awake && floor === "agents");
   // Jarvis keeps the person company as the pet chosen in My Pets.
   useSyncCompanionPet();
   const petName = useActivePet()?.name || "Gigi";
   // Levels: the person, their pet and every agent earn XP for real work; the Verse shows and celebrates it.
-  useProgressionSync(awake, floor);
   const [overview, setOverview] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
@@ -165,7 +175,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   // The call button tells how many are upstairs, so standing at the elevator wakes the coding roster too.
   const atLift = nearby?.kind === "checkpoint" && nearby.id === "elevator";
-  const codingFloor = useCodingFloorOccupants(coding || atLift);
+  const codingFloor = useCodingFloorOccupants(awake && (coding || atLift));
   const jarvisAgents = useMemo(() => (roster.data?.agents ?? []).filter((a) => a.lifecycle !== "archived"), [roster.data]);
   const codingAgents = useMemo(() => codingFloor.occupants.map((o) => o.agent), [codingFloor.occupants]);
   const active = useMemo(() => (arcade ? [] : coding ? codingAgents : jarvisAgents), [arcade, coding, codingAgents, jarvisAgents]);
@@ -232,6 +242,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   useEffect(() => {
     if (!sectionDive || sectionDive.seq === lastSectionDive.current) return;
     lastSectionDive.current = sectionDive.seq;
+    if (!awake) return;
     const { section } = sectionDive;
     const go = () => {
       if (section === "agents" && !compact && onOpenLedger) onOpenLedger();
@@ -241,7 +252,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (reduced) { go(); return; }
     setDiving(true);
     openTimer.current = setTimeout(() => { go(); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
-  }, [sectionDive, compact, onOpenLedger, reduced]);
+  }, [sectionDive, compact, onOpenLedger, reduced, awake]);
 
   // The elevator: pressing its call button, standing at the doors, opens the
   // button panel; pressing a floor there closes the elevator doors over the
@@ -279,10 +290,10 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   }, [ride, reduced]);
   // E at the elevator, or a click on its floor token, presses the call button instead of opening a panel.
   useEffect(() => {
-    if (selection?.kind !== "checkpoint" || selection.id !== "elevator") return;
+    if (!awake || selection?.kind !== "checkpoint" || selection.id !== "elevator") return;
     select(null);
     pressCall();
-  }, [selection, select, pressCall]);
+  }, [selection, select, pressCall, awake]);
   useEffect(() => {
     if (ride?.phase === "closed" && floor === ride.to && ready) {
       // The doors stay shut a short beat at least, so the change reads as a ride and not a cut.
@@ -328,6 +339,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   // Escape closes an open panel before it can leave the map.
   useEffect(() => {
+    if (!awake) return;
     const onKey = (event: KeyboardEvent) => {
       // A field or a dialog (e.g. the create dialog opened from reception) owns its own Escape.
       if (event.key !== "Escape" || !useOfficeStore.getState().selection || ownsKeyboard(event.target)) return;
@@ -337,7 +349,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [select]);
+  }, [select, awake]);
 
   // H (or the HUD button) opens reception on the controls guide from anywhere, and closes it again.
   const toggleGuide = useCallback(() => {
@@ -347,6 +359,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     select({ kind: "checkpoint", id: "create" });
   }, [select]);
   useEffect(() => {
+    if (!awake) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.code !== "KeyH" || event.repeat || event.ctrlKey || event.metaKey || event.altKey || ownsKeyboard(event.target)) return;
       if (useOfficeStore.getState().selection?.kind === "arcade") return;
@@ -355,17 +368,18 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleGuide]);
+  }, [toggleGuide, awake]);
 
   // The Level Hall's two checkpoints open its screen: the stage on the studio, the guide on the overview.
   useEffect(() => {
-    if (selection?.kind !== "checkpoint" || (selection.id !== "studio" && selection.id !== "levels")) return;
+    if (!awake || selection?.kind !== "checkpoint" || (selection.id !== "studio" && selection.id !== "levels")) return;
     useProgression.getState().openPanel(selection.id === "studio" ? "studio" : "overview");
     select(null);
-  }, [selection, select]);
+  }, [selection, select, awake]);
 
   // L (or the level card) opens the Level Hall screen, and closes it again.
   useEffect(() => {
+    if (!awake) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.code !== "KeyL" || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
       const levels = useProgression.getState();
@@ -376,22 +390,39 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [awake]);
   // The Level Hall screen closes with the map.
-  useEffect(() => () => useProgression.getState().openPanel(null), []);
+  useEffect(() => () => { if (onScreenRef.current) useProgression.getState().openPanel(null); }, []);
 
   // Leaving the map forgets panels and calls; the office opens fresh next time.
   useEffect(() => () => {
+    if (!onScreenRef.current) return;
     const store = useOfficeStore.getState();
     store.select(null);
     store.setNearby(null);
     store.clearSummons();
   }, []);
 
+  useEffect(() => {
+    if (onScreen) return;
+    // A mode change ends input and pending navigation without discarding GPU resources.
+    clearTimeout(openTimer.current);
+    clearTimeout(rideTimer.current);
+    setDiving(false);
+    setPicking(false);
+    setRide(null);
+    setMapOpen(false);
+    useProgression.getState().openPanel(null);
+    const store = useOfficeStore.getState();
+    store.select(null);
+    store.setNearby(null);
+    store.clearSummons();
+  }, [onScreen]);
+
   // A panel for an agent that left the roster closes itself.
   useEffect(() => {
-    if (selection?.kind === "agent" && ready && !agents.has(selection.id)) select(null);
-  }, [selection, agents, ready, select]);
+    if (awake && selection?.kind === "agent" && ready && !agents.has(selection.id)) select(null);
+  }, [selection, agents, ready, select, awake]);
 
   const selectedAgent = selection?.kind === "agent" ? agents.get(selection.id) ?? null : null;
   const selectedPane = selectedAgent ? occupants.get(selectedAgent.agentId) ?? null : null;
@@ -422,8 +453,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const dpr = useDprBudget(hostRef);
 
   return (
+    <CanvasActivity.Provider value={awake}>
     <section className={compact ? "office-stage office-stage-compact" : "office-stage"} aria-label={t(titleKey)}
-      data-office-agents={active.length} data-office-floor={floor}>
+      data-office-agents={active.length} data-office-floor={floor} data-office-awake={awake}>
       <div ref={hostRef} className="office-viewport" tabIndex={0} role="application" aria-label={t("society.office.viewport")}>
         {webgl ? (
           <RenderBoundary key={generation} fallbackText={t("society.office.no_graphics")}>
@@ -443,6 +475,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         ) : <div className="office-fallback" role="status">{t("society.office.no_graphics")}</div>}
       </div>
 
+      {awake && <>
+      <OfficeVisit floor={floor} />
       <div className="office-hud office-hud-left" data-office-ui>
         <div className="office-card office-title">
           <strong>{t(titleKey)}</strong>
@@ -520,7 +554,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <LevelToasts names={agentNames} agents={jarvisAgents} />
       <LevelHallScreen agents={jarvisAgents} playerName={playerName} petName={petName} playerLook={playerToyLook} />
       <LevelUpBanner playerName={playerName} petName={petName} />
+      </>}
     </section>
+    </CanvasActivity.Provider>
   );
 }
 
