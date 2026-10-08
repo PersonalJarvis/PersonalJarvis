@@ -256,9 +256,9 @@ def test_only_the_live_switch_selects_the_live_transport() -> None:
             if isinstance(node, ast.ImportFrom) and any(
                 alias.name in ("TelegramBotTransport", "*") for alias in node.names
             ):
-                users.append(str(path.relative_to(root)))
+                users.append(path.relative_to(root).as_posix())
             elif isinstance(node, ast.Name) and node.id == "TelegramBotTransport":
-                users.append(str(path.relative_to(root)))
+                users.append(path.relative_to(root).as_posix())
     # The live switch module is the one sanctioned user (jarvis/ops/delivery.py).
     assert sorted(set(users)) == ["ops/delivery.py"]
 

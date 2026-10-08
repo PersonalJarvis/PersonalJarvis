@@ -247,11 +247,21 @@ def test_the_notifier_module_imports_no_network_or_telegram_code() -> None:
 async def test_simulated_delivery_opens_no_socket(
     enabled: NotifyStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def _no_network(*_a: Any, **_k: Any) -> None:
-        raise AssertionError("a socket was opened")
+    """Every outbound path is closed. ``socket.socket`` itself stays: the
+    Windows proactor loop needs it for its own wake-ups."""
+    import asyncio
 
-    monkeypatch.setattr(socket, "socket", _no_network)
+    import httpx
+
+    def _no_network(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("a connection was opened")
+
+    async def _no_network_async(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("a connection was opened")
+
     monkeypatch.setattr(socket, "create_connection", _no_network)
+    monkeypatch.setattr(asyncio, "open_connection", _no_network_async)
+    monkeypatch.setattr(httpx.AsyncClient, "send", _no_network_async)
     transport = SimulatedTelegramTransport()
     report = await _notifier(enabled, transport).deliver([_note("a")])
     assert report.outcomes[0].status == "simulated"
