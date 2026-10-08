@@ -75,7 +75,7 @@ export function AccessoryPicker({ value, onChange, agentId }: { value: Companion
           data-locked={open ? undefined : "true"}
           className={`${tile} ${active ? "border-foreground bg-secondary" : open ? "border-border hover:bg-secondary" : "cursor-not-allowed border-dashed border-border"}`}>
           <span className={open ? undefined : "opacity-35 grayscale"}>
-            <AgentSymbol shape={value.shape} color={value.color} eyes={value.eyes} accessories={{ ...worn, [slot]: id }} size={60} />
+            <AgentSymbol shape={value.shape} color={value.color} eyes={value.eyes} skin={value.skin} accessories={{ ...worn, [slot]: id }} size={60} />
           </span>
           {!open && <span className="absolute bottom-1 left-1/2 inline-flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-background/90 px-1.5 py-0.5 text-[10px] font-semibold text-foreground shadow-sm">
             <Lock size={9} aria-hidden />{t("society.level.lv").replace("{0}", String(at))}
