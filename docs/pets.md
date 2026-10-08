@@ -55,7 +55,9 @@ one click.
   frames.
 
 The pet stays on screen while Jarvis is idle. Right-clicking the figure or its
-control strip hides the whole pet, including its bubble and cards. The global shortcut
+control strip opens a menu with **Open app**, **Reset position**, and **Hide pet**.
+Only choosing **Hide pet** hides the whole pet, including its bubble and cards.
+The menu shows the current restore shortcut beside that action. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
 back and to the front; voice updates do not undo dismissal. The pet returns
 when shown again or on the next app start. The shortcut is

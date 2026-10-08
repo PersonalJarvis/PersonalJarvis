@@ -1,15 +1,17 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
-## Desktop pet right-click dismissal (2026-10-08, T2)
+## Desktop pet context menu (2026-10-08, T2)
 
-The pet's figure and control strip share right-click dismissal on all desktop
-hosts. The existing global Pet visibility shortcut restores it; its existing
+The pet's figure and control strip share a native right-click menu on desktop
+hosts: open the app, reset the position, or hide the pet. Opening or dismissing
+the menu does not hide the figure. Labels follow the current interface language
+and the hide entry shows the configured shortcut. The existing global Pet
+visibility shortcut restores it; its existing
 Wayland limitation is unchanged. The macOS companion host reports local
 dismissal to its parent so settings and host recovery retain the user's choice.
-Tests cover the event-bus shortcut and companion protocol. A real Windows Ember
-window was hidden through its right-click binding, stayed hidden during a voice
-update, and was restored through the shortcut event. Physical shortcut input
-and native macOS/Linux behavior remain unverified.
+Tests cover the menu choices, cancellation, repeated opening, translated labels,
+the event-bus shortcut and companion protocol. Native menu input and
+macOS/Linux desktop behavior remain unverified.
 
 ## Local voice and audio topology refresh (issue #464, T2)
 

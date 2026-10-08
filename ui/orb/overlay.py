@@ -2281,6 +2281,7 @@ class OrbOverlay:
         # itself stays bus-agnostic (same contract as the mute toggle).
         self._on_show_window: Callable[[], None] | None = None
         self._on_visibility_changed: Callable[[bool], None] | None = None
+        self._context_menu: tk.Menu | None = None
         # The control row's actions. Each is optional: wired, the callback
         # decides (the macOS host forwards it to the parent process, which is
         # the only place a SpeechPipeline exists); unwired, the row falls back
@@ -2558,7 +2559,7 @@ class OrbOverlay:
         #   <B1-Motion> → drag-update (only fires while LMB held)
         #   <ButtonRelease-1> → drag-finish (or no-op if it was a click)
         #   <Double-Button-1> → mute toggle (fires after Button-1+Release)
-        #   <Button-3>       → raise the main desktop window (spec 2026-06-02)
+        #   <Button-3>       → pet context menu, or raise the main window
         #   <Button-2>       → reset position (moved off the old right-click menu)
         # User spec 2026-05-17: double-click on the orb mutes Jarvis.
         # Spec 2026-06-02: right-click now opens the Jarvis window (same as the
@@ -3313,10 +3314,42 @@ class OrbOverlay:
         self._on_show_window = callback
 
     def _on_right_click(self, _event: tk.Event | None = None) -> None:
-        """Dismiss the pet; other orb styles raise the main desktop window."""
+        """Open the pet's menu; other orb styles raise the main window."""
         if self._style == "pet":
-            self.set_visible(False)
+            self._show_pet_context_menu(_event)
             return
+        self._open_main_window()
+
+    def _show_pet_context_menu(self, event: tk.Event | None = None) -> None:
+        root = self._root
+        if root is None:
+            return
+        from jarvis.ui.pets.context_menu import preferences
+
+        try:
+            if self._context_menu is not None:
+                self._context_menu.destroy()
+            labels, shortcut = preferences()
+            menu = tk.Menu(root, tearoff=False)
+            self._context_menu = menu
+            menu.add_command(
+                label=labels[0], command=self._open_main_window,
+                state="normal" if self._on_show_window is not None else "disabled",
+            )
+            menu.add_command(label=labels[1], command=self._on_reset_double_click)
+            menu.add_separator()
+            menu.add_command(
+                label=labels[2], accelerator=shortcut, command=lambda: self.set_visible(False),
+            )
+            x, y = (event.x_root, event.y_root) if event is not None else root.winfo_pointerxy()
+            try:
+                menu.tk_popup(int(x), int(y))
+            finally:
+                menu.grab_release()
+        except tk.TclError:
+            logging.getLogger("jarvis.orb").exception("Pet context menu could not be opened")
+
+    def _open_main_window(self) -> None:
         callback = self._on_show_window
         if callback is None:
             return
