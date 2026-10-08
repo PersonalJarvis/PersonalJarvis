@@ -1,9 +1,4 @@
-"""Jarvis-bar right-click → show-window gesture.
-
-The bar exposes ``set_on_show_window`` (injected by OrbBusBridge) and binds
-``<Button-3>`` to ``_on_right_click``, which fires that callback. The handler
-must be safe before/without a callback (boot race / no bridge).
-"""
+"""Right-click dismisses the bar without opening the main window."""
 from __future__ import annotations
 
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
@@ -16,17 +11,18 @@ def test_set_on_show_window_stores_callback() -> None:
     assert bar._on_show_window is cb  # noqa: SLF001
 
 
-def test_right_click_fires_show_window_callback() -> None:
+def test_right_click_hides_without_opening_the_main_window() -> None:
     bar = JarvisBarOverlay(persistent=False)
     fired: list[bool] = []
     bar.set_on_show_window(lambda: fired.append(True))
 
     bar._on_right_click(None)  # noqa: SLF001 — the Tk <Button-3> handler
 
-    assert fired == [True]
+    assert fired == []
+    assert bar._user_hidden is True
 
 
 def test_right_click_safe_without_callback() -> None:
     bar = JarvisBarOverlay(persistent=False)
-    # No callback registered → must be a silent no-op, never raise.
     bar._on_right_click(None)  # noqa: SLF001
+    assert bar._user_hidden is True

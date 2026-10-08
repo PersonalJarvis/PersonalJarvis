@@ -104,6 +104,7 @@ class SubprocessBarOverlay:
         self._accent = accent
         self._opacity = opacity
         self._startup_gated = bool(startup_gated)
+        self._bar_user_hidden = False
         # User "Bar size" multiplier, forwarded in the init line so the host
         # boots at the right size and a bounded respawn restores it.
         self._size_scale = float(size_scale)
@@ -249,6 +250,7 @@ class SubprocessBarOverlay:
             "persistent": self._persistent_flag,
             "accent": self._accent,
             "startup_gated": self._startup_gated,
+            "user_hidden": self._bar_user_hidden,
             "size_scale": self._size_scale,
             "follow_cursor_monitor": self._follow_cursor_monitor,
         }
@@ -272,6 +274,15 @@ class SubprocessBarOverlay:
     def hide(self) -> None:
         self._visible = False
         self._send({"op": "hide"})
+
+    def set_visible(self, visible: bool) -> None:
+        self._bar_user_hidden = not bool(visible)
+        self._visible = bool(visible)
+        self._send({"op": "set_visible", "visible": bool(visible)})
+
+    def toggle_visible(self) -> None:
+        # The host owns right-click dismissal; toggle its authoritative state.
+        self._send({"op": "toggle_visible"})
 
     def reassert_z_order(self) -> None:
         self._send({"op": "reassert_z_order"})
@@ -545,6 +556,9 @@ class SubprocessBarOverlay:
         try:
             if event == "ready":
                 self._ready.set()
+            elif event == "visibility_changed":
+                self._bar_user_hidden = not bool(msg.get("visible", True))
+                self._visible = not self._bar_user_hidden
             elif event == "talk":
                 self._dispatch_talk_action()
             elif event == "hangup":
