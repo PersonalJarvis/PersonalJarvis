@@ -18,9 +18,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 _capture_mta_lock = threading.Lock()
 _capture_mta: tuple[Any, Any] | None = None
-# Zero opacity removes the window from DWM capture. Keep its surface alive
-# at the lowest nonzero opacity, behind the app and without activation.
-_PARKED_ALPHA = 1
+_PARKED_ALPHA = 0
 
 
 def _release_capture_mta() -> None:
@@ -926,12 +924,11 @@ class NativeWindow:
             self._stop_capture(hwnd)
 
     def _hide_from_desktop(self, hwnd: int) -> None:
-        """Park an owned window at the minimum captureable desktop opacity.
+        """Keep an owned window transparent while retaining native capture.
 
         Moving offscreen makes Chrome clamp its native menus onto a monitor.
         Hiding/minimizing stops window capture. Desktop alpha leaves the native
         surface and its coordinates intact; WGC captures the original pixels.
-        Alpha must stay above zero or Windows closes the capture item.
         The owning browser process retains this style until it exits.
         """
         if not self._owned(hwnd):
@@ -948,11 +945,10 @@ class NativeWindow:
         ]
         u.GetLayeredWindowAttributes.restype = w.BOOL
         style = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE is a 32-bit style, not a pointer.
-        # Layered + no-activate avoids a taskbar entry. Mouse transparency
-        # prevents the nearly invisible surface from intercepting desktop clicks.
-        # Tool windows are excluded from native capture; clear that bit too,
-        # including on an owned popup that Chrome created with it already set.
-        hidden_style = (style | 0x08080020) & ~0x00040080
+        # WGC rejects NOACTIVATE when APPWINDOW is absent. Use SWP_NOACTIVATE
+        # in park() instead; the transparent surface also ignores desktop clicks.
+        # Clear TOOLWINDOW on owned popups so they remain capturable too.
+        hidden_style = (style | 0x00080020) & ~0x08040080
         if style != hidden_style:
             u.SetWindowLongW(hwnd, -20, hidden_style)
             if u.GetWindowLongW(hwnd, -20) != hidden_style:

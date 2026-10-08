@@ -298,9 +298,9 @@ def test_parking_preserves_monitor_geometry_and_does_not_activate(scene):
     args = desktop.positions[-1]
     assert args[:2] == (1, 1)  # Owned Chrome, HWND_BOTTOM.
     assert args[-1] & 0x13 == 0x13  # No move, no size, no activation.
-    assert desktop.alpha[1] == 1
-    assert desktop.styles[1] & 0x08080020 == 0x08080020
-    assert not desktop.styles[1] & 0x00040080
+    assert desktop.alpha[1] == 0
+    assert desktop.styles[1] & 0x00080020 == 0x00080020
+    assert not desktop.styles[1] & 0x08040080
 
 
 def test_parking_hides_later_owned_popups_but_never_other_windows(scene):
@@ -312,7 +312,7 @@ def test_parking_hides_later_owned_popups_but_never_other_windows(scene):
     desktop.add(3, owner=0)
     desktop.add(4, pid=900)
     window._sync_windows()
-    assert desktop.alpha == {1: 1, 2: 1}
+    assert desktop.alpha == {1: 0, 2: 0}
     assert window.click_target(45, 15) == (2, 5, 5)
 
 
@@ -321,10 +321,11 @@ def test_parked_windows_remain_eligible_for_capture_creation(scene):
     factory = window._capture_factory
 
     def captureable(**kwargs):
-        # A tool window or zero-opacity surface is not a live capture target.
+        # WGC rejects a no-activate window unless it is an explicit app window.
         hwnd = kwargs["window_hwnd"]
-        assert not desktop.styles.get(hwnd, 0) & 0x80
-        assert desktop.alpha.get(hwnd, 255) > 0
+        style = desktop.styles.get(hwnd, 0)
+        assert not style & 0x80
+        assert not style & 0x08000000 or style & 0x40000
         return factory(**kwargs)
 
     window._capture_factory = captureable
@@ -334,7 +335,7 @@ def test_parked_windows_remain_eligible_for_capture_creation(scene):
     window._start_capture(1)
     desktop.styles[2] = 0x80
     popup(window, desktop)
-    assert desktop.alpha == {1: 1, 2: 1}
+    assert desktop.alpha == {1: 0, 2: 0}
     assert all(desktop.styles[hwnd] & 0x80000 for hwnd in (1, 2))
 
 
@@ -349,7 +350,7 @@ def test_failed_capture_creation_restores_desktop_transparency(scene):
     window._capture_factory = refused
     with pytest.raises(RuntimeError, match="capture item unavailable"):
         window._start_capture(1)
-    assert desktop.alpha[1] == 1
+    assert desktop.alpha[1] == 0
     assert desktop.styles[1] & 0x80000
     assert 1 not in window._captures and 1 not in window._capture_keys
 
