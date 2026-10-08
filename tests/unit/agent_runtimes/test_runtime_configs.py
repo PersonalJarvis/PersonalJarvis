@@ -153,6 +153,9 @@ def test_openclaw_config_keeps_both_keys_out_of_the_file(tmp_path):
 
 def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    assert config["cron"]["enabled"] is False
+    assert config["plugins"]["slots"]["memory"] == "none"
+    assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
     defaults = config["agents"]["defaults"]
     assert defaults["heartbeat"] == {"every": "0m"}
     assert defaults["skipBootstrap"] is True

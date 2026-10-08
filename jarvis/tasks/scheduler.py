@@ -145,6 +145,8 @@ class TaskScheduler:
         # Per-run cancel tokens (H-03): cancel_task() fires the token of a
         # RUNNING task so its harness action stops; cleared in _safe_run.
         self._running_tokens: dict[str, Any] = {}
+        # Retained after cancel/pause so an already queued firing is revalidated.
+        self._autonomous_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Runner wiring (DI — the runner can be set after construction)
@@ -436,14 +438,18 @@ class TaskScheduler:
         spec = await self._store.get_spec(task_id)
         if spec is None:
             raise TaskNotFound(task_id)
+        if "autonomous" in spec.tags:
+            self._autonomous_ids.add(task_id)
         if spec.trigger.type == "source":
             raise TaskStateConflict("Use the configured trigger input for this routine")
         if spec.trigger.type in ("after_delay", "at_time"):
             self._remove_from_memory(task_id)
-        restore_state = "paused" if state == "paused" else None
+        restore_state = (
+            "paused" if state == "paused" and spec.trigger.type in PAUSABLE_TRIGGER_TYPES else None
+        )
         await self._store.append_step(task_id, "log", {"event": "run_now"})
         task_obj = asyncio.create_task(
-            self._run_now_and_settle(task_id, restore_state),
+            self._run_now_and_settle(task_id, restore_state, allow_paused=state == "paused"),
             name=f"task-run-now-{task_id}",
         )
         self._runner_tasks.add(task_obj)
@@ -453,8 +459,9 @@ class TaskScheduler:
         self,
         task_id: str,
         restore_state: str | None,
+        *, allow_paused: bool = False,
     ) -> None:
-        await self._safe_run(task_id, None)
+        await self._safe_run(task_id, None, allow_paused=allow_paused)
         if restore_state is None:
             return
         # The runner leaves a recurring task as `scheduled` (or `failed`);
@@ -476,7 +483,9 @@ class TaskScheduler:
         task = await self._store.get(task_id)
         if task is None:
             raise TaskNotFound(task_id)
-        if task["trigger_type"] not in PAUSABLE_TRIGGER_TYPES:
+        spec = await self._store.get_spec(task_id)
+        autonomous = spec is not None and "autonomous" in spec.tags
+        if task["trigger_type"] not in PAUSABLE_TRIGGER_TYPES and not autonomous:
             raise TaskStateConflict(
                 f"only recurring tasks can be paused (trigger={task['trigger_type']})"
             )
@@ -497,7 +506,7 @@ class TaskScheduler:
         current = await self._store.get(task_id)
         if current is None:
             raise TaskNotFound(task_id)
-        if spec.trigger.type not in PAUSABLE_TRIGGER_TYPES:
+        if spec.trigger.type not in PAUSABLE_TRIGGER_TYPES and "autonomous" not in spec.tags:
             raise TaskStateConflict("Routine updates require a recurring trigger")
         await self._validate_source(spec)
         was_paused = current["state"] == "paused"
@@ -533,8 +542,12 @@ class TaskScheduler:
         if spec.trigger.type in ("every", "calendar", "cron"):
             due = next_every_due_ns(spec, now)
             await self._store.set_next_due(task_id, due)
+        elif spec.trigger.type in ("after_delay", "at_time"):
+            # Pausing a one-time follow-up must not restart its original delay.
+            due = task.get("due_at_ns")
         await self._store.update_state(task_id, "scheduled")
         await self._store.append_step(task_id, "log", {"event": "resumed"})
+        self._remove_from_memory(task_id)
         self._register_in_memory(spec, task_id, stored_due_at_ns=due)
         if notify_activation:
             await self._bus.publish(
@@ -770,6 +783,8 @@ class TaskScheduler:
         """
         if task_id in self._known:
             return
+        if "autonomous" in spec.tags:
+            self._autonomous_ids.add(task_id)
         trig = spec.trigger
         if trig.type == "after_delay":
             due = (
@@ -898,6 +913,14 @@ class TaskScheduler:
             due, tid = heapq.heappop(self._heap)
             self._known.discard(tid)
             spec = await self._store.get_spec(tid)
+            if spec is not None and "autonomous" in spec.tags:
+                row = await self._store.get(tid)
+                if row is None or row["state"] != "scheduled":
+                    if row and row["state"] == "running" and spec.trigger.type in (
+                        "every", "calendar", "cron",
+                    ):
+                        await self._rearm_every(tid, spec, now_ns)
+                    continue
             if spec is not None and spec.trigger.type in ("every", "calendar", "cron"):
                 if is_missed(due, now_ns):
                     # The process lived but did not tick (machine asleep,
@@ -948,18 +971,28 @@ class TaskScheduler:
         self._runner_tasks.add(task)
         task.add_done_callback(self._runner_tasks.discard)
 
-    async def _safe_run(self, task_id: str, trigger_event: dict[str, Any] | None = None) -> None:
+    async def _safe_run(
+        self, task_id: str, trigger_event: dict[str, Any] | None = None,
+        *, allow_paused: bool = False,
+    ) -> None:
         # Per-run cancel token (deep-dive 2026-07-15, H-03): production runs
         # used to pass NO token, so the runner's cancel probes were no-ops and
         # a running harness action was unstoppable except via the global kill
         # switch. cancel_task() fires this token for a single running task.
         from jarvis.control.cancel import CancelToken  # noqa: PLC0415
 
+        if task_id in self._running_tokens:
+            return  # A queued/manual firing cannot overlap an already admitted run.
         token = CancelToken()
         self._running_tokens[task_id] = token
         path = tuple((trigger_event or {}).get("__trigger_path") or current_trigger_path.get())
         context_token = current_trigger_path.set(path + ("task:" + task_id,))
         try:
+            if task_id in self._autonomous_ids:
+                row = await self._store.get(task_id)
+                allowed = {"scheduled", "paused"} if allow_paused else {"scheduled"}
+                if row is None or row["state"] not in allowed:
+                    return
             await self._runner.run(  # type: ignore[union-attr]
                 task_id,
                 token,
