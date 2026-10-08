@@ -6158,6 +6158,24 @@
     "own_words": "deine eigene Antwort",
     "unanswered": "Nicht beantwortet – der Durchlauf wurde beendet."
   },
+  "messenger_turn": {
+    "thinking": "Denkt nach",
+    "typing": "Schreibt",
+    "writing": "Schreibt sich etwas auf",
+    "searching": "Schlägt nach",
+    "browsing": "Ist im Browser",
+    "setting_up": "Richtet es ein",
+    "working": "Erledigt es",
+    "routine_created": "Erstellt: Routine",
+    "routine_updated": "Aktualisiert: Routine",
+    "routine_paused": "Pausiert: Routine",
+    "routine_resumed": "Fortgesetzt: Routine",
+    "routine_deleted": "Gelöscht: Routine",
+    "rule_saved": "Gemerkt: neue Regel",
+    "skill_saved": "Gespeichert: Skill",
+    "settings_updated": "Aktualisiert: Einstellungen",
+    "note_saved": "Notiert"
+  },
   "thread_turn": {
     "worked": "Gearbeitet",
     "worked_for": "{duration} gearbeitet",

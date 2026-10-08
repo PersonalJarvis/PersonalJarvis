@@ -6143,6 +6143,24 @@
     "own_words": "你自己的回答",
     "unanswered": "未回答——本轮已结束。"
   },
+  "messenger_turn": {
+    "thinking": "正在思考",
+    "typing": "正在输入",
+    "writing": "正在记下",
+    "searching": "正在查找",
+    "browsing": "正在浏览器中",
+    "setting_up": "正在设置",
+    "working": "正在处理",
+    "routine_created": "已创建：例程",
+    "routine_updated": "已更新：例程",
+    "routine_paused": "已暂停：例程",
+    "routine_resumed": "已恢复：例程",
+    "routine_deleted": "已删除：例程",
+    "rule_saved": "已记下：新规则",
+    "skill_saved": "已保存：技能",
+    "settings_updated": "已更新：设置",
+    "note_saved": "已记下"
+  },
   "thread_turn": {
     "worked": "已工作",
     "worked_for": "已工作 {duration}",

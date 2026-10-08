@@ -31,7 +31,7 @@ import { listSubagents } from "./subagents";
  * MIT License, Copyright (c) 2026 T3 Tools Inc. — third_party/t3code/LICENSE.
  */
 
-const PROSE = cn(
+export const PROSE = cn(
   "py-1 prose prose-neutral max-w-none text-base leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
   "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
   "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
@@ -264,7 +264,7 @@ function ThinkingRow({ grouped = false }: { grouped?: boolean }) {
  * A picture in the agent's words — an image it viewed or made — reads as a
  * small preview in the thread; a click opens it full size.
  */
-const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_img]:max-w-sm [&_[data-kind=image]_img]:border [&_[data-kind=image]_img]:border-border";
+export const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_img]:max-w-sm [&_[data-kind=image]_img]:border [&_[data-kind=image]_img]:border-border";
 
 function StepRow({ item, running, grouped, onOpenChange }: { item: WorkItem; running: boolean; grouped?: boolean; onOpenChange?: OpenChange }) {
   if (item.kind === "call") return <CallRow call={item.call} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
@@ -561,7 +561,7 @@ function pendingLabel(block: ToolBlock, t: (key: string) => string): { icon: Rea
  * An approval answered in the turn itself: the waiting line, what the agent
  * asks for, and the three answers under it.
  */
-function ApprovalPrompt({ block, onDecide }: { block: ToolBlock; onDecide?: Decide }) {
+export function ApprovalPrompt({ block, onDecide }: { block: ToolBlock; onDecide?: Decide }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -631,21 +631,6 @@ export interface ThreadTurnProps {
   extras?: { key: string; node: ReactNode }[];
   /** A quiet note on a finished turn's closing line: tokens, cost. */
   receipt?: ReactNode;
-  /**
-   * An agent chat reads like a messenger: every paragraph the agent writes
-   * to the person is its own grey bubble on the left, and the work between
-   * them stays the quiet log it is in a thread.
-   */
-  bubbles?: boolean;
-}
-
-/** One message of the agent's in an agent chat: a grey bubble on the left. */
-function AnswerBubble({ text }: { text: string }) {
-  return <div className="flex min-w-0" data-testid="thread-answer-bubble">
-    <div className="jarvis-chat-in min-w-0 max-w-[min(85%,42rem)] rounded-[20px] px-4 py-2.5">
-      <div className={cn(PROSE, THREAD_MEDIA, "py-0 text-[hsl(var(--chat-bubble-in-foreground))] dark:text-[hsl(var(--chat-bubble-in-foreground))] prose-p:text-inherit prose-li:text-inherit")}><ChatMarkdown text={text} /></div>
-    </div>
-  </div>;
 }
 
 /**
@@ -653,7 +638,7 @@ function AnswerBubble({ text }: { text: string }) {
  * threads and every agent chat draw their turns with it, so a turn looks and
  * behaves the same wherever it is read — streaming, finished or reloaded.
  */
-export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer", onDecide, extras, receipt, bubbles = false }: ThreadTurnProps) {
+export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer", onDecide, extras, receipt }: ThreadTurnProps) {
   const t = useT();
   const lang = t("trace_report.locale");
   const running = turn.status === "running";
@@ -686,9 +671,7 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
   const renderRow = (row: ThreadRow) => {
     if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
     if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
-    if (row.kind === "text") return bubbles
-      ? <AnswerBubble key={row.id} text={row.text} />
-      : <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
+    if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     if (row.kind === "agent") return <SubagentCard key={row.id} block={row.block} turn={turn} />;
     // A secret is pasted where it is asked for, never into a composer.
     if (row.block.credential) return <CredentialCard key={row.id} credential={row.block.credential} />;
@@ -716,7 +699,7 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
         {work.filter((row) => row.kind !== "agent" && !waiting.includes(row)).map(renderRow)}
         {extraNodes}
       </div>}
-      {!bubbles && <div aria-hidden className="mt-1 border-b border-border/70" />}
+      <div aria-hidden className="mt-1 border-b border-border/70" />
     </div>}
     {folded && agents.length > 0 && <div className="space-y-1.5 pt-1" data-testid="thread-turn-subagents">{agents.map(renderRow)}</div>}
     {folded && waiting.map(renderRow)}

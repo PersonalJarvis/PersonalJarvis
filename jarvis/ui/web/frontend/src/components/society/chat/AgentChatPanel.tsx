@@ -60,8 +60,7 @@ import {
   type TurnItem,
   type UserItem,
 } from "@/components/agentchat/reduce";
-import { ThreadTurn } from "@/components/agentic/threads/ThreadTimeline";
-import { formatTokens, outputTokens } from "@/components/agentchat/toolView";
+import { MessengerTurn } from "@/components/agentchat/MessengerTurn";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
@@ -736,7 +735,7 @@ export function Transcript({
               ) : item.type === "user" ? (
                 <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} tint={tint} />
               ) : item.type === "turn" ? (
-                <TurnBubble item={item} memory={memoryByTurn.get(item.id)} onDecide={onDecide} />
+                <TurnBubble item={item} agent={agent} memory={memoryByTurn.get(item.id)} onDecide={onDecide} />
               ) : item.type === "notice" ? (
                 item.kind === "proposal" ? (
                   <ProposalCard item={item} />
@@ -1113,27 +1112,24 @@ export function UserBubble({ item, agentId, sessionId, tint }: { item: UserItem;
 
 function TurnBubble({
   item,
+  agent,
   memory,
   onDecide,
 }: {
   item: TurnItem;
+  agent: SocietyAgent;
   memory?: NoticeItem[];
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
-  const t = useT();
   const extras = useMemo(
-    () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} inTrace /> })),
+    () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} /> })),
     [memory],
   );
-  // What the turn spent: output tokens only (BUG-173), and the cost when billed.
-  const tokens = outputTokens(item.usage ?? item.liveUsage);
-  const spent = [
-    tokens !== null && tokens > 0 ? `${formatTokens(tokens)} ${t("agent_chat.tokens")}` : "",
-    item.costUsd !== null && item.costUsd > 0 ? `$${item.costUsd.toFixed(4)}` : "",
-  ].filter(Boolean).join(" · ");
-  // An agent's turn reads exactly like a coding thread's turn in the Agentic
-  // IDE; only its questions and approvals are answered in place.
-  return <ThreadTurn turn={item} prompts="inline" onDecide={onDecide} extras={extras} receipt={spent || undefined} bubbles />;
+  // An agent's turn reads like a messenger: its messages, what it changed,
+  // and while it works its face with a word for what it is doing.
+  // The face stays a face: the effect beside it says what it is doing, so
+  // the swatch's own "working" dots would only repeat it.
+  return <MessengerTurn turn={item} avatar={<AgentSwatch agent={{ ...agent, state: undefined }} size={26} />} onDecide={onDecide} extras={extras} />;
 }
 
 /**

@@ -6158,6 +6158,24 @@
     "own_words": "your own answer",
     "unanswered": "Not answered — the turn ended."
   },
+  "messenger_turn": {
+    "thinking": "Thinking",
+    "typing": "Writing",
+    "writing": "Writing something down",
+    "searching": "Looking it up",
+    "browsing": "In the browser",
+    "setting_up": "Setting it up",
+    "working": "On it",
+    "routine_created": "Created: Routine",
+    "routine_updated": "Updated: Routine",
+    "routine_paused": "Paused: Routine",
+    "routine_resumed": "Resumed: Routine",
+    "routine_deleted": "Deleted: Routine",
+    "rule_saved": "Noted: new rule",
+    "skill_saved": "Saved: Skill",
+    "settings_updated": "Updated: Settings",
+    "note_saved": "Noted"
+  },
   "thread_turn": {
     "worked": "Worked",
     "worked_for": "Worked for {duration}",

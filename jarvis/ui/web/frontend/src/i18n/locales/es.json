@@ -6158,6 +6158,24 @@
     "own_words": "tu propia respuesta",
     "unanswered": "Sin responder: el turno terminó."
   },
+  "messenger_turn": {
+    "thinking": "Pensando",
+    "typing": "Escribiendo",
+    "writing": "Tomando nota",
+    "searching": "Buscando",
+    "browsing": "En el navegador",
+    "setting_up": "Configurándolo",
+    "working": "En ello",
+    "routine_created": "Creada: rutina",
+    "routine_updated": "Actualizada: rutina",
+    "routine_paused": "Pausada: rutina",
+    "routine_resumed": "Reanudada: rutina",
+    "routine_deleted": "Eliminada: rutina",
+    "rule_saved": "Anotado: nueva regla",
+    "skill_saved": "Guardado: skill",
+    "settings_updated": "Actualizado: ajustes",
+    "note_saved": "Anotado"
+  },
   "thread_turn": {
     "worked": "Trabajó",
     "worked_for": "Trabajó durante {duration}",
