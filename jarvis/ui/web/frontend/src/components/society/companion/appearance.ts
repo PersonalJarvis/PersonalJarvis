@@ -3,7 +3,10 @@ import { ACCESSORY_SLOTS, type AccessoryChoice } from "./accessories";
 
 export const COMPANION_SHAPES = ["circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
 export type SymbolShape = typeof COMPANION_SHAPES[number];
-export const COMPANION_COLORS = ["#8b5cf6", "#c5dfd4", "#f2a65a", "#7ab6ef", "#ed91aa", "#b7cb78", "#bba7ed", "#79c7c4"] as const;
+export const COMPANION_COLORS = [
+  "#ffffff", "#875b36", "#dd2233", "#ff6801", "#ff9700", "#029858",
+  "#00a591", "#1174da", "#804ee1", "#df2a87", "#777777",
+] as const;
 export const COMPANION_SIZE_M = 0.5;
 export const COMPANION_FOLLOW_DISTANCE_M = 1;
 export const companionSchema = z.object({
