@@ -1,7 +1,9 @@
+import { useContext } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { PetStageContext } from "@/components/pets/petStage";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotStage, useDoneFlourish } from "./BotStage";
-import { DONE_MS, MIN_SCENE_MS, SCENES, THINK_ROTATE_MS, sceneFor } from "./scenes";
+import { DONE_MS, MIN_SCENE_MS, PET_STATE, SCENES, THINK_ROTATE_MS, sceneFor } from "./scenes";
 import type { Presence } from "../messengerPresence";
 
 afterEach(cleanup);
@@ -66,6 +68,15 @@ describe("BotStage", () => {
     act(() => { vi.advanceTimersByTime(600); });
     expect(faces()).toEqual([[next, false]]);
     expect(words()).toEqual([false]);
+  });
+
+  it("asks a face that wears a pet to play the scene's pet row", () => {
+    function Row() { return <span data-testid="row">{useContext(PetStageContext)}</span>; }
+    render(<BotStage presence="searching" seed="t" avatar={<Row />} color="#7ab6ef" />);
+    expect(screen.getByTestId("row").textContent).toBe("searching");
+    expect(PET_STATE[sceneName() as keyof typeof PET_STATE]).toBe("searching");
+    expect(PET_STATE.typing).toBe("talking");
+    expect(PET_STATE.done).toBe("success");
   });
 
   it("plays the agent's own face", () => {

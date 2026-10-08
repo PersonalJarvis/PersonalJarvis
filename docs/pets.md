@@ -53,6 +53,17 @@ one click.
   character (`docs/agent-society/office-map.md`, *Jarvis is the person's
   pet*). A pet the person drew becomes a voxel figure cut from its idle
   frames.
+- **Worn by an agent.** In an agent's look dialog (*Companion → Look →
+  Pet*) any pet from My Pets can replace the agent's shape. It is stored as
+  `companion.pet` in the agent's avatar JSON (`jarvis/society/companion.py`,
+  mirrored by `components/society/companion/appearance.ts`) and drawn by
+  `CompanionMark` wherever the agent appears: roster, chats, mentions, the
+  level hall, the bot stage (each scene plays a pet row, `PET_STATE` in
+  `botStage/scenes.ts`), the live line of its routine traces, and as its 3D
+  companion in the Verse with the pet's own model and gait. The agent's
+  colour stays for its chat bubbles. A pet that does not exist on this
+  machine (deleted, or drawn on another one) shows the shape again; a shared
+  agent template keeps a built-in pet and drops a drawn one.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it

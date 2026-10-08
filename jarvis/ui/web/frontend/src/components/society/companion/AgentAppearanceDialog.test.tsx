@@ -10,6 +10,10 @@ vi.mock("./CompanionPreview", () => ({ CompanionPreview: () => <div data-testid=
 vi.mock("../figures/AgentFigureViewer", () => ({ AgentFigureViewer: () => <div data-testid="character-preview" /> }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+const PETS = { active: "gigi", scale: 1, bubble: true, strip_always: false, visible: true, pets: ["gigi", "cocoa"].map(id => ({
+  id, name: id, description: "", builtin: true, frame_size: 48, animations: { idle: { row: 0, frames: 1, fps: 1, loop: true } }, sheet_url: `/api/pets/${id}/sheet.png`,
+})) };
+
 function setup(fail = false, legacy = false) {
   const original = SAMPLE_ROSTER.find(a => a.tier !== "lead")!;
   const figure = legacy ? { contract: 1 as const, archetype: "biped" as const, base: "rogue", parts: {} } : original.figure!;
@@ -18,6 +22,7 @@ function setup(fail = false, legacy = false) {
   // The look picker reads agent levels; an unreachable level system leaves every look open.
   const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).startsWith("/api/progression")
     ? new Response("{}", { status: 404 })
+    : String(url).startsWith("/api/pets") ? new Response(JSON.stringify(PETS), { status: 200 })
     : new Response(JSON.stringify({ agent }), { status: fail ? 500 : 200 }));
   const saves = () => fetcher.mock.calls.filter(([url]) => String(url).startsWith("/api/society/agents/"));
   vi.stubGlobal("fetch", fetcher);
@@ -78,4 +83,20 @@ it("saves a chosen hairstyle on the recipe without dropping its colours", async 
   const body = JSON.parse(init.body as string);
   expect(body.avatar.hairStyle).toBe("beanie");
   expect(body.avatar.palette).toEqual(agent.figure?.palette);
+});
+
+it("lets an agent wear a pet instead of its shape, and take the shape back", async () => {
+  const { saves } = setup();
+  fireEvent.click(screen.getByRole("button", { name: "society.companion.look_pet" }));
+  fireEvent.click(await screen.findByRole("button", { name: "cocoa" }));
+  expect(screen.queryByRole("button", { name: "society.companion.shapes.cloud" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
+  await waitFor(() => expect(saves()).toHaveLength(1));
+  const worn = JSON.parse((saves()[0] as unknown as [string, RequestInit])[1].body as string);
+  expect(worn.avatar.companion).toMatchObject({ pet: "cocoa", shape: "circle" });
+  fireEvent.click(screen.getByRole("button", { name: "society.companion.look_shape" }));
+  fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
+  await waitFor(() => expect(saves()).toHaveLength(2));
+  const bare = JSON.parse((saves()[1] as unknown as [string, RequestInit])[1].body as string);
+  expect("pet" in bare.avatar.companion).toBe(false);
 });

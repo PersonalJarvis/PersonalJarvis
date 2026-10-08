@@ -9,6 +9,7 @@
  * looping one expression. Pure: the stage only draws what this returns.
  */
 
+import type { PetState } from "@/lib/petStates";
 import type { Presence } from "../messengerPresence";
 
 export type Scene =
@@ -31,6 +32,19 @@ export const SCENES: Record<Presence, readonly Scene[]> = {
   typing: ["typing"],
   reading: ["reading"],
   done: ["done"],
+};
+
+/**
+ * The row a pet plays for each scene when the agent wears a pet instead of a
+ * shape: it has no eyes for the stage to move, so its own animation carries
+ * the moment. A pet without a row borrows the nearest one (STATE_FALLBACKS).
+ */
+export const PET_STATE: Record<Scene, PetState> = {
+  ponder: "thinking", glance: "thinking", squint: "thinking", spark: "thinking", wink: "thinking",
+  roll: "thinking", drowsy: "thinking", beam: "thinking", skyread: "thinking", doubt: "thinking",
+  note: "working", jot: "working", scan: "searching", flip: "searching", recall: "thinking",
+  browser: "searching", setup: "working", tune: "working", command: "working", juggle: "working", build: "working",
+  typing: "talking", reading: "listening", done: "success",
 };
 
 /** How long one thinking expression plays before the next one takes over. */

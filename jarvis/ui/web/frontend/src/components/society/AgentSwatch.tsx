@@ -1,8 +1,9 @@
 import { GigiAvatar } from "./GigiAvatar";
 import { cn } from "@/lib/utils";
 
-import { AgentSymbol, SymbolThinkingDots } from "./AgentSymbol";
+import { SymbolThinkingDots } from "./AgentSymbol";
 import { resolveCompanion } from "./companion/appearance";
+import { CompanionMark } from "./companion/CompanionMark";
 import type { SocietyAgent } from "./data";
 
 type SwatchAgent = Pick<SocietyAgent, "figure" | "palette" | "name"> &
@@ -59,7 +60,7 @@ export function AgentSwatch({
         {thinking && <svg aria-hidden viewBox="0 0 40 44" className="pointer-events-none absolute inset-0 h-full w-full"><SymbolThinkingDots color="#ffcf45" /></svg>}
         </>
       ) : (
-        <AgentSymbol {...appearance} size={size} thinking={thinking} expressive={expressive} />
+        <CompanionMark appearance={appearance} size={size} thinking={thinking} expressive={expressive} />
       )}
     </span>
   );

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import type { Presence } from "../messengerPresence";
-import { DONE_MS, MIN_SCENE_MS, THINK_ROTATE_MS, sceneFor, type Scene } from "./scenes";
+import { DONE_MS, MIN_SCENE_MS, PET_STATE, THINK_ROTATE_MS, sceneFor, type Scene } from "./scenes";
+import { PetStageContext } from "@/components/pets/petStage";
 import { bubbleTint } from "@/lib/bubbleTint";
 import "./botStage.css";
 
@@ -11,7 +12,8 @@ import "./botStage.css";
  * look up and around, squint, widen at an idea, wink, smile, read line by
  * line, turn to dashes while it types — and a tool scene adds one tiny prop
  * beside it (a quill writing, a magnifier, a gear). The face must be drawn
- * with `expressive` eyes (AgentSwatch) for the expressions to play.
+ * with `expressive` eyes (AgentSwatch) for the expressions to play; an agent
+ * that wears a pet plays the scene's pet row instead (PET_STATE).
  *
  * A scene never flashes: it plays at least MIN_SCENE_MS before the next one
  * takes over, so a call that lasts 80 ms does not flicker. A long think
@@ -37,7 +39,8 @@ export function BotStage({ presence, seed, avatar, color }: {
     role="status" aria-label={label} data-testid="messenger-presence" data-presence={presence}>
     <span className="bs-set" aria-hidden>
       <Crossfade id={scene} className="bs-face">
-        <span className="bs-body">{avatar}</span>
+        {/* A face that wears a pet plays the scene's pet row instead of moving its eyes. */}
+        <span className="bs-body"><PetStageContext.Provider value={PET_STATE[scene]}>{avatar}</PetStageContext.Provider></span>
         {OVER[scene] && <svg className="bs-over" viewBox="0 0 28 28" width="28" height="28">{OVER[scene]}</svg>}
       </Crossfade>
     </span>

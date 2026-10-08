@@ -3,6 +3,7 @@ import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, Fil
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
+import { PetStageContext } from "@/components/pets/petStage";
 import { PetMark } from "@/components/pets/PetMark";
 import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
@@ -626,6 +627,12 @@ type WorkTraceProps = {
    */
   companion?: boolean;
   /**
+   * An agent's own trace: its face takes the live line instead, and a face
+   * that wears a pet plays the row for what the agent is doing
+   * (PetStageContext). Wins over `companion`.
+   */
+  face?: ReactNode;
+  /**
    * Steps that belong to this turn's work but are not blocks of it (a
    * memory receipt posted after the turn). They sit on the trace above the
    * reply and never below it.
@@ -633,7 +640,7 @@ type WorkTraceProps = {
   extras?: { key: string; node: ReactNode }[];
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, extras }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, face, extras }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
@@ -686,12 +693,14 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     // whenever the trace has no reply between it and the work); a finished
     // conversation turn closes with a quiet line under its reply instead.
     const statusOnRail = !fold && (!conversation || live);
-    const petState = companion && working ? livePetState(blocks) : null;
+    const petState = (companion || face) && working ? livePetState(blocks) : null;
     const statusLine = <div role="status" aria-live="polite" data-trace-status={outcome}
       className={cn("flex min-w-0 flex-wrap items-start gap-x-3 text-xs leading-6 text-muted-foreground",
         statusOnRail ? "py-1" : "pb-2 pt-1", failed && "text-destructive", pending && "text-foreground")}>
       {petState
-        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}><PetMark size={32} state={petState} /></span>
+        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}>{face
+          ? <PetStageContext.Provider value={petState}>{face}</PetStageContext.Provider>
+          : <PetMark size={32} state={petState} />}</span>
         : null}
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
@@ -784,7 +793,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; extras?: WorkTraceProps["extras"] }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; face?: ReactNode; extras?: WorkTraceProps["extras"] }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());

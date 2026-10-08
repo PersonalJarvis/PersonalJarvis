@@ -37,6 +37,7 @@ import { RanksTab } from "./RanksTab";
 import { RewardsTab } from "./RewardsTab";
 import { StudioTab } from "./StudioTab";
 import { AgentSymbol } from "../../AgentSymbol";
+import { CompanionMark } from "../../companion/CompanionMark";
 import { accessoryItem } from "../../companion/accessories";
 import { resolveCompanion } from "../../companion/appearance";
 import "./hall.css";
@@ -213,7 +214,7 @@ function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
               return (
               <li key={agent.agentId} data-podium={i < 3 ? i + 1 : undefined}>
                 <span className="hall-rank">{i + 1}</span>
-                <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} accessories={look.accessories} size={34} />
+                <CompanionMark appearance={look} size={34} />
                 <LevelChip kind="agent" level={level} />
                 <span className="hall-rank-body">
                   <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${rankOf(subject?.title)}`)}</em></span>

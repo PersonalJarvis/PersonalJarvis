@@ -99,6 +99,8 @@ _SCOPES: Final[tuple[str, ...]] = ("shared", "own")
 # URL served by the author's own app and never travels.
 _AVATAR_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9_-]{1,40}$")
 _HEX_RE: Final[re.Pattern[str]] = re.compile(r"^#[0-9a-fA-F]{6}$")
+#: ``USER_ID_RE`` in ``jarvis/ui/pets/manifest.py``: a pet drawn on this machine.
+_DRAWN_PET_RE: Final[re.Pattern[str]] = re.compile(r"^u[0-9a-f]{16}$")
 _AVATAR_STRINGS: Final[tuple[str, ...]] = (
     "archetype",
     "base",
@@ -108,7 +110,7 @@ _AVATAR_STRINGS: Final[tuple[str, ...]] = (
     "eyewear",
 )
 _COMPANION_KEYS: Final[frozenset[str]] = frozenset(
-    {"shape", "color", "eyes", "enabled", "sizeM", "followDistanceM"}
+    {"shape", "color", "eyes", "enabled", "sizeM", "followDistanceM", "pet"}
 )
 
 
@@ -280,6 +282,9 @@ def public_avatar(avatar: Any) -> dict[str, Any]:
     companion = avatar.get("companion")
     if isinstance(companion, dict):
         kept = {k: v for k, v in companion.items() if k in _COMPANION_KEYS}
+        # A pet the person drew lives only on their machine; a built-in one travels.
+        if isinstance(kept.get("pet"), str) and _DRAWN_PET_RE.fullmatch(kept["pet"]):
+            del kept["pet"]
         # The roster validates this namespace strictly; a companion it would
         # refuse is dropped here, so a template never fails to install over
         # the colour of a floating shape.

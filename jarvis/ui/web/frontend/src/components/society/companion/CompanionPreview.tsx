@@ -6,6 +6,7 @@ import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { CompanionModel } from "./AgentFollower";
 import type { CompanionAppearance } from "./appearance";
+import { useSyncCompanionPet } from "./companionPetStore";
 
 class PreviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -19,6 +20,8 @@ export function CompanionPreview({ appearance, lead = false }: { appearance: Com
   const { generation } = useWebglSurface(host);
   const awake = useCanvasAwake(host);
   const supported = useWebglSupported();
+  // A worn pet's model comes from the pets catalog, which the canvas cannot query itself.
+  useSyncCompanionPet();
   return <div ref={host} className="h-48 w-full touch-none" data-testid="companion-preview">
     {supported && awake && <PreviewBoundary key={generation}><Canvas frameloop="demand" dpr={[1, 1.5]} camera={{ position: [0.75, 0.65, 1.8], fov: 38 }} gl={{ alpha: true, antialias: true }}>
       <ambientLight intensity={1.6} /><directionalLight position={[2, 3, 4]} intensity={2.6} />
