@@ -218,6 +218,7 @@ class HostedCli:
         self._exit: asyncio.Future[int] = asyncio.get_running_loop().create_future()
         self._fed = 0
         self._acked = 0
+        self._attaching = False
         self.detached = False
         self.host_lost = False
         #: Another app process took the host over and carries this turn on.
@@ -269,6 +270,18 @@ class HostedCli:
             self._acked = seq
             self._send({"op": "ack", "seq": seq})
 
+    def _on_attach_reply(self, reply: dict[str, Any]) -> None:
+        if reply.get("ok") and reply.get("known"):
+            self.meta = dict(reply.get("meta") or self.meta)
+            self.pid = int(reply.get("pid") or self.pid)
+            if self.stdin is None and self.meta.get("keep_stdin"):
+                self.stdin = _HostStdin(self)
+            self._acked = int(reply.get("acked") or 0)
+            self.stdout.replay_upto = self._acked
+            for line in reply.get("stderr") or ():
+                self._on_err(str(line))
+        self._attaching = False
+
     def _on_line(self, seq: int, text: str) -> None:
         if seq <= self._fed:
             return
@@ -312,6 +325,7 @@ class TurnHostClient:
         # Events for an id whose spawn reply has not been handled yet.
         self._early: dict[str, list[dict[str, Any]]] = {}
         self._futures: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._reply_callbacks: dict[int, Callable[[dict[str, Any]], None]] = {}
         self._next_rid = 1
         self._closed = False
         self.host_pid = host_pid
@@ -366,16 +380,21 @@ class TurnHostClient:
         )
         # Registered BEFORE the request: the replayed lines follow the reply
         # immediately and must find their reader.
+        cli._attaching = True
         self._register(cli)
-        reply = await self._request({"op": "attach", "id": host_id})
+        try:
+            reply = await self._request(
+                {"op": "attach", "id": host_id},
+                on_reply=cli._on_attach_reply,
+            )
+        except BaseException:
+            if self._procs.get(host_id) is cli:
+                cli.detach()
+            cli._on_lost()
+            raise
         if not reply.get("ok") or not reply.get("known"):
             self._forget(host_id)
             return None
-        acked = int(reply.get("acked") or 0)
-        cli.stdout.replay_upto = acked
-        cli._acked = acked
-        for line in reply.get("stderr") or ():
-            cli._on_err(str(line))
         return cli
 
     def _register(self, cli: HostedCli) -> None:
@@ -408,15 +427,21 @@ class TurnHostClient:
             return False
         return True
 
-    async def _request(self, frame: dict[str, Any]) -> dict[str, Any]:
+    async def _request(
+        self, frame: dict[str, Any],
+        *, on_reply: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         if self._closed:
             raise ConnectionError("The turn host is not connected.")
         rid = self._next_rid
         self._next_rid += 1
         future: asyncio.Future[dict[str, Any]] = self._loop.create_future()
         self._futures[rid] = future
+        if on_reply is not None:
+            self._reply_callbacks[rid] = on_reply
         if not self._send({**frame, "rid": rid}):
             self._futures.pop(rid, None)
+            self._reply_callbacks.pop(rid, None)
             raise ConnectionError("The turn host is not connected.")
         try:
             await self._writer.drain()
@@ -425,6 +450,7 @@ class TurnHostClient:
             raise ConnectionError("The turn host did not answer in time.") from exc
         finally:
             self._futures.pop(rid, None)
+            self._reply_callbacks.pop(rid, None)
 
     async def _read_loop(self) -> None:
         error: BaseException | None = None
@@ -452,6 +478,9 @@ class TurnHostClient:
         if rid is not None:
             future = self._futures.get(int(rid))
             if future is not None and not future.done():
+                callback = self._reply_callbacks.pop(int(rid), None)
+                if callback is not None:
+                    callback(frame)
                 future.set_result(frame)
             return
         if frame.get("ev") == "replaced":
@@ -468,6 +497,11 @@ class TurnHostClient:
 
     @staticmethod
     def _deliver(cli: HostedCli, frame: dict[str, Any]) -> None:
+        if cli._attaching:
+            # Live frames before the attach reply belong to the old reader.
+            # The host replays them after that reply; accepting a later live
+            # sequence now would make the new reader discard earlier replay.
+            return
         event = frame.get("ev")
         if event == "line":
             cli._on_line(int(frame.get("seq") or 0), str(frame.get("d", "")))
@@ -484,6 +518,7 @@ class TurnHostClient:
             if not future.done():
                 future.set_exception(ConnectionError("The turn host went away."))
         self._futures.clear()
+        self._reply_callbacks.clear()
         if was_open:
             log.warning(
                 "turn host connection lost (%s) — %d turn(s) reported as ended",
@@ -507,6 +542,7 @@ class TurnHostClient:
             if not future.done():
                 future.set_exception(ConnectionError("Another app took the turn host over."))
         self._futures.clear()
+        self._reply_callbacks.clear()
         for cli in procs:
             cli._on_handed_over()
 
