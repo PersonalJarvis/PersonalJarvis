@@ -72,6 +72,10 @@ from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
+#: A ``[tools: a, b]`` capability-pin line. The list starts with a
+#: non-space character, so the padding and the list cannot both claim the
+#: same spaces: matching stays linear on long lines of spaces.
+_TOOL_PIN_LINE = re.compile(r"(?m)^\[tools:[ \t]*([^\]\s][^\]\r\n]*)\][ \t\r]*$")
 
 
 def _stop_caller() -> str:
@@ -1249,7 +1253,7 @@ class AgentChatService:
             # browser pin to the same validated receipt used by the root composer.
             if session.surface == "jarvis" and any(
                 "core:browser" in {item.strip() for item in match.split(",")}
-                for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+                for match in _TOOL_PIN_LINE.findall(text)
             ):
                 tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
             selected = []
