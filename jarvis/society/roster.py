@@ -65,7 +65,7 @@ _MAX_TITLE: Final[int] = 120
 _MAX_DESCRIPTION: Final[int] = 20_000
 
 #: A visibly temporary name; the agent chooses its identity in conversation.
-_FRESH_NAME: Final[str] = "New Bot"
+_FRESH_NAME: Final[str] = "New Agent"
 
 
 class RosterError(ValueError):
@@ -523,7 +523,7 @@ class Roster:
         self._epoch += 1
 
     async def _placeholder_name(self) -> str:
-        """Use ``New Bot``, adding a number when another agent holds it."""
+        """Use ``New Agent``, adding a number when another agent holds it."""
         candidate = _FRESH_NAME
         number = 2
         while await self._store.get_agent_row_by_name(candidate) is not None:
