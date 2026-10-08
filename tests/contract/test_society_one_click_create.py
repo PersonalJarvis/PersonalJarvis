@@ -41,7 +41,7 @@ async def roster(tmp_path: Path):
 async def test_unnamed_create_gets_placeholder_name_and_random_id(roster: Roster):
     agent, created = await roster.create()
     assert created is True
-    assert agent.name == "New Bot"
+    assert agent.name == "New Agent"
     assert re.fullmatch(r"agent-[0-9a-f]{8}", agent.agent_id)
     assert agent.session_id == f"society:{agent.agent_id}"
     assert is_fresh(agent)
@@ -52,14 +52,14 @@ async def test_unnamed_creates_never_adopt_each_other(roster: Roster):
     second, created = await roster.create()
     assert created is True
     assert first.agent_id != second.agent_id
-    assert (first.name, second.name) == ("New Bot", "New Bot 2")
+    assert (first.name, second.name) == ("New Agent", "New Agent 2")
 
 
 async def test_concurrent_unnamed_creates_have_distinct_names_and_chats(roster: Roster):
     results = await asyncio.gather(*(roster.create() for _ in range(3)))
     assert all(created for _, created in results)
     agents = [agent for agent, _ in results]
-    assert {agent.name for agent in agents} == {"New Bot", "New Bot 2", "New Bot 3"}
+    assert {agent.name for agent in agents} == {"New Agent", "New Agent 2", "New Agent 3"}
     assert len({agent.session_id for agent in agents}) == 3
 
 
@@ -73,17 +73,17 @@ async def test_rename_keeps_the_random_id(roster: Roster):
     assert renamed.name == "Mail Desk"
     assert not is_fresh(renamed)
     next_agent, created = await roster.create()
-    assert created and next_agent.name == "New Bot"
+    assert created and next_agent.name == "New Agent"
     assert next_agent.session_id != renamed.session_id
 
 
 async def test_placeholder_numbering_respects_existing_names_case_insensitively(roster: Roster):
-    for name in ("new bot", "NEW BOT 2"):
+    for name in ("new agent", "NEW AGENT 2"):
         await roster.create(name=name, title="taken")
     agent, _ = await roster.create()
-    assert agent.name == "New Bot 3"
-    assert (await roster.resolve("new bot")).title == "taken"
-    assert (await roster.resolve("NEW BOT 2")).title == "taken"
+    assert agent.name == "New Agent 3"
+    assert (await roster.resolve("new agent")).title == "taken"
+    assert (await roster.resolve("NEW AGENT 2")).title == "taken"
 
 
 async def test_unnamed_lead_is_refused(roster: Roster):
@@ -135,12 +135,12 @@ def test_post_without_a_name_creates_a_fresh_agent(tmp_path: Path):
             body = response.json()
             assert body["created"] is True
             agent = body["agent"]
-            assert agent["name"] == "New Bot"
+            assert agent["name"] == "New Agent"
             assert agent["agent_id"].startswith("agent-")
             assert agent["avatar"]["companion"]["shape"] in COMPANION_SHAPES
             again = client.post("/api/society/agents", json={"name": ""}).json()
             assert again["created"] is True
-            assert again["agent"]["name"] == "New Bot 2"
+            assert again["agent"]["name"] == "New Agent 2"
             assert again["agent"]["agent_id"] != agent["agent_id"]
         finally:
             client.portal.call(runtime.close)
