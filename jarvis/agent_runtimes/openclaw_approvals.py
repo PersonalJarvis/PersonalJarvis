@@ -203,6 +203,7 @@ class OpenClawApprovals:
                     async with asyncio.timeout(min(remaining, 300.0)):
                         decision = await io.ask(call_id, name, args, summary)
                 except TimeoutError:
+                    log.info("OpenClaw native tool approval expired; denying the request")
                     decision = "deny"
             if turn.saw_result or self._closing:
                 return
