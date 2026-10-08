@@ -106,7 +106,10 @@ export class RealtimeWebRtcTransport {
   private finishStartup: ((error?: Error) => void) | null = null;
   private outputMuted = true;
   private outputVolume = 1;
-  constructor(private onRemoteStream?: (stream: MediaStream) => void) {}
+  constructor(
+    private onRemoteStream?: (stream: MediaStream) => void,
+    private onStartupPhase?: (phase: string) => void,
+  ) {}
 
   async createOffer(stream?: MediaStream, startEventRequired = true, startBudgetMs = 25_000): Promise<string | null> {
     this.close();
@@ -114,6 +117,7 @@ export class RealtimeWebRtcTransport {
 
     const peer = new RTCPeerConnection();
     this.peer = peer;
+    this.onStartupPhase?.("peer_created");
     if (stream) {
       for (const track of stream.getAudioTracks()) peer.addTrack(track, stream);
       this.player = new Audio();
@@ -169,7 +173,9 @@ export class RealtimeWebRtcTransport {
       void this.started.catch(() => undefined);
     }
     // Only the backend sideband executes tools or continues Responses work.
-    const offer = await peer.createOffer();
+    const offerPending = peer.createOffer();
+    this.onStartupPhase?.("offer_requested");
+    const offer = await offerPending;
     await peer.setLocalDescription(offer);
     await waitForIceGathering(peer);
     if (this.peer !== peer) return null;
@@ -455,6 +461,7 @@ export class StreamingPcm16Resampler {
 export class RealtimeAudioClient {
   private ws: WebSocket | null = null;
   private ctx: AudioContext | null = null;
+  private localStartup: { cancelled: boolean; cancelTurn?: () => void } | null = null;
   private captureNode: AudioWorkletNode | null = null;
   private captureSink: GainNode | null = null;
   private playbackNode: AudioWorkletNode | null = null;
@@ -568,7 +575,10 @@ export class RealtimeAudioClient {
     private cb: RealtimeCallbacks = {},
     private options: RealtimeAudioOptions = {},
   ) {
-    this.webRtcTransport = new RealtimeWebRtcTransport(stream => this.observeRemoteAudio(stream));
+    this.webRtcTransport = new RealtimeWebRtcTransport(
+      stream => this.observeRemoteAudio(stream),
+      phase => this.markStartup(phase),
+    );
   }
 
   private remoteMeter: AudioWorkletNode | null = null;
@@ -584,7 +594,12 @@ export class RealtimeAudioClient {
     this.startupMarks[phase] = Math.round(performance.now() - this.startupAt);
     console.info(`Voice startup phase=${phase} elapsed_ms=${this.startupMarks[phase]}`);
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "startup_timing", marks_ms: this.startupMarks }));
+      // A rebuilt frontend can run before its backend restarts. Preserve the
+      // earlier backend's eight-phase message bound when flushing startup.
+      const marks = phase === "socket_open" ? Object.entries(this.startupMarks) : [[phase, this.startupMarks[phase]]];
+      for (let start = 0; start < marks.length; start += 8) {
+        this.ws.send(JSON.stringify({ type: "startup_timing", marks_ms: Object.fromEntries(marks.slice(start, start + 8)) }));
+      }
     }
   }
 
@@ -687,6 +702,8 @@ export class RealtimeAudioClient {
   }
 
   private async open(): Promise<void> {
+    const localStartup: { cancelled: boolean; cancelTurn?: () => void } = { cancelled: false };
+    this.localStartup = localStartup;
     // A reused client starts a new source timeline. Keep the local render
     // generation monotonic so callbacks from the old worklet stay obsolete.
     this.timedOutput = false;
@@ -711,33 +728,16 @@ export class RealtimeAudioClient {
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");
       }
-      if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
-        // This destination has no source yet: negotiate a silent track while
-        // the microphone opens. The startup worklet later owns its only input.
-        this.rtcInput = this.ctx.createMediaStreamDestination();
-        this.rtcInput.channelCount = 1;
-      }
-      // Start ICE on a silent destination while microphone/worklet setup runs.
-      // No raw microphone track enters the peer: pcm-startup is the sole
-      // source and stays silent until both media and control are ready.
-      const webRtcOffer: Promise<{
-        sdp: string | null;
-        error: unknown | null;
-      }> | null = this.options.requiresWebRtcOffer
-        ? this.webRtcTransport.createOffer(this.rtcInput?.stream, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(
-            (sdp) => ({ sdp, error: null }),
-            (error: unknown) => ({ sdp: null, error }),
-          )
-        : null;
       // The worklet load, the microphone open, the one-time WS ticket and
       // the shared connect-budget turn are independent: acquiring them
       // concurrently keeps three disk/network waits off the wake path
       // instead of stacked end to end. The silent WebRTC destination also
       // allows offer generation to overlap permission and device setup.
       const setupStartedAt = performance.now();
-      const workletReady = this.ctx.audioWorklet
-        .addModule(pcmWorkletUrl)
-        .then(() => this.ctx?.resume());
+      const workletReady = Promise.all([
+        this.ctx.audioWorklet.addModule(pcmWorkletUrl),
+        this.ctx.resume(),
+      ]);
       // Observed again below, but a rejected worklet must not become an
       // unhandled rejection while a permission prompt holds getUserMedia.
       void workletReady.catch(() => undefined);
@@ -749,10 +749,49 @@ export class RealtimeAudioClient {
           autoGainControl: true,
         },
       });
+      // A synchronous destination failure can end this attempt before a
+      // permission grant returns. Its captured token never belongs to a later
+      // connect() on this client, even if intentionalClose has been reset.
+      void micReady.then(stream => {
+        if (localStartup.cancelled) stream.getTracks().forEach(track => track.stop());
+      }, () => undefined); // The awaited operation below reports permission errors.
       const ticketReady = mintWsTicket();
-      const turnReady = new Promise<void>((resolve) => requestConnect(resolve));
-      this.stream = await micReady;
-      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      const turnReady = new Promise<void>((resolve) => {
+        const cancelTurn = requestConnect(resolve);
+        localStartup.cancelTurn = () => {
+          cancelTurn();
+          // Cancellation must settle the caller too; otherwise connect()
+          // retains this pending promise and prevents another start forever.
+          resolve();
+        };
+      });
+      this.markStartup("local_requests_dispatched");
+      // Native destination/peer construction can block the main thread. Start
+      // the independent device and network requests before entering that work.
+      // Promise callbacks can only run afterward; their timestamps alone do
+      // not measure the underlying module/device operation's duration.
+      if (this.options.browserAudio && this.options.requiresWebRtcOffer) {
+        this.markStartup("rtc_destination_begin");
+        // This destination has no source yet: negotiate a silent track while
+        // the microphone opens. The startup worklet later owns its only input.
+        this.rtcInput = this.ctx.createMediaStreamDestination();
+        this.rtcInput.channelCount = 1;
+        this.markStartup("rtc_destination_ready");
+      }
+      // No raw microphone track enters the peer: pcm-startup is the sole
+      // source and stays silent until both media and control are ready.
+      const webRtcOffer: Promise<{
+        sdp: string | null;
+        error: unknown | null;
+      }> | null = this.options.requiresWebRtcOffer
+        ? this.webRtcTransport.createOffer(this.rtcInput?.stream, this.options.webRtcStartEventRequired, this.options.startBudgetMs).then(
+            (sdp) => ({ sdp, error: null }),
+            (error: unknown) => ({ sdp: null, error }),
+          )
+        : null;
+      const stream = await micReady;
+      if (localStartup.cancelled || this.intentionalClose) throw new Error("Voice start cancelled");
+      this.stream = stream;
       await workletReady;
       if (this.intentionalClose) throw new Error("Voice start cancelled");
       const setupMs = Math.round(performance.now() - setupStartedAt);
@@ -834,11 +873,12 @@ export class RealtimeAudioClient {
       const ticket = await ticketReady;
       await turnReady;
       console.info(`Voice start setup took ${setupMs} ms (mic/worklet/ticket).`);
-      if (this.intentionalClose) throw new Error("Voice start cancelled");
+      if (localStartup.cancelled || this.intentionalClose) throw new Error("Voice start cancelled");
       this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
       await this.waitUntilReady(this.ws);
     } catch (error) {
+      localStartup.cancelled = true;
       await this.teardown(false);
       throw error instanceof Error ? error : new Error(String(error));
     }
@@ -1266,6 +1306,11 @@ export class RealtimeAudioClient {
   }
 
   private async teardown(sendStop: boolean): Promise<void> {
+    if (this.localStartup) {
+      this.localStartup.cancelled = true;
+      this.localStartup.cancelTurn?.();
+      this.localStartup = null;
+    }
     this.stopListeningCue?.();
     this.stopListeningCue = null;
     if (this.remoteMeter) this.remoteMeter.port.onmessage = null;

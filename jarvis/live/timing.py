@@ -11,6 +11,8 @@ log = logging.getLogger(__name__)
 BROWSER_PHASES = frozenset({
     "capture_ready", "first_capture_frame", "offer_ready", "socket_open",
     "answer_received", "media_connected", "input_released", "first_output_audio",
+    "local_requests_dispatched", "rtc_destination_begin", "rtc_destination_ready",
+    "peer_created", "offer_requested",
 })
 
 
