@@ -1090,7 +1090,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     <div className="flex h-full min-h-0 flex-col bg-transparent">
       {inDialog && view === "list" && !selectedId ? content : (
         <ScrollArea className="flex-1">
-          <div className={cn("mx-auto w-full max-w-4xl px-8 py-6", inDialog && "pt-12")}>{content}</div>
+          <div className={cn("mx-auto w-full max-w-4xl px-8 py-6", inDialog && (view === "custom-apis" ? "px-6 pt-5" : "pt-12"))}>{content}</div>
         </ScrollArea>
       )}
       {dialogs}
