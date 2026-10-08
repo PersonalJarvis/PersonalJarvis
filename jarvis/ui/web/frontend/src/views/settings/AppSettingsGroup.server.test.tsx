@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
+const restart = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/useRestartApp", () => ({
+  useRestartApp: () => ({ restart, restarting: false, buttonLabel: "Restart application" }),
+}));
+
 vi.mock("@/hooks/useTheme", () => ({
   useTheme: () => ({ preference: "dark", setPreference: vi.fn() }),
 }));
@@ -39,4 +44,17 @@ it("enables an independent server and saves its destination without stopping liv
     { path: "/api/settings/background", method: "PUT", body: { server_url: "https://jarvis.example.com" } },
   ]);
   expect(requests.every((r) => !r.path.includes("stop") && !r.path.includes("restart"))).toBe(true);
+});
+
+it("offers a real restart instead of silently saving to a backend without server support", async () => {
+  const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({
+    supported: true, keep_agents_running: true, work: { routines: 0, channels: [] },
+  }) }));
+  vi.stubGlobal("fetch", fetcher);
+  render(<AppSettingsGroup />);
+  const button = await screen.findByRole("button", { name: "Restart application" });
+  expect(screen.queryByRole("switch", { name: "Independent agent server" })).toBeNull();
+  fireEvent.click(button);
+  expect(restart).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls.every((args) => args.length < 2)).toBe(true);
 });

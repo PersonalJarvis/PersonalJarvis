@@ -2938,6 +2938,7 @@
     },
     "background_agents": {
       "server_title": "Independent agent server",
+      "server_backend_update": "Restart the desktop app once to load agent server support.",
       "server_description": "Run Jarvis, Hermes and OpenClaw on a server that stays running when every client closes. Applies to the next desktop launch.",
       "server_active": "This independent server keeps agents running. Closing this client does not stop it.",
       "server_url_label": "Server address (leave empty to run on this computer)",

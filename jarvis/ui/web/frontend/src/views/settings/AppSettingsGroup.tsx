@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useBackgroundAgents, type BackgroundAgentsPatch } from "@/hooks/useBackgroundAgents";
+import { useRestartApp } from "@/hooks/useRestartApp";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { fill, useLocaleChunk, useT } from "@/i18n";
@@ -257,6 +258,7 @@ function BackgroundAgentsRows() {
   const pushToast = useEventStore((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const [serverDraft, setServerDraft] = useState<string | null>(null);
+  const restartApp = useRestartApp();
 
   if (config && !config.supported) return null;
 
@@ -330,9 +332,16 @@ function BackgroundAgentsRows() {
       />
       <SettingsRow
         title={t("settings_view.background_agents.server_title")}
-        description={t("settings_view.background_agents.server_description")}
+        description={t(config && typeof config.persistent_server !== "boolean"
+          ? "settings_view.background_agents.server_backend_update"
+          : "settings_view.background_agents.server_description")}
         control={
-          <Switch
+          config && typeof config.persistent_server !== "boolean" ? (
+            <Button variant="outline" disabled={restartApp.restarting}
+              onClick={() => void restartApp.restart()}>
+              {restartApp.buttonLabel}
+            </Button>
+          ) : <Switch
             checked={config?.persistent_server ?? false}
             disabled={loading || saving}
             aria-label={t("settings_view.background_agents.server_title")}
