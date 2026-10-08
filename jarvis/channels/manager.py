@@ -153,9 +153,14 @@ class ChannelManager:
             self._started.add(name)
             log.info("Channel '%s' started", name)
         except Exception as exc:  # noqa: BLE001
-            self._start_errors[name] = f"{type(exc).__name__}: {exc}"
-            log.error("Channel '%s' start failed: %s", name, exc)
-            raise ChannelStartError(f"Channel '{name}' could not start: {exc}") from exc
+            from jarvis.core.redact import redact_secrets
+
+            # A channel error may carry a credential (a Telegram token sits in
+            # every Bot API URL): only a redacted text is stored, logged or raised.
+            detail = redact_secrets(str(exc))
+            self._start_errors[name] = f"{type(exc).__name__}: {detail}"
+            log.error("Channel '%s' start failed: %s", name, detail)
+            raise ChannelStartError(f"Channel '{name}' could not start: {detail}") from None
 
     async def reload(self, name: str) -> None:
         """Stop, drop the cached instance, and start ``name`` afresh.
@@ -183,7 +188,9 @@ class ChannelManager:
         except ChannelStartError as exc:
             return str(exc)
         except Exception as exc:  # noqa: BLE001
-            return f"{type(exc).__name__}: {exc}"
+            from jarvis.core.redact import redact_secrets
+
+            return f"{type(exc).__name__}: {redact_secrets(str(exc))}"
 
     async def stop(self, name: str) -> None:
         if name not in self._started:
@@ -195,7 +202,9 @@ class ChannelManager:
         try:
             await instance.stop()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Channel '%s' stop raised: %s", name, exc)
+            from jarvis.core.redact import redact_secrets
+
+            log.warning("Channel '%s' stop raised: %s", name, redact_secrets(str(exc)))
         finally:
             self._started.discard(name)
             log.info("Channel '%s' gestoppt", name)
