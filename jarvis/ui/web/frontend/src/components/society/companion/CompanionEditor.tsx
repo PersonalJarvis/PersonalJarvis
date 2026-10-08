@@ -30,9 +30,9 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       </button>)}</div>
     </div>
     <div><span className="mb-2 block text-sm font-medium">{t("society.companion.color")}</span>
-      <div className="flex flex-wrap items-center gap-2">{COMPANION_COLORS.map(color => <button key={color} type="button" aria-label={`${t("society.companion.color")} ${color}`} aria-pressed={value.color === color}
-        onClick={() => update({ color })} className={`h-8 w-8 rounded-full border-2 ${value.color === color ? "border-foreground ring-2 ring-background" : "border-transparent"}`} style={{ background: color }} />)}
-        <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="h-8 w-10 rounded border border-border bg-background" />
+      <div className="grid w-fit grid-cols-6 items-center gap-3">{COMPANION_COLORS.map(color => <button key={color} type="button" aria-label={`${t("society.companion.color")} ${color}`} aria-pressed={value.color === color}
+        onClick={() => update({ color })} className={`h-8 w-8 rounded-full border border-border ring-offset-2 ring-offset-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${value.color === color ? "ring-2 ring-foreground" : ""}`} style={{ background: color }} />)}
+        <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="h-8 w-8 rounded border border-border bg-background" />
       </div>
     </div>
     <div className="flex items-center justify-between gap-3 text-sm"><span>{t("society.companion.eyes")}</span>
