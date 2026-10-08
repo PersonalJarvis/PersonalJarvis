@@ -426,7 +426,9 @@ async def test_prepare_native_route_never_refreshes_an_http_catalog(monkeypatch,
         route = await model_map.prepare_route(
             _cfg(), "claude-api", "sonnet", account_id="subscription"
         )
-    assert route.env() == {}  # the fake selected account uses native platform credentials
+    # The selected account uses native platform credentials. A headless POSIX
+    # launcher may need its missing USER repaired for native credential lookup.
+    assert set(route.env()) <= {"USER"}
     assert route.api_key is None
 
 
