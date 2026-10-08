@@ -178,7 +178,6 @@ class NativeWindow:
         if not self.hwnd:
             raise RuntimeError("The owned Chrome window is unavailable")
         self.input_hwnd = self.hwnd
-        self.park()
         self._event_task = self._loop.create_task(self._consume_window_events())
         self._hook_thread = threading.Thread(
             target=self._watch_windows, name="jarvis-chrome-window-events", daemon=True
@@ -188,6 +187,7 @@ class NativeWindow:
             if not self._hook_ready.wait(2) or self._hook_error:
                 raise RuntimeError("Chrome window events are unavailable") from self._hook_error
             self._start_capture(self.hwnd)
+            self.park()
             self._sync_windows()
         except BaseException:
             self.close()
@@ -298,9 +298,6 @@ class NativeWindow:
             return True
 
         self.user32.EnumWindows(visit, 0)
-        if self._parked:
-            for hwnd in popups:
-                self._hide_from_desktop(hwnd)
         # EnumWindows enumerates front to back; painting uses the reverse order.
         popups.reverse()
         with self.lock:
@@ -336,6 +333,10 @@ class NativeWindow:
                     # Native menus can close between the show event and WGC
                     # startup; the main browser stream remains usable.
                     log.debug("Chrome popup capture could not start", exc_info=True)
+        if self._parked:
+            for hwnd in popups:
+                if self._owned(hwnd) and self.user32.IsWindowVisible(hwnd):
+                    self._hide_from_desktop(hwnd)
 
     def _drain_window_events(self) -> None:
         if self._windows_dirty.is_set():
@@ -352,11 +353,15 @@ class NativeWindow:
         # applied. Keep the no-activate state and stacking order throughout.
         u = self.user32
         style = u.GetWindowLongW(hwnd, -20)
-        capture_style = style & ~0x00080000  # WS_EX_LAYERED
+        capture_style = style & ~0x00080080  # WS_EX_LAYERED | WS_EX_TOOLWINDOW
         u.SetWindowLongW(hwnd, -20, capture_style)
         if u.GetWindowLongW(hwnd, -20) != capture_style:
             raise RuntimeError("The Chrome window could not be prepared for capture")
         try:
+            # Commit cached non-client style changes without moving, resizing,
+            # activating, or changing the window's stacking order.
+            if not u.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x37):
+                raise RuntimeError("The Chrome capture style could not be applied")
             self._create_capture(hwnd)
         finally:
             if self._owned(hwnd):
