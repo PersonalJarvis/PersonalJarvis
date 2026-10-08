@@ -215,10 +215,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Install the light gate dependencies (no torch, no audio)
-        run: |
-          python -m pip install -e . --no-deps
-          python -m pip install typer platformdirs click httpx rich pyyaml==6.0.3 pydantic loguru python-dotenv packaging
+      # Light on purpose (no torch, no audio), yet every version comes from
+      # uv.lock: an upstream release cannot turn the gates red on its own.
+      - name: Install the light gate dependencies from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: typer platformdirs click httpx rich pyyaml pydantic loguru python-dotenv packaging
       - name: Run every static gate
         env:
           PRIVACY_PRIVATE_EMAILS: ${{ vars.PRIVACY_PRIVATE_EMAILS }}
@@ -249,8 +252,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - run: python -m pip install -e . --no-deps
-      - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
+      - name: Install the light qualification dependencies from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: pyyaml pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
       - name: Qualify plugin auth and disclose preview plugins
         shell: bash
         run: |
@@ -555,11 +561,14 @@ jobs:
           python-version: "3.11"
       # --no-deps proves jarvis.cli_ctl imports and renders --help with only its
       # own light runtime deps: no torch, audio or GUI stack.
-      - name: Light install + import/--help smoke
+      - name: Light install from uv.lock
+        uses: ./.github/actions/install-locked
+        with:
+          tools-only: "true"
+          with: typer platformdirs click httpx rich pytest pytest-asyncio pyyaml pydantic loguru python-dotenv packaging
+      - name: Import/--help smoke
         shell: bash
         run: |
-          python -m pip install -e . --no-deps
-          python -m pip install typer platformdirs click httpx rich pytest pytest-asyncio pyyaml pydantic loguru python-dotenv packaging
           python -c "import jarvis.cli_ctl.__main__"
           python -m jarvis.cli_ctl --help
       - name: Base install from uv.lock

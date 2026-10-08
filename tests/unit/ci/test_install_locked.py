@@ -74,3 +74,40 @@ def test_ci_test_jobs_install_from_the_lock():
         assert any(step.get("uses") == "./.github/actions/install-locked" for step in steps), name
         for step in steps:
             assert 'pip install -e ".[' not in step.get("run", ""), name
+
+
+def test_tools_only_leaves_the_locked_set_out(tmp_path):
+    constraints = tmp_path / "constraints.txt"
+    commands = install_locked.install_commands(
+        "py", tmp_path / "locked.txt", tools=["typer"], constraints=constraints, base=False
+    )
+    assert len(commands) == 2
+    assert "--require-hashes" not in commands[0]
+    assert commands[0][-3:] == ["--no-deps", "-e", str(install_locked.ROOT)]
+    assert commands[1][-3:] == ["-c", str(constraints), "typer"]
+    with pytest.raises(ValueError):
+        install_locked.install_commands("py", tmp_path / "locked.txt", base=False)
+
+
+def test_tools_only_refuses_extras_and_an_empty_tool_list():
+    with pytest.raises(SystemExit):
+        install_locked.main(["--tools-only", "--extra", "dev", "--with", "pytest", "--dry-run"])
+    with pytest.raises(SystemExit):
+        install_locked.main(["--tools-only", "--dry-run"])
+
+
+def test_light_ci_installs_are_pinned_through_the_lock():
+    """The deliberately light jobs still take every version from uv.lock."""
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    for name in ("gates", "release-qualification", "jarvisctl"):
+        steps = jobs[name]["steps"]
+        light = [
+            step
+            for step in steps
+            if step.get("uses") == "./.github/actions/install-locked"
+            and step.get("with", {}).get("tools-only") == "true"
+        ]
+        assert light, name
+        for step in steps:
+            assert "pip install" not in step.get("run", ""), name
