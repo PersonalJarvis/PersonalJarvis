@@ -99,7 +99,7 @@ def _denied_native(agent: Any, plan_mode: bool) -> frozenset[str]:
     return frozenset(denied)
 
 
-async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
+async def _ready(handle: Any, runtime_name: str, runtime: Any, *, route: Any = None) -> None:
     """Install or update the runtime first when it cannot run this turn.
 
     Nobody sets Hermes or OpenClaw up by hand: the first turn on a fresh
@@ -114,7 +114,13 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
     current = manager.job(runtime_name)
     setting_up = current is not None and current.state == "running"
     status = await asyncio.to_thread(runtime.detect)
-    if not setting_up and manager.needed(runtime, status) is None:
+    route_check = getattr(runtime, "route_needs_update", None)
+
+    def needs_route_update() -> bool:
+        return bool(route is not None and callable(route_check) and route_check(route, status))
+
+    runtime_setup = setting_up or manager.needed(runtime, status) is not None
+    if not runtime_setup and not needs_route_update():
         return
     await handle.emit(
         make_event(
@@ -128,9 +134,17 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
             },
         )
     )
-    status = await manager.wait_ready(runtime_name)
-    if not status.ready:
+    if runtime_setup:
+        status = await manager.wait_ready(runtime_name)
+    if status.ready and needs_route_update():
+        # An API-capable install may predate this native provider. Update it
+        # through the same pinned, exclusive setup job, before a turn owns a slot.
+        await manager.start(runtime_name, "update")
+        status = await manager.wait_ready(runtime_name)
+    if not status.ready or needs_route_update():
         reason = manager.failure_reason(runtime_name) or status.problem
+        if not reason and needs_route_update():
+            reason = "The installed version does not support this model connection."
         raise CliUnavailable(f"{runtime.label} could not be set up. {reason}".strip())
 
 
@@ -181,6 +195,7 @@ async def plan_runtime_turn(
         route=route,
         resume=resume,
         auto_approve=session.permission_mode == "bypass",
+        read_only=plan_mode,
         mcp_url=jarvis_harness.endpoint() if tools else None,
         control_key=jarvis_harness.control_key() if tools else None,
         denied_native=_denied_native(agent, plan_mode),
@@ -189,20 +204,30 @@ async def plan_runtime_turn(
         vision=vision,
     )
     runtime = driver(runtime_name)
-    await _ready(handle, runtime_name, runtime)
+    await _ready(handle, runtime_name, runtime, route=route)
+    provider_prepare = getattr(runtime, "needs_provider_prepare", None)
+    if callable(provider_prepare) and await asyncio.to_thread(provider_prepare, turn):
+        from jarvis.agent_chat.events import make_event
+
+        await handle.emit(make_event("notice", {
+            "kind": "runtime_setup", "runtime": runtime_name, "turn_id": handle.turn_id,
+            "text": f"Preparing the selected subscription for {runtime.label}. "
+            "The first setup may take a few minutes; your message is sent when it is ready.",
+        }))
     try:
         launch = await runtime.launch(turn)
     except RuntimeUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
     try:
-        failure = gateway.watch_failure(route.api_key or "")
+        failure = gateway.watch_failure(route.api_key) if route.api_key else None
     except Exception:
         if launch.release is not None:
             launch.release()
         raise
 
     def release() -> None:
-        gateway.unwatch_failure(route.api_key or "", failure)
+        if route.api_key and failure is not None:
+            gateway.unwatch_failure(route.api_key, failure)
         if launch.release is not None:
             launch.release()
 
@@ -217,6 +242,8 @@ async def plan_runtime_turn(
         auto_deny=plan_mode,
         client_version=__version__,
         report_session=launch.vendor_session,
+        model_id=launch.acp_model,
+        approval_source=launch.approval_source,
     )
     return CliPlan(
         argv=launch.argv,

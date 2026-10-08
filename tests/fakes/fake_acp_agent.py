@@ -161,6 +161,8 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
         while True:
             frame = _read()
             if frame is None:
+                if os.environ.get("FAKE_ACP_IGNORE_EOF"):
+                    time.sleep(600)
                 return
             if frame.get("method") == "session/cancel" and not os.environ.get(
                 "FAKE_ACP_IGNORE_CANCEL"

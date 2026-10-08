@@ -157,7 +157,7 @@ def test_routes_list_status_and_start_jobs(fakes, monkeypatch):
     import jarvis.agent_runtimes.model_map as model_map
     import jarvis.ui.web.agent_runtime_routes as routes
 
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    monkeypatch.setattr(model_map, "claude_subscription_status", lambda account_id="": None)
     routes._USABLE_CACHE[:] = [float("-inf"), [], []]
     app = FastAPI()
     app.include_router(router)
@@ -276,18 +276,21 @@ def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch
     secrets = {"openai": None, "claude-api": login, "openrouter": None, "grok": None,
                "nvidia": None, "gemini": None}
     # No live Claude Code login: Claude is not offered.
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    monkeypatch.setattr(model_map, "claude_subscription_status", lambda account_id="": None)
     routes._USABLE_CACHE[:] = [float("-inf"), [], []]
     with override_provider_secrets(secrets):
         body = TestClient(app).get("/api/agent-runtimes").json()
-        with pytest.raises(RouteUnavailable, match="Claude Code login"):
+        with pytest.raises(RouteUnavailable, match="Claude Code subscription"):
             route_for(config, "claude-api", "claude-sonnet-5-5")
     assert "claude-api" not in body["supported_providers"]
     assert body["login_providers"] == []
     # A live login: Claude is offered, marked as running on the login.
     import jarvis.agent_runtimes.provider_errors as provider_errors
 
-    monkeypatch.setattr(model_map, "claude_login_token", lambda: login)
+    monkeypatch.setattr(
+        model_map, "claude_subscription_status",
+        lambda account_id="": SimpleNamespace(binary_path="claude", config_dir="")
+    )
     monkeypatch.setattr(provider_errors, "_REPORTS", {})
     monkeypatch.setattr(provider_errors, "_claude_usage", lambda token: {})
     routes._USABLE_CACHE[:] = [float("-inf"), [], []]
@@ -296,7 +299,7 @@ def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch
     assert "claude-api" in body["supported_providers"]
     assert body["login_providers"] == ["claude-api"]
     assert body["access_blocked"] == {}
-    # Extra Usage off: the way exists, the dialog shows it disabled with why.
+    # Extra Usage off does not block the native CLI subscription.
     monkeypatch.setattr(provider_errors, "_REPORTS", {})
     monkeypatch.setattr(
         provider_errors, "_claude_usage", lambda token: {"extra_usage": {"is_enabled": False}}
@@ -304,7 +307,8 @@ def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch
     routes._USABLE_CACHE[:] = [float("-inf"), [], []]
     with override_provider_secrets(secrets):
         body = TestClient(app).get("/api/agent-runtimes").json()
-    assert body["access_blocked"] == {"claude-api": {"subscription": "extra_usage_off"}}
+    assert body["access_blocked"] == {}
+    assert body["access"] == {"claude-api": ["subscription"]}
 
 
 # ------------------------------------------------- gate, prepare, rollback

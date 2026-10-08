@@ -252,3 +252,60 @@ def test_a_contract_too_long_for_one_command_line_travels_on_stdin() -> None:
     # A short contract keeps its dedicated flag.
     argv, _ = brain.build_invocation(_req(), cli_flags=frozenset({"--system-prompt"}))
     assert "--system-prompt" in argv
+
+
+async def test_selected_native_environment_reaches_the_process_without_inheritance(
+    monkeypatch, tmp_path
+) -> None:
+    from types import SimpleNamespace
+
+    from jarvis.plugins.brain import claude_cli
+
+    selected_binary = str(tmp_path / "selected-claude")
+    selected_dir = str(tmp_path / "selected-account")
+    selected_env = {"CLAUDE_CONFIG_DIR": selected_dir, "PATH": str(tmp_path / "bin")}
+    brain = ClaudeCliBrain(
+        structured_prompts=True, spawn_env=selected_env, cli_binary=selected_binary
+    )
+    selected_env["CLAUDE_CONFIG_DIR"] = str(tmp_path / "later-account")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unselected-api-credential")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "wrong-account"))
+    monkeypatch.setattr(claude_cli, "_resolve_claude_binary", lambda: None)
+    calls = []
+
+    def probe(binary, env):
+        assert binary == selected_binary
+        assert env["CLAUDE_CONFIG_DIR"] == selected_dir
+        assert "ANTHROPIC_API_KEY" not in env
+        return _FAST_FLAGS
+
+    monkeypatch.setattr(claude_cli, "_probe_selected_flags", probe)
+
+    class Input:
+        def write(self, data):
+            assert isinstance(data, bytes)
+
+        async def drain(self):
+            return None
+
+        def close(self):
+            return None
+
+    async def communicate():
+        return b"selected account answer", b""
+
+    async def spawn(*argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(stdin=Input(), returncode=0, communicate=communicate)
+
+    monkeypatch.setattr(claude_cli.asyncio, "create_subprocess_exec", spawn)
+    deltas = [delta async for delta in brain.complete(_req())]
+    assert any(delta.content == "selected account answer" for delta in deltas)
+    argv, kwargs = calls[0]
+    assert argv[0] == selected_binary
+    assert kwargs["env"] == {"CLAUDE_CONFIG_DIR": selected_dir, "PATH": str(tmp_path / "bin")}
+
+
+def test_selected_environment_requires_a_pinned_executable() -> None:
+    with pytest.raises(ValueError, match="selected executable"):
+        ClaudeCliBrain(spawn_env={})

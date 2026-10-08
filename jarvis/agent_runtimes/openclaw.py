@@ -526,6 +526,24 @@ class OpenClawRuntime:
             # temp-folder log every OpenClaw on the machine appends to.
             "logging": {"file": str(home / "state" / "logs" / "openclaw.log")},
         }
+        if route.transport == "claude_cli":
+            # OpenClaw's bundled Claude backend owns the native session and
+            # exposes Gateway tools through its MCP bridge. The CLI owns its
+            # subscription login; no bearer or API endpoint belongs here.
+            model_ref = f"anthropic/{route.model}"
+            config.pop("models")
+            defaults = config["agents"]["defaults"]
+            defaults["model"] = {"primary": model_ref}
+            defaults["models"] = {model_ref: {"agentRuntime": {"id": "claude-cli"}}}
+            # The native backend consults this host policy for file tools as
+            # well as shell commands; its approval channel is not ACP. Apply
+            # the chat's stance here and keep capability denials in the tool
+            # policy, which the backend evaluates before any approval.
+            config["tools"]["exec"]["mode"] = "full" if turn.auto_approve else "ask"
+            if "shell" in turn.denied_native:
+                denied.extend(["exec", "process"])
+            if turn.read_only:
+                denied.extend(["write", "edit", "apply_patch", "exec", "process"])
         thinking = "off" if turn.effort == "none" else turn.effort
         if thinking in _THINKING_LEVELS:
             config["agents"]["defaults"]["thinkingDefault"] = thinking
@@ -584,6 +602,14 @@ class OpenClawRuntime:
                 **({_CONTROL_KEY_ENV: turn.control_key} if turn.control_key else {}),
             }
         )
+        if turn.route.transport == "claude_cli" and turn.route.claude_binary:
+            # The bundled backend resolves `claude` from its own PATH. Keep
+            # Jarvis' selected executable first without changing the user's
+            # environment or overriding the backend's process supervision.
+            binary_dir = str(Path(turn.route.claude_binary).parent)
+            gateway_env["PATH"] = os.pathsep.join(
+                part for part in (binary_dir, gateway_env.get("PATH", "")) if part
+            )
         gateway = await self._ensure_gateway(turn, key, home, token, launcher, gateway_env)
 
         def release() -> None:
@@ -605,6 +631,13 @@ class OpenClawRuntime:
             # A fresh conversation (first turn, rollover): the Jarvis identity
             # and recent transcript lead the prompt, so the old one must go.
             argv.append("--reset-session")
+        approval_source = None
+        if turn.route.transport == "claude_cli" and not turn.auto_approve:
+            from jarvis.agent_runtimes.openclaw_approvals import OpenClawApprovals
+
+            approval_source = OpenClawApprovals(
+                gateway.port, token, session_key(turn.agent_id, turn.session_id)
+            )
         return RuntimeLaunch(
             argv=argv,
             env=child_env({**_EMBED_ENV, **_state_env(home)}),
@@ -612,6 +645,7 @@ class OpenClawRuntime:
             acp_resume=None,
             vendor_session=session_key(turn.agent_id, turn.session_id),
             release=release,
+            approval_source=approval_source,
         )
 
     async def _ensure_gateway(

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
 
-from jarvis.agent_runtimes.acp import McpServer
+from jarvis.agent_runtimes.acp import ApprovalSource, McpServer
 from jarvis.agent_runtimes.model_map import ModelRoute
 
 log = logging.getLogger(__name__)
@@ -165,6 +165,7 @@ class RuntimeTurn:
     #: it reasons / it reads images. Never inferred from a provider or model name.
     reasoning: bool | None = None
     vision: bool | None = None
+    read_only: bool = False
 
 
 @dataclass(slots=True)
@@ -184,6 +185,10 @@ class RuntimeLaunch:
     #: Called exactly once when the turn's process is gone: frees the turn
     #: slot (and lets an idle Gateway be reaped).
     release: Callable[[], None] | None = None
+    #: Select this provider-qualified model after opening the ACP session,
+    #: before the prompt. A restored session must not retain an old route.
+    acp_model: str = ""
+    approval_source: ApprovalSource | None = field(default=None, repr=False)
 
 
 class AgentRuntimeDriver(Protocol):

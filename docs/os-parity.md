@@ -1726,3 +1726,24 @@ Agent notebook migration explicitly normalizes the final `USER.md` and
 `MEMORY.md` filename spelling on case-insensitive filesystems. The migration
 journal and backups continue to preserve the original content on every OS.
 The inherited-lock and migration recovery contracts run in the OS test shards.
+
+
+### Native Claude subscriptions in external agent runtimes
+
+Hermes and OpenClaw use the installed official Claude CLI for a selected
+Claude subscription. Native account status uses `claude auth status --json`
+and the same selected account directory as the runtime process. An unset
+account directory stays unset for platform-native credentials; GUI launches
+on POSIX retain the account-name repair required by native credential lookup.
+API-key environment variables are excluded from this path.
+
+Hermes provisions its pinned official subscription plugin in the agent's
+profile, under the existing profile lock. Installation has a deadline and
+uses the existing process-tree containment on Windows and POSIX. OpenClaw
+uses its bundled native backend. Missing CLIs or unavailable subscriptions
+produce an in-app setup error without API-key fallback.
+
+Validation: focused fake-based tests cover selected accounts, credential
+isolation, runtime configuration, plugin preparation and cancellation, and
+ACP model selection during session restoration. Real macOS and Linux native
+subscription calls remain unverified from this Windows environment.
