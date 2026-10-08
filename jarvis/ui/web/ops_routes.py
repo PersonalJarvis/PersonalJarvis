@@ -51,7 +51,15 @@ from jarvis.ops.delivery import (
     send_connection_test,
 )
 from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
-from jarvis.ops.morning import MorningSettings, MorningStore, apply_schedule, validate_settings
+from jarvis.ops.morning import (
+    DEFAULT_OVERVIEW_TIME,
+    DEFAULT_PREPARE_TIME,
+    BriefingSnapshotStore,
+    MorningSettings,
+    MorningStore,
+    apply_schedule,
+    validate_settings,
+)
 from jarvis.ops.notify import (
     NOTIFICATION_KINDS,
     Notification,
@@ -115,6 +123,10 @@ def notify_store_for_state(state: Any) -> NotifyStore | None:
 
 def morning_store_for_state(state: Any) -> MorningStore | None:
     return _cached_store(state, "ops_morning_store", MorningStore)
+
+
+def snapshot_store_for_state(state: Any) -> BriefingSnapshotStore | None:
+    return _cached_store(state, "ops_snapshot_store", BriefingSnapshotStore)
 
 
 def _telegram_config(state: Any) -> Any:
@@ -402,9 +414,18 @@ class MorningSettingsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
-    local_time: str = Field(default="07:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    prepare_time: str = Field(
+        default=DEFAULT_PREPARE_TIME,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="When the briefing is prepared (never spoken or sent)",
+    )
+    overview_time: str = Field(
+        default=DEFAULT_OVERVIEW_TIME,
+        pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+        description="When the day's overview goes to Telegram (calendar read again)",
+    )
     timezone: str | None = Field(
-        default=None, description="IANA timezone, e.g. Europe/Berlin; required to switch on"
+        default=None, description="IANA timezone, e.g. Europe/Madrid; required to switch on"
     )
     language: str | None = Field(default=None, description="en, de, es or zh; default UI language")
     include_calendar: bool = True
@@ -412,7 +433,8 @@ class MorningSettingsBody(BaseModel):
 
 @router.put("/morning/settings")
 async def set_morning_settings(request: Request, body: MorningSettingsBody) -> dict[str, Any]:
-    """Switch the automatic morning briefing on or off and set its time."""
+    """Switch the daily morning schedule on or off: prepare (no output) and
+    the Telegram overview (simulated unless the live switch is on)."""
     state = request.app.state
     store = _morning_store(request)
     current = await store.settings()
@@ -429,7 +451,8 @@ async def set_morning_settings(request: Request, body: MorningSettingsBody) -> d
     )
     settings = MorningSettings(
         enabled=body.enabled,
-        local_time=body.local_time,
+        prepare_time=body.prepare_time,
+        overview_time=body.overview_time,
         timezone=timezone,
         language=language,
         include_calendar=body.include_calendar,
@@ -439,11 +462,11 @@ async def set_morning_settings(request: Request, body: MorningSettingsBody) -> d
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # The scheduler first: settings never say "on" without the task behind them.
-    task_id = await apply_schedule(settings, scheduler=scheduler, store=task_store)
+    task_ids = await apply_schedule(settings, scheduler=scheduler, store=task_store)
     saved = await store.save(settings)
     return {
         **saved.to_dict(),
-        "task_id": task_id,
+        "task_ids": task_ids,
         "notifications": await _notify_summary(request),
     }
 
@@ -599,6 +622,11 @@ async def answer_briefing_question(
         focus=body.focus,
         language=language,
     )
+    prepared_at = None
+    if body.focus == "briefing" and body.day == "today":
+        calendar = next((s for s in result.sections if s.key == "calendar"), None)
+        if calendar is not None and calendar.status in ("unavailable", "not_connected"):
+            result, prepared_at = await _prepared_instead(state, result)
     noted = False
     if body.focus == "briefing" and body.day == "today" and channel in ("voice", "telegram"):
         store = notify_store_for_state(state)
@@ -614,7 +642,27 @@ async def answer_briefing_question(
         "channel": channel,
         "say": result.spoken if channel == "voice" else result.text,
         "noted_as_delivered": noted,
+        "prepared_at": prepared_at,
     }
+
+
+async def _prepared_instead(state: Any, result: Any) -> tuple[Any, str | None]:
+    """The calendar cannot be read now: answer with the briefing prepared this
+    morning, if there is one, and say from when it is."""
+    from dataclasses import replace
+
+    from jarvis.ops.briefing_service import spoken_table
+
+    store = snapshot_store_for_state(state)
+    snapshot = await store.get(result.day) if store is not None else None
+    if snapshot is None or snapshot.language != result.language:
+        return result, None
+    clock = snapshot.composed_at[11:16]
+    note = spoken_table(result.language)["as_of"].format(time=clock)
+    return (
+        replace(result, spoken=f"{note} {snapshot.spoken}", text=snapshot.text),
+        snapshot.composed_at,
+    )
 
 
 class BriefingTelegramBody(BaseModel):

@@ -133,7 +133,8 @@ async def test_the_morning_briefing_spoken_and_written() -> None:
     assert result.text.startswith("Briefing for 2026-10-07")
     spoken = result.spoken
     assert spoken.startswith("One thing needs you: Quarterly report.")
-    assert "Today you have 2 appointments: at 11:00 Dentist, at 13:00 Lunch." in spoken
+    assert "Today you have one appointment: at 13:00 Lunch." in spoken
+    assert "New in your calendar: Dentist 11:00." in spoken  # its own group
     assert "Moved: Standup, now 10:00, before 09:00. That was a short-notice change." in spoken
     assert "Cancelled: Client call 12:00." in spoken
     assert "- " not in spoken and "(!)" not in spoken  # sentences, not bullet marks
@@ -275,7 +276,7 @@ async def test_the_channel_is_detected_from_the_calling_turn(app: FastAPI) -> No
     assert telegram["say"] == telegram["text"]
 
 
-async def test_a_voice_briefing_stops_the_automatic_telegram_one(
+async def test_a_voice_briefing_never_stops_the_0900_telegram_overview(
     app: FastAPI, tmp_path: Path
 ) -> None:
     store = NotifyStore(tmp_path / "ops.sqlite")
@@ -285,19 +286,20 @@ async def test_a_voice_briefing_stops_the_automatic_telegram_one(
     again = await _ask(app, {HEADER_DELIVERY: "spoken", HEADER_TRACE: str(uuid4())})
     assert again["noted_as_delivered"] is False  # noted once
 
-    # 07:00 Europe/Madrid: the scheduled briefing finds it already delivered.
+    # 09:00 Europe/Madrid: the overview goes out regardless of the voice briefing.
     sent = SimulatedTelegramTransport()
     tool = MorningBriefingTool(
         composer=lambda: _composer(FakeCalendar()),
         notify_store=lambda: store,
         transport=lambda _settings: sent,
-        clock=lambda: datetime(2026, 10, 7, 5, 0, tzinfo=ZoneInfo("UTC")),
+        clock=lambda: datetime(2026, 10, 7, 7, 0, tzinfo=ZoneInfo("UTC")),
     )
-    result = await tool.execute({"timezone": "Europe/Madrid", "language": "de"})
-    assert result.success and result.output["delivered"] == 0
-    assert sent.sent == []
-    row = await store.get("briefing:2026-10-07")
-    assert row is not None and (row.status, row.transport) == ("delivered", "voice")
+    args = {"mode": "overview", "slot": "09:00", "timezone": "Europe/Madrid", "language": "en"}
+    result = await tool.execute(args)
+    again_0900 = await tool.execute(args)
+    assert result.success and result.output["delivered"] == 1
+    assert again_0900.output["delivered"] == 0  # one Telegram message per scheduled send
+    assert len(sent.sent) == 1 and sent.sent[0].startswith("Briefing for 2026-10-07")
 
 
 async def test_other_questions_never_mark_the_briefing(app: FastAPI, tmp_path: Path) -> None:
@@ -449,3 +451,91 @@ async def test_app_command_from_a_telegram_turn_is_telegram(app: FastAPI) -> Non
     ctx = SimpleNamespace(config={}, trace_id=app.state.telegram_trace)
     result = await tool.execute({"focus": "appointments"}, ctx)
     assert result.output["response"]["channel"] == "telegram"
+
+
+# --- 08:30 prepared, on call ------------------------------------------------------------
+
+
+class DeadCalendarExecutor:
+    async def execute(self, *a: Any, **k: Any) -> ToolResult:
+        return ToolResult(False, None, "Calendar API 503: backend error")
+
+
+async def test_without_a_readable_calendar_voice_gets_the_0830_briefing(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    from jarvis.ops.morning import BriefingSnapshot, BriefingSnapshotStore
+
+    await BriefingSnapshotStore(tmp_path / "ops.sqlite").save(
+        BriefingSnapshot(
+            "2026-10-07",
+            "en",
+            "Briefing for 2026-10-07\n",
+            "Today you have one appointment: at 13:00 Lunch.",
+            "2026-10-07T08:30+02:00",
+        )
+    )
+    app.state.brain._tool_executor_ref = DeadCalendarExecutor()
+    body = await _ask(app, {HEADER_DELIVERY: "spoken"})
+    assert body["prepared_at"] == "2026-10-07T08:30+02:00"
+    assert body["say"] == (
+        "I cannot read your calendar right now; this is the briefing from 08:30. "
+        "Today you have one appointment: at 13:00 Lunch."
+    )
+    assert "503" not in json.dumps(body)
+
+
+async def test_a_live_calendar_always_wins_over_the_prepared_briefing(
+    app: FastAPI, tmp_path: Path
+) -> None:
+    from jarvis.ops.morning import BriefingSnapshot, BriefingSnapshotStore
+
+    await BriefingSnapshotStore(tmp_path / "ops.sqlite").save(
+        BriefingSnapshot("2026-10-07", "en", "old", "old spoken", "2026-10-07T08:30+02:00")
+    )
+    body = await _ask(app, {HEADER_DELIVERY: "spoken"})
+    assert body["prepared_at"] is None and "Lunch" in body["say"] and "old" not in body["say"]
+
+
+def test_the_morning_module_cannot_speak() -> None:
+    """08:30 never starts speech: the scheduled module has no path to the voice."""
+    import ast
+
+    from jarvis.ops import morning
+
+    tree = ast.parse(Path(morning.__file__).read_text(encoding="utf-8"))
+    names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert not names & {"AnnouncementRequested", "EventBus", "TTSRequested"}
+    assert "publish(" not in Path(morning.__file__).read_text(encoding="utf-8")
+
+
+# --- Four separate groups -----------------------------------------------------------------
+
+
+async def test_new_moved_and_cancelled_are_separate_groups_in_order() -> None:
+    result = await _answer("briefing")
+    keys = [s.key for s in result.sections]
+    assert keys[-4:] == ["calendar", "calendar_new", "calendar_moved", "calendar_cancelled"]
+    by = {s.key: [e["id"] for e in s.items] for s in result.sections}
+    assert (by["calendar"], by["calendar_new"], by["calendar_moved"], by["calendar_cancelled"]) == (
+        ["lunch"],
+        ["dentist"],
+        ["standup"],
+        ["call"],
+    )
+    text = result.text
+    order = [
+        text.index(h)
+        for h in (
+            "Upcoming appointments:",
+            "New appointments (1):",
+            "Moved appointments (1):",
+            "Cancelled appointments (1):",
+        )
+    ]
+    assert order == sorted(order)

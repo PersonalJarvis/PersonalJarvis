@@ -58,6 +58,9 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} things need you: {list}.",
         "focus_one": "Your focus today: {list}.",
         "nothing_open": "Nothing needs you right now.",
+        "as_of": (
+            "I cannot read your calendar right now; this is the briefing from {time}."
+        ),
     },
     "de": {  # i18n-allow: runtime spoken briefing (paired with en/es/zh)
         "today": "Heute",  # i18n-allow
@@ -81,6 +84,10 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} Sachen brauchen dich: {list}.",  # i18n-allow
         "focus_one": "Dein Fokus heute: {list}.",  # i18n-allow
         "nothing_open": "Gerade braucht dich nichts.",  # i18n-allow
+        "as_of": (
+            "Ich kann deinen Kalender gerade nicht lesen; "  # i18n-allow
+            "das ist das Briefing von {time}."  # i18n-allow
+        ),
     },
     "es": {  # i18n-allow: runtime spoken briefing (paired with en/de/zh)
         "today": "Hoy",  # i18n-allow
@@ -102,6 +109,9 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} cosas te necesitan: {list}.",  # i18n-allow
         "focus_one": "Tu enfoque de hoy: {list}.",  # i18n-allow
         "nothing_open": "Ahora nada te necesita.",  # i18n-allow
+        "as_of": (
+            "Ahora no puedo leer tu calendario; este es el resumen de las {time}."  # i18n-allow
+        ),
     },
     "zh": {  # i18n-allow: runtime spoken briefing (paired with en/de/es)
         "today": "今天",  # i18n-allow
@@ -123,6 +133,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "有{n}件事需要你处理：{list}。",  # i18n-allow
         "focus_one": "你今天的重点：{list}。",  # i18n-allow
         "nothing_open": "目前没有需要你处理的事。",  # i18n-allow
+        "as_of": "我现在无法读取你的日历；这是{time}的简报。",  # i18n-allow
     },
 }
 
@@ -186,7 +197,7 @@ def spoken_appointments(
     if status is not None:
         return [status]
     when = table[which]
-    unchanged = [e for e in calendar.events if not e.get("moved_from")]
+    unchanged = [e for e in calendar.events if not e.get("moved_from") and not e.get("new")]
     sentences: list[str] = []
     if unchanged:
         key = "count_one" if len(unchanged) == 1 else "count_many"
@@ -235,9 +246,10 @@ def spoken_changes(
 
 def _calendar_from(briefing: Briefing) -> CalendarDay:
     upcoming = briefing.section("calendar")
+    new = briefing.section("calendar_new")
     moved = briefing.section("calendar_moved")
     cancelled = briefing.section("calendar_cancelled")
-    return CalendarDay(upcoming.status, upcoming.items + moved.items, cancelled.items)
+    return CalendarDay(upcoming.status, upcoming.items + new.items + moved.items, cancelled.items)
 
 
 def spoken_briefing(briefing: Briefing, table: Mapping[str, str]) -> str:
@@ -263,8 +275,9 @@ def spoken_briefing(briefing: Briefing, table: Mapping[str, str]) -> str:
 
 def _written_appointments(calendar: CalendarDay, day: date, language: str) -> str:
     table = phrases(language)
-    unchanged = [e for e in calendar.events if not e.get("moved_from")]
     moved = [e for e in calendar.events if e.get("moved_from")]
+    new = [e for e in calendar.events if e.get("new") and not e.get("moved_from")]
+    unchanged = [e for e in calendar.events if e not in moved and e not in new]
     lines = [f"{table['calendar']} ({day.isoformat()}):"]
     status = {"not_connected": "cal_not_connected", "unavailable": "cal_unavailable"}.get(
         calendar.status
@@ -272,6 +285,9 @@ def _written_appointments(calendar: CalendarDay, day: date, language: str) -> st
     if status:
         return "\n".join([*lines, table[status]]) + "\n"
     lines += [event_line(e, table, day=day) for e in unchanged] or [table["cal_empty"]]
+    if new:
+        lines += ["", f"{table['calendar_new']} ({len(new)}):"]
+        lines += [event_line(e, table, day=day) for e in new]
     if moved:
         lines += ["", f"{table['calendar_moved']} ({len(moved)}):"]
         lines += [event_line(e, table, day=day) for e in moved]

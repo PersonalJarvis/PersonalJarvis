@@ -43,6 +43,7 @@ SECTION_KEYS: Final[tuple[str, ...]] = (
     "blocked",
     "failed_recently",
     "calendar",
+    "calendar_new",
     "calendar_moved",
     "calendar_cancelled",
 )
@@ -147,14 +148,22 @@ def build_sections(
         for r in agenda.lanes["failed"]
         if (r.item.updated_ms or r.item.created_ms or 0) >= now_ms - 86_400_000
     ]
-    # Three separate groups, each appointment in exactly one: upcoming as
-    # planned, moved (with the original slot the API stated), cancelled.
-    unchanged = tuple(e for e in calendar.events if not e.get("moved_from"))
+    # Four separate groups, each appointment in exactly one: upcoming as
+    # planned, new (created within a day, per the API), moved (with the
+    # original slot the API stated), cancelled.
     moved = tuple(e for e in calendar.events if e.get("moved_from"))
+    new = tuple(e for e in calendar.events if e.get("new") and not e.get("moved_from"))
+    unchanged = tuple(e for e in calendar.events if e not in moved and e not in new)
     calendar_section = BriefingSection(
         "calendar",
         len(unchanged),
         unchanged[: SECTION_MAX_ITEMS * 2],
+        status=calendar.status,
+    )
+    new_section = BriefingSection(
+        "calendar_new",
+        len(new),
+        new[: SECTION_MAX_ITEMS * 2],
         status=calendar.status,
     )
     moved_section = BriefingSection(
@@ -178,6 +187,7 @@ def build_sections(
         _section("blocked", blocked),
         _section("failed_recently", failed_recently),
         calendar_section,
+        new_section,
         moved_section,
         cancelled_section,
     )
@@ -207,7 +217,7 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "moved_from": "moved from {old}",
         "short_notice": "short-notice change",
         "tentative": "tentative",
-        "new_event": "new",
+        "calendar_new": "New appointments",
         "more": "… and {n} more",
         "nothing": "Nothing needs you right now, nothing is running and nothing is due today.",
         "cal_empty": "No upcoming appointments today.",
@@ -243,7 +253,7 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "moved_from": "verschoben von {old}",  # i18n-allow
         "short_notice": "kurzfristig geändert",  # i18n-allow
         "tentative": "vorläufig",  # i18n-allow
-        "new_event": "neu",  # i18n-allow
+        "calendar_new": "Neue Termine",  # i18n-allow
         "more": "… und {n} weitere",  # i18n-allow
         "nothing": (
             "Gerade braucht dich nichts, nichts läuft und heute ist nichts fällig."  # i18n-allow
@@ -283,7 +293,7 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "moved_from": "movida desde {old}",  # i18n-allow
         "short_notice": "cambio de último momento",  # i18n-allow
         "tentative": "provisional",  # i18n-allow
-        "new_event": "nueva",  # i18n-allow
+        "calendar_new": "Citas nuevas",  # i18n-allow
         "more": "… y {n} más",  # i18n-allow
         "nothing": (
             "Ahora nada te necesita, nada está en curso y nada vence hoy."  # i18n-allow
@@ -323,7 +333,7 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "moved_from": "已从 {old} 改期",  # i18n-allow
         "short_notice": "临时变更",  # i18n-allow
         "tentative": "待定",  # i18n-allow
-        "new_event": "新增",  # i18n-allow
+        "calendar_new": "新增的日程",  # i18n-allow
         "more": "… 还有 {n} 项",  # i18n-allow
         "nothing": "目前没有需要你处理的事，没有进行中的任务，今天也没有到期事项。",  # i18n-allow
         "cal_empty": "今天没有即将到来的日程。",  # i18n-allow
@@ -375,8 +385,6 @@ def event_line(event: Mapping[str, Any], table: Mapping[str, str], *, day: date)
     notes: list[str] = []
     if event.get("state") == "tentative":
         notes.append(table["tentative"])
-    if event.get("new"):
-        notes.append(table["new_event"])
     moved = event.get("moved_from")
     if isinstance(moved, Mapping):
         old = str(moved.get("time") or "") or table["all_day"]
@@ -405,7 +413,7 @@ def render_text(
     if all(s.count == 0 for s in sections if s.key in work_keys):
         lines += ["", table["nothing"]]
     for section in sections:
-        if section.key in ("calendar_moved", "calendar_cancelled"):
+        if section.key in ("calendar_new", "calendar_moved", "calendar_cancelled"):
             if section.count:
                 lines += ["", f"{table[section.key]} ({section.count}):"]
                 lines += [event_line(e, table, day=day) for e in section.items]
@@ -413,7 +421,9 @@ def render_text(
                     lines.append(table["more"].format(n=section.count - len(section.items)))
             continue
         if section.key == "calendar":
-            moved_any = any(s.key == "calendar_moved" and s.count for s in sections)
+            moved_any = any(
+                s.key in ("calendar_new", "calendar_moved") and s.count for s in sections
+            )
             if section.status == "ok" and not section.items and moved_any:
                 continue  # only moved appointments today: their own heading says it
             lines += ["", f"{table['calendar']}:"]

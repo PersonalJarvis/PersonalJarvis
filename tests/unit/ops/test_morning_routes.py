@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 
 from jarvis.core.bus import EventBus
-from jarvis.ops.morning import TASK_TAG, MorningStore
+from jarvis.ops.morning import TASK_TAG_OVERVIEW, TASK_TAG_PREPARE, TASK_TAGS, MorningStore
 from jarvis.ops.notify import NotifyStore
 from jarvis.tasks.scheduler import TaskScheduler
 from jarvis.tasks.store import TaskStore
@@ -44,14 +44,15 @@ async def _call(app: FastAPI, method: str, url: str, **kw: Any) -> httpx.Respons
         return await client.request(method, url, **kw)
 
 
-async def _tagged(app: FastAPI) -> list[dict[str, Any]]:
+async def _tagged(app: FastAPI, tags: tuple[str, ...] = TASK_TAGS) -> list[dict[str, Any]]:
     rows = await app.state.task_store.list(limit=100)
-    return [r for r in rows if TASK_TAG in json.loads(r["spec_json"]).get("tags", [])]
+    return [r for r in rows if set(tags) & set(json.loads(r["spec_json"]).get("tags", []))]
 
 
 async def test_off_by_default_with_no_task(app: FastAPI) -> None:
     body = (await _call(app, "GET", "/api/ops/morning/settings")).json()
-    assert body["enabled"] is False and body["delivery"] == "simulated"
+    assert body["enabled"] is False and body["prepare_output"] == "none"
+    assert body["overview_delivery"].startswith("telegram, simulated")
     assert body["notifications"] == {"enabled": False, "daily_briefing": True}
     assert await _tagged(app) == []
 
@@ -67,29 +68,32 @@ async def test_switching_on_needs_a_valid_timezone(app: FastAPI) -> None:
         app,
         "PUT",
         "/api/ops/morning/settings",
-        json={"enabled": True, "timezone": "Europe/Berlin", "local_time": "7am"},
+        json={"enabled": True, "timezone": "Europe/Madrid", "overview_time": "9am"},
     )
     assert bad_time.status_code == 422
     assert await _tagged(app) == []
     assert (await _call(app, "GET", "/api/ops/morning/settings")).json()["enabled"] is False
 
 
-async def test_on_then_off_keeps_one_task(app: FastAPI) -> None:
+async def test_on_then_off_keeps_one_task_per_moment(app: FastAPI) -> None:
     on = await _call(
         app,
         "PUT",
         "/api/ops/morning/settings",
-        json={"enabled": True, "timezone": "Europe/Berlin", "local_time": "06:45"},
+        json={"enabled": True, "timezone": "Europe/Madrid"},
     )
     assert on.status_code == 200
     body = on.json()
-    assert (body["enabled"], body["language"], body["local_time"]) == (True, "de", "06:45")
-    [task] = await _tagged(app)
-    assert task["id"] == body["task_id"] and task["state"] == "scheduled"
+    assert (body["enabled"], body["language"]) == (True, "de")
+    assert (body["prepare_time"], body["overview_time"]) == ("08:30", "09:00")
+    assert body["prepare_output"] == "none"
+    for tag in (TASK_TAG_PREPARE, TASK_TAG_OVERVIEW):
+        [task] = await _tagged(app, (tag,))
+        assert task["id"] == body["task_ids"][tag] and task["state"] == "scheduled"
 
     off = await _call(app, "PUT", "/api/ops/morning/settings", json={"enabled": False})
-    assert off.json()["enabled"] is False and off.json()["timezone"] == "Europe/Berlin"
-    assert [t["state"] for t in await _tagged(app)] == ["paused"]
+    assert off.json()["enabled"] is False and off.json()["timezone"] == "Europe/Madrid"
+    assert [t["state"] for t in await _tagged(app)] == ["paused", "paused"]
     stored = await MorningStore(Path(app.state.config.memory.data_dir) / "ops.sqlite").settings()
     assert stored.enabled is False
 
@@ -155,13 +159,14 @@ async def test_the_server_task_stack_runs_the_morning_briefing(tmp_path: Path) -
         assert TOOL_NAME in runner._tools
         notify = NotifyStore(data_dir / "ops.sqlite")
         await notify.save_settings(enabled=True, kinds=["daily_briefing"])
-        task_id = await apply_schedule(
-            MorningSettings(True, "07:00", "UTC", "en"),
+        ids = await apply_schedule(
+            MorningSettings(True, "08:30", "09:00", "UTC", "en"),
             scheduler=state.task_scheduler,
             store=state.task_store,
         )
-        assert task_id is not None
-        await asyncio.wait_for(runner.run(task_id, CancelToken()), timeout=10)
+        await asyncio.wait_for(runner.run(ids[TASK_TAG_PREPARE], CancelToken()), timeout=10)
+        assert await notify.outbox() == []  # preparing sends nothing
+        await asyncio.wait_for(runner.run(ids[TASK_TAG_OVERVIEW], CancelToken()), timeout=10)
         [row] = await notify.outbox()
         assert (row.kind, row.status, row.transport) == (
             "daily_briefing",
