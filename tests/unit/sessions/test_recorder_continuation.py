@@ -6,6 +6,7 @@ second history row ("Voice chat · 16:59") beside the one that was open.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterator
 
 import pytest
@@ -31,28 +32,61 @@ def _no_continuation() -> Iterator[None]:
     continue_voice_session(None)
 
 
+# Every event gets its own timestamp, one second after the last. The real
+# event clock ticks in ~15 ms steps on Windows (Python 3.11), so a whole call
+# could share one millisecond with the next and the older call's turns would
+# look as new as the live captions. A real reopened chat is seconds apart.
+_TICKS = itertools.count(1_700_000_000_000_000_000, 1_000_000_000)
+
+
+def _ts() -> int:
+    return next(_TICKS)
+
+
 async def _call(bus: EventBus, call: str, turn: str, user: str, reply: str) -> None:
-    await bus.publish(VoiceSessionStarted(source_layer="test", session_id=call, language="de"))
-    await bus.publish(VoiceTurnStarted(source_layer="test", session_id=call, turn_id=turn))
+    await bus.publish(
+        VoiceSessionStarted(source_layer="test", timestamp_ns=_ts(), session_id=call, language="de")
+    )
+    await bus.publish(
+        VoiceTurnStarted(source_layer="test", timestamp_ns=_ts(), session_id=call, turn_id=turn)
+    )
     await bus.publish(
         VoiceTurnCompleted(
-            source_layer="test", session_id=call, turn_id=turn, user_text=user, jarvis_text=reply
+            source_layer="test",
+            timestamp_ns=_ts(),
+            session_id=call,
+            turn_id=turn,
+            user_text=user,
+            jarvis_text=reply,
         )
     )
-    await bus.publish(VoiceSessionEnded(source_layer="test", session_id=call))
+    await bus.publish(VoiceSessionEnded(source_layer="test", timestamp_ns=_ts(), session_id=call))
 
 
 async def _live_call(bus: EventBus, call: str, user: str, reply: str) -> None:
-    await bus.publish(VoiceSessionStarted(source_layer="test", session_id=call, language="de"))
-    await bus.publish(VoiceTurnStarted(source_layer="test", session_id=call, turn_id=f"{call}-t"))
+    await bus.publish(
+        VoiceSessionStarted(source_layer="test", timestamp_ns=_ts(), session_id=call, language="de")
+    )
+    await bus.publish(
+        VoiceTurnStarted(
+            source_layer="test", timestamp_ns=_ts(), session_id=call, turn_id=f"{call}-t"
+        )
+    )
     for segment, role, text, start in (("u1", "user", user, 100), ("a1", "assistant", reply, 900)):
         await bus.publish(
             VoiceTranscriptUpdated(
-                source_layer="test", session_id=call, segment_id=segment, role=role,  # type: ignore[arg-type]
-                text=text, start_ms=start, end_ms=start + 400, revision=1,
+                source_layer="test",
+                timestamp_ns=_ts(),
+                session_id=call,
+                segment_id=segment,
+                role=role,  # type: ignore[arg-type]
+                text=text,
+                start_ms=start,
+                end_ms=start + 400,
+                revision=1,
             )
         )
-    await bus.publish(VoiceSessionEnded(source_layer="test", session_id=call))
+    await bus.publish(VoiceSessionEnded(source_layer="test", timestamp_ns=_ts(), session_id=call))
 
 
 @pytest.mark.asyncio

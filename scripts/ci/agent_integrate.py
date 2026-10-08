@@ -689,6 +689,7 @@ def plan(repo: str, max_updates: int) -> dict[str, object]:
                 "action": action,
                 "run_id": run_id,
                 "note": note,
+                "labels": sorted(lb["name"] for lb in pr.get("labels", [])),
             }
         )
     return {"repo": repo, "main": main_sha, "queue": queued is not None, "entries": entries}
@@ -850,7 +851,10 @@ def enqueue(entry: dict) -> int:
 
 
 def dispatch_ci(ref: str) -> None:
-    gh("workflow", "run", "ci.yml", "--ref", ref, "-f", "full=false")
+    """Stand-in for the push run a GITHUB_TOKEN merge never fires (direct-merge
+    fallback only; queue merges fire a real push). The dispatch input's
+    default would add every macOS lane (~10x runner cost) to each merge."""
+    gh("workflow", "run", "ci.yml", "--ref", ref, "-f", "full=false", "-f", "include_macos=false")
 
 
 def _bundle_is_safe(sha: str, entry: dict, main_sha: str, checkout: Path) -> bool:
@@ -864,6 +868,35 @@ def _bundle_is_safe(sha: str, entry: dict, main_sha: str, checkout: Path) -> boo
         ):
             return False
     return True
+
+
+_WORKFLOWS_BODY = (
+    "The merge train merged `main` into this branch, but could not push the result: "
+    "`main` changed files under `.github/workflows/`, and the train's `GITHUB_TOKEN` "
+    "may not push workflow changes. Merge `main` into this branch yourself (for example "
+    "`python scripts/agent_land.py --pr`), or give the repository an `INTEGRATION_TOKEN` "
+    "secret with workflow write access."
+)
+
+
+def push_rejection(stderr: str) -> str:
+    """Why a push was refused: ``workflows`` (the token lacks the permission
+    to touch .github/workflows) or ``moved`` (anything else, e.g. not a fast
+    forward because the author pushed meanwhile)."""
+    text = stderr.lower()
+    if "workflow" in text and ("permission" in text or "scope" in text):
+        return "workflows"
+    return "moved"
+
+
+def _report_once(entry: dict, repo: str, body: str, dry_run: bool) -> None:
+    """Comment and label a pull request the train cannot update - once: the
+    `needs-rebase` label marks it as told, so later ticks stay quiet."""
+    number = str(entry["number"])
+    if dry_run or "needs-rebase" in entry.get("labels", []):
+        return
+    gh("pr", "comment", number, "--repo", repo, "--body", body)
+    gh("pr", "edit", number, "--repo", repo, "--add-label", "needs-rebase")
 
 
 def apply_update(
@@ -888,9 +921,7 @@ def apply_update(
             "resolves generated files and lists what is left). The train retries on "
             "the next push to this branch."
         )
-        if not dry_run:
-            gh("pr", "comment", str(number), "--repo", repo, "--body", body)
-            gh("pr", "edit", str(number), "--repo", repo, "--add-label", "needs-rebase")
+        _report_once(entry, repo, body, dry_run)
         return "conflict - " + ", ".join(unresolved)
     if status != "ready":
         return f"update in unexpected state {status!r}; next tick"
@@ -910,6 +941,11 @@ def apply_update(
         return "update bundle rejected (not the planned head plus main); next tick"
     push = git("push", "origin", f"{sha}:refs/heads/{branch}", check=False, cwd=checkout)
     if push.returncode != 0:
+        reason = push_rejection(push.stderr)
+        print(f"[train] #{number}: push rejected:\n{push.stderr.strip()[-2000:]}", flush=True)
+        if reason == "workflows":
+            _report_once(entry, repo, _WORKFLOWS_BODY, dry_run)
+            return "update needs the `workflows` permission (main changed .github/workflows)"
         return "update rejected (the branch moved); retry next tick"
     gh("pr", "edit", str(number), "--repo", repo, "--remove-label", "needs-rebase")
     ai = [str(f) for f in state.get("ai_resolved") or []]
@@ -969,7 +1005,9 @@ def apply(root: Path, data: dict, dry_run: bool, token_is_bot: bool) -> int:
             if action == "approve":
                 code = gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run_id}/approve")
             else:
-                code = gh("run", "rerun", str(run_id), "--repo", repo)
+                # Only the failed and cancelled jobs: a whole-run rerun of a
+                # full pipeline re-queues ~50 green jobs behind the runner limit.
+                code = gh("run", "rerun", str(run_id), "--failed", "--repo", repo)
             if code == 0:
                 summary.append(f"#{number}: CI run {run_id} {action}d")
             else:
