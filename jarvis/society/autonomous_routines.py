@@ -8,6 +8,7 @@ task before acknowledging it. No scheduler or model call is created here.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from typing import Any
@@ -28,6 +29,7 @@ from .routines import (
 AUTONOMOUS_TAG = "autonomous"
 ORIGIN_SESSION_TAG = "origin-session:"
 ORIGIN_PERMISSION_TAG = "origin-permission:"
+log = logging.getLogger(__name__)
 
 _NO_BACKGROUND = re.compile(
     r"\b(?:do not|don't|never)\s+(?:schedule|automate|create\s+(?:a\s+)?routine)|"
@@ -122,6 +124,7 @@ async def apply_autonomous_routine(
     try:
         payload = validate("routine", args.get("payload"), catalog=runtime.catalog())
     except (ProposalRefused, ValueError) as exc:
+        log.info("Autonomous routine validation refused (%s)", type(exc).__name__)
         return ToolResult(False, {}, str(exc))
     store, scheduler = runtime.task_services()
     if store is None or scheduler is None:
@@ -142,6 +145,7 @@ async def apply_autonomous_routine(
         try:
             await manage_routine(agent, payload, store, scheduler)
         except (ValueError, KeyError, RuntimeError) as exc:
+            log.info("Autonomous routine update refused (%s)", type(exc).__name__)
             return ToolResult(False, {}, str(exc))
         if operation == "delete" and await store.get(payload["task_id"]) is None:
             return ToolResult(
@@ -161,6 +165,7 @@ async def apply_autonomous_routine(
             schedule=schedule,
         )
     except (ValueError, KeyError) as exc:
+        log.info("Autonomous routine trigger refused (%s)", type(exc).__name__)
         return ToolResult(False, {}, str(exc))
     # A stable semantic key survives new turn ids, reconnects and process
     # restarts. Never resurrect completed/cancelled work on duplicate delivery.
