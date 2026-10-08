@@ -481,6 +481,20 @@ class NotifyStore:
         finally:
             await conn.close()
 
+    async def note_delivered(
+        self, *, dedup_key: str, kind: str, transport: str, text: str = ""
+    ) -> bool:
+        """Record that the person already got *dedup_key* another way (voice,
+        a chat answer), so the notifier never sends it again. Never overwrites
+        an existing record. Returns whether a record was added."""
+        if await self.get(dedup_key) is not None:
+            return False
+        now = int(time.time() * 1000)
+        await self.record(
+            LogRow(dedup_key, kind, "normal", "delivered", transport, 0, 1, 1, "", text, now, now)
+        )
+        return True
+
     async def outbox(self, limit: int = 50) -> list[LogRow]:
         conn = await self._connect()
         try:

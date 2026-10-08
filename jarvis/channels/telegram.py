@@ -504,6 +504,10 @@ class TelegramChannel:
             return
         await self._send_text(chat_id, msg.content, language="de")
 
+    def owns_trace(self, trace_id: UUID) -> bool:
+        """Whether *trace_id* belongs to a Telegram message awaiting its reply."""
+        return self._inflight.get(trace_id) is not None
+
     async def broadcast_event(self, event: Event) -> None:
         """No-op: Telegram routing goes through InflightMap, not broadcast."""
 

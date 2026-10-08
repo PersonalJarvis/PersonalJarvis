@@ -81,6 +81,10 @@ async def test_only_the_priority_marks_are_writable() -> None:
             "/api/ops/briefing/preview",
             "/api/ops/notify/simulate",
             "/api/ops/notify/telegram/test",
+            # Writes only the "already delivered" note for the day's briefing.
+            "/api/ops/briefing/answer",
+            # Dangerous (asks first) and needs the live switch.
+            "/api/ops/briefing/telegram",
         ):
             assert methods == {"POST"}
         elif path == "/api/ops/notify/live":

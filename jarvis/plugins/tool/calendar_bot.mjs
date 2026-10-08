@@ -119,6 +119,7 @@ function summarizeEvent(rawEvent, calendarId, calendarName) {
     // last modified, and — for a moved instance of a recurring series — the
     // slot it originally had.
     updated: rawEvent.updated || null,
+    created: rawEvent.created || null,
     original_start:
       rawEvent.originalStartTime?.dateTime || rawEvent.originalStartTime?.date || null,
     recurring_event_id: rawEvent.recurringEventId || null,

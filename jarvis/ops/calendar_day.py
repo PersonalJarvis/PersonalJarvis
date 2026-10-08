@@ -15,6 +15,8 @@ sorts every event into what the briefing and the notifier need:
 - **short notice** — a cancellation or move whose change time (Google's
   ``updated``) is known and falls within :data:`SHORT_NOTICE_HOURS` before
   the original appointment. Without a change time nothing is marked.
+- **new** — an event whose creation time (Google's ``created``) is known and
+  lies within :data:`NEW_HOURS` before now. Without it nothing is marked.
 
 Only a status leaves the reader on failure, never a provider error text
 (AP-34). Pure classification functions; the reader is the only I/O.
@@ -34,6 +36,7 @@ log = logging.getLogger(__name__)
 
 CALENDAR_TOOL: Final = "google_calendar"
 SHORT_NOTICE_HOURS: Final = 24
+NEW_HOURS: Final = 24
 MAX_EVENTS: Final = 50
 READ_TIMEOUT_S: Final = 45.0
 _DAY = timedelta(days=1)
@@ -101,6 +104,7 @@ def classify_day(
         start = _parse(event.get("start"), tz)
         original = _parse(event.get("original_start"), tz)
         changed_at = _parse(event.get("updated"), tz)
+        created_at = _parse(event.get("created"), tz)
         # A cancelled instance of a series may only carry its original slot.
         anchor = start if start is not None else (original if state == "cancelled" else None)
         if anchor is None:
@@ -138,6 +142,10 @@ def classify_day(
             "moved_from": moved_from,
             "changed_at": event.get("updated") if changed else None,
             "short_notice": changed and _short_notice(changed_at, reference),
+            "new": state != "cancelled"
+            and created_at is not None
+            and now - timedelta(hours=NEW_HOURS) <= created_at <= now,
+            "created_at": event.get("created") if created_at is not None else None,
         }
         row = (not all_day, anchor, event_id, entry)
         if state == "cancelled":
@@ -204,6 +212,7 @@ class ToolCalendarReader:
 
 __all__ = [
     "CALENDAR_TOOL",
+    "NEW_HOURS",
     "SHORT_NOTICE_HOURS",
     "CalendarDay",
     "CalendarReader",

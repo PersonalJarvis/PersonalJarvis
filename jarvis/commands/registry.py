@@ -1663,6 +1663,51 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("restaura mis terminales",),  # i18n-allow: input vocab
             },
         ),
+        AppCommand(
+            id="ops-briefing",
+            title="Answer a briefing or calendar question",
+            description=(
+                "The person's briefing and appointments from the calendar, read live: "
+                "focus='briefing' for the full morning briefing (tasks that need them, focus, "
+                "today's appointments), 'appointments' for one day's appointments, 'changes' "
+                "for moved, new and cancelled appointments of today and tomorrow. "
+                "day='today' or 'tomorrow'. Speak the returned 'say' text; it states only "
+                "what the calendar reports. Reads only, no model call."
+            ),
+            method="POST",
+            path="/api/ops/briefing/answer",
+            params={
+                "type": "object",
+                "properties": {
+                    "day": _str_param("today or tomorrow", enum=["today", "tomorrow"]),
+                    "focus": _str_param(
+                        "briefing, appointments or changes",
+                        enum=["briefing", "appointments", "changes"],
+                    ),
+                },
+                "required": [],
+            },
+            ui_section="board",
+            voice_aliases={
+                "de": (  # i18n-allow: input vocab
+                    "was steht heute an",  # i18n-allow: input vocab
+                    "gib mir mein morgenbriefing",  # i18n-allow: input vocab
+                    "welche termine habe ich morgen",  # i18n-allow: input vocab
+                    "hat sich heute etwas an meinem kalender geändert",  # i18n-allow: input vocab
+                ),
+                "en": (
+                    "what is on today",
+                    "give me my morning briefing",
+                    "which appointments do i have tomorrow",
+                    "has anything changed in my calendar today",
+                ),
+                "es": (  # i18n-allow: input vocab
+                    "qué tengo hoy",  # i18n-allow: input vocab
+                    "dame mi resumen de la mañana",  # i18n-allow: input vocab
+                    "qué citas tengo mañana",  # i18n-allow: input vocab
+                ),
+            },
+        ),
     )
 
 

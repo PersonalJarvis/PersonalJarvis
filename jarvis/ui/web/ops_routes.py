@@ -54,6 +54,7 @@ from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
 from jarvis.ops.morning import MorningSettings, MorningStore, apply_schedule, validate_settings
 from jarvis.ops.notify import (
     NOTIFICATION_KINDS,
+    Notification,
     NotificationTransport,
     NotifySettings,
     NotifyStore,
@@ -275,11 +276,20 @@ def briefing_composer_for_state(state: Any) -> BriefingComposer:
     return BriefingComposer(
         snapshot=_snapshot,
         marks=_marks,
-        calendar=ToolCalendarReader(
-            tools=lambda: getattr(_brain(), "_tools", None),
-            executor=lambda: getattr(_brain(), "_tool_executor_ref", None),
-        ),
+        calendar=calendar_reader_for_state(state),
         address=_address,
+    )
+
+
+def calendar_reader_for_state(state: Any) -> ToolCalendarReader:
+    """Any day's calendar through the brain's calendar tool (AP-3)."""
+
+    def _brain() -> Any:
+        return getattr(state, "brain", None)
+
+    return ToolCalendarReader(
+        tools=lambda: getattr(_brain(), "_tools", None),
+        executor=lambda: getattr(_brain(), "_tool_executor_ref", None),
     )
 
 
@@ -521,3 +531,124 @@ async def send_telegram_test(request: Request, body: TelegramTestBody) -> dict[s
     except LiveDisabled:
         raise HTTPException(status_code=409, detail="live_disabled") from None
     return outcome.to_dict()
+
+
+# ------------------------------------------------------------------ briefing on request
+
+
+def resolve_channel(request: Request) -> str:
+    """Where a briefing question came from: ``voice``, ``telegram`` or ``text``.
+
+    The app tools send the calling turn's origin (``jarvis/core/turn_origin.py``):
+    a trace id the Telegram channel is waiting to answer means Telegram; a
+    written turn means a typed chat; any other turn is spoken. A direct UI or
+    CLI call carries no origin and is ``text``.
+    """
+    from uuid import UUID
+
+    from jarvis.core.turn_origin import HEADER_DELIVERY, HEADER_TRACE
+
+    delivery = request.headers.get(HEADER_DELIVERY, "")
+    trace = request.headers.get(HEADER_TRACE, "")
+    manager = getattr(request.app.state, "channel_manager", None)
+    if trace and manager is not None:
+        try:
+            channel = manager.get("telegram") if "telegram" in manager.started() else None
+            owns = getattr(channel, "owns_trace", None)
+            if callable(owns) and owns(UUID(trace)):
+                return "telegram"
+        except (ValueError, KeyError, AttributeError):  # not a Telegram turn: fall through
+            pass
+    if delivery == "spoken":
+        return "voice"
+    return "text"
+
+
+class BriefingQuestionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: str = Field(default="today", pattern="^(today|tomorrow)$")
+    focus: str = Field(default="briefing", pattern="^(briefing|appointments|changes)$")
+    language: str | None = Field(default=None, description="en, de, es or zh; default UI language")
+
+
+@router.post("/briefing/answer")
+async def answer_briefing_question(
+    request: Request, body: BriefingQuestionBody
+) -> dict[str, Any]:
+    """Answer "what is on today / tomorrow", "my morning briefing" or "what
+    changed in my calendar" — spoken for voice, written for chat and Telegram.
+
+    A full morning briefing given here (by voice or in the Telegram chat) is
+    noted as delivered for the day, so the automatic one is not sent again.
+    Sends nothing itself; no model call.
+    """
+    from jarvis.ops.briefing_service import answer
+
+    state = request.app.state
+    config = getattr(state, "config", None)
+    language = normalize_language(
+        body.language or getattr(getattr(config, "ui", None), "language", None)
+    )
+    channel = resolve_channel(request)
+    result = await answer(
+        composer=briefing_composer_for_state(state),
+        calendar=calendar_reader_for_state(state),
+        now=datetime.now().astimezone(),
+        day=body.day,
+        focus=body.focus,
+        language=language,
+    )
+    noted = False
+    if body.focus == "briefing" and body.day == "today" and channel in ("voice", "telegram"):
+        store = notify_store_for_state(state)
+        if store is not None:
+            noted = await store.note_delivered(
+                dedup_key=f"briefing:{result.day.isoformat()}",
+                kind="daily_briefing",
+                transport="voice" if channel == "voice" else "telegram-chat",
+                text=result.text,
+            )
+    return {
+        **result.to_dict(),
+        "channel": channel,
+        "say": result.spoken if channel == "voice" else result.text,
+        "noted_as_delivered": noted,
+    }
+
+
+class BriefingTelegramBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = None
+
+
+@router.post("/briefing/telegram", openapi_extra={"x-jarvis-dangerous": True})
+async def send_briefing_to_telegram(
+    request: Request, body: BriefingTelegramBody
+) -> dict[str, Any]:
+    """On request ("send it to Telegram"): today's briefing to the paired owner
+    chat — only while the live switch is on, at most once per day (an automatic
+    Telegram briefing already sent counts)."""
+    state = request.app.state
+    store = _notify_store(request)
+    settings = await store.settings()
+    if not settings.live:
+        raise HTTPException(status_code=409, detail="live_disabled")
+    config = getattr(state, "config", None)
+    language = normalize_language(
+        body.language or getattr(getattr(config, "ui", None), "language", None)
+    )
+    briefing = await briefing_composer_for_state(state).compose(
+        now=datetime.now().astimezone(), language=language
+    )
+    key = f"briefing:{briefing.day.isoformat()}"
+    previous = await store.get(key)
+    if previous is not None and previous.transport in ("voice", "telegram-chat"):
+        # Heard by voice or read in a chat: an explicit Telegram copy is still wanted.
+        key = f"{key}:telegram-request"
+    note = Notification("daily_briefing", key, briefing.text, "normal")
+    report = await OwnerNotifier(store, transport_for_state(state, settings)).deliver(
+        [note], explicit=True
+    )
+    return report.outcomes[0].to_dict()

@@ -378,6 +378,9 @@ class RegistryCommandTool:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
 
             headers[HEADER_NAME] = session_id
+        from jarvis.core.turn_origin import turn_origin_headers
+
+        headers.update(turn_origin_headers(ctx))  # spoken / written, and the turn's trace
         try:
             async with httpx.AsyncClient(
                 # The request stays in-process through ASGITransport. Use a

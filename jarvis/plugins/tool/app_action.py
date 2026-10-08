@@ -209,7 +209,7 @@ class RunAppActionTool:
                     f"Valid: {', '.join(valid) or 'none'}."
                 ),
             )
-        status, data = await self._request(entry.method, path, query, body)
+        status, data = await self._request(entry.method, path, query, body, ctx)
         if status is None:
             history.record(entry.id, "failed", str(data), via=self.name)
             return ToolResult(success=False, output=None, error=str(data))
@@ -226,7 +226,7 @@ class RunAppActionTool:
         return ToolResult(success=True, output={"action_id": entry.id, "response": _trim(data)})
 
     async def _request(
-        self, method: str, path: str, query: dict[str, Any], body: Any
+        self, method: str, path: str, query: dict[str, Any], body: Any, ctx: Any = None
     ) -> tuple[int | None, Any]:
         import httpx
 
@@ -247,6 +247,9 @@ class RunAppActionTool:
         session_id = caller_session_id()
         if session_id:
             headers[HEADER_NAME] = session_id
+        from jarvis.core.turn_origin import turn_origin_headers
+
+        headers.update(turn_origin_headers(ctx))  # spoken / written, and the turn's trace
         try:
             async with httpx.AsyncClient(
                 transport=transport, base_url="http://127.0.0.1", headers=headers, timeout=60.0
