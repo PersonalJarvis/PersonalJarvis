@@ -35,12 +35,17 @@
 # excluded), so a pushed update is no more trusted than their own push: CI
 # and the merge queue test it before anything lands.
 #
-# Tokens: with the optional INTEGRATION_TOKEN secret (a fine-grained PAT or App
-# token with contents + pull-requests write), pushes fire the normal
-# pull_request events. Without it the train uses GITHUB_TOKEN: the
-# pull_request run its own push triggers parks in "action_required" and the
-# train approves it on the next tick (a dispatched run would never count for
-# the pull request).
+# Tokens: the `apply` job runs in the `merge-train` environment (deployable
+# from main only) and mints a short-lived installation token of the
+# "PersonalJarvis Merge Bot" GitHub App (variable MERGE_APP_ID, environment
+# secret MERGE_APP_PRIVATE_KEY; contents, pull requests, workflows and actions
+# write; no ruleset bypass). Its pushes and enqueues fire the normal events,
+# so the queue's merge_group runs start, and it may push merges that carry
+# main's .github/workflows changes. Without the app the train falls back to
+# GITHUB_TOKEN: its pull_request runs park in "action_required" and the train
+# approves them on the next tick, and it does NOT enqueue, because GitHub
+# starts no merge_group run for an entry GITHUB_TOKEN added - the entry would
+# sit until the queue's timeout. With no queue on main it merges directly.
 #
 # AI conflict resolution is optional: set ANTHROPIC_API_KEY (Claude Code) or
 # OPENAI_API_KEY (Codex CLI). Without a key, semantic conflicts are reported.
@@ -183,15 +188,27 @@ jobs:
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: merge-train
     permissions:
       contents: write
       pull-requests: write
       actions: write
     env:
-      GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
-      TOKEN_IS_BOT: ${{ secrets.INTEGRATION_TOKEN == '' }}
       DRY_RUN: ${{ inputs.dry_run }}
     steps:
+      # The only credential that can write. Minted here, after nothing from a
+      # pull request ever ran on this machine, and revoked when the job ends.
+      - name: Mint a merge bot token
+        id: bot
+        if: vars.MERGE_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.MERGE_APP_ID }}
+          private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-actions: write
       # The write token is never persisted into .git; `gh auth setup-git`
       # hands it to git only for this step's pushes. Nothing from a pull
       # request executes in this job: bundles are fetched as data.
@@ -213,6 +230,9 @@ jobs:
           name: merge-train-updates
           path: ${{ runner.temp }}/train
       - name: Run the train
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token || github.token }}
+          TOKEN_IS_BOT: ${{ steps.bot.outputs.token == '' }}
         run: |
           gh auth setup-git
           args=(--dir "$RUNNER_TEMP/train")

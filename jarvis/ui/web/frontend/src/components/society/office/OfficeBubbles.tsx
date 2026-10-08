@@ -7,12 +7,13 @@
  * camera distance. Ambient bubbles (agents nobody is talking to) hide when
  * the camera is far away, so the overview never turns into a wall of text.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { AlertTriangle, Check, LoaderCircle } from "lucide-react";
 import { Vector3, type Group } from "three";
 import { useT } from "@/i18n";
+import { useCanvasInterval } from "@/hooks/useCanvasInterval";
 import { useEventStore } from "@/store/events";
 import { memoryNoteFor, useMemoryWrites, type MemoryWrite } from "@/store/memoryWrites";
 import type { SocietyAgent } from "../data";
@@ -92,11 +93,7 @@ function useErrandBubble(agent: SocietyAgent): Bubble | null {
 /** Re-renders once a second while `active`, so a settled bubble can expire. */
 function useClock(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [active]);
+  useCanvasInterval(() => setNow(Date.now()), 1000, active);
   return now;
 }
 

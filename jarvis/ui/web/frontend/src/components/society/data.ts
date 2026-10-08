@@ -113,7 +113,7 @@ export interface AgentStats {
   lastActiveMs: number | null;
 }
 
-/** Plain-language rules under the ceiling (agent-definition §3.4); require wins. */
+/** Permission rules under the ceiling (agent-definition §3.4); require wins. */
 export interface ApprovalRules {
   requireApproval: string[];
   alwaysAllow: string[];
@@ -334,12 +334,13 @@ export function withLeadName(data: RosterData, assistantName: string): RosterDat
   return { ...data, agents: data.agents.map((a) => (a.tier === "lead" ? { ...a, name } : a)) };
 }
 
-export function useSocietyRoster() {
+export function useSocietyRoster(enabled = true) {
   const assistantName = useEventStore((s) => s.assistantName) ?? "";
   const select = useCallback((data: RosterData) => withLeadName(data, assistantName), [assistantName]);
   return useQuery({
     queryKey: ROSTER_QUERY_KEY,
     queryFn: fetchSocietyRoster,
+    enabled,
     select,
     staleTime: 15_000,
     // A refetch mid-ceremony would delete the figure being carried to the

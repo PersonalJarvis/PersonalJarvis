@@ -782,11 +782,26 @@ def test_apply_enqueues_green_pull_requests_and_reports_the_rest(tmp_path, monke
             {"number": 4, "branch": "claude/d", "head": "d" * 40, "id": "PR_d", "action": "held"},
         ],
     }
-    assert agent_integrate.apply(tmp_path, plan, False, True) == 0
+    assert agent_integrate.apply(tmp_path, plan, False, False) == 0  # merge bot token
     enqueued = [c for c in fake.calls if c[:2] == ("api", "graphql")]
     assert len(enqueued) == 2  # a queue takes every green PR, not one per tick
     assert "head=" + "a" * 40 in enqueued[0] and "id=PR_a" in enqueued[0]
     assert not any(c[:2] == ("pr", "merge") or c[:2] == ("workflow", "run") for c in fake.calls)
+
+
+def test_github_token_never_enqueues_because_the_queue_would_stall(tmp_path, monkeypatch):
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    plan = {
+        "repo": "example/project",
+        "main": "m" * 40,
+        "queue": True,
+        "entries": [
+            {"number": 1, "branch": "claude/a", "head": "a" * 40, "id": "PR_a", "action": "merge"}
+        ],
+    }
+    assert agent_integrate.apply(tmp_path, plan, False, True) == 0
+    assert not fake.calls  # no enqueue, no direct merge past the queue
 
 
 def test_apply_reruns_only_the_failed_jobs_of_a_cancelled_run(tmp_path, monkeypatch):

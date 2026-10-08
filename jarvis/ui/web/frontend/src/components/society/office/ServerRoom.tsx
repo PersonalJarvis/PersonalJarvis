@@ -16,7 +16,9 @@
  * Pieces are built in local space centred on the origin, front facing +z, and
  * stay inside their FURNITURE_SIZE box.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
+import { useCanvasInterval } from "@/hooks/useCanvasInterval";
 import { useFrame } from "@react-three/fiber";
 import {
   CanvasTexture, Color, CylinderGeometry, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D,
@@ -614,10 +616,7 @@ function useClusterData(): ClusterData {
 /** A counter that ticks on a slow timer; the screens redraw on it, never per frame. */
 function useTicker(ms: number): number {
   const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setTick((t) => t + 1), ms);
-    return () => clearInterval(timer);
-  }, [ms]);
+  useCanvasInterval(() => setTick((t) => t + 1), ms);
   return tick;
 }
 
@@ -908,7 +907,8 @@ const IDE_SPEND_FILTERS: CostFilters = { ...EMPTY_FILTERS, surfaces: ["agentic-i
 
 /** A floor-standing status display: the Agentic IDE's spend for the whole room. A click dives into it and opens Spend. */
 export function StatusWall() {
-  const summary = useCostSummary(IDE_SPEND_FILTERS);
+  const active = useContext(CanvasActivity);
+  const summary = useCostSummary(IDE_SPEND_FILTERS, active);
   const spend = ideSpendFrom(summary.data, IDE_SPEND_FILTERS.days);
   // The clock in the corner moves once a minute; the numbers when the summary answers.
   const tick = useTicker(30_000);

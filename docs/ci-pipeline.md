@@ -165,12 +165,18 @@ pull-request code, and only pushes bundles that build on the planned head and
 main, labels, comments, approves parked runs and enqueues. No checkout
 persists a token.
 
-**Token.** With the optional `INTEGRATION_TOKEN` secret (a fine-grained token
-with contents and pull-request write access), the train's pushes fire the
-normal events. Without it the train uses `GITHUB_TOKEN`: the pull-request run
-its own push triggers waits in "action required" and the train approves it
-on the next tick, because GitHub never counts a dispatched run for a pull
-request. The merge queue's own merges fire the normal push to main.
+**Token.** The `apply` job runs in the `merge-train` environment (deployable
+from main only) and mints a short-lived token of the "PersonalJarvis Merge
+Bot" GitHub App (variable `MERGE_APP_ID`, environment secret
+`MERGE_APP_PRIVATE_KEY`; contents, pull requests, workflows and actions
+write; no ruleset bypass). Its pushes and enqueues fire the normal events, and
+it may push merges that carry main's `.github/workflows` changes. Without the
+app the train falls back to `GITHUB_TOKEN`: the pull-request run its own push
+triggers waits in "action required" and the train approves it on the next
+tick, and it does not enqueue, because GitHub starts no `merge_group` run for
+an entry `GITHUB_TOKEN` added (the entry would wait until the queue's
+timeout). With no queue on main it merges directly. The merge queue's own
+merges fire the normal push to main.
 
 **Rollback.** If the queue stalls, disable the "main merge queue" ruleset
 (Settings → Rules → Rulesets, or `gh api -X PUT
