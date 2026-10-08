@@ -338,3 +338,21 @@ def test_delayed_first_frame_does_not_create_a_black_lead_in(tmp_path):
         stream = source.streams.video[0]
         assert stream.start_time == 0
         assert next(source.decode(stream)).pts == 0
+
+
+def test_clip_rate_snaps_jittered_average_to_the_capture_rate():
+    from fractions import Fraction
+    from types import SimpleNamespace
+
+    from jarvis.appshot.video_edit import _nominal_rate
+
+    def stream(declared, average):
+        return SimpleNamespace(
+            codec_context=SimpleNamespace(framerate=declared), average_rate=average)
+
+    # VideoToolbox writes no timing info; jitter skews the average to 59.7 FPS.
+    assert _nominal_rate(stream(None, Fraction(4000, 67))) == 60
+    assert _nominal_rate(stream(Fraction(30), Fraction(4000, 67))) == 30
+    assert _nominal_rate(stream(None, None)) == 60
+    # A rate far from every capture rate is kept as measured.
+    assert _nominal_rate(stream(None, Fraction(37))) == 37

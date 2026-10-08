@@ -96,6 +96,29 @@ def _clip_encoder(av: Any, source: Any) -> tuple[str, str, dict[str, str]]:
     return "mpeg4", "yuv420p", {}
 
 
+#: Whole-number rates the recorder captures at (its ``fps`` is an int); a
+#: measured rate near one of them is that rate.
+_NOMINAL_RATES = tuple(
+    Fraction(rate) for rate in (24, 25, 30, 48, 50, 60, 72, 90, 100, 120, 144, 165, 240)
+)
+
+
+def _nominal_rate(video: Any) -> Fraction:
+    """The rate the recording was captured at, not one skewed by timestamp jitter.
+
+    VFR timestamp jitter can make base_rate report 120/60000 for a 60 FPS
+    recording, and encoders that write no timing info (VideoToolbox) leave only
+    the average rate, which jitter skews to e.g. 4000/67. Prefer the codec's
+    declared rate, then the average, and snap either to a capture rate within 2 %.
+    """
+    measured = video.codec_context.framerate or video.average_rate or Fraction(60)
+    measured = Fraction(measured)
+    nearest = min(_NOMINAL_RATES, key=lambda rate: abs(rate - measured))
+    if abs(nearest - measured) <= nearest * Fraction(2, 100):
+        return nearest
+    return measured
+
+
 def _copy_colour_tags(source: Any, target: Any) -> None:
     """The clip says the same colour space as its recording, so players match it."""
     for name in ("color_primaries", "color_trc", "colorspace", "color_range"):
@@ -115,9 +138,7 @@ def _write_clip(source_id: str, clip_id: str, start: float, end: float, speed: f
     try:
         with av.open(str(source)) as reader, av.open(str(partial), "w", format="mp4") as writer:
             video = reader.streams.video[0]
-            # VFR timestamp jitter can make base_rate report 120/60000 for a
-            # 60 FPS recording. Preserve the codec's declared frame rate instead.
-            fps = video.codec_context.framerate or video.average_rate or Fraction(60)
+            fps = _nominal_rate(video)
             time_base = 1 / fps
             video.thread_type = "AUTO"
             codec, pixel_format, options = _clip_encoder(av, video.codec_context)
