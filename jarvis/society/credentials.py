@@ -28,6 +28,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -249,7 +250,13 @@ class CredentialVault:
     # ------------------------------------------------------------- index
 
     def _index_path(self, agent_id: str) -> Path:
-        return self._root / f"{_SAFE_ID.sub('_', agent_id)}.json"
+        # The name keeps no separator, but the joined path is still checked to
+        # stay inside the vault: an agent id must never address another file.
+        root = os.path.normpath(os.path.abspath(self._root))
+        path = os.path.normpath(os.path.join(root, f"{_SAFE_ID.sub('_', agent_id)}.json"))
+        if not path.startswith(root + os.sep):
+            raise ValueError("Agent credential index escapes the vault")
+        return Path(path)
 
     def _read_index(self, agent_id: str) -> dict[str, CredentialInfo]:
         path = self._index_path(agent_id)
