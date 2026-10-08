@@ -58,6 +58,9 @@ MAX_PER_RUN: Final = 10
 MAX_ATTEMPTS_PER_RUN: Final = 3
 MAX_TOTAL_ATTEMPTS: Final = 5
 BACKOFF_S: Final[tuple[float, ...]] = (1.0, 4.0)
+#: A rate limit asking for a longer wait ends this run's attempts; the message
+#: is tried again on the next run instead of holding the scheduler.
+MAX_RETRY_AFTER_S: Final = 30.0
 OUTBOX_KEEP: Final = 500
 TEXT_KEEP: Final = TELEGRAM_MAX_CHARS * 4
 
@@ -249,12 +252,14 @@ def notifications_from_briefing(briefing: Briefing) -> list[Notification]:
 
 class TransportError(Exception):
     """A send that did not go through. ``code`` is a short machine code (never
-    a provider text); ``retryable`` says whether trying again can help."""
+    a provider text); ``retryable`` says whether trying again can help;
+    ``retry_after`` is the wait the service asked for (Telegram's 429)."""
 
-    def __init__(self, code: str, *, retryable: bool) -> None:
+    def __init__(self, code: str, *, retryable: bool, retry_after: float | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 class NotificationTransport(Protocol):
@@ -581,11 +586,14 @@ class OwnerNotifier:
                     return await self._finish(
                         note, "gave_up", attempts, parts_sent, len(parts), exc.code, created
                     )
-                if tries_this_run >= MAX_ATTEMPTS_PER_RUN:
+                wait = self._backoff(tries_this_run)
+                if exc.retry_after is not None:
+                    wait = max(wait, float(exc.retry_after))
+                if tries_this_run >= MAX_ATTEMPTS_PER_RUN or wait > MAX_RETRY_AFTER_S:
                     return await self._finish(
                         note, "failed", attempts, parts_sent, len(parts), exc.code, created
                     )
-                await self._sleep(self._backoff(tries_this_run))
+                await self._sleep(wait)
                 continue
             except asyncio.CancelledError:
                 raise
