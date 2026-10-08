@@ -13,7 +13,8 @@
  * Pieces are built in local space centred on the origin, front facing +z, and
  * stay inside their FURNITURE_SIZE box.
  */
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { Html } from "@react-three/drei";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { CanvasTexture, CylinderGeometry, MeshBasicMaterial, MeshStandardMaterial, Quaternion, SRGBColorSpace, Vector3, type Group } from "three";
@@ -245,11 +246,13 @@ function useLiveScreen(width: number, height: number, key: string, draw: (ctx: C
 
 /** Minutes change the clock; a timer ticks it without any network. */
 function useClock(): string {
+  const active = useContext(CanvasActivity);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
+    if (!active) return;
     const timer = setInterval(() => setNow(new Date()), 20_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [active]);
   return now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 

@@ -5,7 +5,8 @@
  * touches the chat the rest of the app has open. Display only: clicks go to
  * the monitor underneath, which dives into the chat view.
  */
-import { Suspense, lazy, useEffect, useMemo } from "react";
+import { Suspense, lazy, useContext, useEffect, useMemo } from "react";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { Html } from "@react-three/drei";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { createAgentChatStore } from "@/store/agentChat";
@@ -21,9 +22,16 @@ const SCREEN_W_M = 0.66;
 const SCREEN_Z_RANGE: [number, number] = [10, 0];
 const DISTANCE_FACTOR = (SCREEN_W_M * 400) / REAL_CHAT_PX.w;
 
-export function RealChatScreen({ agent, roster, position }: {
+type RealChatScreenProps = {
   agent: SocietyAgent; roster: SocietyAgent[]; position: [number, number, number];
-}) {
+};
+
+export function RealChatScreen(props: RealChatScreenProps) {
+  const active = useContext(CanvasActivity);
+  return active ? <ActiveRealChatScreen {...props} /> : null;
+}
+
+function ActiveRealChatScreen({ agent, roster, position }: RealChatScreenProps) {
   // drei renders <Html> content in a separate React root: the app's data client
   // must be handed over, or the chat panel's queries throw and the screen stays blank.
   const client = useQueryClient();

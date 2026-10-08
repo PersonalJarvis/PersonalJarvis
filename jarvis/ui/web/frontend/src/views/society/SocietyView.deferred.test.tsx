@@ -47,7 +47,12 @@ it("never evaluates closed dialog modules; creates agents without a dialog", asy
   expect(screen.getByLabelText("Existing chat draft")).toBe(draft);
   expect((draft as HTMLInputElement).value).toBe("Keep this draft");
 
-  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  const worldTab = screen.getByRole("tab", { name: "society.world.mode_map" });
+  fireEvent.pointerEnter(worldTab);
+  await waitFor(() => expect(loaded.world).toBe(1));
+  expect(screen.queryByTestId("society-world-surface")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Open foundry" })).toBeNull();
+  fireEvent.click(worldTab);
   fireEvent.click(await screen.findByRole("button", { name: "Open foundry" }));
   expect(await screen.findByRole("dialog", { name: "Building" })).toBeTruthy();
   expect(screen.getByText("foundry")).toBeTruthy();

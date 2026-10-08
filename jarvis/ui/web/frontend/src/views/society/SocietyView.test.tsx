@@ -26,8 +26,8 @@ vi.mock("@/components/society/data", () => ({ useQuickCreateAgent: () => quick.c
   { agentId: "lead", name: "Lead", tier: "lead", state: "idle" },
   { agentId: "specialist", name: "Specialist", tier: "specialist", state: "idle" },
 ] }, isLoading: false }) }));
-vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ onSelectAgent, onOpenAgents, onMarsSelectionChange }: any) => (
-  <div data-testid="map"><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
+vi.mock("@/views/JarvisAgentsView", () => ({ JarvisAgentsView: ({ active, onSelectAgent, onOpenAgents, onMarsSelectionChange }: any) => (
+  <div data-testid="map" data-active={active}><button onClick={() => onSelectAgent("specialist")}>Map specialist</button><button onClick={onOpenAgents}>Map fallback</button><div data-mars-ui><input aria-label="Mars draft" /></div><div data-mars-mode="player"><button>Player viewport</button></div><div data-mars-mode="follow"><button>Follow viewport</button></div><button onClick={() => onMarsSelectionChange(false)}>Previous world</button><button onClick={() => onMarsSelectionChange(true)}>Mars world</button></div>
 ) }));
 vi.mock("@/components/society/mars/MarsStationPanel", () => ({ MarsStationPanel: ({ onClose }: any) => <aside aria-label="Mars station"><button onClick={onClose}>Close station</button></aside> }));
 vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay: ({ agent, embedded, onSelectAgent, onSelectGroup, onCreate, railHeader }: any) => (
@@ -69,12 +69,19 @@ it("switches to Map and back without losing the selected agent or draft", async 
   const draft = screen.getByLabelText("Draft") as HTMLInputElement;
   fireEvent.change(draft, { target: { value: "Unsent message" } });
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
-  expect(await screen.findByTestId("map")).toBeTruthy();
+  const map = await screen.findByTestId("map");
+  expect(map.dataset.active).toBe("true");
   fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
   expect(screen.getByText("Specialist")).toBeTruthy();
   expect(screen.getByLabelText("Draft")).toBe(draft);
   expect(draft.value).toBe("Unsent message");
+  expect(screen.getByTestId("map")).toBe(map);
+  expect(map.dataset.active).toBe("false");
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  expect(screen.getByTestId("map")).toBe(map);
+  expect(map.dataset.active).toBe("true");
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("false");
 });
 
 it("restores the most recently selected agent after the view is remounted", () => {
@@ -92,7 +99,7 @@ it("opens map selections in Agents and keeps creation available", async () => {
   render(<SocietyView />);
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   fireEvent.click(await screen.findByText("Map specialist"));
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
   expect(screen.getByText("Specialist")).toBeTruthy();
   fireEvent.click(screen.getByText("Create agent"));
   await waitFor(() => expect(quick.create).toHaveBeenCalledTimes(1));
@@ -129,7 +136,7 @@ it("keeps the Map/Agents switch in the caption in both modes", async () => {
   expect(screen.getByTestId("mode-switch")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
   fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
   expect(screen.getByTestId("mode-switch")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
 });
@@ -148,7 +155,7 @@ it("leaves Map on Escape without requesting native fullscreen in a browser", asy
   await screen.findByTestId("map");
   expect(setMapFullscreen).not.toHaveBeenCalledWith(true);
   fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
 });
 
 it("shows no station shortcut in Agents mode", () => {
@@ -166,7 +173,7 @@ it("does not discard a Mars form when Escape belongs to its input", async () => 
   expect(screen.getByTestId("map")).toBeTruthy();
   expect((field as HTMLInputElement).value).toBe("Unsent station draft");
   fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
 });
 
 it.each(["Mars draft", "Player viewport", "Follow viewport"])("preserves focused %s when the browser exits fullscreen without a keydown", async (target) => {
@@ -182,7 +189,7 @@ it.each(["Mars draft", "Player viewport", "Follow viewport"])("preserves focused
   expect(screen.getByLabelText("Mars draft")).toBe(field);
   expect((field as HTMLInputElement).value).toBe("Unsent station draft");
   fireEvent.click(screen.getByRole("tab", { name: "society.roster.title" }));
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
 });
 
 it("still leaves the ordinary map when browser fullscreen exits", async () => {
@@ -190,7 +197,7 @@ it("still leaves the ordinary map when browser fullscreen exits", async () => {
   fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
   await screen.findByTestId("map");
   fireEvent(document, new Event("fullscreenchange"));
-  expect(screen.queryByTestId("map")).toBeNull();
+  expect(screen.getByTestId("society-world-surface").getAttribute("aria-hidden")).toBe("true");
 });
 
 
