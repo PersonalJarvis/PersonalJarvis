@@ -31,6 +31,7 @@ import { appZoomIntentFor, nextAppZoom } from "@/lib/appZoom";
 import { armZoomTransition, installZoomTransition } from "@/lib/zoomTransition";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { useEventStore } from "@/store/events";
+import { windowIdentity } from "@/lib/sectionWindows";
 
 /** Whether this window's engine zooms: unknown until the first answer. */
 export type AppZoomSupport = "unknown" | "native" | "browser" | "unsupported";
@@ -58,7 +59,7 @@ export function hideZoomIndicator(): void {
 
 function windowView(): string | null {
   const { solo, activeSection } = useEventStore.getState();
-  return solo ? activeSection : null;
+  return solo ? windowIdentity(window.location.search, activeSection) : null;
 }
 
 /**

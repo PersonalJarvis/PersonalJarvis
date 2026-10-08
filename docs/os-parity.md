@@ -15,6 +15,29 @@ changes that disappear during settling do not trigger re-initialization.
 Regression tests use fake devices and models on Windows. Ubuntu/PipeWire,
 macOS audio devices and NVIDIA T600 inference have not been verified live.
 
+## Section windows (2026-10-08, T2)
+
+The section-window action opens Agents, Agentic IDE, Settings, Plugins, CLIs,
+Docs, Wiki, Board, Sessions, Marketplace and Visualization in separate windows.
+Settings (including Profile) shares one window across all its tabs; the IDE,
+Plugins and CLIs also share a window within their respective tab families.
+Voice stays in the main window's navigation. Returning a detached view first
+restores the main window. A missing detached owner never targets main for a
+close or zoom command.
+
+Windows and Linux use the existing resizable frameless desktop window path;
+macOS retains its native frame. Browser-only clients open named tabs without
+controlling the desktop application's windows. The IDE window action requires
+the native shell so a second browser tab cannot compete for terminal streams.
+Automated tests cover section
+ownership, family reuse, failure handling and the three platform frame options.
+Real Windows WebView2 checks opened Settings, Agents and Agentic IDE windows
+simultaneously against a local test page, reused the Settings window for an API
+Keys request, maximized/restored it and closed it while preserving main. Chrome
+checks covered the Settings browser tab, internal tab navigation, returning to
+the full app, and light/dark appearance at a narrow width.
+Physical macOS and Linux window behavior remains unverified.
+
 ## Screenshots paste anywhere (2026-10-05, T2)
 
 Appshots taken by shortcut or button and Jarvis X screenshots go on the
