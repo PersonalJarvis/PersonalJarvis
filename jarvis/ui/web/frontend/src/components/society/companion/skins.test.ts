@@ -14,8 +14,8 @@ describe("companion designs", () => {
     for (const preset of SKIN_PRESETS) expect(skinSchema.safeParse({ ...preset.skin, name: preset.id }).success).toBe(true);
   });
 
-  it("round-trips a design code, names with umlauts included", () => {
-    const skin = { ...GALAXY, name: "Grüne Galaxie" };
+  it("round-trips a design code, non-ASCII names included", () => {
+    const skin = { ...GALAXY, name: "Nébula ✦ 星系" };
     const code = encodeDesignCode(skin);
     expect(code.startsWith("jarvis-design:")).toBe(true);
     expect(parseDesignImport(code)).toEqual(skin);
