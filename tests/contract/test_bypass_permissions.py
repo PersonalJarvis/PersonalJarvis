@@ -83,6 +83,27 @@ def test_nine_new_agents_share_the_fresh_install_default(tmp_path: Path, creatio
         assert len([a for a in agents if a["agent_id"] != "jarvis"]) == 9
 
 
+def test_the_leads_ceiling_can_be_updated_under_the_app_policy(tmp_path: Path):
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    app = FastAPI()
+    app.include_router(router)
+    app.state.society_factory = lambda: runtime
+    with TestClient(app) as client:
+        for ceiling in ("monitor", "ask"):
+            response = client.patch(
+                "/api/society/agents/jarvis", json={"permission_ceiling": ceiling}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["agent"]["permission_ceiling"] == ceiling
+        response = client.post(
+            "/api/society/agents", json={"name": "Delegated helper"},
+            headers={"X-Jarvis-Chat-Session": "society:jarvis"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["agent"]["permission_ceiling"] == "ask"
+        assert response.json()["agent"]["approval_mode"] == "bypass"
+
+
 @pytest.mark.parametrize("snapshot", [
     {}, {"voice_confirm": True}, {"approval_surface": "unattended"},
     {"approval_surface": "interactive", "mission_id": "mission", "worker_id": "worker"},

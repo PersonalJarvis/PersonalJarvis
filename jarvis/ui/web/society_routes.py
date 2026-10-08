@@ -82,7 +82,11 @@ def _validated_chat_runner(
     account_id: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
-    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.permissions import (
+        default_permission,
+        normalize_permission,
+        society_mode_supported,
+    )
     from jarvis.agent_chat.service import resolve_runner
 
     chosen_runtime = str(agent.runtime)
@@ -104,6 +108,9 @@ def _validated_chat_runner(
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
+    if not mode and agent.agent_id == rt.lead_id:
+        # The lead uses the app's chat policy; NULL is not a legacy Ask choice.
+        mode = default_permission("jarvis")
     if mode and not society_mode_supported(runner, mode):
         raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
     ceiling = str(
