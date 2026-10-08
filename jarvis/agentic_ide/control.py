@@ -210,7 +210,10 @@ class CodingSessionControl:
         readable = agent_transcript.can_read(term.agent)
         handle = term.resume
         result = None
-        if readable and handle is not None:
+        from . import task_state
+
+        identity = task_state._key(term)
+        if readable and handle is not None and not term.computer_id:
             result = await asyncio.to_thread(
                 agent_transcript.read_timeline,
                 term.agent,
@@ -218,6 +221,8 @@ class CodingSessionControl:
                 home=account_home(term.agent, term.account),
                 live=state["activity"] in ("working", "starting"),
             )
+        if task_state._key(term) != identity:
+            raise SessionError("Session changed while reading; request context again.")
         source = handle.id if handle else None
         cursor = args.get("cursor") or {}
         if cursor and cursor.get("source") != source:
@@ -226,7 +231,7 @@ class CodingSessionControl:
         limit = max(1, min(100, int(args.get("limit", 30))))
         events = result.events if result else []
         if action == "observe":
-            offset = max(0, len(events) - 30)
+            offset = max(0, len(events) - limit)
         if offset > len(events):
             raise SessionError("Transcript was truncated; request context without a cursor.")
 
