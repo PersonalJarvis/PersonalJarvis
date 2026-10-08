@@ -7,7 +7,7 @@ import { CompanionMark } from "./CompanionMark";
 import { PetSprite } from "@/components/pets/PetSprite";
 import { usePets } from "@/hooks/usePets";
 import gigiMark from "@/assets/gigi-companion-avatar.png";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 const CompanionPreview = lazy(() => import("./CompanionPreview").then(m => ({ default: m.CompanionPreview })));
 
 export function CompanionEditor({ value, onChange, disabled = false, lead = false, preview3d = true, agentId }: {
@@ -19,7 +19,8 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
 }) {
   const t = useT();
   const update = (patch: Partial<CompanionAppearance>) => onChange({ ...value, ...patch });
-  const pets = usePets().data?.pets ?? [];
+  const petsQuery = usePets();
+  const pets = petsQuery.data?.pets ?? [];
   // The look is a shape or a pet; "Pet" stays chosen even before a pet exists to pick.
   const [kind, setKind] = useState<"shape" | "pet">(value.pet ? "pet" : "shape");
   const choose = (next: "shape" | "pet") => {
@@ -27,6 +28,11 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
     if (next === "shape" && value.pet) update({ pet: undefined });
     if (next === "pet" && !value.pet && pets[0]) update({ pet: pets[0].id });
   };
+  // "Pet" chosen before the pets arrived: wear the first one as soon as they do.
+  const firstPet = pets[0]?.id;
+  useEffect(() => {
+    if (kind === "pet" && !value.pet && firstPet) onChange({ ...value, pet: firstPet });
+  }, [kind, value, firstPet, onChange]);
   return <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-5 p-4" data-testid="companion-editor">
     <div className="flex items-center gap-5 rounded-xl bg-secondary/50 p-5">
       {lead ? <img src={gigiMark} width={88} height={88} alt="" /> : <CompanionMark appearance={value} size={88} />}
@@ -42,7 +48,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       </div>
     </div>}
     {!lead && kind === "pet" && <div data-testid="companion-pet-picker"><span className="mb-1 block text-sm font-medium">{t("society.companion.pet")}</span>
-      <p className="mb-2 text-xs text-muted-foreground">{pets.length ? t("society.companion.pet_hint") : t("society.companion.no_pets")}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{pets.length || petsQuery.isLoading ? t("society.companion.pet_hint") : t("society.companion.no_pets")}</p>
       <div className="flex flex-wrap gap-2">{pets.map(pet => <button key={pet.id} type="button" title={pet.name}
         aria-label={pet.name} aria-pressed={value.pet === pet.id} onClick={() => update({ pet: pet.id })}
         className={`grid h-14 w-14 place-items-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${value.pet === pet.id ? "border-foreground bg-secondary" : "border-border hover:bg-secondary"}`}>

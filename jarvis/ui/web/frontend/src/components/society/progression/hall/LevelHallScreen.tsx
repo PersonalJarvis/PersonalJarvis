@@ -221,8 +221,8 @@ function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
                   <XpBar fraction={levelFraction(subject)} kind="agent" label={t("society.level.agent_xp_label").replace("{0}", agent.name)} />
                   {next && nextItem && (
                     <span className="hall-rank-next">
-                      <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={22}
-                        accessories={{ ...look.accessories, [nextItem.slot]: next[0] }} />
+                      {!look.pet && <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={22}
+                        accessories={{ ...look.accessories, [nextItem.slot]: next[0] }} />}
                       {t("society.hall.next_look").replace("{0}", t(`society.companion.items.${next[0]}`)).replace("{1}", String(next[1]))}
                     </span>
                   )}

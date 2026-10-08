@@ -64,7 +64,11 @@ export function useSyncCompanionPet(): void {
     const active = pickActivePet(data);
     if (active) setPet(companionFor(active));
     const catalog: Record<string, CompanionPet> = {};
-    for (const pet of Array.isArray(data.pets) ? data.pets : []) catalog[pet.id] = companionFor(pet);
+    for (const pet of Array.isArray(data.pets) ? data.pets : []) {
+      // A drawn pet without a usable sheet would come back as Gigi; leave it out so the agent keeps its shape.
+      const companion = companionFor(pet);
+      if (companion.id === pet.id) catalog[pet.id] = companion;
+    }
     setCatalog(catalog);
   }, [data, setPet, setCatalog]);
 }
