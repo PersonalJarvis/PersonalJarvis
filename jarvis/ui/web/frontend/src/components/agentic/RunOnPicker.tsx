@@ -1,14 +1,15 @@
 /**
  * "Runs on" — where new agents run: this computer, or one of the connected
  * computers (a VPS, a local VM; see the Computers section). On a computer the
- * agents live in tmux there and keep working while this PC is off; the folder
- * is copied there first (new files that look like secrets stay here).
+ * Linux server sessions use tmux to survive a disconnected PC; local VMs and
+ * remote Windows sessions still depend on this PC. The folder is copied first.
  */
 import { useEffect } from "react";
 import { Laptop, Server } from "lucide-react";
 import { useComputerChoiceList } from "@/hooks/useComputers";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
+import type { Computer } from "@/lib/computersApi";
 
 const RUN_ON_KEY = "jarvis.agenticIde.runOn.";
 
@@ -25,9 +26,13 @@ export function storeRunOn(projectId: string | undefined, computerId: string | n
   } catch { /* a convenience only */ }
 }
 
-function detailFor(status: string): string {
-  if (status === "online") return "Keeps running while this PC is off";
-  if (status === "unknown") return "Not checked yet";
+function detailFor(computer: Computer): string {
+  if (computer.health.status === "unknown") return "Not checked yet";
+  if (computer.health.status === "online") {
+    if (computer.kind === "local_vm") return "Stops when this PC sleeps or shuts down";
+    if (/windows/i.test(`${computer.facts?.os_id ?? ""} ${computer.facts?.os_name ?? ""}`)) return "Needs this PC to stay connected";
+    return "Linux sessions can keep running while this PC is off";
+  }
   return "Not reachable right now";
 }
 
@@ -51,7 +56,7 @@ export function RunOnPicker({
     ...usable.map((computer) => ({
       id: computer.id as string | null,
       name: computer.name,
-      detail: detailFor(computer.health.status),
+      detail: detailFor(computer),
       online: computer.health.status === "online",
       icon: Server,
     })),

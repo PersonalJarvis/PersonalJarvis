@@ -430,7 +430,7 @@ async def test_native_workflow_dispatch_receives_trusted_ancestry(stack):
     ],
 )
 async def test_owned_workflow_dispatch_honors_live_owner_state(
-    stack, owner_state, halted, with_guard, allowed
+    stack, owner_state, halted, with_guard, allowed, tmp_path
 ):
     from types import SimpleNamespace
     from uuid import uuid4
@@ -453,6 +453,8 @@ async def test_owned_workflow_dispatch_honors_live_owner_state(
             return SimpleNamespace(state=owner_state)
 
     class State:
+        path = tmp_path / "society.db"
+
         async def kill_switch(self):
             return halted
 

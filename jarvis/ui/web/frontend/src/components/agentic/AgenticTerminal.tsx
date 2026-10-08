@@ -552,6 +552,8 @@ interface AgenticTerminalProps {
   folder?: string;
   /** Compact header only: the connected computer this pane runs on, if any. */
   computerName?: string;
+  onOpenCloud?: () => void;
+  placementBusy?: boolean;
   /** Compact header only: "Run on …" / "Bring back" menu entries. */
   placementItems?: { label: string; run: () => void }[];
   /** Compact header only: "Move to <workspace>" menu entries. */
@@ -697,6 +699,8 @@ export function AgenticTerminal({
   branch,
   folder,
   computerName,
+  onOpenCloud,
+  placementBusy,
   placementItems,
   workspaceItems,
   agent,
@@ -2926,6 +2930,8 @@ export function AgenticTerminal({
     onFork,
     branch,
     computerName,
+    onOpenCloud,
+    placementBusy,
     placementItems,
     workspaceItems,
   };

@@ -72,7 +72,7 @@ import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -4309,6 +4309,9 @@ class Registry:
 
         async def _closed(_tid: str, code: int) -> None:
             nonlocal recovered
+            if term.pty_id is not None and term.pty_id != _tid:
+                # A replaced process can finish flushing after a handoff.
+                return
             term.pty_id = None
             if code == _HOST_LOST_CODE and self._host_went_away():
                 # Not this agent failing: the host holding it went away. It is
@@ -4405,7 +4408,7 @@ class Registry:
             term.error = str(exc)
             raise
 
-        if term.resumed and not term.computer_id:
+        if term.resumed:
             # The CLI's own "finish the turn that was cut off" (see
             # ``agent_sessions.resume_env``) — how a resumed agent carries on
             # without Jarvis ever typing into it.
@@ -5589,12 +5592,31 @@ class Registry:
                         f"{other.name} came back with it: they worked in one copy there."
                     )
             return {"moved": True, "message": " ".join(messages), "terminal": term.to_dict()}
-        async with term.attach_lock:
-            was_live = bool(term.pty_id)
-            message = await self._offload_locked(session, term, target, {})
-            if was_live:
-                await self._restart_in_place(session, term)
-        await self._persist()
+        try:
+            async with term.attach_lock:
+                # Another placement may have completed while this request
+                # waited. Never treat its old local folder as the source now.
+                if self._owner_of(term) is not session:
+                    raise SessionError("The selected terminal changed workspace or closed.")
+                if term.placing:
+                    raise SessionError(f"{term.name} is being moved already.")
+                if term.computer_id == target:
+                    return {"moved": False, "message": "The pane already runs there."}
+                if term.computer_id:
+                    raise SessionError(
+                        f"{term.name} runs on {self._computer_label(term.computer_id)}. "
+                        "Bring it back to this computer first."
+                    )
+                was_live = bool(term.pty_id)
+                message = await self._offload_locked(session, term, target, {})
+                if was_live and not await self._restart_in_place(session, term):
+                    raise PlacementError(
+                        f"Moved to {self._computer_label(target)}, but the agent did not start: "
+                        f"{term.error} The copied work and conversation remain there."
+                    )
+        finally:
+            # Placement is durable even when remote startup fails after copying.
+            await self._persist()
         return {"moved": True, "message": message, "terminal": term.to_dict()}
 
     async def place_workspace(
@@ -5616,26 +5638,83 @@ class Registry:
         placements: dict[str, tuple[remote.Placement, str]] = {}
         moved: list[str] = []
         messages: list[str] = []
+        candidates = []
+        for term in list(session.terminals):
+            if term.computer_id == target or term.placing:
+                continue
+            if term.computer_id:
+                messages.append(
+                    f"{term.name} stays on {self._computer_label(term.computer_id)}; "
+                    "bring it back first to move it."
+                )
+                continue
+            candidates.append(term)
+        from jarvis.computers.remote_terminal import pool_for
+        from jarvis.computers.service import ComputerError
+
+        live: list[Terminal] = []
+        start_failures: list[str] = []
         try:
-            for term in list(session.terminals):
-                if term.computer_id == target or term.placing:
-                    continue
-                if term.computer_id:
-                    messages.append(
-                        f"{term.name} stays on {self._computer_label(term.computer_id)}; "
-                        "bring it back first to move it."
+            async with AsyncExitStack() as locks:
+                for term in candidates:
+                    await locks.enter_async_context(term.attach_lock)
+                # Candidates were collected before waiting for every lock.
+                # Recheck each source so a concurrent move cannot upload this
+                # machine's stale copy over work now owned by another server.
+                current = []
+                for term in candidates:
+                    if self._owner_of(term) is not session:
+                        messages.append(
+                            f"{term.name} changed workspace or closed; it was not moved."
+                        )
+                    elif term.placing:
+                        messages.append(f"{term.name} is being moved already.")
+                    elif term.computer_id == target:
+                        continue
+                    elif term.computer_id:
+                        messages.append(
+                            f"{term.name} stays on {self._computer_label(term.computer_id)}; "
+                            "bring it back first to move it."
+                        )
+                    else:
+                        current.append(term)
+                candidates = current
+                if not candidates:
+                    return {"moved": moved, "messages": messages}
+                # Check the complete destination before interrupting any source.
+                try:
+                    await remote.preflight(
+                        pool_for(target), _remote_commands(candidates), self._computer_label(target)
                     )
-                    continue
-                async with term.attach_lock:
-                    was_live = bool(term.pty_id)
-                    message = await self._offload_locked(session, term, target, placements)
-                    if was_live:
-                        await self._restart_in_place(session, term)
-                moved.append(term.key)
-                if message and message not in messages:
-                    messages.append(message)
+                except remote.MoveError as exc:
+                    raise PlacementError(str(exc)) from exc
+                except ComputerError as exc:
+                    raise PlacementError(exc.message) from exc
+                try:
+                    # Every selected writer stops before the shared snapshot.
+                    # Starting the first pane remotely also waits for all copies.
+                    for term in candidates:
+                        if term.pty_id:
+                            live.append(term)
+                            await self._stop_for_move(term, self._pty)
+                    for term in candidates:
+                        message = await self._offload_locked(session, term, target, placements)
+                        moved.append(term.key)
+                        if message and message not in messages:
+                            messages.append(message)
+                finally:
+                    # A failed copy must not strand other stopped panes. Those
+                    # already transferred start there; the rest restart here.
+                    for term in live:
+                        if term.pty_id:
+                            term.stopping = False
+                            continue
+                        if not await self._restart_in_place(session, term):
+                            start_failures.append(f"{term.name}: {term.error}")
         finally:
             await self._persist()
+        if start_failures:
+            raise PlacementError("Some moved agents did not start: " + "; ".join(start_failures))
         return {"moved": moved, "messages": messages}
 
     async def _bring_workspace_back(self, session: Session) -> dict[str, Any]:
@@ -5696,7 +5775,10 @@ class Registry:
                         back.append(term)
                     term.placing = ""
                     if id(term) in live:
-                        await self._restart_in_place(session, term)
+                        if not await self._restart_in_place(session, term):
+                            start_error = f"{term.name} did not start after its move: {term.error}"
+                            message += " " + start_error
+                            failures.append((term, start_error))
                 if message and message not in messages:
                     messages.append(message)
         finally:
@@ -5729,11 +5811,15 @@ class Registry:
         """End the pane's current process and wait until its exit is recorded."""
         if not term.pty_id or pool is None:
             return
+        term.resume_continuation_needed = (
+            term.activity == "working" or term.resume_continuation_needed
+        )
         term.stopping = True
         try:
             pool.close(term.pty_id)
-        except Exception as exc:  # noqa: BLE001 - the move proceeds; the process is gone or going
-            logger.info("Agentic IDE: stopping {} for a move: {}", term.name, exc)
+        except Exception as exc:  # noqa: BLE001 - never copy while the source may still write
+            term.stopping = False
+            raise PlacementError(f"Could not stop {term.name} before copying: {exc}") from exc
         # A local PTY reports its exit through `_closed`, which clears
         # `pty_id` and must land BEFORE the new process is recorded. A remote
         # pool's close is final at once and reports nothing.
@@ -5742,6 +5828,11 @@ class Registry:
                 if term.pty_id is None:
                     break
                 await asyncio.sleep(0.1)
+            if term.pty_id is not None and pool.has(term.pty_id):
+                term.stopping = False
+                raise PlacementError(
+                    f"{term.name} is still stopping. Nothing was copied; try again."
+                )
         term.pty_id = None
 
     async def _offload_locked(
@@ -5758,9 +5849,14 @@ class Registry:
         local = term.cwd(session.folder)
         where = self._computer_label(computer_id)
         key, top = await self._copy_root(local)
+        was_live = bool(term.pty_id)
+        copied = False
         async with self._copy_lock(computer_id, key):
             try:
                 await remote.preflight(pool, _remote_commands([term]), where)
+                await self._stop_for_move(term, self._pty)
+                if reports_session_starts(term.agent):
+                    await asyncio.to_thread(self._sync_hooked_session, term)
                 placement, joined = await self._join_or_copy(
                     pool, computer_id, local, key, top, term, placements
                 )
@@ -5771,6 +5867,7 @@ class Registry:
                     placement.remote_folder,
                     account_home(term.agent, term.account),
                 )
+                copied = True
             except remote.MoveError as exc:
                 raise PlacementError(str(exc)) from exc
             except ComputerError as exc:
@@ -5778,7 +5875,11 @@ class Registry:
             except Exception as exc:  # noqa: BLE001 - SSH/SFTP failures become one sentence
                 logger.warning("Agentic IDE: moving {} failed: {}", term.name, exc)
                 raise PlacementError(f"The move failed: {exc}") from exc
-            await self._stop_for_move(term, self._pty)
+            finally:
+                # No placement was committed if copying raised. Restore the
+                # stopped source without injecting or replaying a prompt.
+                if was_live and term.pty_id is None and not copied:
+                    await self._restart_in_place(session, term)
             if not carried:
                 # Nothing to continue from on the server: start clean there
                 # rather than asking the CLI for a conversation it does not have.
@@ -5789,6 +5890,10 @@ class Registry:
         moved = (
             "Moved with its conversation." if carried else "Moved; the agent starts fresh there."
         )
+        if carried and resume_env(term.agent):
+            moved += " Its CLI can continue an interrupted turn automatically."
+        elif accepts_prompts(term.agent):
+            moved += " Send an instruction there to continue working."
         joined_note = f" It works in the copy already on {where}." if joined else ""
         term.notice = (
             f"{moved}{joined_note} {remote.left_behind_note(placement.left_behind)}".strip()
@@ -5870,8 +5975,10 @@ class Registry:
         if known is None:
             known = await self._sibling_placement(computer_id, key, exclude)
             snapshot = known[0].offload_snapshot if known is not None else None
-            if top is not None and snapshot and await asyncio.to_thread(
-                _changed_since, top, snapshot
+            if (
+                top is not None
+                and snapshot
+                and await asyncio.to_thread(_changed_since, top, snapshot)
             ):
                 raise remote.MoveError(
                     f"This folder changed since the copy on {self._computer_label(computer_id)} "
@@ -6001,7 +6108,7 @@ class Registry:
             term.placing = ""
         return outcome.message
 
-    async def _restart_in_place(self, session: Session, term: Terminal) -> None:
+    async def _restart_in_place(self, session: Session, term: Terminal) -> bool:
         """Start the pane's agent in its new place for whoever is watching it."""
 
         async def _discard(_data: Any) -> None:
@@ -6020,6 +6127,8 @@ class Registry:
             )
         except SessionError as exc:
             logger.warning("Agentic IDE: {} did not start after its move: {}", term.name, exc)
+            return False
+        return True
 
     async def fork_terminal(
         self,
@@ -6807,8 +6916,7 @@ class Registry:
         await probe(term)
         activity = send_reading(term)
         has_submission = (
-            term.last_submit_at is not None
-            and term.submit_generation == term.process_generation
+            term.last_submit_at is not None and term.submit_generation == term.process_generation
         )
         if activity in ("working", "asking", "failed", "exited"):
             return activity
@@ -7002,7 +7110,9 @@ class Registry:
         ):
             raise SessionError("The selected terminal changed while waiting; nothing was sent.")
         if expected_location is not None and expected_location != (
-            term.cwd(owner.folder), term.computer_id, term.remote_folder,
+            term.cwd(owner.folder),
+            term.computer_id,
+            term.remote_folder,
         ):
             raise SessionError("The image destination changed while waiting; nothing was sent.")
         if expected_input and (
@@ -7249,8 +7359,10 @@ class Registry:
         manager.write(term.pty_id or "", "\r")
         left_the_box = await self._confirm_submitted(term, payload, manager)
 
-        if not arrived and left_the_box and await self._await_arrival(
-            term, payload, window_s=_LATE_ARRIVAL_WINDOW_S
+        if (
+            not arrived
+            and left_the_box
+            and await self._await_arrival(term, payload, window_s=_LATE_ARRIVAL_WINDOW_S)
         ):
             # The text surfaced in the box only after the Enter went out: the
             # pane buffered it while loading and dropped that early Enter. It

@@ -112,6 +112,7 @@ export function loadUiLocale(lang: UiLanguage): Promise<void> {
  * that cares waits for `ready` before it paints.
  */
 export type LocaleChunk =
+  | "agent_cloud"
   | "marketplace"
   | "local_models"
   | "society"
@@ -122,6 +123,12 @@ export type LocaleChunk =
   | "pane_review";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
+  agent_cloud: {
+    en: () => import("./locales/agent_cloud/en.json"),
+    de: () => import("./locales/agent_cloud/de.json"),
+    es: () => import("./locales/agent_cloud/es.json"),
+    zh: () => import("./locales/agent_cloud/zh.json"),
+  },
   marketplace: {
     en: () => import("./locales/marketplace/en.json"),
     de: () => import("./locales/marketplace/de.json"),

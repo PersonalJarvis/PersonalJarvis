@@ -472,6 +472,9 @@ class SocietyRuntime:
                     cleanup.callback(unsubscribe)
                     setattr(self, attribute, None)
             cleanup.push_async_callback(self.coding_threads.close)
+            from .cloud_host import CloudHost
+
+            cleanup.push_async_callback(CloudHost(self).aclose)
             # Hermes / OpenClaw agents: their Gateways must not outlive the app.
             from jarvis.agent_runtimes import stop_all as stop_agent_runtimes
 
@@ -1071,8 +1074,13 @@ class SocietyRuntime:
 
     async def _learn(self, target: AgentRecord, digest: TurnDigest) -> None:
         try:
-            fresh = await self.roster.get(target.agent_id)
-            await self.learning.run(fresh or target, digest)
+            from .cloud_admission import assert_local_owner
+            from .cloud_host import ownership_lock
+
+            async with ownership_lock(self._data_dir, target.agent_id):
+                fresh = await self.roster.get(target.agent_id)
+                assert_local_owner(self, target.agent_id)
+                await self.learning.run(fresh or target, digest)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - learning never breaks a finished turn
@@ -1090,8 +1098,15 @@ class SocietyRuntime:
         }
         if language in ("de", "en"):
             kwargs["language"] = language
-        mission_id = await manager.dispatch(**kwargs)
-        self._owners[str(mission_id)] = target.agent_id
+        from .cloud_admission import assert_local_owner
+        from .cloud_host import ownership_lock
+
+        # A mission may yield while its workspace is prepared. Handoff cannot
+        # snapshot between the final admission check and its owner receipt.
+        async with ownership_lock(self._data_dir, target.agent_id):
+            assert_local_owner(self, target.agent_id)
+            mission_id = await manager.dispatch(**kwargs)
+            self._owners[str(mission_id)] = target.agent_id
         return str(mission_id)
 
     # ------------------------------------------------------------ controls
@@ -1150,8 +1165,12 @@ class SocietyRuntime:
                     killed += 1
                 except Exception:  # noqa: BLE001 — a mission already gone is fine
                     log.debug("society kill switch: mission %s not cancellable", mission_id)
+        from .cloud_controls import relay_kill_switch
+
+        unconfirmed = await relay_kill_switch(self)
         return {
             "engaged": True,
+            "cloud_unconfirmed": unconfirmed,
             "runs_halted": halted,
             "rooms_settled": settled,
             "missions_cancelled": killed,
@@ -1159,7 +1178,9 @@ class SocietyRuntime:
 
     async def release_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(False)
-        return {"engaged": False}
+        from .cloud_controls import relay_kill_switch
+
+        return {"engaged": False, "cloud_unconfirmed": await relay_kill_switch(self, release=True)}
 
     async def status(self) -> dict[str, Any]:
         agents = await self.roster.list()

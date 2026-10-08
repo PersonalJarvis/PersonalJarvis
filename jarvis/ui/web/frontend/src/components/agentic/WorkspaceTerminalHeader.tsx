@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, FileDiff, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { Check, Cloud, CloudUpload, FileDiff, FolderInput, GitBranch, Loader2, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { loadLocaleChunk } from "@/i18n";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
@@ -49,6 +49,9 @@ interface Props {
   branch?: string;
   /** The connected computer this pane's agent runs on (a VPS, a local VM). */
   computerName?: string;
+  /** Opens the server picker and transfer review, even before a server is connected. */
+  onOpenCloud?: () => void;
+  placementBusy?: boolean;
   /** "Run on …" / "Bring back" entries for the pane's menu. */
   placementItems?: { label: string; run: () => void }[];
   /** "Move to <workspace>" entries: the pane joins another open workspace, still running. */
@@ -81,7 +84,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onReviewChanges, onReviewChangesPrefetch, onRestart, onFork, branch,
-  computerName, placementItems, workspaceItems, variant = "bar", focused = false, githubStatusEnabled = true,
+  computerName, onOpenCloud, placementBusy = false, placementItems, workspaceItems, variant = "bar", focused = false, githubStatusEnabled = true,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -287,9 +290,9 @@ export function WorkspaceTerminalHeader({
           // its edge, the way a multiplexer lights the label in its border.
           className={tile ? `truncate ${focused ? "font-semibold" : ""}` : "truncate"}
           style={tile ? { color: focused ? PANE_TILE[appearance].focus : brand.inkMuted } : undefined}>{title || name}</span>
-        {computerName && <span data-testid={`pane-computer-${name}`} title={`Runs on ${computerName}. It keeps working while this app is closed.`}
+        {computerName && <span data-testid={`pane-computer-${name}`} title={`Runs on ${computerName}. Open Cloud options to manage its location.`}
           className={`flex min-w-0 max-w-[35%] shrink items-center gap-1 ${radius} bg-[color:var(--pane-chip)] px-1.5 py-0.5 text-[11px] font-normal text-[color:var(--pane-ink-muted)]`}>
-          <Server className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
+          <Cloud className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
         {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
           className="flex min-w-0 max-w-[45%] shrink items-center gap-1 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
           <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
@@ -298,6 +301,12 @@ export function WorkspaceTerminalHeader({
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
       <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
+        {onOpenCloud && <button type="button" data-testid={`pane-cloud-${name}`} aria-label={`Cloud options for ${name}`}
+          title={computerName ? `Runs on ${computerName} · Cloud options` : "Move this coding session to a server"}
+          aria-haspopup="dialog" disabled={placementBusy} onClick={onOpenCloud} className={action}>
+          {placementBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            : computerName ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudUpload className="h-4 w-4" aria-hidden="true" />}
+        </button>}
         {onReviewChanges && <button type="button" data-testid={`pane-review-changes-${name}`} aria-label={`Review changes by ${name}`}
           title="Review changes" onClick={onReviewChanges} onPointerEnter={() => { cancelPrefetch(); prefetchReview(); }} className={action}><FileDiff className="h-[15px] w-[15px]" /></button>}
         {moreButton}

@@ -195,6 +195,20 @@ describe("compact workspace terminal header", () => {
 });
 
 describe("minimal tile title row", () => {
+  it("opens cloud options directly from the header and disables duplicate moves", () => {
+    const cloud = vi.fn();
+    const { rerender } = render(<WorkspaceTerminalHeader {...BASE} variant="tile" onOpenCloud={cloud} />);
+    const button = screen.getByRole("button", { name: "Cloud options for Dana" });
+    expect(button.getAttribute("aria-haspopup")).toBe("dialog");
+    fireEvent.click(button);
+    expect(cloud).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu")).toBeNull();
+    rerender(<WorkspaceTerminalHeader {...BASE} variant="tile" onOpenCloud={cloud} placementBusy computerName="Build server" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cloud options for Dana" }));
+    expect(cloud).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("pane-computer-Dana").title).not.toContain("keeps working");
+  });
+
   it("keeps every control of the card header in a slimmer, square row", () => {
     render(<WorkspaceTerminalHeader {...BASE} variant="tile" onFork={() => {}} onAdd={() => {}} onToggleMaximize={() => {}} onClose={() => {}} />);
     const header = screen.getByTestId("workspace-terminal-header-Dana");
