@@ -56,6 +56,10 @@ one click.
 
 The pet stays on screen while Jarvis is idle. Right-clicking the figure or its
 control strip opens a menu with **Open app**, **Reset position**, and **Hide pet**.
+The popup follows the app's light, dark or system appearance: neutral surfaces,
+rounded rows, Inter labels, line icons and a JetBrains Mono shortcut hint.
+Arrow keys move between available actions; Enter selects, Escape or an outside
+click dismisses the popup. It stays within the pointer's monitor work area.
 Only choosing **Hide pet** hides the whole pet, including its bubble and cards.
 The menu shows the current restore shortcut beside that action. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it

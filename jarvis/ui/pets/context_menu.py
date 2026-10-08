@@ -15,6 +15,23 @@ LABELS = {
 }
 
 
+def appearance(path: Path | None = None) -> str:
+    """Use the current app appearance, including the OS-following setting."""
+    from jarvis.core.config import DEFAULT_CONFIG_FILE
+    from jarvis.ui.theme import resolve_theme
+
+    try:
+        source = DEFAULT_CONFIG_FILE if path is None else path
+        data = tomllib.loads(source.read_text(encoding="utf-8-sig"))
+        configured = str(data.get("ui", {}).get("theme", "dark"))
+    except FileNotFoundError:
+        configured = "dark"  # Fresh installs use the product default.
+    except (OSError, ValueError, AttributeError, TypeError):
+        logging.getLogger(__name__).debug("Pet menu appearance unavailable", exc_info=True)
+        configured = "dark"
+    return resolve_theme(configured)
+
+
 def preferences(path: Path | None = None) -> tuple[tuple[str, str, str], str]:
     """Read on opening, so language and shortcut edits apply without a restart."""
     from jarvis.core.config import DEFAULT_CONFIG_FILE, TriggerConfig

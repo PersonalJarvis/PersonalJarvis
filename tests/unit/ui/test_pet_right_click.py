@@ -12,7 +12,7 @@ from jarvis.ui.jarvisbar import host
 from jarvis.ui.jarvisbar.modes import MODES
 from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
 from jarvis.ui.pets import context_menu
-from ui.orb import overlay
+from ui.orb import overlay, pet_context_menu
 from ui.orb.bus_bridge import OrbBusBridge
 from ui.orb.overlay import OrbOverlay, PetControlStrip
 
@@ -67,7 +67,7 @@ class _Menu:
 
 @pytest.fixture
 def pet(monkeypatch):
-    monkeypatch.setattr(overlay.tk, "Menu", _Menu)
+    monkeypatch.setattr(pet_context_menu, "PetContextMenu", _Menu)
     monkeypatch.setattr(context_menu, "preferences", lambda: (
         context_menu.LABELS["en"], "Alt+Win+P",
     ))
@@ -190,6 +190,14 @@ def test_repeated_right_click_replaces_the_previous_menu(pet) -> None:
     assert previous.destroyed
     assert pet._context_menu is not previous
     assert not pet.pet_user_hidden
+
+
+def test_hiding_pet_from_another_action_also_dismisses_its_popup(pet) -> None:
+    pet._on_right_click()
+    menu = pet._context_menu
+    pet.set_visible(False)
+    assert menu.destroyed
+    assert pet.pet_user_hidden
 
 
 def test_failed_popup_releases_grab_without_hiding_pet(pet, monkeypatch, caplog) -> None:

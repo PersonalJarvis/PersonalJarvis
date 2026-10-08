@@ -2281,7 +2281,7 @@ class OrbOverlay:
         # itself stays bus-agnostic (same contract as the mute toggle).
         self._on_show_window: Callable[[], None] | None = None
         self._on_visibility_changed: Callable[[bool], None] | None = None
-        self._context_menu: tk.Menu | None = None
+        self._context_menu = None
         # The control row's actions. Each is optional: wired, the callback
         # decides (the macOS host forwards it to the parent process, which is
         # the only place a SpeechPipeline exists); unwired, the row falls back
@@ -3325,12 +3325,13 @@ class OrbOverlay:
         if root is None:
             return
         from jarvis.ui.pets.context_menu import preferences
+        from ui.orb.pet_context_menu import PetContextMenu
 
         try:
             if self._context_menu is not None:
                 self._context_menu.destroy()
             labels, shortcut = preferences()
-            menu = tk.Menu(root, tearoff=False)
+            menu = PetContextMenu(root, scale=getattr(self, "_dpi_ratio", 1.0))
             self._context_menu = menu
             menu.add_command(
                 label=labels[0], command=self._open_main_window,
@@ -3649,6 +3650,9 @@ class OrbOverlay:
 
     def _actually_hide(self) -> None:
         self._pending_hide_after_id = None
+        menu = getattr(self, "_context_menu", None)
+        if menu is not None:
+            menu.destroy()
         # The controls belong to the orb, not to the desktop: a row of buttons
         # left floating where the sphere used to be is a widget with nothing
         # behind it.
