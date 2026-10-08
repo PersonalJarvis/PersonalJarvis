@@ -2321,17 +2321,6 @@ def _main(argv: list[str] | None = None) -> int:
     args = _parse_args(_raw_argv)
     if args.persistent_server:
         args.background_service = True
-    if args.connect is not None:
-        from jarvis.ui.server_client import run
-
-        try:
-            return run(
-                None if args.connect == "local" else args.connect,
-                port=args.port or _fast_admin_port(),
-            )
-        except (RuntimeError, ValueError) as exc:
-            _report_startup_failure(str(exc))
-            return 4
     if args.background_service:
         args.headless = True
 
@@ -2449,6 +2438,22 @@ def _main(argv: list[str] | None = None) -> int:
         if args.background_service:
             _exit_background_service(code)
         return code
+
+    # A client needs the same toolkit, privilege and branded-launch guards as
+    # the integrated window. It must only skip backend construction, not those
+    # device-side prerequisites (an elevated window rejects normal text input).
+    if args.connect is not None:
+        from jarvis.ui.server_client import run
+
+        _ensure_windows_app_identity()
+        try:
+            return run(
+                None if args.connect == "local" else args.connect,
+                port=args.port or _fast_admin_port(),
+            )
+        except (RuntimeError, ValueError) as exc:
+            _report_startup_failure(str(exc))
+            return 4
 
     # Desktop boot: CLASSIC path (proven + GUI-safe). The serve-first bootstrap
     # + static-shell + boot-splash (the black-screen fix) live in
