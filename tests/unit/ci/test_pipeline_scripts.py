@@ -4,8 +4,10 @@ impact selection, conflict resolution, release cut)."""
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -540,6 +542,228 @@ def test_train_updates_only_conflicting_or_stale_red_branches():
     assert decide("MERGEABLE", "failure", False) == "wait"
     assert decide("UNKNOWN", "success", False) == "wait"
     assert decide("UNKNOWN", "approve", False) == "approve"
+
+
+def test_train_leaves_a_queued_pull_request_to_the_queue():
+    decide = agent_integrate.decide
+    assert decide("MERGEABLE", "success", True, queued=True) == "queued"
+    assert decide("CONFLICTING", "failure", True, queued=True) == "queued"
+
+
+def test_train_never_re_enqueues_a_head_the_queue_already_failed():
+    decide = agent_integrate.decide
+    # Behind main: a newer main may be the fix, so update and re-test.
+    assert decide("MERGEABLE", "success", True, queue_failed=True) == "update"
+    # Already contains main: re-adding it unchanged would fail the same way.
+    assert decide("MERGEABLE", "success", False, queue_failed=True) == "held"
+    assert decide("MERGEABLE", "success", False, queue_failed=False) == "merge"
+
+
+def _queue_run(number, conclusion, created, status="completed"):
+    return {
+        "event": "merge_group",
+        "head_branch": f"gh-readonly-queue/main/pr-{number}-{'b' * 40}",
+        "status": status,
+        "conclusion": conclusion,
+        "created_at": created,
+    }
+
+
+def test_queue_runs_are_mapped_to_their_pull_request():
+    runs = [
+        _queue_run(7, "failure", "2026-10-07T10:00:00Z"),
+        _queue_run(7, "success", "2026-10-07T11:00:00Z"),
+        _queue_run(9, "failure", "2026-10-07T09:00:00Z"),
+        {"event": "push", "head_branch": "main", "created_at": "2026-10-07T12:00:00Z"},
+        {"event": "merge_group", "head_branch": "gh-readonly-queue/main/odd"},
+    ]
+    newest = agent_integrate.queue_runs_by_pr(runs)
+    assert set(newest) == {7, 9}
+    assert newest[7]["conclusion"] == "success"
+
+
+def test_queue_failure_holds_only_until_a_newer_green_pull_request_run():
+    green = _run("pull_request", "completed", "success", "2026-10-07T10:00:00Z")
+    failed = _queue_run(5, "failure", "2026-10-07T10:30:00Z")
+    assert agent_integrate.queue_rejected(failed, [green])
+    newer = _run("pull_request", "completed", "success", "2026-10-07T11:00:00Z")
+    assert not agent_integrate.queue_rejected(failed, [green, newer])
+    # A cancelled or still-running queue run is not a verdict.
+    cancelled = _queue_run(5, "cancelled", "2026-10-07T10:30:00Z")
+    assert not agent_integrate.queue_rejected(cancelled, [green])
+    running = _queue_run(5, None, "2026-10-07T10:30:00Z", status="in_progress")
+    assert not agent_integrate.queue_rejected(running, [green])
+    assert not agent_integrate.queue_rejected(None, [green])
+
+
+class _FakeGh:
+    """Records gh calls instead of reaching GitHub."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str) -> int:
+        self.calls.append(args)
+        return 0
+
+
+def _origin_with_feature(tmp_path, repo, main_edit, branch_edit):
+    _diverge(repo, main_edit, branch_edit)
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "clone", "-q", "--bare", str(repo), str(origin))
+    machines = []
+    for name in ("integrate", "apply"):
+        clone = tmp_path / name
+        _git(tmp_path, "clone", "-q", str(origin), str(clone))
+        _git(clone, "config", "user.email", "t@example.invalid")
+        _git(clone, "config", "user.name", "t")
+        _git(clone, "config", "core.autocrlf", "false")
+        machines.append(clone)
+    plan = {
+        "repo": "example/project",
+        "main": _git(origin, "rev-parse", "main").strip(),
+        "queue": True,
+        "entries": [
+            {
+                "number": 3,
+                "branch": "feature",
+                "head": _git(origin, "rev-parse", "feature").strip(),
+                "id": "PR_node",
+                "action": "update",
+                "run_id": None,
+                "note": "",
+            }
+        ],
+    }
+    return origin, machines[0], machines[1], plan
+
+
+def test_train_phases_update_a_branch_across_separate_machines(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path,
+        repo,
+        {"CHANGELOG.md": "# Changelog\n\n- main entry\n- base\n"},
+        {"CHANGELOG.md": "# Changelog\n\n- branch entry\n- base\n"},
+    )
+    work = tmp_path / "train"
+    assert agent_integrate.integrate_merge(work, plan, integrate) == 0
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    state = json.loads((work / "state" / "pr-3.json").read_text(encoding="utf-8"))
+    assert state["status"] == "ready", state
+    assert state["resolved"] == ["CHANGELOG.md"]
+
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    outcome = agent_integrate.apply_update(work, plan, plan["entries"][0], False, applier)
+    assert outcome.startswith("updated with main"), outcome
+    pushed = _git(origin, "rev-parse", "feature").strip()
+    assert pushed == state["sha"]
+    changelog = _git(origin, "show", "feature:CHANGELOG.md")
+    assert "main entry" in changelog and "branch entry" in changelog
+    unlabel = ("pr", "edit", "3", "--repo", "example/project", "--remove-label", "needs-rebase")
+    assert unlabel in fake.calls
+
+
+def test_train_resolver_runs_between_merge_and_finish(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path, repo, {"app.py": "VALUE = 2\n"}, {"app.py": "VALUE = 3\n"}
+    )
+    work = tmp_path / "train"
+    assert agent_integrate.integrate_merge(work, plan, integrate) == 1
+    resolver = tmp_path / "resolver.py"
+    resolver.write_text(
+        "from pathlib import Path\nPath('app.py').write_text('VALUE = 5\\n')\n", encoding="utf-8"
+    )
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(resolver))}"
+    agent_integrate.integrate_resolve(work, plan, command)
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    state = json.loads((work / "state" / "pr-3.json").read_text(encoding="utf-8"))
+    assert state["status"] == "ready" and state["ai_resolved"] == ["app.py"], state
+
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    agent_integrate.apply_update(work, plan, plan["entries"][0], False, applier)
+    assert _git(origin, "show", "feature:app.py") == "VALUE = 5\n"
+    assert any(call[:2] == ("pr", "comment") for call in fake.calls)
+
+
+def test_train_reports_a_conflict_without_a_resolver(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path, repo, {"app.py": "VALUE = 2\n"}, {"app.py": "VALUE = 3\n"}
+    )
+    head = plan["entries"][0]["head"]
+    work = tmp_path / "train"
+    assert agent_integrate.integrate_merge(work, plan, integrate) == 1
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    outcome = agent_integrate.apply_update(work, plan, plan["entries"][0], False, applier)
+    assert outcome == "conflict - app.py"
+    assert _git(origin, "rev-parse", "feature").strip() == head
+    label = ("pr", "edit", "3", "--repo", "example/project", "--add-label", "needs-rebase")
+    assert label in fake.calls
+
+
+def test_apply_rejects_a_bundle_not_built_on_the_planned_head(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path,
+        repo,
+        {"CHANGELOG.md": "# Changelog\n\n- main entry\n- base\n"},
+        {"CHANGELOG.md": "# Changelog\n\n- branch entry\n- base\n"},
+    )
+    work = tmp_path / "train"
+    agent_integrate.integrate_merge(work, plan, integrate)
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    # A head the bundle does not build on (an unrelated commit in the applier).
+    _git(applier, "checkout", "-q", "--orphan", "elsewhere")
+    _git(applier, "commit", "-q", "--allow-empty", "-m", "unrelated")
+    forged = {**plan["entries"][0], "head": _git(applier, "rev-parse", "HEAD").strip()}
+    monkeypatch.setattr(agent_integrate, "gh", _FakeGh())
+    outcome = agent_integrate.apply_update(work, plan, forged, False, applier)
+    assert outcome.startswith("update bundle rejected"), outcome
+    assert _git(origin, "rev-parse", "feature").strip() == plan["entries"][0]["head"]
+
+
+def test_apply_enqueues_green_pull_requests_and_reports_the_rest(tmp_path, monkeypatch):
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    plan = {
+        "repo": "example/project",
+        "main": "m" * 40,
+        "queue": True,
+        "entries": [
+            {"number": 1, "branch": "claude/a", "head": "a" * 40, "id": "PR_a", "action": "merge"},
+            {"number": 2, "branch": "claude/b", "head": "b" * 40, "id": "PR_b", "action": "merge"},
+            {"number": 3, "branch": "claude/c", "head": "c" * 40, "id": "PR_c", "action": "queued"},
+            {"number": 4, "branch": "claude/d", "head": "d" * 40, "id": "PR_d", "action": "held"},
+        ],
+    }
+    assert agent_integrate.apply(tmp_path, plan, False, True) == 0
+    enqueued = [c for c in fake.calls if c[:2] == ("api", "graphql")]
+    assert len(enqueued) == 2  # a queue takes every green PR, not one per tick
+    assert "head=" + "a" * 40 in enqueued[0] and "id=PR_a" in enqueued[0]
+    assert not any(c[:2] == ("pr", "merge") or c[:2] == ("workflow", "run") for c in fake.calls)
+
+
+def test_apply_without_a_queue_merges_directly_and_pins_the_head(tmp_path, monkeypatch):
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    plan = {
+        "repo": "example/project",
+        "main": "m" * 40,
+        "queue": False,
+        "entries": [
+            {"number": 1, "branch": "claude/a", "head": "a" * 40, "id": "PR_a", "action": "merge"}
+        ],
+    }
+    agent_integrate.apply(tmp_path, plan, False, True)
+    merge = next(c for c in fake.calls if c[:2] == ("pr", "merge"))
+    assert merge[-2:] == ("--match-head-commit", "a" * 40) and "--squash" in merge
+    assert ("workflow", "run", "ci.yml", "--ref", "main", "-f", "full=false") in fake.calls
 
 
 # --------------------------------------------------------------------------- release

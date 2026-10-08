@@ -24,7 +24,7 @@ from typing import Any
 
 # Jobs that only exist on some events: pull-request-only checks and manual
 # soak runs. A strict run may skip these and nothing else.
-STRICT_SKIP_OK = frozenset({"pr-policy", "soak", "release-qualification"})
+STRICT_SKIP_OK = frozenset({"pr-policy", "dependency-review", "soak", "release-qualification"})
 
 LANE_JOBS = {
     "python": {"python-fast", "tests-linux", "tests-windows", "test-report"},
@@ -42,7 +42,7 @@ LANE_JOBS = {
 
 def expected_jobs(outputs: dict[str, str]) -> set[str]:
     """Derive required evidence from detection, rather than trusting skipped jobs."""
-    required = {"detect", "gates"}
+    required = {"detect", "gates", "zizmor"}
     for lane, jobs in LANE_JOBS.items():
         if outputs.get(lane) == "true":
             required.update(jobs)

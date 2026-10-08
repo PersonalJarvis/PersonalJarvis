@@ -14,9 +14,9 @@
 #   * Every PR ran every job (~20 runners, three 45-min macOS jobs on most),
 #     and pushes to main cancelled each other, so main was never proven.
 #     -> `detect` classifies the diff into lanes (scripts/ci/classify_changes.py,
-#        fail-open); only affected lanes run. Every push to main runs the whole
-#        test suite and is never cancelled; the nightly run and manual
-#        dispatches run every lane.
+#        fail-open); only affected lanes run. Every merge-queue group and every
+#        push to main runs the whole test suite and is never cancelled; the
+#        nightly run and manual dispatches run every lane.
 #   * Branch protection listed five job names; renaming a job meant a settings
 #     change. -> `CI gate` aggregates every job (scripts/ci/required_results.py)
 #     and is the ONLY required check, for humans and for the merge train.
@@ -24,8 +24,14 @@
 #     runs them in one job, all of them report, and agents run the same command
 #     locally.
 #
-# Windows: the full sharded suite on main / nightly / dispatch; on a pull
-# request only the tests the diff can reach (scripts/ci/select_tests.py).
+# Merge queue: main requires a merge queue. A pull request's own run is the
+# admission ticket; the `merge_group` run tests the exact tree main will get
+# (the PR on top of main plus every entry ahead of it) with the whole Linux +
+# Windows suite, and only a green `CI gate` there lands it. This is what keeps
+# main green when PRs that pass alone break together.
+#
+# Windows: the full sharded suite on merge groups / main / nightly / dispatch;
+# on a pull request only the tests the diff can reach (scripts/ci/select_tests.py).
 # macOS (~10x runner cost): nightly and manual dispatch, plus the path-gated
 # realtime contract and macOS desktop lanes.
 #
@@ -35,6 +41,8 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
@@ -59,9 +67,12 @@ on:
 # share one group: GitHub keeps a single PENDING run and drops older pending
 # ones, so a burst of agent pushes cannot stack a backlog behind the
 # organisation's concurrent-job limit — the newest run covers every commit
-# before it. The nightly run and manual dispatches get their own group.
+# before it. Every merge-queue entry gets its own group and is never
+# cancelled: the queue itself drops entries it no longer needs, and a dropped
+# pending run would leave `CI gate` unreported until the queue times out. The
+# nightly run and manual dispatches get their own group.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'merge_group' && format('merge-group-{0}', github.event.merge_group.head_ref)) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main') }}
 
 permissions:
@@ -115,15 +126,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           IN_FULL: ${{ inputs.full }}
           IN_MACOS: ${{ inputs.include_macos }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          # A push to main classifies its lanes like a pull request (the
-          # concurrent-job limit is shared by every agent's PR), but always
-          # runs the WHOLE test suite on Linux and Windows: post-merge proof
-          # is never narrowed. Nightly and manual full runs force everything.
+          # A merge-queue group and a push to main classify their lanes like a
+          # pull request (the concurrent-job limit is shared by every agent's
+          # PR), but always run the WHOLE test suite on Linux and Windows: the
+          # proof that lands on main is never narrowed. A merge group's lanes
+          # are classified against the queue base (main or the entry ahead).
+          # Nightly and manual full runs force everything.
           full=false; macos=false; pr_mode=false; tests_full=false
           case "$EVENT" in
-            push) tests_full=true ;;
+            push|merge_group) tests_full=true ;;
             schedule) full=true; macos=true; tests_full=true ;;
             workflow_dispatch)
               [ "$IN_FULL" = "true" ] && full=true && tests_full=true
@@ -239,6 +252,79 @@ jobs:
         run: |
           GOBIN="$RUNNER_TEMP/actionlint" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$RUNNER_TEMP/actionlint/actionlint" -shellcheck= -pyflakes=
+
+  # Workflow audit. A blocking part of the gate on every event, merge-queue
+  # groups included; security.yml keeps uploading the same audit to the
+  # Security tab from main. Accepted exceptions live in .github/zizmor.yml.
+  zizmor:
+    name: zizmor (workflow audit)
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.30.1"
+          min-severity: medium
+          advanced-security: false
+          annotations: true
+          # Explicit: auto-discovery did not apply every ignore in a local
+          # `zizmor .` run, and a blocking audit must read the same rules.
+          config: .github/zizmor.yml
+
+  # Fails when the diff ADDS a dependency with a known high or critical
+  # advisory. Only a pull request has a dependency diff; on every other
+  # event (merge queue, main, nightly) it skips and the gate accepts that.
+  dependency-review:
+    name: dependency review
+    needs: detect
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # Third-party websites the app parses (ollama.com's model library) change
+  # without notice. Those live checks are opt-in (JARVIS_LIVE_NETWORK_TESTS)
+  # and run only in the nightly: a redesign shows up as a failed step and a
+  # warning there, never as a red pull request, merge queue or nightly gate.
+  live-network:
+    name: live third-party sites (nightly, non-blocking)
+    needs: detect
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Install
+        uses: ./.github/actions/install-locked
+        with:
+          extras: dev
+      - name: Live ollama.com library checks
+        id: live
+        continue-on-error: true
+        env:
+          JARVIS_LIVE_NETWORK_TESTS: "1"
+        run: python -m pytest -m integration tests/integration/test_ollama_library_live.py -v
+      - name: Report a drifted site without failing the run
+        if: steps.live.outcome == 'failure'
+        run: echo "::warning title=Live site check failed::A third-party page the app parses changed (see the 'Live ollama.com library checks' step). Update its parser."
 
   release-qualification:
     name: release qualification
@@ -984,6 +1070,9 @@ jobs:
     needs:
       - detect
       - gates
+      - zizmor
+      - dependency-review
+      - live-network
       - python-fast
       - release-qualification
       - tests-linux

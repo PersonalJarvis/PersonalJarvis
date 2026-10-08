@@ -1,27 +1,27 @@
 # Supply-chain and workflow security scans.
 #
-# Three free scanners for public repositories. Each one writes into the
-# repository's Security tab (code scanning), next to CodeQL's default setup:
+# Free scanners for public repositories that write into the repository's
+# Security tab (code scanning), next to CodeQL's default setup. They run on
+# main, weekly and by hand:
 #
 #   zizmor             audits these workflow files themselves: template
 #                      injection, leaked checkout credentials, dangerous
 #                      triggers, cache poisoning. Accepted exceptions live in
 #                      .github/zizmor.yml with their reason.
-#   dependency-review  on pull requests only: fails when the diff ADDS a
-#                      dependency with a known high or critical advisory.
-#   osv-scanner        scans the shipped lockfiles against osv.dev on main and
-#                      once a week, so an advisory published after a merge
-#                      still surfaces. It reports; it never blocks.
+#   osv-scanner        scans the shipped lockfiles against osv.dev, so an
+#                      advisory published after a merge still surfaces. It
+#                      reports; it never blocks.
 #
-# None of these is part of the required `CI gate` check. They inform; the
-# ratchet stays the only merge blocker.
+# The blocking checks live in ci.yml, under the required `CI gate`, so they
+# also run for merge-queue groups: the same zizmor audit on every event, and
+# dependency review (fails when a pull request ADDS a dependency with a known
+# high or critical advisory).
 
 name: Security scans
 
 on:
   push:
     branches: [main]
-  pull_request:
   schedule:
     - cron: "41 3 * * 2" # Tuesdays, off the hour
   workflow_dispatch:
@@ -30,7 +30,7 @@ permissions: {}
 
 concurrency:
   group: security-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   zizmor:
@@ -51,22 +51,10 @@ jobs:
           # Low/informational hints (self-repository syntax, ad-hoc pip in the
           # merge train) stay local-only instead of filling the Security tab.
           min-severity: medium
-
-  dependency-review:
-    name: dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
+          config: .github/zizmor.yml
 
   osv-scanner:
     name: osv-scanner (lockfiles)
-    if: github.event_name != 'pull_request'
     permissions:
       actions: read
       contents: read

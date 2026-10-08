@@ -157,7 +157,7 @@ def pipeline_needs():
 
 
 @pytest.mark.parametrize(
-    "job", ["gates", "python-fast", "tests-macos", "frontend", "release-qualification"]
+    "job", ["gates", "zizmor", "python-fast", "tests-macos", "frontend", "release-qualification"]
 )
 @pytest.mark.parametrize("missing", [False, True])
 def test_expected_lane_cannot_be_skipped_or_omitted(job, missing):
@@ -182,9 +182,42 @@ def test_unaffected_lanes_can_still_skip():
     needs = {
         "detect": {"result": "success", "outputs": flags},
         "gates": {"result": "success"},
+        "zizmor": {"result": "success"},
         "tests-macos": {"result": "skipped"},
     }
     assert required_results.evaluate(needs, pipeline=True)["ok"]
+
+
+def test_dependency_review_runs_only_on_pull_requests_and_may_skip_elsewhere():
+    ci = workflows()["ci.yml"]["jobs"]
+    assert ci["dependency-review"]["if"] == "github.event_name == 'pull_request'"
+    assert "if" not in ci["zizmor"]  # the workflow audit runs on every event
+    needs = pipeline_needs()
+    needs["dependency-review"] = {"result": "skipped"}
+    assert required_results.evaluate(needs, pipeline=True, strict=True)["ok"]
+    needs["dependency-review"] = {"result": "failure"}
+    assert not required_results.evaluate(needs, pipeline=True)["ok"]
+
+
+def test_live_site_checks_run_only_nightly_and_never_fail_the_run():
+    job = workflows()["ci.yml"]["jobs"]["live-network"]
+    assert job["if"] == "github.event_name == 'schedule'"
+    live = next(s for s in job["steps"] if s.get("id") == "live")
+    assert live["continue-on-error"] is True
+    assert live["env"]["JARVIS_LIVE_NETWORK_TESTS"] == "1"
+    assert all(s.get("continue-on-error") for s in job["steps"] if "pytest" in s.get("run", ""))
+
+
+def test_merge_queue_runs_the_whole_suite_and_is_never_cancelled():
+    ci = workflows()["ci.yml"]
+    triggers = ci.get("on", ci.get(True))
+    assert triggers["merge_group"] == {"types": ["checks_requested"]}
+    assert "merge_group" in ci["concurrency"]["group"]
+    assert "merge_group" not in ci["concurrency"]["cancel-in-progress"]
+    mode = next(s for s in ci["jobs"]["detect"]["steps"] if s.get("id") == "mode")
+    assert "push|merge_group) tests_full=true" in mode["run"]
+    assert "merge_group.base_sha" in mode["env"]["PR_BASE"]
+    assert ci["jobs"]["gate"]["if"] == "${{ !cancelled() }}"
 
 
 @pytest.mark.parametrize("payload", [{}, {"failed_ids": [], "counts": {}, "files": 0}])

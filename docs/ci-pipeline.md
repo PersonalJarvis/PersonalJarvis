@@ -6,8 +6,10 @@ Python + TypeScript desktop app, three operating systems, and signed
 installers.
 
 ```
-agent branch ──► pull request ──► CI (lanes) ──► CI gate ──► merge train ──► main
-                                                                              │
+agent branch ──► pull request ──► CI (lanes) ──► CI gate ──► merge train ──► merge queue
+                                                                                  │
+                                          main ◄── CI gate (merge_group, full) ◄──┘
+                                            │
      release-cut (manual) ──► tag ──► release gate ──► PyPI / installers / signatures
                                                    └─► draft assets ──► finalize ──► updater
 ```
@@ -16,16 +18,18 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 
 | Stage | What it does | Script |
 | --- | --- | --- |
-| `detect` | Classifies the diff into lanes. Fails open: an empty diff, a pipeline change, the nightly run and a manual run turn every lane on. A push to main classifies its lanes too (the concurrent-job limit is shared), but always runs the whole test suite on Linux and Windows. | `scripts/ci/classify_changes.py` |
+| `detect` | Classifies the diff into lanes. Fails open: an empty diff, a pipeline change, the nightly run and a manual run turn every lane on. A merge-queue group (`merge_group`, classified against the queue base) and a push to main classify their lanes too (the concurrent-job limit is shared), but always run the whole test suite on Linux and Windows. | `scripts/ci/classify_changes.py` |
 | `static gates` | ~20 repository gates (keys, bundle, mirrors, privacy, docs, CLI coverage, ratchets, bash 3.2, no new German) in one job. Every gate reports. | `scripts/ci/run_gates.py` |
+| `zizmor` / `dependency review` | Workflow security audit on every event (merge queue included, exceptions in `.github/zizmor.yml`); dependency review on pull requests only, failing on an added dependency with a high or critical advisory. `security.yml` keeps the Security-tab uploads. | — |
+| `live third-party sites` | Nightly only and non-blocking: the opt-in live checks of pages the app parses (`JARVIS_LIVE_NETWORK_TESTS=1`, ollama.com's library). A site redesign shows as a failed step and a run warning, never as a red gate. | — |
 | `python contracts (fast)` | Import cleanliness on the bare install, the named contract guards, skill-routing precision and recall, plugin auth. Blocking, no baseline. | — |
 | `tests linux 1..6` | The whole suite in six shards. Batches of files run in fresh processes with a wall-clock budget; a failed batch is re-run file by file, a failed file once more (a pass there is reported as flaky). | `scripts/ci/run_tests_parallel.py` |
-| `tests windows` | Four shards on full runs; on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
+| `tests windows` | Four shards on full runs (merge queue, main, nightly, manual); on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Proves the six Linux shards cover every discovered file exactly once, enforces the min-passed floor, and on main refreshes the duration cache. Detection freezes one shared duration snapshot for all shards, including partial reruns. | `scripts/ci/ratchet_tests.py` |
 | Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `agent runtimes` (3 OS + slim container + the real Hermes and OpenClaw at their pinned version; see [agent-runtimes.md](agent-runtimes.md#ci-and-release-gates)), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
 | `release qualification` | Tag CI requires a full run with macOS and the browser-auth E2E evidence gate: a plugin labeled verified needs a completed journey, every completed journey ships as verified, and every other plugin ships labeled preview. The step summary counts both. Ordinary branch/PR/nightly CI skips this release-only job. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
-| `CI gate` | Aggregates every job. **The only required check.** A missing or skipped selected lane fails. Unselected lanes may skip; nightly is strict except event-specific jobs. | `scripts/ci/required_results.py` |
+| `CI gate` | Aggregates every job. **The only required check**, on the pull request and again on its merge-queue group. A missing or skipped selected lane fails. Unselected lanes may skip; nightly is strict except event-specific jobs. | `scripts/ci/required_results.py` |
 
 The realtime lane runs the subscription authentication, direct reasoning,
 voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
@@ -102,47 +106,76 @@ the recorded result and its limits are in `macos-permissions.md`, section 4.15).
 ### Concurrency
 
 A pull request keeps only its
-newest run. A run on main is never cancelled once it started; pushes to main
-share one queue slot, so a burst of pushes leaves one pending run that covers
-every commit before it instead of a backlog behind the organisation's
-concurrent-job limit. The nightly run and manual runs have their own slots.
+newest run. Every merge-queue entry has its own slot and is never cancelled:
+the queue drops entries it no longer needs itself, and a dropped pending run
+would leave `CI gate` unreported until the queue times out. A run on main is
+never cancelled once it started; pushes to main share one queue slot, so a
+burst of pushes leaves one pending run that covers every commit before it
+instead of a backlog behind the organisation's concurrent-job limit. The
+nightly run and manual runs have their own slots.
 
-## 2. Integrating several agents — `.github/workflows/merge-train.yml`
+## 2. Integrating several agents — merge queue + `.github/workflows/merge-train.yml`
+
+`main` requires a **merge queue** (repository ruleset "main merge queue":
+squash, `CI gate` required). A pull request's own CI is its admission ticket;
+the queue then builds each entry on top of the newest main plus every entry
+ahead of it, runs `ci.yml` on that exact tree (`merge_group` event, whole
+Linux + Windows suite), and squash-merges only when `CI gate` is green there.
+Changes that pass alone and break together stop in the queue instead of on
+main. A failed entry leaves the queue; the entries behind it are rebuilt
+without it.
 
 Agents push branches named `codex/…`, `claude/…`, `agent/…`, `gemini/…`,
 `cursor/…` or `bot/…`, or add the `auto-merge` label to any pull request. The
-merge train runs on every push to main, after every CI run, and every 15
-minutes:
+merge train runs on every push to main, after every CI run (pull request or
+merge queue), and hourly as a safety net:
 
-1. A pull request that **conflicts** with main (or whose CI failed while it
-   was behind) gets main merged into it (`scripts/ci/agent_integrate.py`).
-   No force push, so an agent that keeps pushing to its branch is never
-   overwritten. A pull request that is merely behind is left alone: with
-   several agents pushing to main, re-testing every PR on every push meant
-   nothing ever landed.
+1. A pull request that **conflicts** with main (or whose CI, or merge-queue
+   run, failed while it was behind) gets main merged into it
+   (`scripts/ci/agent_integrate.py`). No force push, so an agent that keeps
+   pushing to its branch is never overwritten. A pull request that is merely
+   behind is left alone: the queue re-tests it on the newest main anyway.
 2. Conflicts resolve by file class: **generated** files (frontend `dist/`,
    agent mirrors, CLI reference docs, lockfiles, timing caches) take main's
    copy and are regenerated; **append-only** files (CHANGELOG, allowlists,
    `.gitignore`, `docs/BUGS.md`) are union-merged; **everything else** goes
    to the optional AI resolver (`ANTHROPIC_API_KEY` → Claude Code,
-   `OPENAI_API_KEY` → Codex CLI). Its result must leave no conflict markers
-   and must still parse, and CI re-runs on it before anything lands. What
-   stays unresolved aborts cleanly, gets the `needs-rebase` label and a
-   comment listing the files. `git rerere` replays recorded resolutions.
-3. The first green, conflict-free pull request is squash-merged, one per
-   tick. Main's full post-merge test run is the backstop for changes that
-   pass alone and break together — GitHub's non-strict model.
+   `OPENAI_API_KEY` → Codex CLI, both pinned to exact versions). Its result
+   must leave no conflict markers and must still parse, and CI re-runs on it
+   before anything lands. What stays unresolved aborts cleanly, gets the
+   `needs-rebase` label and a comment listing the files. `git rerere`
+   replays recorded resolutions.
+3. Every green, conflict-free pull request joins the merge queue, pinned to
+   the head commit its CI tested. A head the queue already failed is held
+   until a new push or a train update. Without a queue on main (the
+   rollback path: delete or disable the ruleset) the train squash-merges one
+   green pull request per tick instead.
 
 Opt out with `no-auto-merge`, `do-not-merge`, `wip` or `needs-human`.
 `priority` moves a pull request to the front. Forks and Dependabot never ride
 the train.
 
+**Trust.** The train is three jobs with three privilege levels. `plan` has a
+read-only token and no secrets and runs no pull-request code. `integrate` has
+a read-only token: it merges main into each branch in its own worktree, gives
+the AI resolver its API keys in one step that runs before any pull-request
+code on that machine, then runs the regenerators (pull-request code) and
+hands the result on as git bundles. `apply` holds the write token, runs no
+pull-request code, and only pushes bundles that build on the planned head and
+main, labels, comments, approves parked runs and enqueues. No checkout
+persists a token.
+
 **Token.** With the optional `INTEGRATION_TOKEN` secret (a fine-grained token
-with contents and pull-request write access), the train's pushes and merges
-fire the normal events. Without it the train uses `GITHUB_TOKEN`: the
-pull-request run its own push triggers waits in "action required" and the
-train approves it on the next tick, because GitHub never counts a dispatched
-run for a pull request. After each merge it dispatches `ci.yml` for main.
+with contents and pull-request write access), the train's pushes fire the
+normal events. Without it the train uses `GITHUB_TOKEN`: the pull-request run
+its own push triggers waits in "action required" and the train approves it
+on the next tick, because GitHub never counts a dispatched run for a pull
+request. The merge queue's own merges fire the normal push to main.
+
+**Rollback.** If the queue stalls, disable the "main merge queue" ruleset
+(Settings → Rules → Rulesets, or `gh api -X PUT
+repos/<owner>/<repo>/rulesets/<id> -f enforcement=disabled`). The train sees
+no queue on its next tick and merges directly again.
 
 ### Locally: `scripts/agent_land.py`
 
@@ -164,8 +197,8 @@ A release happens **only** when the maintainer asks for one.
 * **`release-cut.yml`** (manual): refuses unless main is green, bumps
   `pyproject.toml` + `jarvis/__init__.py` + the root package in `uv.lock`, moves the `[Unreleased]` notes (or
   the Conventional Commits since the last tag) into a dated CHANGELOG section
-  (`scripts/ci/cut_release.py`), lands the candidate through a CI-checked PR,
-  tags the resulting merge commit, and dispatches full CI with macOS on that
+  (`scripts/ci/cut_release.py`), lands the candidate through a CI-checked PR
+  and the merge queue, tags the landed commit, and dispatches full CI with macOS on that
   immutable tag. Its `cut` job runs in the `release-cut` environment, which
   only `main` may deploy to and which holds the private key of the release
   bot GitHub App (secret `RELEASE_APP_PRIVATE_KEY`, variable

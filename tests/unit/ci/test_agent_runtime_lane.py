@@ -45,7 +45,10 @@ def _needs(lane: bool, **results: str) -> dict:
     outputs = {flag: "false" for flag in required_results.LANE_JOBS}
     outputs.update(full="false", macos="false", macos_desktop="false", release="false")
     outputs["agent_runtimes"] = "true" if lane else "false"
-    needs = {"detect": {"result": "success", "outputs": outputs}, "gates": {"result": "success"}}
+    needs = {"detect": {"result": "success", "outputs": outputs}}
+    # Every pipeline also requires the always-on jobs (gates, workflow audit).
+    always = required_results.expected_jobs(dict.fromkeys(outputs, "false")) - {"detect"}
+    needs.update({job: {"result": "success"} for job in always})
     needs.update({job: {"result": result} for job, result in results.items()})
     return needs
 
