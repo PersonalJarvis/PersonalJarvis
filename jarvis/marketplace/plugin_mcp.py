@@ -23,8 +23,9 @@ def plugin_to_mcp_server_spec(
     """Return (MCPServerSpec, env_overrides) for a connected plugin, or None.
 
     None when the plugin has no mcp_server block or an MCP-incompatible
-    transport (rest_wrapper / unknown). stdio + http are supported — the same
-    two transports the worker bridge speaks.
+    transport (rest_wrapper / unknown). stdio, http and sse are supported —
+    the same transports the worker bridge speaks; sse only reaches older
+    remote servers a custom connector was pointed at.
     """
     spec = plugin.mcp_server
     if not spec:
@@ -32,7 +33,7 @@ def plugin_to_mcp_server_spec(
     repl = _token_replacements(plugin.id, tokens.access)
     transport = str(spec.get("transport") or "").lower()
 
-    if transport == "http":
+    if transport in ("http", "sse"):
         url = spec.get("url")
         if not url:
             return None
@@ -48,7 +49,7 @@ def plugin_to_mcp_server_spec(
             display=plugin.display_name,
             description=plugin.description,
             install_command=[],
-            transport="http",
+            transport="sse" if transport == "sse" else "http",
             url=str(url),
             headers=headers,
         )

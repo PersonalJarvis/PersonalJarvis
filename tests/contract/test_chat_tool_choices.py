@@ -203,7 +203,7 @@ def test_wire_category_and_fields_match_typescript():
     union = re.search(r"export type ToolCategory\s*=\s*([^;]+);", source).group(1)
     assert set(re.findall(r'"([a-z]+)"', union)) == set(get_args(Category))
     interface = source.split("export interface ToolChoice {", 1)[1].split("}", 1)[0]
-    assert set(re.findall(r"^\s*(\w+):", interface, re.M)) == set(ToolChoice.model_fields)
+    assert set(re.findall(r"^\s*(\w+)\??:", interface, re.M)) == set(ToolChoice.model_fields)
     for locale in ("en", "de", "es"):
         data = json.loads(
             (root / f"jarvis/ui/web/frontend/src/i18n/locales/{locale}.json").read_text(

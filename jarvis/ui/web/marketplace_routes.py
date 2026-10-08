@@ -14,6 +14,7 @@ Endpoints:
     DELETE /api/marketplace/community/plugins/{id}         — uninstall + revoke
     POST   /api/marketplace/plugins/upload/inspect         — read a dropped manifest
     POST   /api/marketplace/plugins/upload                 — install a dropped manifest
+    POST   /api/marketplace/connectors                     — add a remote MCP server by URL
 """
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ from jarvis.marketplace.auth import (
 from jarvis.marketplace.catalog import (
     CATEGORY_ORDER,
     HostedMcpOAuthDcrAuth,
+    HostedMcpOpenAuth,
     InstanceBrowserAuth,
     OAuthDeviceFlowAuth,
     OAuthPkceLoopbackAuth,
@@ -306,6 +308,29 @@ def _make_validator(transport: httpx.AsyncBaseTransport | None = None):
 _validate_token = _make_validator()
 
 
+async def _validate_connector_token(spec: Any, pat: PatPasteAuth, token: str) -> tuple[bool, int]:
+    """Prove a custom connector's token with an MCP handshake.
+
+    The server behind a custom connector has no REST "who am I" route to ask,
+    so the token rides in the entry's own header on an ``initialize`` — the
+    exact request the tool registry sends next. Unreachable or non-MCP
+    answers surface as a 502 with the probe's sentence, not as "rejected".
+    """
+    from jarvis.marketplace.custom_connector import (
+        ConnectorError,
+        connector_auth_headers,
+        probe_connector,
+    )
+
+    try:
+        probe = await probe_connector(
+            pat.validation_endpoint, headers=connector_auth_headers(spec, token)
+        )
+    except ConnectorError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return probe.auth == "none", probe.status
+
+
 # ----------------------------------------------------------------------
 # Read endpoints
 # ----------------------------------------------------------------------
@@ -332,7 +357,7 @@ def _mcp_live(
     today's behaviour.
     """
     transport = str(mcp.get("transport", "")).lower()
-    if transport == "http":
+    if transport in ("http", "sse"):
         if status == "connected":
             reg = _live_plugin_registry()  # the same accessor refresh uses
             if reg is not None and reg.is_bootstrapped() and reg.live_tool_count(plugin_id) == 0:
@@ -511,11 +536,12 @@ async def connect_pat(plugin_id: str, body: PatConnectBody, request: Request) ->
         # Only widen the call for self-hosted plugins. Every other caller (and
         # every injected test double) keeps the two-argument shape it has had
         # since the flow was written.
-        ok, status = (
-            await _validate_token(pat, token, instance_url)
-            if instance_url
-            else await _validate_token(pat, token)
-        )
+        if pat.validation_method == "mcp_initialize":
+            ok, status = await _validate_connector_token(spec, pat, token)
+        elif instance_url:
+            ok, status = await _validate_token(pat, token, instance_url)
+        else:
+            ok, status = await _validate_token(pat, token)
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,
@@ -707,6 +733,27 @@ async def connect_start(
         TokenStore().save(plugin_id, Tokens(access="local-enabled"))
         _refresh_plugin_in_live_registry(plugin_id)
         return {"kind": "local", "plugin_id": plugin_id, "state": "connected"}
+    elif isinstance(spec.auth, HostedMcpOpenAuth):
+        # No sign-in to run: one answered handshake is the whole connect, so
+        # "Connected" is never shown for a server that is down or now wants
+        # credentials it did not want when it was added.
+        from jarvis.marketplace.custom_connector import ConnectorError, probe_connector
+
+        try:
+            probe = await probe_connector(spec.auth.mcp_url)
+        except ConnectorError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if probe.auth != "none":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{spec.display_name} now asks for sign-in. Remove it and add it "
+                    "again so the new sign-in is detected."
+                ),
+            )
+        TokenStore().save(plugin_id, Tokens(access="open"))
+        _refresh_plugin_in_live_registry(plugin_id)
+        return {"kind": "local", "plugin_id": plugin_id, "state": "connected"}
     elif isinstance(spec.auth, OAuthDeviceFlowAuth):
         from jarvis.marketplace.connect_helpers import is_placeholder_client_id
         from jarvis.marketplace.publisher_clients import resolve_publisher_client
@@ -771,7 +818,8 @@ async def connect_start(
             detail=(
                 f"plugin {plugin_id!r} uses auth mode {spec.auth.mode!r} "
                 "which is not yet wired to /connect/start. Supported: "
-                "hosted_mcp_oauth_dcr, oauth_device_flow, oauth_pkce_loopback."
+                "hosted_mcp_oauth_dcr, hosted_mcp_open, oauth_device_flow, "
+                "oauth_pkce_loopback."
             ),
         )
 
@@ -1681,14 +1729,17 @@ async def community_install_by_name(item_id: str, request: Request) -> dict[str,
 @router.delete("/community/plugins/{plugin_id}")
 async def community_uninstall(plugin_id: str) -> dict[str, Any]:
     """Remove an installed community plugin: revoke + drop stored tokens,
-    remove the catalog entry and its usage card, refresh the live registry."""
+    remove the catalog entry and its usage card, refresh the live registry.
+
+    A plugin the owner added here (an upload or a custom connector) lives in
+    the same override catalog and leaves the same way."""
     from jarvis.marketplace.community_install import remove_community_plugin
     from jarvis.marketplace.usage_cards.loader import delete_usage_card
 
     spec = load_catalog().by_id(plugin_id)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
-    if spec.source != "community":
+    if spec.source not in ("community", LOCAL_PLUGIN_SOURCE):
         raise HTTPException(
             status_code=409,
             detail=f"{plugin_id!r} is a built-in plugin — disconnect it instead of uninstalling",
@@ -1933,3 +1984,88 @@ async def upload_plugin(
     item = spec.model_dump(mode="json")
     item["status"] = "not_connected"
     return {"ok": True, "plugin": item, "upload": result["upload"]}
+
+
+# ----------------------------------------------------------------------
+# Custom connector — a remote MCP server added by name and address
+# ----------------------------------------------------------------------
+
+
+class CustomConnectorBody(BaseModel):
+    name: str = Field(default="", max_length=80)
+    url: str = Field(min_length=1, max_length=2048)
+    # "auto" asks the server; the others are the owner's override from the
+    # dialog's advanced settings, still checked against what the server says.
+    auth: str = Field(default="auto", pattern="^(auto|oauth|token|none)$")
+    # The header an access token travels in; Authorization (Bearer) if unset.
+    header_name: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/connectors")
+async def add_custom_connector(body: CustomConnectorBody) -> dict[str, Any]:
+    """Adds a remote MCP server as a plugin, after asking it how to sign in.
+
+    One call instead of inspect-then-install: the probe is the inspection,
+    and a connector the server would refuse is never written. The response
+    carries the catalog item, so the dialog can start the matching connect
+    flow (browser sign-in, token dialog, or a plain enable) at once.
+    """
+    from jarvis.marketplace.community_install import install_plugin_spec
+    from jarvis.marketplace.custom_connector import (
+        ConnectorError,
+        build_connector_spec,
+        connector_id,
+        connector_url,
+        display_name_for,
+        normalize_connector_url,
+        normalize_header_name,
+        probe_connector,
+        resolve_auth,
+    )
+
+    try:
+        url = normalize_connector_url(body.url)
+        header_name = normalize_header_name(body.header_name)
+    except ConnectorError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    catalog = load_catalog()
+    for existing in catalog.plugins:
+        if connector_url(existing) == url:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This server is already added as {existing.display_name}.",
+            )
+
+    try:
+        probe = await probe_connector(url)
+        auth = resolve_auth(body.auth, probe)  # type: ignore[arg-type]  # pattern-checked
+    except ConnectorError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    display_name = display_name_for(body.name, url, probe)
+    plugin_id = connector_id(display_name, url, (p.id for p in catalog.plugins))
+    spec = build_connector_spec(
+        plugin_id=plugin_id,
+        display_name=display_name,
+        url=url,
+        auth=auth,
+        probe=probe,
+        header_name=header_name,
+    )
+    try:
+        await asyncio.to_thread(install_plugin_spec, spec)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    _refresh_plugin_in_live_registry(spec.id)
+    item = spec.model_dump(mode="json")
+    item["status"] = "not_connected"
+    return {
+        "ok": True,
+        "plugin": item,
+        "detected": {
+            "auth": auth,
+            "transport": probe.transport,
+            "server_name": probe.server_name,
+        },
+    }

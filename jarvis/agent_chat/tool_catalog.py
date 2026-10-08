@@ -38,6 +38,10 @@ class ToolChoice(BaseModel):
     available: bool = True
     tool_names: tuple[str, ...] = ()
     skill: str = ""
+    # A plugin the owner added here (custom connector or upload). The Add
+    # menu lists these even before they are connected, so a connector just
+    # added is never hidden behind a search.
+    user_added: bool = False
 
 
 def category_for(name: str) -> Category:
@@ -99,6 +103,7 @@ def build_catalog(
                 brand=spec.id,
                 available=available,
                 tool_names=names,
+                user_added=getattr(spec, "source", "") == "local",
             )
         )
         owned.update(names)
