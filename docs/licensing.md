@@ -2,13 +2,10 @@
 
 ## Current: Apache License 2.0
 
-Personal Jarvis is licensed under the [Apache License 2.0](../LICENSE), with the
-attribution notice in [`NOTICE`](../NOTICE). The switch was made on `main` on
-2026-08-27 and ships with **version 2.0.0** — the first release under the new
-terms. Everything merged from that day on is Apache 2.0.
-
-Because a license change is a breaking change in SemVer terms, the next release
-out of `main` is 2.0.0. There is no further 1.x release.
+Personal Jarvis project code is licensed under the
+[Apache License 2.0](../LICENSE), with the attribution notice in
+[`NOTICE`](../NOTICE), starting with version 2.0.0. Third-party code, fonts,
+models, images, and native libraries retain their own licenses.
 
 ## Released 1.x stays MIT, permanently
 
@@ -19,20 +16,20 @@ with is still in the history — `git show v1.6.0:LICENSE`.
 
 ## Why Apache 2.0
 
-Apache 2.0 keeps everything MIT gives you — use, modify, distribute, sell, no
-copyleft, no source-sharing obligation — and closes three things MIT leaves
-unsaid:
+Apache 2.0 permits use, modification, and distribution, including commercial
+distribution, subject to its conditions. This describes the project code;
+bundled dependencies can impose additional obligations.
 
 - **An explicit patent grant** (§3). Every contributor grants users a license to
-  the patents their contribution needs, and that grant ends for anyone who sues
-  over them. MIT says nothing about patents at all, which is the single most
-  common reason a corporate legal review rejects an MIT dependency.
+  applicable patent claims described in the license. Section 3 terminates
+  that grant for the work if the recipient brings the specified patent
+  infringement litigation. MIT contains no equivalent express patent grant.
 - **A trademark carve-out** (§6). The license covers the code and not the name
   or the logo, in writing. Ours already lives in
   [`TRADEMARK.md`](../TRADEMARK.md); Apache 2.0 makes it a license term.
 - **Stated redistribution duties** (§4). Pass on the license, keep the notices,
-  carry the `NOTICE` file, mark the files you changed. MIT only asks for the
-  copyright line.
+  carry the `NOTICE` file, mark the files you changed. MIT also requires
+  preservation of its copyright and permission notice.
 
 ## What it means for you
 
@@ -65,6 +62,64 @@ descriptions, and pinned posts. Those are the checklist below.
 
 ## Third-party components
 
+The warranty and liability disclaimers in an open-source license do not replace
+its redistribution conditions. The project license also does not grant rights
+in another party's trademarks. The project name and the assistant name chosen
+by a user are separate labels; choosing an assistant name does not change any
+bundled component's license.
+
+### What builds from the corrected source include
+
+The following describes the packaging corrections accompanying the linked
+artifact audit. Previously published installers retain their original contents
+until a separately verified release is published.
+
+- The Python wheel carries the project and vendored component licenses in its
+  distribution metadata. The desktop bundle also includes the `third_party/`
+  license texts referenced by `NOTICE`.
+- Each frontend build emits `THIRD_PARTY_NOTICES.txt` alongside its assets. It
+  contains complete license texts for bundled packages and fonts, plus notices
+  for copied source and artwork. These notices travel with the frontend in
+  wheels and desktop bundles.
+- The current onboarding terms are included in both wheel and desktop layouts.
+  They describe the optional project-operated OAuth token broker as well as
+  directly connected third-party services.
+
+License files document permissions and conditions; they do not by themselves
+prove that a particular native binary satisfies every condition. A source
+checkout, a dependency installed by the user, and a frozen installer are
+different distribution artifacts and must be assessed separately.
+
+### Native libraries and models
+
+Inspect the exact binaries in each release, including their transitive native
+dependencies. In particular:
+
+- `sherpa-onnx` has an Apache-2.0 top-level license, but some native builds
+  include GPL-licensed eSpeak through `piper-phonemize`. Selecting sherpa rather
+  than `piper1-gpl` does not establish that a distribution is free of GPL
+  obligations. See the [upstream dependency discussion](https://github.com/k2-fsa/sherpa-onnx/issues/3731).
+- PyAV's source license does not cover all bundled FFmpeg and codec binaries.
+  Review the exact wheel's FFmpeg build options, external codecs, and any
+  documented license exceptions. Preserve the notices and corresponding source
+  or other materials required by the selected license route. See
+  [FFmpeg's licensing guidance](https://ffmpeg.org/legal.html) and the
+  [PyAV wheel discussion](https://github.com/PyAV-Org/PyAV/issues/2270).
+- Downloaded voice and wake models have licenses separate from the engine that
+  loads them. Record the model source, version, and applicable terms.
+
+Keep an artifact-level inventory of component versions, file hashes, licenses,
+upstream source/build references, and unresolved permissions. Claims of
+commercial exceptions require the applicable grant, not only a package label
+or a link to a vendor's sales page. Public source for this project alone is
+not a substitute for the corresponding source of bundled third-party binaries.
+
+The [v2.9.0 artifact inspection](legal/distribution-audit-2026-10-08.md)
+records verified Windows and Linux package identities, observed components,
+missing notices, and the limits of that inspection.
+
+### Adapted source
+
 The bundled Silero VAD model (`jarvis/assets/vad/`) carries its own MIT license
 from its own authors and keeps it — the switch does not touch it, and no
 dependency's terms change either. Nothing is relicensed by being included here.
@@ -88,13 +143,10 @@ A few well-separated portions of NousResearch/hermes-agent (MIT, Copyright (c)
 its upstream file and commit in a header comment; the license text and the list
 of adapted files live in [`third_party/hermes-agent/`](../third_party/hermes-agent/).
 
-## Still to do at the 2.0 release
+## External distribution metadata
 
-- [ ] `homebrew-tap/Formula/personal-jarvis-installer.rb` and
-      `scoop-bucket/personal-jarvis-installer.json` — both are pinned to the
-      v1.0.5 installer asset, which really is MIT. Change `license` in the same
-      commit that bumps them to the 2.0 asset, not before.
-- [ ] Repository social preview — `assets/brand/social-preview.png` is already
-      re-rendered and reads "APACHE 2.0". GitHub does not take it from the
-      repository: upload it under Settings -> General -> Social preview.
-- [ ] The GitHub release notes for 2.0.0 — lead with the license change.
+Package-manager listings and release descriptions should identify the license
+of the artifact they actually distribute. A listing pinned to an older MIT
+release retains that description until its artifact is updated. External
+listings and repository social-preview settings are not updated by changing
+this file; verify them separately when publishing a release.

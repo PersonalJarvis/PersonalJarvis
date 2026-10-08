@@ -1,14 +1,14 @@
 ---
 title: "Privacy and Local Data"
 slug: privacy-and-local-data
-summary: "Learn what Jarvis stores locally, what may be sent to a connected service, and how each optional feature changes that boundary."
+summary: "Learn what Jarvis stores locally, what may be sent to connected services or the project's OAuth service, and how each optional feature changes that boundary."
 section: "Privacy, safety, and support"
 section_order: 6
 order: 1
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-08
 phase: "-"
 audience: end-user
 tags: [privacy, local-data, retention, deletion, providers, backups]
@@ -18,7 +18,8 @@ related: [credentials-and-secrets, permissions, wiki-and-memory, jarvis-board]
 Jarvis keeps much of its working history on the computer or server where the
 app runs. It contacts another service only when a feature needs that service,
 such as a remote Brain, speech provider, connected tool, phone service, or a
-sharing destination you choose.
+sharing destination you choose. Some plugin sign-in flows also use the project's
+OAuth token service, so a local installation does not keep every request local.
 
 This page explains those boundaries and their current limits. It is a product
 map, not a promise about a provider's own storage, training, or deletion rules.
@@ -91,6 +92,7 @@ chat as proof that no local or remote copy exists.
 | Voice | Microphone audio for remote speech recognition or Realtime voice, transcripts for the Brain, and reply text for remote speech output | While you use the corresponding remote voice capability |
 | Vision and Computer Use | Screenshots, visible window context, the requested action, and action results | When a remote vision or action model is needed; approvals still apply to consequential actions |
 | Plugins, MCP, and CLI connections | The arguments and context passed to the tool, plus any result it returns | When you or Jarvis runs that connection; a local CLI can itself contact services outside Jarvis |
+| Project OAuth token service | Authorization codes, PKCE verifiers, client and redirect information, refresh tokens, and provider token responses | When connecting or refreshing a grant issued to a shipped Google or Slack client; Slack's browser callback also uses this service |
 | Jarvis-Agents | The mission request, selected files or repository context, scoped tool calls, worker output, and review material | When a remote worker or model handles the mission |
 | Wiki processing | Candidate facts and relevant page excerpts | When a remote Wiki extractor or curator reviews a possible memory update |
 | Board and sharing | A share card when you send it; a request routed through a configured Board federation service when that API is used | Sharing is user-triggered. Enabling federation alone does not start an automatic aggregate upload in the current app. The biography limitation below is separate. |
@@ -100,6 +102,28 @@ Phone calls and connected messaging channels necessarily pass audio or messages
 through their configured services. Once data reaches a provider, channel,
 community, or recipient, its retention and deletion rules apply separately.
 Removing the local Jarvis record does not send a deletion request to them.
+
+### Understand the Project OAuth Service
+
+The shipped Google and Slack sign-in clients use `token.personaljarvis.ai`, a
+project-run OAuth token service hosted on Cloudflare. This service performs
+token exchange and refresh for those clients. The browser still opens the
+provider's sign-in page for you to sign in and approve access. Slack then
+routes its browser callback through the service before returning to the app.
+
+The desktop sends authentication fields to the service, including an
+authorization code and PKCE verifier during token exchange, or a refresh token
+during renewal. It receives the provider's token response through the service.
+These token requests do not include chat histories or local files. Connected
+plugins can separately send tool arguments and content to their providers.
+
+The service runs outside the Jarvis host. This page does not establish its
+server-side logging, storage, or retention behavior, and it does not promise
+that authentication data is never received or processed by project
+infrastructure. Local data deletion does not establish that remote records
+have been removed. An explicitly configured alternative OAuth client can use
+the provider's token endpoint directly; other integrations use their own
+configured authentication paths.
 
 An optional feedback API relay can send a report title, description, screenshot,
 app and runtime versions, operating-system description, and submission time to

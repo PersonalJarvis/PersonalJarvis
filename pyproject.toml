@@ -16,7 +16,14 @@ readme = "README.md"
 # Apache-2.0 from 2.0.0 on. Releases up to 1.6.0 shipped MIT and stay MIT —
 # docs/licensing.md has the reasoning and what is still owed at the release.
 license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license-files = [
+    "LICENSE",
+    "NOTICE",
+    "third_party/*/LICENSE",
+    "third_party/*/NOTICE*",
+    "third_party/*/ThirdPartyNotices.txt",
+    "jarvis/ui/web/frontend/src/assets/octicons-LICENSE.txt",
+]
 authors = [{ name = "Ruben Lütke" }]  # i18n-allow: maintainer proper name (umlaut)
 keywords = [
     "voice-assistant",
@@ -551,7 +558,8 @@ vertex-stt = "jarvis.plugins.stt.gemini_api:VertexSTT"
 [project.entry-points."jarvis.tts"]
 # Local, keyless neural speech (Piper VITS voices via sherpa-onnx / ONNX
 # Runtime). The voices are plain ONNX files, deliberately NOT loaded through the
-# GPL-3 piper1-gpl library, so this repo stays free of GPL obligations.
+# piper1-gpl library. Native sherpa builds can still include GPL-licensed
+# phonemization components; redistribution must account for their own terms.
 piper-local = "jarvis.plugins.tts.piper_local:PiperLocalTTS"
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"
 elevenlabs = "jarvis.plugins.tts.elevenlabs_tts:ElevenLabsTTS"
@@ -561,7 +569,7 @@ gemini-flash-tts = "jarvis.plugins.tts.gemini_flash_tts:GeminiFlashTTS"
 # production voice cannot live inside — a Cloud project has no preview cap.
 vertex-tts = "jarvis.plugins.tts.gemini_flash_tts:VertexTTS"
 grok-voice = "jarvis.plugins.tts.grok_voice_tts:GrokVoiceTTS"
-# Phase L.4 — Streaming-TTS mit niedriger TTFB.
+# Phase L.4 — Streaming TTS with low time to first byte.
 cartesia = "jarvis.plugins.tts.cartesia_tts:CartesiaTTS"
 # OpenRouter cloud speech synthesis — reuses the shared openrouter_api_key.
 openrouter-tts = "jarvis.plugins.tts.openrouter_tts:OpenRouterTTS"
@@ -932,6 +940,7 @@ jarvis = [
 
 [tool.setuptools.data-files]
 "share/personal-jarvis/docs" = ["docs/product/**/*.md"]
+"share/personal-jarvis/docs/legal" = ["docs/legal/TERMS.md"]
 
 [tool.ruff]
 line-length = 100

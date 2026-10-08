@@ -7,6 +7,9 @@ import path from "node:path";
 
 import { missingNameGate } from "./vite-plugins/missingNameGate";
 import { safePublication } from "./vite-plugins/safePublication";
+import { thirdPartyNotices } from "./vite-plugins/thirdPartyNotices";
+
+const notices = thirdPartyNotices(__dirname);
 
 const MATERIAL_ICON_ROUTE = "/assets/material-file-icons";
 const materialIconSource = path.resolve(
@@ -68,7 +71,8 @@ function materialIconAssets(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [safePublication(__dirname), react(), materialIconAssets(), missingNameGate(__dirname)],
+  plugins: [safePublication(__dirname), react(), materialIconAssets(), missingNameGate(__dirname), notices.plugin],
+  worker: { plugins: () => [notices.workerPlugin()] },
   // The society's figures are binary glTF; Vite serves them as fingerprinted
   // assets (docs/agent-society/character-pipeline.md §4.2).
   assetsInclude: ["**/*.glb"],
