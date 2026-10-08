@@ -18,7 +18,7 @@ from pathlib import Path
 
 # Dependency-free import (no numpy/PIL): this module stays cheap enough for the
 # IPC proxy and the pure unit tests.
-from jarvis.ui.jarvisbar.modes import DICTATION_MODES, NOTICE_MODES
+from jarvis.ui.jarvisbar.modes import ACTIVE_VOICE_MODES, DICTATION_MODES, NOTICE_MODES
 
 
 # --------------------------------------------------------------------------- #
@@ -61,7 +61,7 @@ def resolve_click(
     if action == "orb" and prompt_mode:
         return "prompt_mode_toggle"
     if action in ("orb", "call"):
-        return "hangup" if mode in ("listen", "think", "speak") else "talk"
+        return "hangup" if mode in ACTIVE_VOICE_MODES else "talk"
     return "none"
 
 

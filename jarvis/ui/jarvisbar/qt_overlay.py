@@ -427,6 +427,8 @@ class QtJarvisBarOverlay:
         self._user_size_scale = renderer.clamp_user_size(size_scale)
         self._screen_scale = 1.0
         self._mode = "idle"
+        # perf_counter() when the call left ``connect`` (the flourish clock).
+        self._connected_t0: float | None = None
         self._ext_level = 0.0
         self._last_audible_t = 0.0
         # Receipt stamp of the last set_level of ANY value: the frame loop
@@ -522,6 +524,10 @@ class QtJarvisBarOverlay:
     def show(self, mode: str = "listen") -> None:
         if mode not in renderer.MODES:
             return
+        # Leaving ``connect`` for the live look starts the "connected" flourish.
+        self._connected_t0 = renderer.connected_stamp(
+            self._mode, mode, time.perf_counter(), getattr(self, "_connected_t0", None)
+        )
         self._mode = mode
         self._desired_visible = not self._startup_gated and (
             self._persistent_flag or mode != "idle"
@@ -799,6 +805,7 @@ class QtJarvisBarOverlay:
             # Without the veto the confirmation is never seen: a settled idle
             # bar skips exactly the frames the tick would live in.
             drop_visual = self._current_drop_visual()
+            connected = renderer.connected_elapsed(getattr(self, "_connected_t0", None), now)
             tick_key = (
                 effective_mode,
                 self._hovered,
@@ -809,6 +816,7 @@ class QtJarvisBarOverlay:
                 drop_visual,
                 self._prompt_mode,
                 self._prompt_mode_paused,
+                connected is not None,
             )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
@@ -840,6 +848,7 @@ class QtJarvisBarOverlay:
                 prompt_mode_paused=self._prompt_mode_paused,
                 drop_state=drop_visual,
                 drop_elapsed=now - self._drop_visual_t0,
+                connected_elapsed=connected,
             )
             rgba_frame = renderer.key_to_alpha(pil_frame)
             input_mask_key = rgba_frame.getchannel("A").tobytes()

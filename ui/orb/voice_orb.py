@@ -117,6 +117,10 @@ class Motion:
 #:   shimmering as though it were still hearing something.
 #: * ``notice`` — something the user asked for did not happen. Quiet and dim,
 #:   clearly awake but clearly not listening.
+#: * ``connect`` — the call is accepted and the realtime transport negotiates.
+#:   The field gathers and slowly turns while a comet circles the sphere (the
+#:   loading loop, ``_spinner_layer``); when the call connects, one bright ring
+#:   leaves the sphere before the listening weather takes over.
 MOTIONS: dict[str, Motion] = {
     "idle": Motion(0.025, 0.008, 0.004, 0.14, 0.8, 0.86, 0.0, 0.28),
     "listen": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0, 0.34),
@@ -129,15 +133,17 @@ MOTIONS: dict[str, Motion] = {
     "dictate": Motion(0.11, 0.035, 0.016, 0.72, 1.02, 0.98, 0.0, 0.34),
     "dictate_transcribing": Motion(0.95, -0.44, 0.010, 0.34, 1.85, 1.08, 0.0, 1.45),
     "notice": Motion(0.012, 0.0, 0.003, 0.12, 0.7, 0.72, 0.0, 0.28),
+    "connect": Motion(0.42, 0.18, 0.022, 0.55, 1.25, 0.9, 0.0, 0.6),
 }
 
-#: Modes that react to a live level. ``speak`` is here because the bridge
+#: Modes that react to a live level. ``connect`` is here because the opening
+#: words are captured while the transport negotiates. ``speak`` is here because the bridge
 #: forwards the REAL TTS loudness through ``set_level`` while Jarvis talks
 #: (``OrbBridge._note_tts_level``); using it means the orb swells on the actual
 #: voice instead of a synthetic cadence that only looks like speech. Every
 #: other mode ignores ``ext_level`` outright, so a stale sample cannot animate
 #: the orb while nothing is being heard.
-_LEVEL_REACTIVE = frozenset({"listen", "dictate", "speak"})
+_LEVEL_REACTIVE = frozenset({"listen", "dictate", "speak", "connect"})
 
 #: Floor under the dictation level: a quiet moment while recording must still
 #: read as "I am listening", never as a dead orb.
@@ -176,6 +182,22 @@ _WAVE_PERIOD_S = 1.35
 _WAVE_TRAVEL_S = 1.05
 #: Wave ring thickness, as a fraction of the half-window.
 _WAVE_WIDTH = 0.055
+# --- Connecting loop ----------------------------------------------------------
+#: One turn of the comet around the sphere, in seconds.
+_SPIN_PERIOD_S = 1.15
+#: The comet's tail, as a share of the full circle.
+_SPIN_TAIL = 0.42
+#: Gap between the sphere's edge and the comet's path, and the path's
+#: thickness, as fractions of the half-window.
+_SPIN_GAP = 0.08
+_SPIN_WIDTH = 0.075
+#: The "connected" ring: how long it travels outward and its thickness.
+_CONNECTED_S = 0.7
+_CONNECTED_WIDTH = 0.07
+#: Modes that count as a live call after ``connect`` (the ring plays on the
+#: change to one of them).
+_CALL_MODES = frozenset({"listen", "think", "speak"})
+
 #: Ordered-dither cell. 8x8 is fine enough that the pattern reads as texture
 #: rather than as a grid, and cheap enough to tile across a 216² window.
 _DITHER_N = 8
@@ -326,6 +348,9 @@ class VoiceOrbRenderer:
         self._speaking_age = math.inf
         self._live_impact = 0.0
         self._live_input = 0.0
+        #: Seconds since the call connected while the "connected" ring plays;
+        #: ``inf`` when it is not playing.
+        self._connected_age = math.inf
         self._field_due_t = -math.inf
         self._texture: Image.Image | None = None
         self._masks: dict[int, Image.Image] = {}
@@ -351,6 +376,10 @@ class VoiceOrbRenderer:
         self._last_t = t
 
         if mode != self._active_mode:
+            if self._active_mode == "connect" and mode in _CALL_MODES:
+                self._connected_age = 0.0
+            elif mode == "connect" or mode not in _CALL_MODES:
+                self._connected_age = math.inf
             self._active_mode = mode
             self._speaking_age = 0.0 if mode == "speak" else math.inf
 
@@ -371,6 +400,10 @@ class VoiceOrbRenderer:
         self._activity_elapsed += dt
         if math.isfinite(self._speaking_age):
             self._speaking_age += dt
+        if math.isfinite(self._connected_age):
+            self._connected_age += dt
+            if self._connected_age >= _CONNECTED_S:
+                self._connected_age = math.inf
 
         # Speech choreography. When the host forwards a REAL output level the
         # sphere follows that; the synthetic cadence is only the fallback for a
@@ -416,7 +449,13 @@ class VoiceOrbRenderer:
             energy = max(energy, 0.42 + 0.30 * math.sin(self._aura_elapsed * 3.1))
         elif mode == "speak":
             energy = max(energy, self._live_impact * 6.0)
-        return self._compose(self._texture, radius, min(1.0, max(0.0, energy)))
+        elif mode == "connect":
+            # A low, steady glow under the comet: awake, getting through.
+            energy = max(energy, 0.22 + 0.08 * math.sin(self._aura_elapsed * 2.4))
+        frame = self._compose(self._texture, radius, min(1.0, max(0.0, energy)))
+        if mode == "connect" or math.isfinite(self._connected_age):
+            self._draw_connect_ring(frame, radius, mode == "connect")
+        return frame
 
     # Compatibility no-ops: the overlay drives mascot-only expressions through
     # these. Answering them here (instead of leaving them to fail) keeps the
@@ -608,6 +647,46 @@ class VoiceOrbRenderer:
         layer[visible, 1] = (LOWER[1] + (MID[1] - LOWER[1]) * amount).astype(np.uint8)
         layer[visible, 2] = (LOWER[2] + (MID[2] - LOWER[2]) * amount).astype(np.uint8)
         return layer
+
+    def _draw_connect_ring(self, frame: Image.Image, radius: float, connecting: bool) -> None:
+        """The loading comet around the sphere, or the "connected" ring leaving it.
+
+        Painted straight into the colour-keyed frame with the aura's density
+        trick: the tail thins by dropping pixels against the fixed dither
+        field, never by alpha the window cannot carry. Only pixels outside the
+        sphere are touched, so the field itself stays untouched.
+        """
+        half = max(1.0, self._size / 2.0)
+        inner = radius / half
+        field = self._pixel_radius
+        if connecting:
+            path_r = min(_AURA_REACH - _SPIN_WIDTH, inner + _SPIN_GAP)
+            band = np.clip(1.0 - np.abs(field - path_r) / _SPIN_WIDTH, 0.0, 1.0)
+            # Clockwise from 12 o'clock: 0 at the head, growing along the tail.
+            angle = (self._pixel_angle + math.pi / 2.0) / (2.0 * math.pi)
+            head = (self._aura_elapsed / _SPIN_PERIOD_S) % 1.0
+            behind = (head - angle) % 1.0
+            tail = np.clip(1.0 - behind / _SPIN_TAIL, 0.0, 1.0)
+            strength = band * tail**1.2 * 1.6
+            bright = CREST
+            dim = LOWER
+        else:
+            travel = min(1.0, self._connected_age / _CONNECTED_S)
+            ring_r = inner + (_AURA_REACH - inner) * (0.15 + 0.85 * travel)
+            band = np.clip(1.0 - np.abs(field - ring_r) / _CONNECTED_WIDTH, 0.0, 1.0)
+            strength = band * (1.0 - travel) * 1.3
+            bright = CLOUD
+            dim = MID
+        visible = (field > inner) & (strength > self._dither_field)
+        if not visible.any():
+            return
+        pixels = np.asarray(frame).copy()
+        amount = np.clip(strength[visible], 0.0, 1.0)[:, None]
+        tone = np.array(dim, dtype=np.float32) + (
+            np.array(bright, dtype=np.float32) - np.array(dim, dtype=np.float32)
+        ) * amount
+        pixels[visible] = np.clip(np.round(tone), 0, 255).astype(np.uint8)
+        frame.paste(Image.fromarray(pixels, "RGB"))
 
     def _compose(self, texture: Image.Image, radius: float, energy: float = 0.0) -> Image.Image:
         diameter = max(2, int(round(radius * 2.0)))

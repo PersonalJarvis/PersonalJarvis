@@ -33,7 +33,11 @@ one click.
     three, each a light-blue sky with soft white clouds in it): start a conversation, or hang up the running one. The
     strokes stand still and dimmed at rest, follow the live audio level while
     listening, dictating or talking, and carry a travelling highlight while
-    thinking or transcribing;
+    thinking or transcribing. While a realtime call is still connecting
+    (`SystemStateChanged(CONNECTING)`) a comet circles the strokes — the
+    loading loop — while they hop as dots and still follow the voice; once
+    the provider takes the call the ring closes, flares green and fades into
+    the listening look. The Jarvis Bar shows the same loop;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thought bubble** above the pet's head while Jarvis thinks, drawn in
@@ -148,7 +152,7 @@ equal.
 |---|---|
 | `idle` | `SystemStateChanged(IDLE)`, no session |
 | `listening` | wake word, `VoiceSessionStarted`, `SystemStateChanged(LISTENING)`, dictation |
-| `thinking` | `SystemStateChanged(THINKING)` |
+| `thinking` | `SystemStateChanged(THINKING)`; also `SystemStateChanged(CONNECTING)` while a realtime call connects (the pet nods once it is connected) |
 | `talking` | `AudioOutFirst`, `SystemStateChanged(SPEAKING)` with audible output |
 | `success` (one-shot, 1.5 s) | `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)`, `ActionExecuted(success=True)` while no turn is running |
 | `error` (one-shot, 2 s) | `ErrorOccurred(recoverable=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")`, `ActionExecuted(success=False)` while no turn is running |
@@ -352,6 +356,6 @@ The pet must cost next to nothing while idle:
 - the window repaints only when the frame key changes (frame index, plus the
   level bucket while talking), and the timer sleeps until the next frame
   boundary: 6 fps idle, 3 fps asleep, 8–10 fps active, nothing while hidden;
-- the control strip's indicator animates only while listening, talking or thinking.
+- the control strip's indicator animates only while connecting, listening, talking or thinking.
 
 Target: an idle pet adds less than 1 % of one CPU core to the app process.

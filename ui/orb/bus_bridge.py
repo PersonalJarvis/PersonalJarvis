@@ -1588,7 +1588,7 @@ class OrbBusBridge:
         # ``log.debug`` behind it: the shortcut did nothing, visibly or
         # otherwise, until the app was restarted. Suppressed states must not
         # resurrect the mirror any more than they resurrect the mascot.
-        if state == "LISTENING":
+        if state in ("CONNECTING", "LISTENING"):
             # An authoritative supervisor edge can arrive after a late bridge
             # attach even if VoiceSessionStarted itself was missed.
             self._voice_session_active = True
@@ -1630,9 +1630,18 @@ class OrbBusBridge:
             # stands it down when the call ended in the meantime.
             return
 
-        if state == "LISTENING":
+        if state == "CONNECTING":
+            # The call is accepted and the realtime transport is negotiating:
+            # the loading loop runs until the provider takes the session. The
+            # opening words are buffered meanwhile, so the transcript bubble
+            # stays as it is; the LISTENING that follows opens a fresh one.
+            self._orb.show(mode="connect")
+            self._cancel_idle_scheduler()
+        elif state == "LISTENING":
             self._orb.show(mode="listen")
-            if prev_state in ("IDLE", "ERROR", "PAUSED"):
+            if prev_state in ("IDLE", "ERROR", "PAUSED", "CONNECTING"):
+                # After CONNECTING this is the "connected" greeting: the bar
+                # and the pet strip play their flourish, the pet nods.
                 self._orb.play_animation("wave")
             # The pulsing listen-mode already signals "I'm hearing you"
             # visually. The bubble starts empty and fills with the live
@@ -2156,6 +2165,8 @@ class OrbBusBridge:
         ``renderer.visual_mode``), not the state label.
         """
         state = self._last_state
+        if state == "CONNECTING":
+            return "connect"
         if state in ("LISTENING", "WAITING_FOR_COMPLETION"):
             return "listen"
         if state in ("THINKING", "SPEAKING"):
