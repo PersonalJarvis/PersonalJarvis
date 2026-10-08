@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -536,20 +537,20 @@ async def stop_appshot_shortcut() -> None:
     """Release the native helpers before the backend event loop closes."""
     global _shortcut
     shortcut, _shortcut = _shortcut, None
+    # A helper whose module was never imported never started: shutdown must
+    # not import (and initialize) it just to find nothing to close.
+    picker_host = sys.modules.get("jarvis.appshot.picker_host")
     if shortcut is not None:
         await shortcut.stop()
-    else:
-        from jarvis.appshot.picker_host import close_picker_host
-
-        await close_picker_host()
-    from jarvis.cu.indicator.controller import get_indicator_controller
-
-    controller = get_indicator_controller()
+    elif picker_host is not None:
+        await picker_host.close_picker_host()
+    indicator = sys.modules.get("jarvis.cu.indicator.controller")
+    controller = indicator.get_indicator_controller() if indicator is not None else None
     if controller is not None:
         await controller.close()
-    from jarvis.appshot.recording import close_recording_service
-
-    await close_recording_service()
+    recording = sys.modules.get("jarvis.appshot.recording")
+    if recording is not None:
+        await recording.close_recording_service()
 
 
 __all__ = [
