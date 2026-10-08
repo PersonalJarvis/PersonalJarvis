@@ -168,7 +168,7 @@ class RequestCredentialTool:
             request_id = await service.open_credential_request(
                 self._session_id, spec, save, asker=self._asker()
             )
-        except TooManyCredentialRequests as exc:
+        except TooManyCredentialRequests as exc:  # Return the limit as the tool's visible error.
             return ToolResult(
                 success=False,
                 output={"status": "limit", "env": env},

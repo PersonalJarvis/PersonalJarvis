@@ -118,7 +118,7 @@ async def send_or_queue(
         pending.starting = True
         try:
             turn_id = await svc.send(session_id, text, attachments, tool_choices=tool_choices)
-        except SessionBusy:
+        except SessionBusy:  # The expected occupied seat becomes a visible queued message below.
             first = True
         else:
             return turn_id, ""
