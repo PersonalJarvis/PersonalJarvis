@@ -689,6 +689,46 @@ def test_train_resolver_runs_between_merge_and_finish(tmp_path, repo, monkeypatc
     assert any(call[:2] == ("pr", "comment") for call in fake.calls)
 
 
+def test_push_rejections_are_told_apart():
+    github = (
+        "! [remote rejected] abc -> claude/x (refusing to allow a GitHub App to create or "
+        "update workflow `.github/workflows/ci.yml` without `workflows` permission)"
+    )
+    assert agent_integrate.push_rejection(github) == "workflows"
+    assert agent_integrate.push_rejection("! [rejected] abc -> x (non-fast-forward)") == "moved"
+
+
+def test_a_workflow_permission_refusal_is_reported_once(tmp_path, repo, monkeypatch):
+    origin, integrate, applier, plan = _origin_with_feature(
+        tmp_path,
+        repo,
+        {"CHANGELOG.md": "# Changelog\n\n- main entry\n- base\n"},
+        {"CHANGELOG.md": "# Changelog\n\n- branch entry\n- base\n"},
+    )
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow "
+        "`.github/workflows/ci.yml` without `workflows` permission' >&2\nexit 1\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    hook.chmod(0o755)
+    work = tmp_path / "train"
+    agent_integrate.integrate_merge(work, plan, integrate)
+    agent_integrate.integrate_finish(work, plan)
+    agent_integrate.cleanup_worktrees(work, integrate)
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    outcome = agent_integrate.apply_update(work, plan, plan["entries"][0], False, applier)
+    assert "workflows" in outcome, outcome
+    assert any(c[:2] == ("pr", "comment") for c in fake.calls)
+    told = {**plan["entries"][0], "labels": ["needs-rebase"]}
+    quiet = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", quiet)
+    agent_integrate.apply_update(work, plan, told, False, applier)
+    assert not quiet.calls  # already labelled: no comment on every tick
+
+
 def test_train_reports_a_conflict_without_a_resolver(tmp_path, repo, monkeypatch):
     origin, integrate, applier, plan = _origin_with_feature(
         tmp_path, repo, {"app.py": "VALUE = 2\n"}, {"app.py": "VALUE = 3\n"}
@@ -749,6 +789,20 @@ def test_apply_enqueues_green_pull_requests_and_reports_the_rest(tmp_path, monke
     assert not any(c[:2] == ("pr", "merge") or c[:2] == ("workflow", "run") for c in fake.calls)
 
 
+def test_apply_reruns_only_the_failed_jobs_of_a_cancelled_run(tmp_path, monkeypatch):
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    plan = {
+        "repo": "example/project",
+        "main": "m" * 40,
+        "queue": True,
+        "entries": [{"number": 1, "branch": "claude/a", "head": "a" * 40, "id": "PR_a",
+                     "action": "rerun", "run_id": 77}],
+    }
+    agent_integrate.apply(tmp_path, plan, False, True)
+    assert ("run", "rerun", "77", "--failed", "--repo", "example/project") in fake.calls
+
+
 def test_apply_without_a_queue_merges_directly_and_pins_the_head(tmp_path, monkeypatch):
     fake = _FakeGh()
     monkeypatch.setattr(agent_integrate, "gh", fake)
@@ -763,7 +817,8 @@ def test_apply_without_a_queue_merges_directly_and_pins_the_head(tmp_path, monke
     agent_integrate.apply(tmp_path, plan, False, True)
     merge = next(c for c in fake.calls if c[:2] == ("pr", "merge"))
     assert merge[-2:] == ("--match-head-commit", "a" * 40) and "--squash" in merge
-    assert ("workflow", "run", "ci.yml", "--ref", "main", "-f", "full=false") in fake.calls
+    dispatch = ("workflow", "run", "ci.yml", "--ref", "main", "-f", "full=false")
+    assert dispatch + ("-f", "include_macos=false") in fake.calls  # no macOS lanes per merge
 
 
 # --------------------------------------------------------------------------- release

@@ -53,7 +53,6 @@ __all__ = [
     "Roster",
     "RosterError",
     "PAIR_SESSION_MARKER",
-    "FRESH_NAMES",
     "canonical_session_id",
     "conversation_session_id",
     "is_fresh",
@@ -67,13 +66,8 @@ _NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[^/\\:@#<>\"'`]{1,40}$")
 _MAX_TITLE: Final[int] = 120
 _MAX_DESCRIPTION: Final[int] = 20_000
 
-#: Placeholder names for an agent created with one click. Short, neutral and
-#: readable in every UI language; the agent proposes its real name in its
-#: first conversation.
-FRESH_NAMES: Final[tuple[str, ...]] = (
-    "Nova", "Juno", "Iris", "Kite", "Lumen", "Sage", "Vega", "Wren", "Orion", "Milo",
-    "Luna", "Finn", "Mira", "Otto", "Ruby", "Theo", "Zara", "Ivy", "Leo", "Nia",
-)
+#: A visibly temporary name; the agent chooses its identity in conversation.
+_FRESH_NAME: Final[str] = "New Bot"
 
 
 class RosterError(ValueError):
@@ -552,16 +546,13 @@ class Roster:
         self._epoch += 1
 
     async def _placeholder_name(self) -> str:
-        """A free name from :data:`FRESH_NAMES`, else ``Agent <n>``."""
-        pool = list(FRESH_NAMES)
-        secrets.SystemRandom().shuffle(pool)
-        for candidate in pool:
-            if await self._store.get_agent_row_by_name(candidate) is None:
-                return candidate
+        """Use ``New Bot``, adding a number when another agent holds it."""
+        candidate = _FRESH_NAME
         number = 2
-        while await self._store.get_agent_row_by_name(f"Agent {number}") is not None:
+        while await self._store.get_agent_row_by_name(candidate) is not None:
+            candidate = f"{_FRESH_NAME} {number}"
             number += 1
-        return f"Agent {number}"
+        return candidate
 
     async def _fresh_agent_id(self) -> str:
         while True:
