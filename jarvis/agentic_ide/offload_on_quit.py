@@ -11,7 +11,8 @@ and a move that could not finish leaves the pane where it was (the placement
 is recorded only after the move completed).
 
 A Windows computer is never a target: it has no tmux, so its panes end with
-the app's SSH connection (``jarvis.computers.remote_terminal``).
+the app's SSH connection (``jarvis.computers.remote_terminal``). Neither is a
+computer the user switched off: nothing connects to it.
 """
 
 from __future__ import annotations
@@ -60,6 +61,13 @@ def _is_windows(computer_id: str) -> bool:
     return facts is not None and facts.os_id == "windows"
 
 
+def _is_switched_off(computer_id: str) -> bool:
+    from jarvis.computers.store import ComputerStore
+
+    computer = ComputerStore().get(computer_id)
+    return computer is not None and not computer.enabled
+
+
 async def offload_before_quit(registry: Any) -> list[str]:
     """Move every workspace with a locally running agent. Returns their ids."""
     computer_id = target()
@@ -72,6 +80,9 @@ async def offload_before_quit(registry: Any) -> list[str]:
             "Agentic IDE: not moving panes on quit — {} runs Windows, where they would stop",
             computer_id,
         )
+        return []
+    if _is_switched_off(computer_id):
+        logger.warning("Agentic IDE: not moving panes on quit — {} is switched off", computer_id)
         return []
     moved: list[str] = []
     for workspace in list(registry.sessions):

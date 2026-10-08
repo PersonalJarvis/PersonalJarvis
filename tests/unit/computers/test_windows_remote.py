@@ -175,8 +175,10 @@ def test_launcher_keeps_every_argument_intact() -> None:
     script = remote_os.launcher_script(host, f"{HOME}/jarvis-agents/scout", argv, {"CI": "1"})
     lines = script.splitlines()
     agent_env = '"$HOME/.config/jarvis/agent.env"'
+    github_env = '"$HOME/.config/jarvis/github.env"'
     assert lines[0] == f"[ -f {agent_env} ] && . {agent_env}"
-    assert lines[1] == f"cd -- {HOME}/jarvis-agents/scout || exit 97"
+    assert lines[1] == f"[ -f {github_env} ] && . {github_env}"
+    assert lines[2] == f"cd -- {HOME}/jarvis-agents/scout || exit 97"
     assert "export CI=1" in lines
     assert "MSYS_NO_PATHCONV=1" in script
     assert "PATH=" not in script, "Git Bash brings the Windows PATH itself"

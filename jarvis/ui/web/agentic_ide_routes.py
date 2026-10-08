@@ -3425,9 +3425,13 @@ def put_offload_on_quit(req: OffloadOnQuitRequest) -> dict:
 
     if req.computer_id:
         try:
-            get_service().get(req.computer_id)
+            chosen = get_service().get(req.computer_id)
         except ComputerError as exc:
             raise HTTPException(status_code=404, detail=exc.message) from exc
+        if not chosen.enabled:
+            raise HTTPException(
+                status_code=409, detail="This computer is switched off. Switch it on first."
+            )
     offload_on_quit.set_target(req.computer_id)
     return {"computer_id": offload_on_quit.target()}
 
