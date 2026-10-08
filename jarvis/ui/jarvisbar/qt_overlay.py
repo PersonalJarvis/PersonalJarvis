@@ -416,14 +416,11 @@ class QtJarvisBarOverlay:
         startup_gated: bool = False,
         size_scale: float = 1.0,
         follow_cursor_monitor: bool = True,
-        user_hidden: bool = False,
     ) -> None:
         self._persistent_flag = bool(persistent)
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))
         self._startup_gated = bool(startup_gated)
-        self._user_hidden = bool(user_hidden)
-        self._on_visibility_changed: Callable[[bool], None] | None = None
         # User "Bar size" preference (multiplied on top of the screen-adaptive
         # scale) + the screen scale captured at start(), so the live "Bar size"
         # slider can re-derive geometry without re-probing the screen.
@@ -535,24 +532,6 @@ class QtJarvisBarOverlay:
     def hide(self) -> None:
         self._desired_visible = False
         self._enqueue_if_started(self._sync_visibility_ui)
-
-    def set_visible(self, visible: bool) -> None:
-        """Remember dismissal independently of voice and idle state updates."""
-        self._user_hidden = not bool(visible)
-        self._desired_visible = bool(visible)
-        self._enqueue_if_started(self._sync_visibility_ui)
-        callback = self._on_visibility_changed
-        if callback is not None:
-            try:
-                callback(not self._user_hidden)
-            except Exception:  # noqa: BLE001
-                log.debug("Qt bar visibility callback failed", exc_info=True)
-
-    def toggle_visible(self) -> None:
-        self.set_visible(self._user_hidden)
-
-    def set_on_visibility_changed(self, callback: Callable[[bool], None] | None) -> None:
-        self._on_visibility_changed = callback
 
     def reassert_z_order(self) -> None:
         if self._startup_gated:
@@ -888,14 +867,14 @@ class QtJarvisBarOverlay:
     def _sync_visibility_ui(self) -> None:
         if self._window is None:
             return
-        if self._desired_visible and not self._startup_gated and not self._user_hidden:
+        if self._desired_visible and not self._startup_gated:
             self._do_show_ui()
         else:
             self._set_hovered_ui(False)
             self._window.hide()
 
     def _do_show_ui(self) -> None:
-        if self._window is None or self._startup_gated or self._user_hidden:
+        if self._window is None or self._startup_gated:
             return
         # Follow mode: a bar popping from hidden should appear on the monitor the
         # mouse is on right now, not wherever it was last shown.
@@ -1350,7 +1329,7 @@ class QtJarvisBarOverlay:
         q = _qt()
         button = event.button()
         if button == q.Qt.MouseButton.RightButton:
-            self.set_visible(False)
+            self._invoke_callback(self._on_show_window, "show-window")
             return True
         if button == q.Qt.MouseButton.MiddleButton:
             self._reset_position_ui()

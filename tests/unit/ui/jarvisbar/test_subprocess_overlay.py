@@ -101,7 +101,6 @@ def test_init_line_carries_the_constructor_config(monkeypatch) -> None:
         "persistent": False,
         "accent": "#123456",
         "startup_gated": True,
-        "user_hidden": False,
         "size_scale": 1.0,
         "follow_cursor_monitor": True,
     }
@@ -440,7 +439,6 @@ def test_host_death_triggers_respawn_and_reapplies_desired_state(
         "persistent": True,
         "accent": "#e7c46e",
         "startup_gated": False,
-        "user_hidden": False,
         "size_scale": 1.0,
         "follow_cursor_monitor": True,
     }
@@ -599,7 +597,6 @@ def test_bar_init_payload_is_unchanged_by_the_mascot_variant(monkeypatch) -> Non
         "persistent": True,
         "accent": "#e7c46e",
         "startup_gated": False,
-        "user_hidden": False,
         "size_scale": 1.0,
         "follow_cursor_monitor": True,
     }

@@ -15,18 +15,6 @@ changes that disappear during settling do not trigger re-initialization.
 Regression tests use fake devices and models on Windows. Ubuntu/PipeWire,
 macOS audio devices and NVIDIA T600 inference have not been verified live.
 
-## Jarvis Bar visibility shortcut (2026-10-08, T2)
-
-Right-click dismisses the whole bar until the existing configurable Pet
-visibility shortcut restores it (default Alt+Win+P, mapped to Option+Command+P
-on macOS). Tk on Windows/Linux and Qt on macOS keep user dismissal independent
-of voice updates and the startup gate. The companion host reports dismissal
-to its parent and restores it before mapping a replacement window. Window-free
-contract tests cover both hosts and the event-bus shortcut. A real Windows Tk
-window was verified through its right-click binding, an intervening voice-mode
-update and restoration through the shortcut's bus event. Physical hotkey input
-and native macOS/Linux window-manager behavior remain unverified.
-
 ## Screenshots paste anywhere (2026-10-05, T2)
 
 Appshots taken by shortcut or button and Jarvis X screenshots go on the
