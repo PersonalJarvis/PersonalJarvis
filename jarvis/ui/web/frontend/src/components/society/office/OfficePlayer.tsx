@@ -170,6 +170,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   // Arrive by the elevator once per app run; coming back to the map keeps the
   // character where it was, unless a changed floor plan put that spot in a wall.
   useEffect(() => {
+    if (!awake) return;
     player.path = []; player.moving = false;
     if (officeSession.playerPlaced && isWalkable(grid, player)) return;
     const start = (officeSession.playerPlaced ? nearestWalkable(grid, player) : null)
@@ -177,7 +178,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     player.x = start.x; player.z = start.z;
     if (!officeSession.playerPlaced) player.heading = Math.PI;
     officeSession.playerPlaced = true;
-  }, [grid, layout.spawn]);
+  }, [grid, layout.spawn, awake]);
 
   useFrame((_, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
