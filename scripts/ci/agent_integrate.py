@@ -874,8 +874,8 @@ _WORKFLOWS_BODY = (
     "The merge train merged `main` into this branch, but could not push the result: "
     "`main` changed files under `.github/workflows/`, and the train's `GITHUB_TOKEN` "
     "may not push workflow changes. Merge `main` into this branch yourself (for example "
-    "`python scripts/agent_land.py --pr`), or give the repository an `INTEGRATION_TOKEN` "
-    "secret with workflow write access."
+    "`python scripts/agent_land.py --pr`), or configure the merge bot app "
+    "(`MERGE_APP_ID`), whose token may push workflow changes."
 )
 
 
@@ -977,6 +977,13 @@ def apply(root: Path, data: dict, dry_run: bool, token_is_bot: bool) -> int:
             except (subprocess.CalledProcessError, OSError) as exc:
                 outcome = f"update push crashed ({type(exc).__name__}); left for the next tick"
             summary.append(f"#{number}: {outcome}")
+        elif action == "merge" and data.get("queue") and token_is_bot:
+            # GitHub starts no merge_group run for an entry GITHUB_TOKEN added:
+            # it would wait in the queue until the timeout and block the rest.
+            summary.append(
+                f"#{number}: green, not enqueued - the merge queue needs the merge bot "
+                "token (MERGE_APP_ID); add it to the queue by hand meanwhile"
+            )
         elif action == "merge" and data.get("queue"):
             if dry_run:
                 summary.append(f"#{number}: would join the merge queue")
@@ -1013,7 +1020,7 @@ def apply(root: Path, data: dict, dry_run: bool, token_is_bot: bool) -> int:
             else:
                 summary.append(
                     f"#{number}: could not {action} CI run {run_id} - approve it in the "
-                    "Actions tab or set the INTEGRATION_TOKEN secret"
+                    "Actions tab or configure the merge bot app (MERGE_APP_ID)"
                 )
         elif action == "queued":
             summary.append(f"#{number}: in the merge queue")

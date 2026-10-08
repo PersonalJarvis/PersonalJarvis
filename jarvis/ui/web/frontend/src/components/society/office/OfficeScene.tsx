@@ -59,8 +59,9 @@ const PLAYER_OWNER = { current: playerBody };
  * before the player controller checks its spot; it repeats for every rebuilt
  * plan until the floor's roster has loaded, then the arrival is done.
  */
-function FloorArrival({ floor, layout, grid, ready }: { floor: OfficeFloor; layout: OfficeLayout; grid: NavGrid; ready: boolean }) {
+function FloorArrival({ floor, layout, grid, ready, awake }: { floor: OfficeFloor; layout: OfficeLayout; grid: NavGrid; ready: boolean; awake: boolean }) {
   useLayoutEffect(() => {
+    if (!awake) return;
     const arrival = officeSession.arrival;
     if (!arrival || arrival.floor !== floor) return;
     const pose = arrivalPose(layout, arrival.at, officeSession.floors[floor]);
@@ -69,7 +70,7 @@ function FloorArrival({ floor, layout, grid, ready }: { floor: OfficeFloor; layo
     playerBody.path = []; playerBody.moving = false;
     officeSession.playerPlaced = true;
     if (ready) officeSession.arrival = null;
-  }, [floor, layout, grid, ready]);
+  }, [floor, layout, grid, ready, awake]);
   return null;
 }
 
@@ -122,7 +123,7 @@ function SharedFloorParts({ floor, layout, grid, ready, awake, reduced, player, 
         <ElevatorCallButton shaft={shaft} floor={floor} lit={elevatorCall.lit} animate={awake && !reduced}
           near={atLift} hint={atLift && !elevatorCall.picking} onPress={elevatorCall.onPress} />
       )}
-      <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
+      <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} awake={awake} />
       <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
       <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
     </>
@@ -225,7 +226,7 @@ function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awak
         : <LiveMonitors desks={desks} agents={agents} chats={chats} onOpen={onOpenScreen} />}
       {layout.furniture.map((item) => <FurniturePiece key={item.id} item={item} />)}
       {table && <MeetingChairs table={table} />}
-      {board && <TeamBoardFace board={board} enabled={floor === "agents"} />}
+      {board && <TeamBoardFace board={board} enabled={awake && floor === "agents"} />}
       {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
       {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}

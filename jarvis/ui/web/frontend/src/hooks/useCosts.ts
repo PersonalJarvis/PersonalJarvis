@@ -326,9 +326,10 @@ export function costDailyQueryOptions(filters: CostFilters) {
   };
 }
 
-export function useCostSummary(filters: CostFilters) {
+export function useCostSummary(filters: CostFilters, enabled = true) {
   return useQuery({
     ...costSummaryQueryOptions(filters),
+    enabled,
     // Spend only moves when a turn finishes, and this is the most expensive
     // read in the app. At thirty seconds a slow answer was still in flight
     // when the next poll fired, so the section spent its whole life queueing

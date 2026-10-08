@@ -15,7 +15,8 @@
  *    the desk monitors use. Mounting the real IDE would attach a second xterm
  *    to every PTY and resize the user's live terminals to monitor size.
  */
-import { Suspense, lazy, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, lazy, useContext, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { Html } from "@react-three/drei";
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
@@ -242,9 +243,16 @@ const SECTIONS: Record<MonitorSection, () => ReactNode> = {
 };
 
 /** `section`, live, on a monitor `widthM` metres wide whose glass sits at `position`. */
-export function MissionLiveScreen({ section, widthM, position }: {
+type MissionLiveScreenProps = {
   section: MonitorSection; widthM: number; position: [number, number, number];
-}) {
+};
+
+export function MissionLiveScreen(props: MissionLiveScreenProps) {
+  const active = useContext(CanvasActivity);
+  return active ? <ActiveMissionLiveScreen {...props} /> : null;
+}
+
+function ActiveMissionLiveScreen({ section, widthM, position }: MissionLiveScreenProps) {
   // drei renders <Html> content in a separate React root: the app's data client
   // must be handed over, or the sections' queries throw and the screen stays blank.
   const client = useQueryClient();

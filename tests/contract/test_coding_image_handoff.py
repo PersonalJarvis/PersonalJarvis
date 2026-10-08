@@ -370,7 +370,7 @@ async def test_remote_session_gets_verified_remote_bytes(delivery, monkeypatch, 
         assert path in "".join(text for _, text in registry._pty.writes)
 
 
-async def test_changed_image_selection_is_a_new_assignment(delivery):
+async def test_changed_image_selection_is_a_new_assignment(delivery, monkeypatch):
     tool, registry, ctx = delivery
     store = image_references.get_store()
     refs = [
@@ -383,6 +383,12 @@ async def test_changed_image_selection_is_a_new_assignment(delivery):
     # A finished CLI is ready for a second independent work order.
     term.transcript.feed("\x1b[2J\x1b[H❯ ")
     term.last_submit_at = None
+    # A still screen alone cannot prove completion to automatic selection.
+    from jarvis.agentic_ide import task_state
+
+    monkeypatch.setattr(task_state, "_read", lambda key, now: task_state.Evidence(
+        "completed", now, now,
+    ))
     reused = await tool.execute({**args, "image_refs": [refs[1]]}, ctx)
     assert not reused.success  # A spent request ID cannot authorize different bytes.
     second, _ = await assignment(delivery, ctx, "send", [refs[1]])
