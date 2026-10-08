@@ -79,8 +79,8 @@ async def test_only_the_priority_marks_are_writable() -> None:
         path = getattr(route, "path", "")
         if path in ("/api/ops/briefing/preview", "/api/ops/notify/simulate"):
             assert methods == {"POST"}
-        elif path == "/api/ops/notify/settings":
-            assert methods <= {"GET", "HEAD", "PUT"}  # the person's opt-in
+        elif path in ("/api/ops/notify/settings", "/api/ops/morning/settings"):
+            assert methods <= {"GET", "HEAD", "PUT"}  # the person's own switches
         elif methods - {"GET", "HEAD"}:
             assert path.startswith("/api/ops/priorities/"), path
         else:

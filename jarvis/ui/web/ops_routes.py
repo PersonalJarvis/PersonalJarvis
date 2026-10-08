@@ -19,6 +19,10 @@ subscription or a local model; the deterministic text is always returned.
 until the person opts in, and for now a SIMULATED Telegram transport only —
 ``POST /api/ops/notify/simulate`` records what would be sent and opens no
 connection, reads no token and needs no chat id.
+
+``/api/ops/morning/settings`` switches the automatic morning briefing
+(``jarvis/ops/morning.py``): off by default; on keeps ONE recurring task in
+the existing task scheduler, off pauses it. Delivery stays simulated.
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from jarvis.ops.briefing import (
     phrase_briefing,
 )
 from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
+from jarvis.ops.morning import MorningSettings, MorningStore, apply_schedule, validate_settings
 from jarvis.ops.notify import (
     NOTIFICATION_KINDS,
     NotifyStore,
@@ -55,8 +60,8 @@ router = APIRouter(prefix="/api/ops", tags=["ops"])
 PRIORITY_DB_NAME = "ops.sqlite"
 
 
-def _ledger(request: Request) -> WorkLedger:
-    state = request.app.state
+def ledger_for_state(state: Any) -> WorkLedger:
+    """The read-only ledger over whatever stores *state* (``app.state``) holds."""
     return WorkLedger(
         missions=lambda: getattr(state, "mission_manager", None),
         tasks=lambda: getattr(state, "task_store", None),
@@ -66,32 +71,57 @@ def _ledger(request: Request) -> WorkLedger:
     )
 
 
-def _ops_db_path(request: Request, what: str) -> Path:
-    config = getattr(request.app.state, "config", None)
+def _ledger(request: Request) -> WorkLedger:
+    return ledger_for_state(request.app.state)
+
+
+def ops_db_path_for_state(state: Any) -> Path | None:
+    """The Ops core's own SQLite file under the data dir, or None without one."""
+    config = getattr(state, "config", None)
     data_dir = getattr(getattr(config, "memory", None), "data_dir", None)
-    if not data_dir:
+    return Path(data_dir) / PRIORITY_DB_NAME if data_dir else None
+
+
+def _cached_store(state: Any, attribute: str, factory: Any) -> Any:
+    """A store on *state*, created on first use (nothing opens on boot)."""
+    store = getattr(state, attribute, None)
+    if store is None:
+        path = ops_db_path_for_state(state)
+        if path is None:
+            return None
+        store = factory(path)
+        setattr(state, attribute, store)
+    return store
+
+
+def priority_store_for_state(state: Any) -> OpsPriorityStore | None:
+    return _cached_store(state, "ops_priority_store", OpsPriorityStore)
+
+
+def notify_store_for_state(state: Any) -> NotifyStore | None:
+    return _cached_store(state, "ops_notify_store", NotifyStore)
+
+
+def morning_store_for_state(state: Any) -> MorningStore | None:
+    return _cached_store(state, "ops_morning_store", MorningStore)
+
+
+def _required(store: Any, what: str) -> Any:
+    if store is None:
         raise HTTPException(status_code=503, detail=f"{what} not available")
-    return Path(data_dir) / PRIORITY_DB_NAME
+    return store
 
 
 def _priority_store(request: Request) -> OpsPriorityStore:
-    """The marks store, created on first use (nothing opens on boot)."""
-    state = request.app.state
-    store = getattr(state, "ops_priority_store", None)
-    if store is None:
-        store = OpsPriorityStore(_ops_db_path(request, "Priority store"))
-        state.ops_priority_store = store
-    return store
+    return _required(priority_store_for_state(request.app.state), "Priority store")  # type: ignore[no-any-return]
 
 
 def _notify_store(request: Request) -> NotifyStore:
-    """Opt-in settings and delivery log, created on first use."""
-    state = request.app.state
-    store = getattr(state, "ops_notify_store", None)
-    if store is None:
-        store = NotifyStore(_ops_db_path(request, "Notification store"))
-        state.ops_notify_store = store
-    return store
+    return _required(notify_store_for_state(request.app.state), "Notification store")  # type: ignore[no-any-return]
+
+
+def _morning_store(request: Request) -> MorningStore:
+    return _required(morning_store_for_state(request.app.state), "Morning briefing store")  # type: ignore[no-any-return]
 
 
 def _today() -> date:
@@ -201,17 +231,16 @@ class BriefingPreviewBody(BaseModel):
 BRIEFING_ITEM_LIMIT = 200
 
 
-def _briefing_composer(request: Request) -> BriefingComposer:
-    state = request.app.state
-    ledger = _ledger(request)
+def briefing_composer_for_state(state: Any) -> BriefingComposer:
+    """The briefing over *state*'s stores, marks, calendar tool and profile."""
+    ledger = ledger_for_state(state)
 
     async def _snapshot() -> Any:
         return await ledger.snapshot(include_finished=True, limit=BRIEFING_ITEM_LIMIT)
 
     async def _marks() -> list[PriorityMark]:
-        try:
-            store = _priority_store(request)
-        except HTTPException:
+        store = priority_store_for_state(state)
+        if store is None:
             return []  # no data dir: the briefing simply carries no marks
         return await store.all()
 
@@ -232,6 +261,10 @@ def _briefing_composer(request: Request) -> BriefingComposer:
         ),
         address=_address,
     )
+
+
+def _briefing_composer(request: Request) -> BriefingComposer:
+    return briefing_composer_for_state(request.app.state)
 
 
 @router.post("/briefing/preview")
@@ -318,3 +351,68 @@ async def notify_outbox(
     """What was (simulated as) sent, failed or given up — newest first."""
     rows = await _notify_store(request).outbox(limit)
     return {"items": outbox_dicts(rows)}
+
+
+# ------------------------------------------------------------------ morning
+
+
+@router.get("/morning/settings")
+async def get_morning_settings(request: Request) -> dict[str, Any]:
+    """The automatic morning briefing (off by default)."""
+    settings = await _morning_store(request).settings()
+    return {**settings.to_dict(), "notifications": await _notify_summary(request)}
+
+
+async def _notify_summary(request: Request) -> dict[str, Any]:
+    settings = await _notify_store(request).settings()
+    return {"enabled": settings.enabled, "daily_briefing": "daily_briefing" in settings.kinds}
+
+
+class MorningSettingsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    local_time: str = Field(default="07:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    timezone: str | None = Field(
+        default=None, description="IANA timezone, e.g. Europe/Berlin; required to switch on"
+    )
+    language: str | None = Field(default=None, description="en, de, es or zh; default UI language")
+    include_calendar: bool = True
+
+
+@router.put("/morning/settings")
+async def set_morning_settings(request: Request, body: MorningSettingsBody) -> dict[str, Any]:
+    """Switch the automatic morning briefing on or off and set its time."""
+    state = request.app.state
+    store = _morning_store(request)
+    current = await store.settings()
+    timezone = body.timezone or current.timezone
+    if body.enabled and not timezone:
+        raise HTTPException(status_code=400, detail="timezone is required to switch on")
+    scheduler = getattr(state, "task_scheduler", None)
+    task_store = getattr(state, "task_store", None)
+    if scheduler is None or task_store is None:
+        raise HTTPException(status_code=503, detail="The task scheduler is unavailable")
+    config = getattr(state, "config", None)
+    language = normalize_language(
+        body.language or current.language or getattr(getattr(config, "ui", None), "language", None)
+    )
+    settings = MorningSettings(
+        enabled=body.enabled,
+        local_time=body.local_time,
+        timezone=timezone,
+        language=language,
+        include_calendar=body.include_calendar,
+    )
+    try:
+        validate_settings(settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # The scheduler first: settings never say "on" without the task behind them.
+    task_id = await apply_schedule(settings, scheduler=scheduler, store=task_store)
+    saved = await store.save(settings)
+    return {
+        **saved.to_dict(),
+        "task_id": task_id,
+        "notifications": await _notify_summary(request),
+    }
