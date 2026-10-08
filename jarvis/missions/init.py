@@ -349,13 +349,13 @@ def _connected_native_worker_tools(task_text: str) -> tuple[str, ...]:
     names or semantically matches that connector.  Any store/catalog fault
     fails closed for that connector rather than granting a phantom tool.
     """
+    selected = list(_custom_api_worker_tools(task_text))
     try:
         from jarvis.marketplace.catalog_data import load_catalog
         from jarvis.marketplace.plugin_relevance import plugin_is_relevant
         from jarvis.marketplace.token_store import TokenStore
 
         store = TokenStore()
-        selected: list[str] = []
         for plugin in load_catalog().plugins:
             native_name = str(plugin.native_tool or "").strip()
             if not native_name:
@@ -375,6 +375,30 @@ def _connected_native_worker_tools(task_text: str) -> tuple[str, ...]:
         return tuple(dict.fromkeys(selected))
     except Exception:  # noqa: BLE001 - capability discovery must not block missions
         logger.debug("missions: native connector discovery failed", exc_info=True)
+        return tuple(selected)
+
+
+def _custom_api_worker_tools(task_text: str) -> tuple[str, ...]:
+    """Grant relevant native API actions through the credential-free gateway."""
+    import re
+
+    from jarvis.core.runtime_refs import get_supervisor_tool_gateway
+    from jarvis.marketplace.plugin_relevance import plugin_is_relevant
+
+    gateway = get_supervisor_tool_gateway()
+    if gateway is None:
+        return ()
+    try:
+        return tuple(
+            tool.name for tool in gateway.catalog()
+            if re.fullmatch(r"api_[a-f0-9]{32}_[a-z][a-z0-9_]{0,23}", tool.name)
+            and tool.risk_tier != "block"
+            and plugin_is_relevant(task_text, tool.name, [
+                {"name": f"{tool.name}/action", "description": tool.description},
+            ])
+        )
+    except Exception:  # noqa: BLE001 - a unavailable surface grants no extra access
+        logger.debug("missions: custom API discovery failed", exc_info=True)
         return ()
 
 
