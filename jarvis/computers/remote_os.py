@@ -398,6 +398,7 @@ def pane_launcher_script(
     argv: Sequence[str],
     cols: int,
     rows: int,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """A POSIX IDE pane: create-or-attach its tmux session, the agent inside.
 
@@ -413,6 +414,7 @@ def pane_launcher_script(
         env_preamble(host)
         + _source_agent_env()
         + 'if [ "${1:-}" = run ]; then\n'
+        + "".join(f"  export {key}={shlex.quote(value)}\n" for key, value in (env or {}).items())
         + f"  cd -- {folder} || {{ printf 'The folder %s is missing on this computer.\\n' "
         + f"{folder}; sleep 5; exit 97; }}\n"
         + f"  exec {shlex.join(argv)}\n"

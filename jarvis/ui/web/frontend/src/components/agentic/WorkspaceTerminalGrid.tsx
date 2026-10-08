@@ -3,6 +3,7 @@ import { AgenticTerminal } from "./AgenticTerminal";
 import { AgentMark } from "./AgentMark";
 import { ForkPaneDialog, type ForkMode, type ForkSource } from "./ForkPaneDialog";
 import { MovePaneDialog, type MovePaneRequest } from "./MovePaneDialog";
+import { CloudPlacementDialog } from "./CloudPlacementDialog";
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import type { SessionState, TerminalState } from "@/lib/agenticIdeApi";
 import { forkTerminal, moveTerminal, placeTerminal, renameTerminal, transferTerminal, type PaneMovePosition, type TransferPlacement } from "@/lib/agenticIdeApi";
@@ -369,6 +370,15 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   // and conversation; the pane reconnects to wherever it runs now.
   const computers = useComputerChoices();
   const [placing, setPlacing] = useState<string | null>(null);
+  const placementInFlight = useRef(false);
+  const [cloudChoice, setCloudChoice] = useState<{ id: string; workspaceId: string; initialTarget?: string | null } | null>(null);
+  const [placementError, setPlacementError] = useState("");
+  const cloudTerminal = cloudChoice?.workspaceId === session.id ? session.terminals.find((terminal) => idOf(terminal) === cloudChoice.id) : undefined;
+  const openCloud = (terminal: TerminalState, initialTarget?: string | null) => {
+    if (placementInFlight.current || saving || transferring || disabled) return;
+    setPlacementError("");
+    setCloudChoice({ id: idOf(terminal), workspaceId: session.id, initialTarget });
+  };
   // A whole-workspace move (sidebar menu) restarted every pane in its new
   // place; reconnect each one so it shows the agent where it runs now.
   useEffect(() => {
@@ -381,31 +391,40 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     window.addEventListener("jarvis:ide-panes-reconnect", onReconnect);
     return () => window.removeEventListener("jarvis:ide-panes-reconnect", onReconnect);
   }, []);
-  const place = async (terminal: TerminalState, computerId: string | null) => {
+  const place = async (source: TerminalState, computerId: string | null, target: string) => {
+    const owner = latest.current.session;
+    const terminal = owner.terminals.find((entry) => idOf(entry) === idOf(source));
+    if (!terminal || owner.id !== cloudChoice?.workspaceId || placementInFlight.current || latest.current.disabled) return;
     const id = idOf(terminal);
-    if (placing) return;
-    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? "the computer") : "this computer";
+    placementInFlight.current = true;
+    setPlacementError("");
     setPlacing(id);
-    pushToast("info", `Moving ${terminal.name} to ${target}. The folder and the conversation go with it.`);
+    pushToast("info", `Moving ${terminal.name} to ${target}. Keep this PC connected until the move finishes.`);
     latest.current.onMutationStart?.();
     try {
-      const { session: next, message } = await placeTerminal(terminal.name, latest.current.session.id, computerId);
+      const { session: next, message } = await placeTerminal(terminal.history_id ? `pane:${terminal.history_id}` : terminal.name, owner.id, computerId);
       if (!mounted.current) return;
       if (next && next.id === latest.current.session.id) latest.current.onChanged(next);
       setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
+      setCloudChoice(null);
       pushToast("success", `${terminal.name} now runs on ${target}. ${message}`.trim());
       setAnnouncement(`${terminal.name} now runs on ${target}.`);
-    } catch (error) { pushToast("error", (error as Error).message); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (mounted.current) setPlacementError(message);
+      pushToast("error", message);
+    }
     finally {
+      placementInFlight.current = false;
       latest.current.onMutationEnd?.();
       if (mounted.current) setPlacing(null);
     }
   };
   const placementItems = (terminal: TerminalState) => {
-    if (placing) return [];
-    if (terminal.computer_id) return [{ label: "Bring back to this computer", run: () => void place(terminal, null) }];
+    if (placing || saving || transferring || disabled) return [];
+    if (terminal.computer_id) return [{ label: "Bring back to this computer", run: () => openCloud(terminal, null) }];
     return computers.filter((computer) => computer.health.status !== "provisioning")
-      .map((computer) => ({ label: `Run on ${computer.name}`, run: () => void place(terminal, computer.id) }));
+      .map((computer) => ({ label: `Run on ${computer.name}`, run: () => openCloud(terminal, computer.id) }));
   };
   const computerName = (terminal: TerminalState) => terminal.computer_id
     ? (computers.find((computer) => computer.id === terminal.computer_id)?.name ?? "another computer") : undefined;
@@ -509,6 +528,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onSplit={(direction) => onAdd(terminal.name, direction)}
             branch={terminal.branch || undefined} folder={terminal.folder || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
+            onOpenCloud={() => openCloud(terminal)} placementBusy={Boolean(placing || saving || transferring || disabled)}
             workspaceItems={transferring || saving || disabled ? [] : movable
               .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
@@ -550,5 +570,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />
     <MovePaneDialog request={moving?.request ?? null} busy={transferring !== null} onCancel={() => setMoving(null)}
       onConfirm={(placement) => { if (moving) void transfer(moving.id, moving.request.target, placement); }} />
+    {cloudTerminal && cloudChoice && <CloudPlacementDialog key={`${cloudChoice.workspaceId}:${cloudChoice.id}`}
+      terminal={cloudTerminal} initialTarget={cloudChoice.initialTarget} busy={placing !== null} error={placementError}
+      onCancel={() => { if (!placementInFlight.current) setCloudChoice(null); }}
+      onConfirm={(computerId, targetName) => void place(cloudTerminal, computerId, targetName)} />}
   </div>;
 }

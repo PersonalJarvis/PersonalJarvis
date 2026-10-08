@@ -28,11 +28,19 @@ async def guard_owned_routine(runtime: Any, tags: tuple[str, ...]) -> Any:
     agent_id = agent_id_from_tags(tags)
     if agent_id is None:
         return None
+    from .cloud_admission import assert_local_owner
+
     if await runtime.store.kill_switch():
         raise RuntimeError("The society is halted")
     agent = await runtime.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         raise RuntimeError("The routine owner is unavailable or paused")
+    try:
+        assert_local_owner(runtime, agent_id)
+    except PermissionError as exc:
+        from jarvis.core.protocols import RoutineDeferred
+
+        raise RoutineDeferred(str(exc)) from exc
     return agent
 
 

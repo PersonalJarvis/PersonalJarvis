@@ -1523,6 +1523,23 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
         reader = asyncio.create_task(_reader())
         try:
             while not reader.done():
+                if session.surface == "society":
+                    from jarvis.society.cloud_host import placement_for
+
+                    from .society_cloud_proxy import cloud_agent_path
+
+                    owner = cloud_agent_path(f"/api/agent-chat/sessions/{session_id}/ws")
+                    runtime = getattr(ws.app.state, "society", None)
+                    if (
+                        owner
+                        and runtime is not None
+                        and placement_for(runtime.store.path.parent, owner) is not None
+                    ):
+                        # The existing frontend reconnect budget reattaches to
+                        # the new owner. Never leave an open pane on stale local
+                        # history after its agent moves to the cloud.
+                        await ws.close(code=1012, reason="Agent ownership changed")
+                        break
                 getter = asyncio.ensure_future(q.get())
                 done, _ = await asyncio.wait(
                     {getter, reader}, timeout=_WS_PING_S, return_when=asyncio.FIRST_COMPLETED

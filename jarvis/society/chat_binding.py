@@ -241,6 +241,11 @@ async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool =
     if agent is None or session is None or session.surface != SURFACE:
         raise PermissionError("Society agent is unavailable")
     inactive = str(agent.state) != "active" or await runtime.store.kill_switch()
+    # This is the final await before send reserves its turn. A handoff may
+    # have fenced the owner while the kill-switch query was in flight.
+    from .cloud_admission import assert_local_owner
+
+    assert_local_owner(runtime, agent_id)
     if session_id.startswith(f"{agent.session_id}:routine:"):
         if not routine_run or inactive:
             raise PermissionError("Routine chat requires an active scheduled run")

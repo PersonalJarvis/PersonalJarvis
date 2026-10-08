@@ -59,6 +59,14 @@ RECONNECT_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0)
 #: How long opening one pane's channel may take before it counts as failed.
 OPEN_TIMEOUT_S = 30.0
 _NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
+# Only native continuation controls travel from the desktop environment.
+# Account homes, credentials and local MCP endpoints belong to that machine.
+_PANE_ENV_ALLOW = frozenset(
+    {
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN",
+        "CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS",
+    }
+)
 
 
 def tmux_session_name(identity: str) -> str:
@@ -222,7 +230,10 @@ class SshPtyPool:
                     status=409,
                 )
             self._tmux_checked = True
-        command = await self._launcher(host, name, pane_argv(host, shell_argv), cwd, cols, rows)
+        safe_env = {key: value for key, value in (env or {}).items() if key in _PANE_ENV_ALLOW}
+        command = await self._launcher(
+            host, name, pane_argv(host, shell_argv), cwd, cols, rows, safe_env
+        )
         pane = _Pane(
             terminal_id=uuid4().hex,
             tmux_name=name,
@@ -328,6 +339,7 @@ class SshPtyPool:
         cwd: str,
         cols: int,
         rows: int,
+        env: dict[str, str] | None = None,
     ) -> str:
         """Upload the pane's launcher; the command line that starts it.
 
@@ -342,10 +354,17 @@ class SshPtyPool:
             )
         relative = f"{remote_os.LAUNCH_DIR}/{remote_os.launcher_name(name)}"
         if host.windows:
-            script = remote_os.launcher_script(host, cwd, argv)
+            script = remote_os.launcher_script(host, cwd, argv, env)
         else:
             script = remote_os.pane_launcher_script(
-                host, name=name, self_path=relative, cwd=cwd, argv=argv, cols=cols, rows=rows
+                host,
+                name=name,
+                self_path=relative,
+                cwd=cwd,
+                argv=argv,
+                cols=cols,
+                rows=rows,
+                env=env,
             )
         session = await self.connection()
         try:

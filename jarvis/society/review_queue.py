@@ -61,6 +61,8 @@ async def drain_reviews(runtime: Any) -> None:
 async def _drain_once(runtime: Any) -> None:
     archive = runtime.conversations
     for pending in archive.pending_reviews():
+        if _cloud_owned(runtime, pending):
+            continue  # The remote owner alone may review; preserve retry state.
         if pending["retry_after_ms"] > now_ms():
             continue  # Still waiting out its backoff: no seat call now.
         key = (pending["session"], pending["turn_id"])
@@ -90,7 +92,9 @@ def _schedule_wake(runtime: Any) -> None:
     """Keep exactly one wake-up, for the earliest pending review's due time."""
     if getattr(runtime, "_closing", False):
         return
-    pending = runtime.conversations.pending_reviews()
+    pending = [
+        row for row in runtime.conversations.pending_reviews() if not _cloud_owned(runtime, row)
+    ]
     if not pending:
         return
     due = min(item["retry_after_ms"] for item in pending)
@@ -108,3 +112,11 @@ def _schedule_wake(runtime: Any) -> None:
 async def _wake(runtime: Any, due: int) -> None:
     await asyncio.sleep(max(0.0, (due - now_ms()) / 1000))
     await drain_reviews(runtime)
+
+
+def _cloud_owned(runtime: Any, pending: dict[str, Any]) -> bool:
+    from .cloud_host import placement_for
+    from .surface import agent_id_of
+
+    owner = agent_id_of(pending["session"])
+    return bool(owner and placement_for(runtime.store.path.parent, owner))

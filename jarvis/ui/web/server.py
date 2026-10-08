@@ -352,6 +352,9 @@ class WebServer:
             )
             if value
         )
+        from .society_cloud_proxy import SocietyCloudProxy
+
+        app.add_middleware(SocietyCloudProxy, data_dir=self.cfg.memory.data_dir)
         # The security boundary must wrap every router and both HTTP and WS.
         # It is added after CORS so Starlette places it outside the CORS layer:
         # hostile Host/Origin values never reach route code or preflight logic.
@@ -554,6 +557,7 @@ class WebServer:
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
         from .society_browser_routes import router as society_browser_router
+        from .society_cloud_routes import router as society_cloud_router
         from .society_figure_routes import router as society_figure_router
         from .society_routes import router as society_router
         from .soul_routes import router as soul_router
@@ -766,6 +770,7 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        app.include_router(society_cloud_router)
         app.include_router(agent_runtime_router)
         app.include_router(runtime_gateway_router)
         from .mars_routes import router as mars_router

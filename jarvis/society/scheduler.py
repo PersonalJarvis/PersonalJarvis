@@ -188,6 +188,10 @@ class SocietyScheduler:
             return FailureReason.TARGET_UNKNOWN
         if target.state is AgentState.PAUSED:
             return FailureReason.TARGET_PAUSED
+        from .cloud_host import placement_for
+
+        if placement_for(self._store.path.parent, target.agent_id) is not None:
+            return FailureReason.TARGET_PAUSED
         return target
 
     async def _on_assign(self, env: SocietyEnvelope) -> None:

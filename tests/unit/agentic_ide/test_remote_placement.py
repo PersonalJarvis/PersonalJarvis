@@ -116,6 +116,116 @@ async def test_a_live_pane_moves_to_the_computer_and_continues_its_chat(
     assert far.writes and far.writes[-1][1] == "x"
 
 
+async def test_offload_stops_the_writer_before_copying_its_final_files_and_chat(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    term.activity = "working"
+    local_id = term.pty_id
+    original = remote.push_code
+
+    async def copy(pool: object, folder: Path) -> remote.Placement:
+        assert local_id in local.closed
+        assert term.pty_id is None
+        return await original(pool, folder)
+
+    monkeypatch.setattr(remote, "push_code", copy)
+    result = await registry.place_terminal(term.key, workspace_id=session.id, computer_id="c_1")
+
+    assert any(move[0] == "chat-up" for move in moves)
+    assert far.spawns[-1]["env"] == ide.resume_env("claude")
+    assert far.writes == [], "native continuation must never inject or replay an instruction"
+    assert term.adopted_generation == term.process_generation
+    assert "interrupted turn" in result["message"]
+
+
+async def test_failed_copy_restarts_the_source_and_keeps_its_placement(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, _moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+
+    async def fail(_pool: object, _folder: Path) -> remote.Placement:
+        raise remote.MoveError("Upload interrupted")
+
+    monkeypatch.setattr(remote, "push_code", fail)
+    with pytest.raises(ide.PlacementError, match="Upload interrupted"):
+        await registry.place_terminal(term.key, workspace_id=session.id, computer_id="c_1")
+
+    assert term.computer_id == "" and term.remote_folder == ""
+    assert term.pty_id and local.has(term.pty_id)
+    assert len(local.spawns) == 2 and not far.spawns
+    assert not local.writes
+
+
+async def test_workspace_stops_all_its_writers_before_the_shared_snapshot(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local, far, _moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}, {"agent": "claude"}])
+    for term in session.terminals:
+        await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    original = remote.push_code
+
+    async def copy(pool: object, folder: Path) -> remote.Placement:
+        assert all(term.pty_id is None for term in session.terminals)
+        assert len(local.closed) == 2 and not far.spawns
+        return await original(pool, folder)
+
+    monkeypatch.setattr(remote, "push_code", copy)
+    await registry.place_workspace(session.id, computer_id="c_1")
+    assert len(far.spawns) == 2
+
+
+async def test_a_destination_start_failure_reports_and_persists_the_moved_pane(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    local, far, _moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    far.spawn_error = "SSH connection lost"
+
+    with pytest.raises(ide.PlacementError, match="did not start.*SSH connection lost"):
+        await registry.place_terminal(term.key, workspace_id=session.id, computer_id="c_1")
+
+    assert term.computer_id == "c_1" and term.status == "error"
+    saved = resume_store.SnapshotTerminal.from_dict(term.to_snapshot().to_dict())
+    assert saved is not None and saved.computer_id == "c_1"
+
+
+async def test_a_cli_without_native_continuation_waits_for_user_input(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
+) -> None:
+    local, far, _moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "codex"}])
+    term = session.terminals[0]
+    await registry.attach(term.key, 100, 30, _sink, _gone, workspace_id=session.id)
+    term.resume = ide.ResumeHandle("codex_rollout", "recorded-codex", 0)
+
+    result = await registry.place_terminal(term.key, workspace_id=session.id, computer_id="c_1")
+
+    assert "Send an instruction" in result["message"]
+    assert far.spawns[-1]["env"] == {}
+    assert not far.writes
+
+
 async def test_placement_survives_a_restart(
     pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path
 ) -> None:
@@ -147,6 +257,80 @@ async def test_a_workspace_moves_with_one_folder_transfer(
     assert [m for m in moves if m[0] == "push"] == [("push", Path(str(tmp_path)))]
     assert all(t.computer_id == "c_1" for t in session.terminals)
     assert far.spawns == [], "panes that were not running only change place"
+
+
+@pytest.mark.parametrize("first_workspace", [False, True])
+@pytest.mark.parametrize("second_workspace", [False, True])
+async def test_concurrent_offloads_never_copy_from_a_stale_local_source(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    first_workspace: bool,
+    second_workspace: bool,
+) -> None:
+    local, _far, moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    copying, release = asyncio.Event(), asyncio.Event()
+    original = remote.push_code
+
+    async def copy(pool: object, folder: Path) -> remote.Placement:
+        copying.set()
+        await release.wait()
+        return await original(pool, folder)
+
+    async def place(target: str, workspace: bool) -> dict[str, Any]:
+        if workspace:
+            return await registry.place_workspace(session.id, computer_id=target)
+        return await registry.place_terminal(term.key, workspace_id=session.id, computer_id=target)
+
+    monkeypatch.setattr(remote, "push_code", copy)
+    first = asyncio.create_task(place("c_1", first_workspace))
+    await asyncio.wait_for(copying.wait(), timeout=10)
+    second = asyncio.create_task(place("c_2", second_workspace))
+    # The second request reaches the already-held attach lock before release.
+    await asyncio.sleep(0)
+    release.set()
+    first_result, second_result = await asyncio.gather(first, second, return_exceptions=True)
+
+    assert isinstance(first_result, dict)
+    if second_workspace:
+        assert isinstance(second_result, dict) and second_result["moved"] == []
+        assert any("stays on" in message for message in second_result["messages"])
+    else:
+        assert isinstance(second_result, ide.SessionError)
+        assert "Bring it back" in str(second_result)
+    assert term.computer_id == "c_1"
+    assert len([move for move in moves if move[0] == "push"]) == 1
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+async def test_queued_offload_rechecks_that_its_terminal_still_belongs_to_the_workspace(
+    pools: tuple[FakePtyManager, RemotePool, list[Any]], tmp_path: Path, workspace: bool
+) -> None:
+    local, _far, moves = pools
+    registry = ide.Registry(pty_manager=local)
+    session = await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = session.terminals[0]
+    await term.attach_lock.acquire()
+    operation = (
+        registry.place_workspace(session.id, computer_id="c_1")
+        if workspace
+        else registry.place_terminal(term.key, workspace_id=session.id, computer_id="c_1")
+    )
+    task = asyncio.create_task(operation)
+    await asyncio.sleep(0)
+    session.terminals.remove(term)
+    term.attach_lock.release()
+    if workspace:
+        result = await task
+        assert result["moved"] == []
+        assert any("changed workspace or closed" in message for message in result["messages"])
+    else:
+        with pytest.raises(ide.SessionError, match="changed workspace or closed"):
+            await task
+    assert not moves
 
 
 async def test_bringing_back_kills_the_remote_agent_and_runs_here_again(

@@ -108,8 +108,10 @@ def _validated_chat_runner(
         runtime=chosen_runtime,
         account_id=agent.account_id if account_id is None else account_id,
     )
-    mode = approval_mode if approval_mode is not None else (
-        str(agent.approval_mode) if agent.approval_mode is not None else ""
+    mode = (
+        approval_mode
+        if approval_mode is not None
+        else (str(agent.approval_mode) if agent.approval_mode is not None else "")
     )
     if mode and not society_mode_supported(runner, mode):
         raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
@@ -271,10 +273,29 @@ def _agent_row(agent: AgentRecord, request: HTTPConnection) -> dict[str, Any]:
 @router.get("/agents")
 async def list_agents(request: Request, include_archived: bool = False) -> dict[str, Any]:
     rt = await _runtime(request)
+    from jarvis.society.cloud_host import placement_for
+
     agents = await rt.roster.list(include_archived=include_archived)
     rows = []
     for agent in agents:
         row = _agent_row(agent, request)
+        placement = placement_for(rt.store.path.parent, agent.agent_id)
+        if placement is not None:
+            snapshot = placement.get("agent_snapshot") or {}
+            if snapshot.get("state") == "archived" and not include_archived:
+                continue
+            # A successful remote edit is projected locally, never applied to
+            # local execution state. Unreachable hosts retain the last receipt.
+            row.update(snapshot)
+            row["cloud_placement"] = {
+                "computer_id": placement.get("computer_id"),
+                "state": placement["state"],
+            }
+            row["run_state"] = (
+                "paused" if snapshot.get("state") == "paused" else snapshot.get("run_state", "idle")
+            )
+            rows.append(row)
+            continue
         if agent.state == "paused":
             row["run_state"] = "paused"
         elif rt.checkpoints.is_busy(agent.agent_id):
@@ -592,7 +613,9 @@ async def get_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
 
 @router.post("/chat-groups/{group_id}/meeting", openapi_extra={"x-jarvis-dangerous": True})
 async def send_group_meeting(
-    group_id: str, body: MeetingMessageBody, request: Request,
+    group_id: str,
+    body: MeetingMessageBody,
+    request: Request,
 ) -> dict[str, Any]:
     """Ask each group member for one contribution in the shared meeting."""
     rt = await _runtime(request)
@@ -886,8 +909,10 @@ def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
 
     current = agent_provider_prefs.load().to_dict()
     patch = body.model_dump(exclude_none=True)
-    ids = set(patch.get("disabled", [])) | set(patch.get("api_only", [])) | set(
-        patch.get("hidden_models", {})
+    ids = (
+        set(patch.get("disabled", []))
+        | set(patch.get("api_only", []))
+        | set(patch.get("hidden_models", {}))
     )
     unknown = sorted(i for i in ids if not offers(agent_provider_prefs.AGENT_SURFACE, i))
     if unknown:
@@ -1961,10 +1986,24 @@ async def society_status(request: Request) -> dict[str, Any]:
 @router.post("/kill-switch", openapi_extra={"x-jarvis-dangerous": True})
 async def engage_kill_switch(request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
-    return await rt.engage_kill_switch()
+    result = await rt.engage_kill_switch()
+    if result.get("cloud_unconfirmed"):
+        raise HTTPException(
+            502,
+            "Local agents stopped. Could not confirm stopping cloud agents: "
+            + ", ".join(result["cloud_unconfirmed"]),
+        )
+    return result
 
 
 @router.post("/kill-switch/release", openapi_extra={"x-jarvis-dangerous": True})
 async def release_kill_switch(request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
-    return await rt.release_kill_switch()
+    result = await rt.release_kill_switch()
+    if result.get("cloud_unconfirmed"):
+        raise HTTPException(
+            502,
+            "Local stop released. Cloud agents may remain halted: "
+            + ", ".join(result["cloud_unconfirmed"]),
+        )
+    return result

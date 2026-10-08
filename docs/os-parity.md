@@ -1,5 +1,30 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Cloud handoff (2026-10-08, T3)
+
+Coding panes expose a Cloud action with destination readiness checks and a
+review of what moves. POSIX destinations use detached tmux; Windows SSH panes
+still require the desktop connection, and local VMs depend on their host PC.
+Source processes stop before the final project and transcript snapshot.
+Claude can use native interrupted-turn resume; Codex restores its conversation
+and waits for the next instruction. No synthetic prompt replays a turn.
+
+Independent Jarvis-agent hosting uses a dedicated headless process on a
+non-local POSIX server with Jarvis installed. It transfers an idle agent's
+context and recurring time-based routines, preserves permission restrictions,
+and uses a subscription CLI login already configured on that server. API seats,
+external runtimes and one-shot routines are not supported by this initial host.
+The desktop retains
+a durable ownership fence and routes the agent's chat back through pinned SSH.
+Windows and local-VM targets are rejected for this independent hosting mode.
+Dependency-bound routines and unsupported runtime state are rejected before
+handoff rather than silently omitted. This mode does not federate a team of
+agents across machines. Existing cross-agent dependencies must be resolved.
+
+Validation covers local contract tests and a real Chrome component preview
+in both themes. A live Linux VPS handoff and operation after disconnect have
+not been verified; the available connected target was Windows.
+
 ## Local voice and audio topology refresh (issue #464, T2)
 
 Local final transcription uses its configured model independently of the wake

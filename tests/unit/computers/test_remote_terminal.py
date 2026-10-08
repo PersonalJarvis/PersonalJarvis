@@ -94,6 +94,32 @@ async def test_spawn_streams_both_ways_inside_a_named_tmux_session(
     assert "jarvis-workspaces/app" in command
 
 
+async def test_remote_launcher_carries_native_resume_controls_without_local_secrets(
+    pool: SshPtyPool, tmux_server: FakeTmuxServer
+) -> None:
+    screen = Screen()
+    await pool.spawn(
+        shell_argv=("claude", "--resume", "id-1"),
+        shell_id="continuation",
+        cwd="/home/test/jarvis-workspaces/app",
+        cols=100,
+        rows=30,
+        on_output=screen.output,
+        on_closed=screen.exit,
+        env={
+            "CLAUDE_CODE_RESUME_INTERRUPTED_TURN": "1",
+            "CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS": "0",
+            "ANTHROPIC_API_KEY": "must-stay-local",
+            "CODEX_HOME": "/private/local/account",
+        },
+    )
+    await screen.wait_for("ready")
+    command = next(c for c in tmux_server.state.commands if "new-session" in c)
+    assert "export CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1" in command
+    assert "export CLAUDE_CODE_RESUME_INTERRUPTED_TURN_MAX_AGE_MS=0" in command
+    assert "must-stay-local" not in command and "/private/local/account" not in command
+
+
 async def test_resize_reaches_the_server(pool: SshPtyPool, tmux_server: FakeTmuxServer) -> None:
     screen = Screen()
     terminal = await _spawn(pool, screen)

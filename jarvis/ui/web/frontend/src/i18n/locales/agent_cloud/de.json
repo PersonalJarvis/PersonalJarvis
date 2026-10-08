@@ -1,0 +1,20 @@
+{
+  "agent_cloud": {
+    "title": "Agent in die Cloud verschieben",
+    "cancel": "Inaktive Übergabe abbrechen",
+    "hosted": "Cloud-Server",
+    "active": "Der VPS führt diesen Agenten aus. Chat und Routinen laufen dort weiter, wenn dieser PC ausgeschaltet ist.",
+    "pending": "Die Übergabe ist noch nicht bestätigt. Die lokale Ausführung bleibt pausiert, damit keine Aufgaben doppelt laufen.",
+    "loading": "Server und Zuständigkeit werden geladen…",
+    "load_failed": "Cloud-Zuständigkeit oder Server konnten nicht geladen werden.",
+    "retry": "Status aktualisieren",
+    "description": "Verschiebe Gesprächsverlauf, Gedächtnis, Arbeitsordner und zeitgesteuerte Routinen dieses Agenten auf deinen VPS. Du kannst seinen Chat weiter von diesem PC nutzen.",
+    "requirements": "Unterstützt inaktive Jarvis-Agenten mit einer Abo-CLI und wiederkehrenden Zeitplänen. Der VPS benötigt Jarvis, tmux und eine eigene Abo-Anmeldung. API-Modelle, einmalige Routinen und rechnerübergreifende Teamabläufe werden noch nicht unterstützt. Desktop-Abhängigkeiten müssen vorher geklärt sein.",
+    "credentials": "Verwendet die auf dem VPS eingerichtete Modellanmeldung. Passwörter, lokale Anmeldungen und Browserprofile werden nicht kopiert.",
+    "target": "Zielserver",
+    "choose": "Server auswählen",
+    "connect": "Server verbinden",
+    "moving": "Wird geprüft und verschoben…",
+    "move": "Server prüfen und verschieben"
+  }
+}
