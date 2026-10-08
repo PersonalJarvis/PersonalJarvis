@@ -33,6 +33,8 @@ TESTS = [
 CONTRACTS = (
     "test_one_time_commitment_is_durable_without_approval_card",
     "test_inferred_recurring_goal_is_active_without_routine_keyword",
+    "test_conditional_instructions_are_not_hypothetical_questions",
+    "test_no_routine_still_allows_a_requested_one_time_followup",
     "test_duplicate_delivery_and_restart_keep_id_and_original_deadline",
     "test_pause_resume_update_to_one_time_and_cancel_preserve_identity",
     "test_non_actions_and_explicit_exclusions_do_not_create_jobs",

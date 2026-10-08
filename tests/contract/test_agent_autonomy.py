@@ -132,6 +132,26 @@ async def test_inferred_recurring_goal_is_active_without_routine_keyword(world):
     assert spec.trigger.type == "every" and result["state"] == "scheduled"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "If the project changes, check it again and keep me informed",
+        "Wenn sich das Projekt ändert, prüfe es und halte mich auf dem Laufenden",  # i18n-allow
+    ],
+)
+async def test_conditional_instructions_are_not_hypothetical_questions(world, text):
+    result = await submit(
+        world, arguments(text, schedule={"kind": "every", "interval_seconds": 60})
+    )
+    assert result.get("applied"), result
+
+
+async def test_no_routine_still_allows_a_requested_one_time_followup(world):
+    result = await submit(world, arguments("Check it later only once, no routine"))
+    assert result.get("applied"), result
+    assert result["trigger"]["type"] == "after_delay"
+
+
 async def test_duplicate_delivery_and_restart_keep_id_and_original_deadline(world):
     first = await submit(world, arguments())
     tid = first["task_id"]

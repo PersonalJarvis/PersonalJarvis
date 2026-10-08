@@ -33,21 +33,24 @@ log = logging.getLogger(__name__)
 
 _NO_BACKGROUND = re.compile(
     r"\b(?:do not|don't|never)\s+(?:schedule|automate|create\s+(?:a\s+)?routine)|"
-    r"\b(?:no\s+(?:background|routine|automation)|nur\s+jetzt|"  # i18n-allow
-    r"keine?\s+(?:routine|automatisierung|hintergrundarbeit)|"  # i18n-allow
+    r"\b(?:no\s+(?:background|automation)|nur\s+jetzt|"  # i18n-allow
+    r"keine?\s+(?:automatisierung|hintergrundarbeit)|"  # i18n-allow
     r"nicht\s+(?:automatisieren|planen)|no\s+automatices)\b",  # i18n-allow
     re.I,
 )
 _ONCE = re.compile(
     r"\b(?:only\s+(?:once|this\s+time)|just\s+(?:once|today)|one.off|"
-    r"nur\s+(?:einmal|diesmal|heute)|einmalig|solo\s+una\s+vez)\b",  # i18n-allow
+    r"nur\s+(?:einmal|diesmal|heute)|einmalig|solo\s+una\s+vez|"  # i18n-allow
+    r"no\s+routine|keine?\s+routine)\b",  # i18n-allow
     re.I,
 )
 _INFORMATION = re.compile(
     r"^\s*(?:(?:please|bitte)\s+)?(?:explain|translate|quote|imagine|suppose|"  # i18n-allow
-    r"what\s+(?:is|are|would)|how\s+(?:do|does|can|would)|if\s+|"
+    r"what\s+(?:is|are|would)|how\s+(?:do|does|can|would)|"
+    r"if\s+(?:i|we|you)\s+(?:wanted|were|could|would)|"
     r"erkl[aä]r\w*|[uü]bersetz\w*|zitiere|was\s+(?:ist|sind|w[aä]re)|"  # i18n-allow
-    r"wie\s+(?:kann|geht|funktioniert)|wenn\s+|explica|traduce)\b",  # i18n-allow
+    r"wie\s+(?:kann|geht|funktioniert)|"  # i18n-allow
+    r"wenn\s+ich\b[^.!?]{0,80}\b(?:würde|wollte|könnte)|explica|traduce)\b",  # i18n-allow
     re.I,
 )
 
