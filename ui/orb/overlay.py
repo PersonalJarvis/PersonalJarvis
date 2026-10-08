@@ -67,7 +67,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
-from jarvis.ui.jarvisbar.modes import MODES
+from jarvis.ui.jarvisbar.modes import ACTIVE_VOICE_MODES, CONNECT_MODES, MODES
 from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES, PERSISTENT_ORB_STYLES
 from jarvis.ui.pets.states import ACTION_STATES, DEFAULT_PET_ID, NO_PET_ID, ONE_SHOT_STATES
 from ui.orb import controls as orb_controls
@@ -2216,6 +2216,9 @@ FRAME_INTERVAL_MS = 16
 #: ticks at least this often, so the strokes follow the voice even when the
 #: figure is slow.
 PET_PULSE_INTERVAL_MS = 100
+#: The loading loop and the "connected" flourish turn faster than a level can
+#: change, so the strip ticks at this rate while either is on screen.
+PET_CONNECT_INTERVAL_MS = 40
 #: A level older than this no longer moves the strip's strokes (the voice stopped).
 PET_LEVEL_FRESH_S = 0.25
 #: Overlay modes and what the strip's indicator shows for them. Dictation
@@ -2347,6 +2350,8 @@ class OrbOverlay:
         self._photo: ImageTk.PhotoImage | None = None
         self._image_id: int | None = None
         self._mode: str = "idle"
+        # time.monotonic() when the call left ``connect`` (the strip flourish).
+        self._connected_at: float | None = None
         self._ext_level: float | None = None
         self._ext_level_at: float = -math.inf
         self._t0: float = 0.0
@@ -2988,7 +2993,7 @@ class OrbOverlay:
             return
         row.set_on_action(self._on_control_action)
         row.set_state(
-            active=self._mode in ("listen", "think", "speak"),
+            active=self._mode in ACTIVE_VOICE_MODES,
             speaker_muted=self._speaker_muted,
         )
         if isinstance(row, PetControlStrip):
@@ -3011,7 +3016,7 @@ class OrbOverlay:
         """
         if self._pet_strip_always or self._pet_id == NO_PET_ID:
             return True
-        if self._mode in PET_VOICE_MODES or self._mode in PET_THINK_MODES:
+        if self._mode in ACTIVE_VOICE_MODES + PET_VOICE_MODES + PET_THINK_MODES:
             return True
         notices = self._notices
         if notices is not None and notices.count:
@@ -3031,7 +3036,7 @@ class OrbOverlay:
         # A live conversation keeps the controls out: hanging up is the one
         # thing the user reaches for mid-call, and hunting for a row that hides
         # itself is worse than a row that stays.
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             return
         row.hide_after_grace()
 
@@ -3040,7 +3045,7 @@ class OrbOverlay:
         row = self._controls
         if row is None:
             return
-        active = self._mode in ("listen", "think", "speak")
+        active = self._mode in ACTIVE_VOICE_MODES
         row.set_state(active=active)
         if self._style == "pet":
             # The pet alone at rest; its strip joins it while it is useful.
@@ -3098,7 +3103,7 @@ class OrbOverlay:
 
     def _do_call(self) -> None:
         """The phone disc: call Jarvis (ringing as it dials), or hang up."""
-        if self._mode not in ("listen", "think", "speak"):
+        if self._mode not in ACTIVE_VOICE_MODES:
             self._ring_phone()
         self._do_talk_or_hangup()
 
@@ -3204,7 +3209,7 @@ class OrbOverlay:
 
     def _do_talk_or_hangup(self) -> None:
         """The mic disc: start a conversation, or end the running one."""
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             self._do_hangup()
             return
         callback = self._on_talk
@@ -3232,7 +3237,7 @@ class OrbOverlay:
 
     def _do_close(self) -> None:
         """X: end the conversation and put the orb away, like the in-app X."""
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             self._do_hangup()
         row = self._controls
         if row is not None:
@@ -4425,6 +4430,11 @@ class OrbOverlay:
         if mode not in MODES:
             raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
         changed = mode != self._mode
+        # Leaving ``connect`` for the live look starts the strip's "connected"
+        # flourish (on the strip's monotonic clock).
+        self._connected_at = orb_controls.connected_stamp(
+            self._mode, mode, time.monotonic(), getattr(self, "_connected_at", None)
+        )
         self._mode = mode
         renderer = getattr(self, "_renderer", None)
         if isinstance(renderer, PetRenderer):
@@ -4579,7 +4589,13 @@ class OrbOverlay:
             self._frame_key = key
         delay_ms = int(renderer.next_frame_delay_ms(t))
         if self._pump_strip_level():
-            delay_ms = min(delay_ms, PET_PULSE_INTERVAL_MS)
+            row = self._controls
+            connecting = isinstance(row, PetControlStrip) and row.state.motion in (
+                "connect",
+                "connected",
+            )
+            pulse_ms = PET_CONNECT_INTERVAL_MS if connecting else PET_PULSE_INTERVAL_MS
+            delay_ms = min(delay_ms, pulse_ms)
         return delay_ms
 
     def _show_photo(self, photo: Any) -> None:
@@ -4592,25 +4608,35 @@ class OrbOverlay:
         """Drive the strip's three strokes. True while they move.
 
         Listening or talking: the strokes follow the live audio level.
-        Thinking: a highlight travels across them. At rest they stand still
-        and the strip is not repainted at all.
+        Thinking: a highlight travels across them. Connecting: the loading
+        loop runs round them, then the "connected" flourish plays once. At
+        rest they stand still and the strip is not repainted at all.
         """
         row = self._controls
         if not isinstance(row, PetControlStrip):
             return False
         now = time.monotonic()
-        if self._mode in PET_VOICE_MODES:
+        clock = now
+        connected = orb_controls.connected_elapsed(getattr(self, "_connected_at", None), now)
+        if self._mode in CONNECT_MODES:
+            motion = "connect"
+        elif connected is not None and self._mode in ACTIVE_VOICE_MODES:
+            # The call just connected: one flourish before the live look.
+            motion = "connected"
+            clock = connected
+        elif self._mode in PET_VOICE_MODES:
             motion = "voice"
         elif self._mode in PET_THINK_MODES:
             motion = "think"
         else:
             motion = "rest"
         fresh = now - self._ext_level_at <= PET_LEVEL_FRESH_S
-        level = orb_controls.quantize_level(self._ext_level) if motion == "voice" and fresh else 0
+        metered = motion in ("voice", "connect")
+        level = orb_controls.quantize_level(self._ext_level) if metered and fresh else 0
         row.set_state(
             level=level,
             motion=motion,
-            phase=orb_controls.indicator_phase(motion, now),
+            phase=orb_controls.indicator_phase(motion, clock),
         )
         return motion != "rest"
 
