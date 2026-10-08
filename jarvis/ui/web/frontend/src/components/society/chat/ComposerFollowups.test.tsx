@@ -37,13 +37,13 @@ function mount(surface: "jarvis" | "society" = "society") {
   return { store, send, cancel, tree, view: render(tree()) };
 }
 
-it.each(["jarvis", "society"] as const)("keeps %s Send beside optional Stop during startup and accepts rapid followups", async (surface) => {
+it.each(["jarvis", "society"] as const)("keeps only %s Send during startup and accepts rapid followups", async (surface) => {
   const { send, cancel } = mount(surface);
   let accept!: (value: string) => void;
   send.mockImplementationOnce(() => new Promise<string>((resolve) => { accept = resolve; }));
   write("first followup");
   expect(screen.getByTestId("composer-send").hasAttribute("disabled")).toBe(false);
-  expect(screen.getByTestId("composer-stop")).toBeTruthy();
+  expect(screen.queryByTestId("composer-stop")).toBeNull();
   fireEvent.click(screen.getByTestId("composer-send"));
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
   expect(screen.getByRole("textbox").textContent).toBe("");

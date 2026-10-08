@@ -38,7 +38,7 @@ import { notifyRoutineChanged } from "../cardData";
 import { routineTaskId } from "./routineExecution";
 import { RoutineChatHost } from "./RoutineChatHost";
 import { AgentConversationsBar } from "./AgentConversations";
-import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
+import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
 import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
@@ -1185,7 +1185,7 @@ interface ComposerProps {
   onCancel: () => Promise<void>;
 }
 
-export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
+export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend }: ComposerProps) {
   const t = useT();
   const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
@@ -1222,8 +1222,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   }, () => void submit());
   const timeline = useAgentChat((s) => s.timeline);
   const sending = useAgentChat((s) => s.busy);
-  // `busy` on this composer also covers "session not open yet". Stop is only
-  // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
+  // Track HTTP admission and running work independently of composer readiness.
   const live = runningTurn(timeline) !== null || sending;
   // Admission is serialized by the store; execution waits in the backend.
   // A pending HTTP request or credential card does not lock this composer.
@@ -1514,18 +1513,6 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
-        {live && (
-          <button
-            type="button"
-            onClick={() => void onCancel()}
-            aria-label={t("society.chat.stop")}
-            title={t("society.chat.stop")}
-            data-testid="composer-stop"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90"
-          >
-            <Square className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        )}
         {(
           <button
             type="button"
@@ -1535,7 +1522,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             disabled={!sessionReady || modelSaving || attachments.analyzing > 0 || (!value.trim() && messageDraft.choices.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--chat-send-background))] text-[hsl(var(--chat-send-foreground))] disabled:[&_svg]:opacity-40"
           >
             <Send className="h-3.5 w-3.5" aria-hidden />
           </button>
