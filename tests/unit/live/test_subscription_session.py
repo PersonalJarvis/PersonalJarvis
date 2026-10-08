@@ -26,12 +26,12 @@ from tests.fakes.fake_subscription_session import (
 
 
 @pytest.fixture
-def make_session(monkeypatch, tmp_path):
+def make_session(monkeypatch):
     import jarvis.live.subscription as module
 
     sessions = []
 
-    def make(rounds, gateway=None, *, memory_ledger=False):
+    def make(rounds, gateway=None):
         reasoning = ScriptedSubscriptionReasoning(rounds)
         monkeypatch.setattr(module, "SubscriptionReasoning", lambda **kwargs: reasoning)
         config = SimpleNamespace(
@@ -59,7 +59,9 @@ def make_session(monkeypatch, tmp_path):
             send_json=send,
             bus=bus,
         )
-        ledger = LiveLedger(":memory:" if memory_ledger else tmp_path / f"{session.session_id}.sqlite3")
+        # These tests exercise orchestration with real SQL, not disk latency.
+        # test_gpt_live.test_receipts_survive_reopening covers durable receipts.
+        ledger = LiveLedger(":memory:")
         gateway = gateway or SubscriptionGateway()
         session._ledger = ledger
         session._connection = SubscriptionConnection()
@@ -318,7 +320,7 @@ async def test_explicit_cancel_does_not_resume_old_request_on_next_input(make_se
 async def test_followup_retains_original_request_and_receipts_beyond_history_window(make_session):
     # Exercise history retention with real SQL, independently of disk fsync
     # latency for the many receipts. Persistence has separate ledger tests.
-    session, _, _, _, _, _ = make_session([], memory_ledger=True)
+    session, _, _, _, _, _ = make_session([])
     rounds = [completed_response(f"read-{i}", [agent_call(
         f"read-call-{i}", "inspect-state", {},
     )]) for i in range(18)]
