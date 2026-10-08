@@ -320,7 +320,7 @@ _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
     "dsh-cli": (_DSH, "auto"),
     "cursor-cli": (_CURSOR, "auto"),
     "api": (_API, "ask"),
-    JARVIS_LADDER: (_JARVIS, "ask"),
+    JARVIS_LADDER: (_JARVIS, "bypass"),
     "society": (_SOCIETY, "bypass"),
 }
 

@@ -1897,9 +1897,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     """Create a NEW agent from a template on this install's own model.
 
     Shared by the import route below and the marketplace's install-by-name.
-    The agent asks before it acts where its runner can (``approval_mode=ask``):
-    its instructions were written by somebody else, so the person sees its
-    first moves before trusting it with more.
+    Use the normal creation defaults, including Bypass permissions. Explicit
+    template approval rules and any creator restrictions still apply.
     """
     from jarvis.society.agent_template import TemplateError, create_fields
 
@@ -1911,15 +1910,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     wanted = fields.pop("name")
     name = await _free_agent_name(rt, wanted)
     scope = template.get("knowledge_scope", "shared")
-    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
-    try:
-        created = await create_agent(body, request)
-    except HTTPException as exc:
-        if exc.status_code != 422:
-            raise
-        # This runner cannot hold an approval prompt: the app's default applies.
-        body = CreateAgentBody(name=name, **fields)
-        created = await create_agent(body, request)
+    body = CreateAgentBody(name=name, **fields)
+    created = await create_agent(body, request)
     agent_row = created["agent"]
     if scope == "own" and agent_row.get("knowledge_scope") != "own":
         try:
