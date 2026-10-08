@@ -94,7 +94,11 @@ def test_tool_result_becomes_unwrapped_function_response() -> None:
     assert "tool_result" not in response["response"]["result"]
 
 
-def test_signature_less_tool_use_keeps_text_form() -> None:
+def test_a_signature_less_call_replays_natively_with_the_sentinel() -> None:
+    """A call whose signature is gone (an app restart between rounds, a
+    second instance) must still be a functionCall: as text it breaks the
+    call/response pairing (400) and teaches the model to call tools in prose.
+    Google documents the sentinel for exactly this reconstruction."""
     contents = _to_gemini_contents(
         (
             BrainMessage(
@@ -109,12 +113,52 @@ def test_signature_less_tool_use_keeps_text_form() -> None:
         ),
     )
 
-    parts = contents[0]["parts"]
-    assert all("functionCall" not in p for p in parts), (
-        "a signature-less call must NOT replay natively — Gemini 3 rejects "
-        "functionCall parts without their thought_signature (400)"
+    (part,) = contents[0]["parts"]
+    assert part["functionCall"] == {"name": "search_web", "args": {"query": "divo"}}
+    assert part["thought_signature"] == "skip_thought_signature_validator"
+
+
+def test_a_parallel_step_replays_every_call_and_answers_them_in_one_turn() -> None:
+    """Gemini signs only the first call of a parallel step."""
+    contents = _to_gemini_contents(
+        (
+            BrainMessage(role="user", content="read a and b"),
+            BrainMessage(
+                role="assistant",
+                content=[
+                    {"type": "tool_use", "id": "c1", "name": "read_file",
+                     "input": {"path": "a"}, "thought_signature": "U0lH"},
+                    {"type": "tool_use", "id": "c2", "name": "read_file",
+                     "input": {"path": "b"}},
+                ],
+            ),
+            BrainMessage(role="tool", content="A", tool_call_id="c1", name="read_file"),
+            BrainMessage(role="tool", content="B", tool_call_id="c2", name="read_file"),
+        ),
     )
-    assert any("tool_use" in str(p.get("text", "")) for p in parts)
+
+    calls = contents[1]["parts"]
+    assert [c["functionCall"]["args"] for c in calls] == [{"path": "a"}, {"path": "b"}]
+    assert calls[0]["thought_signature"] == "U0lH"
+    assert "thought_signature" not in calls[1]  # only the step's first call is checked
+    assert len(contents) == 3
+    responses = [p["functionResponse"]["response"]["result"] for p in contents[2]["parts"]]
+    assert responses == ["A", "B"]
+
+
+def test_a_tool_result_without_a_name_takes_its_calls_name() -> None:
+    """OpenClaw sends tool results without a name; Gemini refuses an empty one."""
+    contents = _to_gemini_contents(
+        (
+            BrainMessage(
+                role="assistant",
+                content=[{"type": "tool_use", "id": "c1", "name": "read_file", "input": {}}],
+            ),
+            BrainMessage(role="tool", content="body", tool_call_id="c1"),
+        ),
+    )
+
+    assert contents[1]["parts"][0]["functionResponse"]["name"] == "read_file"
 
 
 def test_plain_turns_keep_their_shape() -> None:

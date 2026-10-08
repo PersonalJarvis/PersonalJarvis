@@ -26,6 +26,7 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -50,6 +51,8 @@ def _posix_candidates() -> list[str]:
         str(home / ".npm-global" / "bin"),
         # Volta pins a single stable shim dir.
         str(home / ".volta" / "bin"),
+        # OpenClaw's user-space installer (install-cli.sh) and its default prefix.
+        str(home / ".openclaw" / "bin"),
     ]
     if sys.platform.startswith("linux"):
         dirs.append("/snap/bin")
@@ -90,6 +93,9 @@ def _windows_candidates() -> list[str]:
     if local:
         # User-scoped Node installers commonly use this UAC-free location.
         dirs.append(os.path.join(local, "Programs", "nodejs"))
+        # The official Hermes Agent installer (install.ps1) stages its
+        # launchers here and registers the folder on the registry PATH only.
+        dirs.append(os.path.join(local, "hermes", "bin"))
         # The official Antigravity PowerShell/CMD installer uses this directory.
         dirs.append(os.path.join(local, "agy", "bin"))
         # winget's shim dir lands on the *registry* PATH only — a running
@@ -179,6 +185,65 @@ def ensure_cli_paths() -> list[str]:
     return added
 
 
+def _registry_paths() -> list[str]:
+    """The user's and the machine's persistent PATH (Windows registry)."""
+    import winreg
+
+    values: list[str] = []
+    for hive, key_path in (
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+        (
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+    ):
+        try:
+            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_QUERY_VALUE) as key:
+                value, _kind = winreg.QueryValueEx(key, "Path")
+        except OSError:  # no such value or no access: that hive adds nothing
+            continue
+        values.append(str(value))
+    return values
+
+
+def refresh_from_persistent_path(
+    read: Callable[[], list[str]] | None = None,
+    *,
+    skip: Callable[[str], bool] | None = None,
+) -> list[str]:
+    """Append entries an installer just added to the persistent PATH.
+
+    An installer run by the app (Hermes, OpenClaw, Node.js) registers its
+    folder in the user's or the machine's PATH, which a running process never
+    sees. Windows only (POSIX installers edit shell profiles, which
+    ``ensure_cli_paths`` covers with the folders they use); ``read`` is
+    injectable for tests. Existing entries keep priority; ``skip`` drops
+    entries that must never be used. Returns the appended folders.
+    """
+    if read is None:
+        if sys.platform != "win32":
+            return []
+        read = _registry_paths
+    current = os.environ.get("PATH", "")
+    seen = {os.path.normcase(os.path.normpath(p)) for p in current.split(os.pathsep) if p}
+    added: list[str] = []
+    for value in read():
+        for raw in value.split(";"):
+            entry = os.path.expandvars(raw.strip().strip('"'))
+            if not entry or (skip is not None and skip(entry)):
+                continue
+            key = os.path.normcase(os.path.normpath(entry))
+            if key in seen or not os.path.isdir(entry):
+                continue
+            seen.add(key)
+            added.append(entry)
+    if added:
+        joined = os.pathsep.join(added)
+        os.environ["PATH"] = f"{current}{os.pathsep}{joined}" if current else joined
+        log.info("PATH refreshed with %d folder(s) from the persistent PATH", len(added))
+    return added
+
+
 def resolve_node_executable() -> str | None:
     """Return an absolute Node.js executable, including stale-GUI-PATH hosts."""
     ensure_cli_paths()
@@ -196,4 +261,9 @@ def resolve_node_executable() -> str | None:
     return None
 
 
-__all__ = ["candidate_dirs", "ensure_cli_paths", "resolve_node_executable"]
+__all__ = [
+    "candidate_dirs",
+    "ensure_cli_paths",
+    "refresh_from_persistent_path",
+    "resolve_node_executable",
+]

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import codecs
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -40,6 +41,8 @@ from jarvis.core.path_safety import UnsafePathError, contained_path
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 from .folders import _SKIP_DIRS
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_EDITABLE_BYTES",

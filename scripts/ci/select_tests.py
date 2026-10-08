@@ -12,6 +12,8 @@ Selection is textual and deliberately generous — FAIL OPEN:
   (import or monkeypatch target) and every ``test_b*.py``;
 * any other changed file (frontend source, docs, assets) selects the tests
   that mention its path or its file stem;
+* a change the agent-runtime lane covers adds that lane's whole suite
+  (``agent_runtime_suite.SUITE``);
 * conftest, packaging, lockfiles or the pipeline itself select EVERYTHING,
   and so does a selection larger than :data:`ALL_RATIO` of the suite.
 
@@ -31,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.ci import agent_runtime_suite  # noqa: E402
 from scripts.ci.run_tests_parallel import discover  # noqa: E402
 
 ALL_RATIO = 0.35
@@ -97,6 +100,11 @@ def select(changed: list[str], tests: list[str], texts: dict[str, str]) -> tuple
                 chosen.add(test)
     if touches_product:
         chosen.update(t for t in SMOKE if t in test_set)
+    if any(agent_runtime_suite.touches(path) for path in changed):
+        # The runtimes are driven by the chat and the society; a change on
+        # either side runs the whole chain, not only the importing tests.
+        for entry in agent_runtime_suite.SUITE:
+            chosen.update(t for t in tests if t == entry or t.startswith(entry.rstrip("/") + "/"))
     if len(chosen) > ALL_RATIO * max(1, len(tests)):
         return "all", list(tests)
     if not chosen:

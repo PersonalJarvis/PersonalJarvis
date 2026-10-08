@@ -13,6 +13,8 @@ from typing import Any, Final
 
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
+from . import _agent_profile
+
 # Reuse the tested tool-name sanitizer/map (regex [^A-Za-z0-9_-] + dedup). Its
 # 64-char cap is stricter than Anthropic's 128 but still valid, so a slash/dot/
 # colon MCP name (jarvis/mcp/adapter.py) no longer trips Anthropic's
@@ -100,6 +102,37 @@ def _to_anthropic_messages(messages: tuple[BrainMessage, ...]) -> list[dict[str,
         else:
             out.append({"role": role, "content": content})
     return out
+
+
+#: A prompt-cache breakpoint with the default five-minute lifetime: a tool
+#: loop's next round arrives well within it, and it costs no beta header.
+_EPHEMERAL: Final[dict[str, str]] = {"type": "ephemeral"}
+
+
+def _cache_last_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``messages`` with a cache breakpoint on the last content block.
+
+    Anthropic reads the cache up to the longest marked prefix it has seen, so
+    one rolling breakpoint at the end lets every tool round reuse the whole
+    conversation before it instead of paying the full input rate again.
+    """
+    if not messages:
+        return messages
+    last = dict(messages[-1])
+    content = last.get("content")
+    if isinstance(content, str):
+        if not content:
+            return messages
+        blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
+    elif isinstance(content, list) and content and isinstance(content[-1], dict):
+        blocks = [dict(block) if isinstance(block, dict) else block for block in content]
+    else:
+        return messages
+    if blocks[-1].get("type") == "text" and not blocks[-1].get("text"):
+        return messages  # an empty text block may not carry a breakpoint
+    blocks[-1] = {**blocks[-1], "cache_control": dict(_EPHEMERAL)}
+    last["content"] = blocks
+    return [*messages[:-1], last]
 
 
 def _extract_system(messages: tuple[BrainMessage, ...], extra_system: str | None) -> str | None:
@@ -247,6 +280,8 @@ async def stream_complete(
     # tool schema as the cache boundary (Anthropic caches everything up
     # to and including the marked block).
     prompt_cache_enabled = os.environ.get(_ENV_PROMPT_CACHE) == "1"
+    profile = _agent_profile.current()
+    agent_cache = profile is not None and profile.prompt_cache
     extra_headers: dict[str, str] = {}
     system_payload: Any = system
     if prompt_cache_enabled and system:
@@ -266,6 +301,16 @@ async def stream_complete(
         cached_tools[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
         tools_payload = cached_tools
         extra_headers.setdefault("anthropic-beta", _ANTHROPIC_CACHE_TTL_BETA)
+    if agent_cache:
+        # An agent's tool loop resends system, tools and the whole history on
+        # every round: mark all three (at most four breakpoints in total).
+        if system and not prompt_cache_enabled:
+            system_payload = [{"type": "text", "text": system, "cache_control": dict(_EPHEMERAL)}]
+        if tools_payload and not prompt_cache_enabled:
+            cached_tools = [dict(t) for t in tools_payload]
+            cached_tools[-1]["cache_control"] = dict(_EPHEMERAL)
+            tools_payload = cached_tools
+        messages = _cache_last_message(messages)
 
     kwargs: dict[str, Any] = {
         "model": model,
@@ -275,8 +320,12 @@ async def stream_complete(
     # `temperature` is deprecated on reasoning models (opus-4.x, sonnet-4.x).
     # Only send it for explicitly classic models; on the new defaults,
     # temperature=1 is hardcoded on the backend anyway.
-    if not _is_reasoning_model(model):
+    if not _is_reasoning_model(model) and _agent_profile.sends_temperature():
         kwargs["temperature"] = req.temperature
+    # An agent call may think for minutes; the voice path's short client
+    # timeout is replaced only while an agent request profile is active.
+    if (timeout := _agent_profile.http_timeout()) is not None:
+        kwargs["timeout"] = timeout
     # A requested reasoning effort (the agent chat's picker) becomes
     # ``output_config.effort`` plus adaptive thinking on the models that
     # take it; the voice brain never sets one and sends exactly what it did.

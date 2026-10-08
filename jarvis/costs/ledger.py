@@ -303,10 +303,32 @@ def read_usage(path: Path, since_ms: int, until_ms: int) -> Iterator[UsageRow]:
         conn.close()
 
 
+def first_call_ms(path: Path, caller: str) -> int | None:
+    """When ``caller`` first wrote a row, or ``None`` (no file, no rows)."""
+    if not path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error as exc:
+        log.warning("usage ledger: %s not readable (%s)", path, exc)
+        return None
+    try:
+        row = conn.execute(
+            "SELECT MIN(ts_ms) FROM llm_usage WHERE caller = ?", (caller,)
+        ).fetchone()
+    except sqlite3.Error as exc:
+        log.warning("usage ledger: read failed (%s)", exc)
+        return None
+    finally:
+        conn.close()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 __all__ = [
     "DB_NAME",
     "UsageRow",
     "current_caller",
+    "first_call_ms",
     "flush",
     "ledger_path",
     "read_usage",

@@ -54,6 +54,33 @@ describe("RuntimeChoice", () => {
     expect(ensure).not.toHaveBeenCalled();
   });
 
+  test("a screen reader hears each runtime's setup state, and arrow keys move the pick", async () => {
+    const onChange = vi.fn();
+    withData(
+      data(status("hermes", true), status("openclaw", false, job("openclaw", "running"))),
+      <RuntimeChoice value="hermes" onChange={onChange} />,
+    );
+    const hermes = await screen.findByRole("radio", { name: "society.runtime.hermes" });
+    const openclaw = screen.getByRole("radio", { name: "society.runtime.openclaw" });
+    await waitFor(() => expect(
+      document.getElementById(openclaw.getAttribute("aria-describedby") ?? "")?.textContent,
+    ).toBe("society.runtime.setting_up"));
+    expect(screen.getAllByRole("radio").map((radio) => radio.tabIndex)).toEqual([-1, 0, -1]);
+    fireEvent.keyDown(hermes, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith("openclaw");
+    expect(document.activeElement).toBe(openclaw);
+    fireEvent.keyDown(hermes, { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenLastCalledWith("jarvis");
+  });
+
+  test("a ready runtime newer than the tested release says so, without a version number", async () => {
+    const newer = { ...status("hermes", true), untested: true };
+    withData(data(newer, status("openclaw", true)), <RuntimeChoice value="hermes" onChange={vi.fn()} />);
+    expect(await screen.findByText("society.runtime.ready_untested")).toBeTruthy();
+    expect(screen.getByTestId("runtime-untested").textContent).toBe("society.runtime.untested_hint");
+    expect(screen.queryByText(/1\.2\.3/)).toBeNull();
+  });
+
   test("never shows a version number", async () => {
     withData(data(status("hermes", true), status("openclaw", true)), <RuntimeChoice value="hermes" onChange={vi.fn()} />);
     expect(await screen.findAllByText("society.runtime.ready")).toHaveLength(2);

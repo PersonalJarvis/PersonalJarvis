@@ -92,6 +92,10 @@ datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "ja
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/manual_chrome.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/window_actions.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/pointer.py"), "jarvis/society/browser"))
+# The Hermes / OpenClaw pins (agent_runtimes/versions.py). The package-data
+# sweep below also finds them; named here so a narrower sweep cannot drop them
+# and send a frozen app's setup to upstream latest.
+datas.append((str(PROJECT_ROOT / "jarvis/agent_runtimes/runtime-versions.json"), "jarvis/agent_runtimes"))
 
 # The local voice engine runs in its OWN Python environment, so a frozen build
 # must ship its sources as plain files: setup copies them into the engine home

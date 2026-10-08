@@ -15,6 +15,7 @@ number of matches and the time spent are capped. A capped answer says so
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 import time
@@ -29,6 +30,8 @@ from .file_editing import (
     read_text_file,
     write_text_file,
 )
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_MATCHES",

@@ -504,3 +504,4 @@ scripts/figures/cache/
 
 # Launch-video renders from the /brag skill (thousands of frames).
 brag-output/
+eval-results/

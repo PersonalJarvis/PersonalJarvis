@@ -28,6 +28,7 @@ from uuid import uuid4
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
+from . import _agent_profile
 from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 log = logging.getLogger(__name__)
@@ -47,8 +48,9 @@ _TRANSPORT_OPENAI_COMPAT = "openai-compatible"
 # assistant function-call step. Jarvis deliberately normalizes provider output
 # into BrainDelta/BrainMessage instead of retaining the raw response object, so
 # Google's documented validator sentinel is the honest compatibility value.
+_SKIP_SIGNATURE = "skip_thought_signature_validator"
 _TOOL_HISTORY_EXTRA_CONTENT = {
-    "google": {"thought_signature": "skip_thought_signature_validator"},
+    "google": {"thought_signature": _SKIP_SIGNATURE},
 }
 
 # Latency-Sprint-2: ENV switch for the context cache. BrainManager sets this
@@ -244,8 +246,22 @@ def _to_gemini_contents(
     the ``extract_leaked_tool_calls`` recovery has to repair — observed on
     every delegated research turn). ``tool_name_map`` (original → wire name)
     keeps history names consistent with the sanitized declarations.
+
+    A call without its own thought signature (the 2nd..nth call of a
+    parallel step, which Gemini never signs, or any call after the signature
+    was lost) still replays as a ``functionCall``; the step's first call then
+    carries Google's documented validator sentinel. The results of one
+    parallel step go back in ONE content, one ``functionResponse`` per call,
+    and a result without a tool name takes the name of its call.
     """
     name_map = tool_name_map or {}
+    call_names = {
+        str(part.get("id")): str(part.get("name") or "")
+        for m in messages
+        if m.role == "assistant" and isinstance(m.content, list)
+        for part in m.content
+        if isinstance(part, dict) and part.get("type") == "tool_use" and part.get("id")
+    }
     contents: list[dict[str, Any]] = []
     for m in messages:
         if m.role == "system":
@@ -266,20 +282,24 @@ def _to_gemini_contents(
                 result_text = "\n".join(t for t in inner if t) or json.dumps(payload, default=str)
             else:
                 result_text = str(payload)
-            tool_name = m.name or ""
-            contents.append(
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "functionResponse": {
-                                "name": name_map.get(tool_name, tool_name),
-                                "response": {"result": result_text},
-                            }
-                        }
-                    ],
+            tool_name = m.name or call_names.get(m.tool_call_id or "", "")
+            response = {
+                "functionResponse": {
+                    "name": name_map.get(tool_name, tool_name),
+                    "response": {"result": result_text},
                 }
-            )
+            }
+            previous = contents[-1] if contents else None
+            if (
+                previous is not None
+                and previous["role"] == "user"
+                and previous["parts"]
+                and all("functionResponse" in part for part in previous["parts"])
+            ):
+                # The next result of the same parallel step.
+                previous["parts"].append(response)
+            else:
+                contents.append({"role": "user", "parts": [response]})
             continue
 
         # `getattr` for backwards-compat (Protocol pre-Wave-1-B1 had no images).
@@ -295,28 +315,25 @@ def _to_gemini_contents(
                 elif part.get("type") == "text":
                     if part.get("text"):
                         parts.append({"text": str(part["text"])})
-                elif (
-                    part.get("type") == "tool_use"
-                    and role == "model"
-                    and isinstance(part.get("thought_signature"), str)
-                    and part["thought_signature"]
-                ):
-                    # Native replay is only VALID with the original
-                    # thought_signature: Gemini 3 thinking models 400 on a
-                    # replayed functionCall part without it. The stream loop
-                    # captures it (base64) on every native call, so this
-                    # covers all Gemini-originated calls.
+                elif part.get("type") == "tool_use" and role == "model":
+                    # Gemini 3 thinking models 400 on a replayed step whose
+                    # first functionCall lacks its thought_signature. The
+                    # stream loop captures it (base64) on every signed call;
+                    # where it is missing, the sentinel stands in.
                     call_name = str(part.get("name", ""))
                     call_args = part.get("input")
-                    parts.append(
-                        {
-                            "functionCall": {
-                                "name": name_map.get(call_name, call_name),
-                                "args": call_args if isinstance(call_args, dict) else {},
-                            },
-                            "thought_signature": part["thought_signature"],
+                    call: dict[str, Any] = {
+                        "functionCall": {
+                            "name": name_map.get(call_name, call_name),
+                            "args": call_args if isinstance(call_args, dict) else {},
                         }
-                    )
+                    }
+                    signature = part.get("thought_signature")
+                    if isinstance(signature, str) and signature:
+                        call["thought_signature"] = signature
+                    elif not any("functionCall" in earlier for earlier in parts):
+                        call["thought_signature"] = _SKIP_SIGNATURE
+                    parts.append(call)
                 else:
                     # Unknown block type: keep the previous lossless behavior.
                     parts.append({"text": json.dumps(part, default=str)})
@@ -1054,10 +1071,11 @@ class GeminiBrain:
         if req.system:
             system_parts.append(req.system)
 
-        config_dict: dict[str, Any] = {
-            "temperature": req.temperature,
-            "max_output_tokens": req.max_tokens,
-        }
+        config_dict: dict[str, Any] = {"max_output_tokens": req.max_tokens}
+        if _agent_profile.sends_temperature():
+            # An agent that chose no temperature gets the model's default
+            # (Gemini 3 is tuned for 1.0 and may loop below it).
+            config_dict["temperature"] = req.temperature
         system_text = "\n\n".join(system_parts) if system_parts else ""
         # One pass builds both the outbound declarations and the name map.
         tools_payload, _tool_name_map = _build_gemini_tool_declarations(req.tools)
