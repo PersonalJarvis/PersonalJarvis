@@ -2937,6 +2937,13 @@
       "instant_start_declined_toast": "Se denegó el permiso: {name} sigue iniciándose mediante el acceso directo (puede retrasarse)."
     },
     "background_agents": {
+      "server_title": "Servidor de agentes independiente",
+      "server_backend_update": "Reinicia la aplicación de escritorio una vez para cargar la compatibilidad con el servidor de agentes.",
+      "server_description": "Ejecuta Jarvis, Hermes y OpenClaw en un servidor que sigue activo al cerrar todos los clientes. Se aplica al próximo inicio de la aplicación de escritorio.",
+      "server_active": "Este servidor independiente mantiene los agentes en marcha. Cerrar este cliente no detiene el servidor.",
+      "server_url_label": "Dirección del servidor (déjala vacía para usar este equipo)",
+      "server_save": "Guardar dirección",
+      "server_hint": "Los servidores remotos usan HTTPS y su propio inicio de sesión. El cliente ofrece voz mediante el navegador; la palabra de activación local, las superposiciones y el control del dispositivo requieren el escritorio integrado o un dispositivo disponible.",
       "title": "Mantener los agentes activos al cerrar",
       "description": "Al cerrar {name}, un pequeño servicio en segundo plano mantiene activas tus rutinas y canales de chat (Telegram, Discord). Al abrir la app, esta vuelve a tomar el control. Solo se inicia cuando hay algo que mantener.",
       "keeps_now": "Al cerrar ahora se mantiene: {what}.",
