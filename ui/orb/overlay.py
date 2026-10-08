@@ -2276,10 +2276,11 @@ class OrbOverlay:
         # stays decoupled from the bus — OrbBusBridge injects a
         # callable that publishes ``VoiceMuteToggleRequested``.
         self._mute_toggle_callback: Callable[[], None] | None = None
-        # Right-click on the orb raises the main desktop window. OrbBusBridge
+        # Right-click on non-pet orbs raises the main window. OrbBusBridge
         # injects a callable that publishes ``ShowWindowRequested``; the orb
         # itself stays bus-agnostic (same contract as the mute toggle).
         self._on_show_window: Callable[[], None] | None = None
+        self._on_visibility_changed: Callable[[bool], None] | None = None
         # The control row's actions. Each is optional: wired, the callback
         # decides (the macOS host forwards it to the parent process, which is
         # the only place a SpeechPipeline exists); unwired, the row falls back
@@ -3303,19 +3304,19 @@ class OrbOverlay:
         self._on_speaker_toggle = callback
 
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
-        """Inject the right-click → raise-main-window action.
+        """Inject the main-window action used by non-pet orb right-clicks.
 
-        Fired on a right-click of the orb. Same bus-agnostic contract as
+        Same bus-agnostic contract as
         ``set_on_mute_toggle``: OrbBusBridge passes a callable that publishes
         ``ShowWindowRequested``. Pass ``None`` to detach.
         """
         self._on_show_window = callback
 
     def _on_right_click(self, _event: tk.Event | None = None) -> None:
-        """Right-click → raise the main desktop window via the injected
-        callback. Replaces the old Reset/Mute context menu (spec 2026-06-02):
-        "Reset position" now lives on middle-click, mute stays on the
-        double-double-click gesture. No callback wired → safe no-op."""
+        """Dismiss the pet; other orb styles raise the main desktop window."""
+        if self._style == "pet":
+            self.set_visible(False)
+            return
         callback = self._on_show_window
         if callback is None:
             return
@@ -4020,6 +4021,20 @@ class OrbOverlay:
         self._user_hidden = not bool(visible)
         self._note_activity()
         self._enqueue_ui(self._apply_user_visibility)
+        self._notify_visibility_changed()
+
+    def set_on_visibility_changed(self, callback: Callable[[bool], None] | None) -> None:
+        """Report pet dismissal to the companion host's parent process."""
+        self._on_visibility_changed = callback
+
+    def _notify_visibility_changed(self) -> None:
+        callback = self._on_visibility_changed
+        if self._style != "pet" or callback is None:
+            return
+        try:
+            callback(not self._user_hidden)
+        except Exception:  # noqa: BLE001 — observers must not break the Tk loop
+            logging.getLogger("jarvis.orb").debug("pet visibility callback failed", exc_info=True)
 
     def toggle_visible(self) -> None:
         """The pet shortcut: hide the pet, or show it and bring it to the front."""
@@ -4152,9 +4167,11 @@ class OrbOverlay:
         if not self._user_hidden and self._window_mapped():
             self._user_hidden = True
             self._apply_user_visibility()
+            self._notify_visibility_changed()
             return
         self._user_hidden = False
         self._reveal_pet(raise_to_front=True)
+        self._notify_visibility_changed()
 
     def _reveal_pet(self, *, raise_to_front: bool) -> None:
         """Map the pet window, its strip, and restart the frame loop."""
