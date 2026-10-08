@@ -40,9 +40,10 @@ test("rejected environment selection keeps the saved environment", async () => {
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ detail: { detail: "Choose an API model" } }), { status: 409 }));
   vi.stubGlobal("fetch", fetcher);
   mount({ ...agent, executionEnvironment: "local" });
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "sandbox" } });
+  fireEvent.click(screen.getByRole("combobox"));
+  fireEvent.click(await screen.findByRole("option", { name: "society.sandbox.code" }));
   await screen.findByRole("alert");
-  expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("local");
+  expect(screen.getByRole("combobox").textContent).toContain("society.sandbox.local");
   expect(fetcher).toHaveBeenCalledWith("/api/society/agents/sandbox-user", expect.objectContaining({
     method: "PATCH", body: JSON.stringify({ execution_environment: "sandbox" }),
   }));

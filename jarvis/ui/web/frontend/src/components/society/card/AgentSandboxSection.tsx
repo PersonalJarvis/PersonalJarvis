@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 
@@ -17,16 +18,16 @@ export function SandboxChoice({ value, onChange, disabled = false }: {
   value: "local" | "sandbox"; onChange: (value: "local" | "sandbox") => void; disabled?: boolean;
 }) {
   const t = useT();
-  return <label className="flex flex-col gap-2 text-sm">
+  return <div className="flex flex-col gap-2 text-sm">
     <span className="font-medium">{t("society.sandbox.environment")}</span>
-    <select aria-label={t("society.sandbox.environment")} value={value} disabled={disabled}
-      onChange={(event) => onChange(event.target.value as "local" | "sandbox")}
-      className="rounded-md border border-border bg-background px-3 py-2 text-foreground">
-      <option value="local">{t("society.sandbox.local")}</option>
-      <option value="sandbox">{t("society.sandbox.code")}</option>
-    </select>
+    <BrandedSelect ariaLabel={t("society.sandbox.environment")} value={value} disabled={disabled}
+      onValueChange={(next) => onChange(next as "local" | "sandbox")}
+      options={[
+        { value: "local", label: t("society.sandbox.local") },
+        { value: "sandbox", label: t("society.sandbox.code") },
+      ]} />
     {value === "sandbox" ? <span className="text-xs text-muted-foreground">{t("society.sandbox.scope")}</span> : null}
-  </label>;
+  </div>;
 }
 
 export function AgentSandboxSection({ agent }: { agent: SocietyAgent }) {
