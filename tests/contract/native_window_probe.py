@@ -25,6 +25,8 @@ async def capture_styles() -> None:
         ("unchanged", 0, 0, None, False),
         ("background-only", 0, 0, None, True),
         ("no-activate", 0x08000000, 0x40000, None, False),
+        ("no-activate-appwindow", 0x08040000, 0, None, False),
+        ("no-appwindow", 0, 0x40000, None, False),
         ("layered-opaque", 0x80000, 0, 255, False),
         ("layered-minimum", 0x80000, 0, 1, False),
         ("parked-minimum", 0x08080000, 0x40080, 1, False),
