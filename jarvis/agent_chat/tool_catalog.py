@@ -113,6 +113,7 @@ def build_catalog(
         rows.append(ToolChoice(
             id=f"plugin:custom-api-{api_id}", label=label,
             description=str(getattr(tool, "custom_api_description", "") or tool.description),
+            brand=str(getattr(tool, "custom_api_brand", "")),
             category="plugins", group=label, tool_names=tuple(names),
         ))
         owned.update(names)
