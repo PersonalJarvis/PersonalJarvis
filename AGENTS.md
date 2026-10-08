@@ -104,7 +104,9 @@ Describe our features and interactions directly. Do not present another product
 as a design reference or say our UI or behavior is inspired by, modeled on,
 copied from, or made to match it. Preserve required copyright, license and
 attribution notices and factual dependency, integration and compatibility
-references; this rule never authorizes concealing code provenance.
+references; this rule never authorizes concealing code provenance. Competitor
+research stays out of the repo. `scripts/ci/check_design_references.py` checks
+staged lines at commit time and the whole tree in CI.
 
 **Proportionality.** You own the validation plan: the smallest set of checks
 that can detect a plausible regression from the diff. State the scope, what
@@ -196,9 +198,9 @@ tag + CHANGELOG + published GitHub Release) happens ONLY when explicitly
 asked — an ordinary push is not a release. A release is ONE command:
 `gh workflow run release-cut.yml -f bump=patch|minor|major` (pick the bump from
 the commits since the last tag), then watch the run and report the Release URL.
-The PyPI and signing jobs then wait for the maintainer's approval in the
-Actions tab (environments `pypi`, `release-signing`); tell them, never bypass.
-That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
+There is no approval pause: only the release bot (and admins) may create a
+`v*` tag, and the signing keys and PyPI (environments `release-signing`,
+`pypi`) are reachable only from `v*` tag runs. That workflow bumps, writes the CHANGELOG, tags, waits for CI and publishes;
 never bump, tag or `gh release create` by hand.
 
 Every frontend change works in BOTH light and dark mode, and on the terminal

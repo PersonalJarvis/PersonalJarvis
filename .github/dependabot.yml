@@ -12,6 +12,24 @@
 # procedure.
 
 version: 2
+
+# Public PyPI, declared as the base index for the root `uv` entry below.
+# Dependabot builds its list of Python index URLs from the job credentials. With
+# no registry, the always-present GitHub `git_source` credential becomes an
+# EMPTY index URL next to the default one. When a security update has to fetch
+# hashes again (requirements.txt carries two pinned versions of av, numpy,
+# onnxruntime and scipy, one per platform split, so it always does), hashin
+# requests "/pypi/av/json" with no host and the job dies with
+# `ValueError: unknown url type`. Every uv security update failed that way
+# (multidict, urllib3, PyJWT in 2026-09/10). A base-replacing registry makes
+# this the only index URL, and urljoin() turns it into
+# https://pypi.org/pypi/<name>/json. It needs no credentials.
+registries:
+  pypi:
+    type: python-index
+    url: https://pypi.org/simple
+    replaces-base: true
+
 updates:
   # Build tooling is a separate small lock surface; do not recompile the
   # platform-universal application lock when refreshing packaging tools.
@@ -80,6 +98,28 @@ updates:
     # usually caught and yanked before it can reach this repository.
     cooldown:
       default-days: 7
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 0
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # uv — the ecosystem Dependabot actually runs for the root since uv.lock
+  # exists: every root security update since 2026-09 is a "uv in /." job, which
+  # rewrites uv.lock and requirements.txt together. Version updates stay off for
+  # the reasons above (limit 0); this entry exists so security updates get the
+  # `pypi` registry (see the top of this file) and the project's labels.
+  - package-ecosystem: uv
+    directory: /
+    registries:
+      - pypi
     schedule:
       interval: weekly
       day: monday

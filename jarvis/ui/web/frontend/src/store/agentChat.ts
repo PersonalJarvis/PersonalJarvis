@@ -54,7 +54,7 @@ import { reuseHistoryRows } from "@/lib/historyRequests";
  * DRAFT: for a fresh chat it is what the next session is created with; with
  * a session open, changing a pick patches that session on the backend and
  * the same draft mirrors it. The draft survives a reload (localStorage) so
- * the composer opens on what you used last, like the Claude app does.
+ * the composer opens on what you used last.
  *
  * The provider list is the backend catalog (`/api/agent-chat/catalog`)
  * joined with the Agents tab's credential truth (`/api/jarvis-agent/status`):

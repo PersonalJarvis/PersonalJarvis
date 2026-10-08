@@ -1,5 +1,20 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Local voice and audio topology refresh (issue #464, T2)
+
+Local final transcription uses its configured model independently of the wake
+model. Preview is disabled when it would share a non-concurrent native engine
+with final transcription; cloud preview remains available. CUDA construction
+preserves the configured compute type, and STT failure speech uses the shared
+reply/conversation/UI language resolution.
+
+On Windows, macOS and Linux, topology refresh waits for playback and native
+stream operations to finish, refuses to terminate PortAudio after a failed
+stream close, and retries a deferred refresh. Transient device enumeration
+changes that disappear during settling do not trigger re-initialization.
+Regression tests use fake devices and models on Windows. Ubuntu/PipeWire,
+macOS audio devices and NVIDIA T600 inference have not been verified live.
+
 ## Screenshots paste anywhere (2026-10-05, T2)
 
 Appshots taken by shortcut or button and Jarvis X screenshots go on the

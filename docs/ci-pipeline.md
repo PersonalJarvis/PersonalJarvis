@@ -1,11 +1,9 @@
 # CI/CD pipeline
 
 How a change travels from a coding agent's branch to a user's machine. The
-design borrows the strongest ideas of the
-[Hermes Agent pipeline](https://github.com/NousResearch/hermes-agent/tree/main/.github/workflows)
-and adapts them to this repository: several coding agents working in
-parallel, a Python + TypeScript desktop app, three operating systems, and
-signed installers.
+design fits this repository: several coding agents working in parallel, a
+Python + TypeScript desktop app, three operating systems, and signed
+installers.
 
 ```
 agent branch ──► pull request ──► CI (lanes) ──► CI gate ──► merge train ──► main
@@ -133,7 +131,7 @@ minutes:
    comment listing the files. `git rerere` replays recorded resolutions.
 3. The first green, conflict-free pull request is squash-merged, one per
    tick. Main's full post-merge test run is the backstop for changes that
-   pass alone and break together — GitHub's non-strict model, as in Hermes.
+   pass alone and break together — GitHub's non-strict model.
 
 Opt out with `no-auto-merge`, `do-not-merge`, `wip` or `needs-human`.
 `priority` moves a pull request to the front. Forks and Dependabot never ride
@@ -168,11 +166,19 @@ A release happens **only** when the maintainer asks for one.
   the Conventional Commits since the last tag) into a dated CHANGELOG section
   (`scripts/ci/cut_release.py`), lands the candidate through a CI-checked PR,
   tags the resulting merge commit, and dispatches full CI with macOS on that
-  immutable tag. It dispatches publishers when using `GITHUB_TOKEN`; a new
-  tag pushed with the optional integration token already starts them, so no
-  duplicate PyPI publication is dispatched. Resume support accepts an already
-  merged version commit. Repository PR policy may require the integration
-  token or a maintainer to open the candidate PR.
+  immutable tag. Its `cut` job runs in the `release-cut` environment, which
+  only `main` may deploy to and which holds the private key of the release
+  bot GitHub App (secret `RELEASE_APP_PRIVATE_KEY`, variable
+  `RELEASE_APP_ID`). Right before each write (candidate push and PR, merge,
+  tag push) the job mints a fresh installation token with
+  `actions/create-github-app-token`; CI waits use `GITHUB_TOKEN`, because an
+  installation token lasts one hour. Bot pushes fire the normal events: the
+  candidate PR runs CI by itself and the new tag starts the publishers, so no
+  duplicate PyPI publication is dispatched. Without the bot
+  (`RELEASE_APP_ID` unset) the job falls back to `GITHUB_TOKEN`, dispatches
+  the publishers itself, and a maintainer must open the candidate PR, since
+  `GITHUB_TOKEN` may not open pull requests here. Resume support accepts an
+  already merged version commit.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and
@@ -190,8 +196,8 @@ A release happens **only** when the maintainer asks for one.
   its checksum, and verifies those uploads before publishing. The release-cut
   `publish` job is the normal finalizer. `release-finalize.yml` shares its
   per-tag lock but only fires on its own (`workflow_run`) when a person or the
-  integration token started the publishers: publisher runs dispatched with
-  `GITHUB_TOKEN` raise no `workflow_run` event, so with the default token it
+  release bot started the publishers: publisher runs dispatched with
+  `GITHUB_TOKEN` raise no `workflow_run` event, so without the bot it
   stays a manual retry path. Finalization can
   also be retried manually from main with an existing draft tag. Producers
   never edit release visibility or replace existing asset names. Before an
@@ -271,27 +277,24 @@ Steps:
    signed manifests and the attestations all point at them. Add a short note
    to the release body instead.
 
-**Release approval.** Two GitHub environments guard the irreversible steps:
-`pypi` (the PyPI upload in `release.yml`) and `release-signing` (the `sign`
-job of `sign-installer.yml`, the only job that reads the offline Ed25519 and
-ML-DSA-65 private keys, `WAVE2_OFFLINE_KEY_B64` and `WAVE4_MLDSA65_KEY_B64`).
-Both admit deployments from `v*` tags only, never from a branch, and both
-require the maintainer's approval; administrators cannot bypass it. A
-release therefore pauses twice after tag admission: open the two waiting runs
-("Release to PyPI" and "Sign installer (Sigstore keyless)") in the Actions
-tab, choose **Review deployments**, tick the environment and approve. The
-desktop installers do not wait. Approve within the release-cut publisher's
-150-minute window; a later approval still finishes the release, because
-`release-finalize.yml` runs when the last publisher completes. Rejecting a
-deployment leaves the release a draft.
+**Release environments.** Two GitHub environments guard the irreversible
+steps: `pypi` (the PyPI upload in `release.yml`) and `release-signing` (the
+`sign` job of `sign-installer.yml`, the only job that reads the offline
+Ed25519 and ML-DSA-65 private keys, `WAVE2_OFFLINE_KEY_B64` and
+`WAVE4_MLDSA65_KEY_B64`). Both admit deployments from `v*` tags only, never
+from a branch, and administrators cannot bypass that policy. Neither has
+required reviewers: a release runs from `release-cut.yml` to the published
+GitHub Release without an approval pause or a **Review deployments** click.
+The signing keys and the PyPI upload are therefore reachable only from a
+workflow run on a `v*` tag.
 
 **Release tags.** The `release tags` repository ruleset protects
-`refs/tags/v*` against update and deletion; only the repository admin role
-may bypass it. Creation stays open because `release-cut.yml` pushes the tag
-with `GITHUB_TOKEN`, and GitHub does not accept the GitHub Actions
-integration as a bypass actor on this repository's rulesets. A stray `v*` tag
-still publishes nothing on its own: release admission and both environment
-approvals stand between it and a published release.
+`refs/tags/v*` against creation, update and deletion. Only the release bot
+GitHub App (the `release-cut` job's installation token, app id in
+`RELEASE_APP_ID`) and the repository admin role may bypass it, so only a
+release cut or an administrator can create a `v*` tag. A tag created that way
+still passes release admission (`release-gate.yml`) before anything is
+published.
 
 PyPI publishing retains a separate OIDC-only job and can run only after tag
 admission. Manual branch runs build packages without publishing or signing.
@@ -299,9 +302,9 @@ Native macOS signing imports the publisher certificate into a temporary
 keychain and cleans it up even when the build fails. Native OS build and
 signing proof still requires hosted runners; local syntax checks cannot prove it.
 
-## 4. Adapted from Hermes, and what was left out
+## 4. Design choices, and what was left out
 
-| Hermes idea | Here |
+| Idea | Here |
 | --- | --- |
 | Orchestrator + change classifier, fail-open lanes | `detect` + `classify_changes.py` |
 | One aggregate required check (`all-checks-pass`) | `CI gate` |

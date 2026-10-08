@@ -15934,6 +15934,52 @@ permission need. The rows to close these are in `docs/macos-permissions.md` sect
 (each carries a "superseded" note), ADR-0038, `docs/os-parity.md`,
 `docs/product/privacy-safety-and-support/permissions.md`.
 
+## BUG-226: an agent's answer never came back during a browser voice call — the user had to ask for it (HIGH, FIXED 2026-10-02)
+
+**Symptom.** In a GPT-Live call Jarvis sent Jarvis-Scout a research task and
+said "I'll tell you when it's done". Scout finished five minutes later; Jarvis
+stayed silent for the rest of the call until the user asked "is Scout back?".
+In the same call a mission's "Almost there" line came out in a second, classic
+TTS voice on top of the live call. Scout's finished research was also filed as
+"blocked".
+
+**Cause.** Three gaps:
+
+1. A browser or native live call (`jarvis/live/session.py`) runs beside the
+   speech pipeline. The pipeline never got its handle (`_active_realtime_handle`
+   stays `None`), and `_voice_engine_transitioning` stayed `True` for the whole
+   call, because only the desktop realtime path clears it on `audio_ready`. So
+   `_agent_reply_needs_session()` was true for the entire call: every
+   `society.lead` / `agentic_ide.readback` result waited in the delegation inbox
+   until the call ended, and `_realtime_session_owns_voice()` was false, so
+   other readbacks fell through to classic TTS.
+2. Even with a handle, the pipeline offers owed replies only on its own
+   `LISTENING` transitions and settles them on the desktop `turn_complete`. A
+   live call has neither, so a delivered reply would have stayed "in flight"
+   and blocked every later one.
+3. `agent_chat/media.py` emits a `kind: error` event when a mentioned picture
+   cannot be displayed; `society/runtime.py::_watch_turn` treated any error
+   event as a failed turn.
+
+**Fix.** (1) The pipeline treats an active `jarvis.live` call as the realtime
+voice owner (`_live_call`, `_realtime_voice_handle`, `_agent_reply_floor_open`).
+(2) The live session reports conversational pauses (`ready_for_report`,
+`_notify_pause` → `SpeechPipeline.live_call_paused`) — on every indicator
+change, when the user falls silent, when a tool task finishes and when audio
+first flows — and tracks a handed-over report (sent → started → done/failed,
+20 s start timeout). The pipeline settles its in-flight reply on that outcome,
+offers an unvoiced one again (at most `_LIVE_REPLY_MAX_ATTEMPTS`, then the next
+call), and keeps a reply that was still on its way at hang-up for the next call
+(`live_call_ended`). Several results finishing together are still one grouped
+report; results arriving while one is spoken follow at the next pause.
+(3) Display errors carry `display_only`, picture rows carry `media_only`; the
+society turn watcher and the agent MCP tool ignore both for the turn's status
+and final text.
+Guards: `tests/unit/speech/test_live_call_agent_replies.py`,
+`tests/unit/live/test_report_delivery.py`,
+`tests/unit/society/test_chat_binding.py::test_a_picture_that_could_not_be_shown_does_not_block_finished_work`,
+`tests/unit/agent_chat/test_media.py::test_display_errors_are_marked_so_they_never_fail_the_turn`.
+
 ## BUG-227: "send Jarvis Scout a message" found no agent when speech misheard the name (HIGH, FIXED 2026-10-02)
 
 **Symptom.** On a voice call the user asked Jarvis to message their agent
@@ -16027,7 +16073,7 @@ child window, and the real outer window kept affinity 0 (measured on the live
 child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
 the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
 real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
-Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+Side effect: the overlays also vanish from other capture and streaming tools,
 which is the documented intent of the module. Guard:
 `tests/unit/platform/test_capture_exclusion.py`.
 

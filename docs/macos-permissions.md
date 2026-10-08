@@ -160,65 +160,9 @@ need to detect silent failures) that was never weighed, and a small set of real 
 got conflated with it. None of the real constraints requires a banner, a wizard, a readiness gate
 or refusing to let the OS show its own dialog.
 
-## 3. How other apps do it, and what Apple says
+## 3. What Apple says
 
-### 3.1 Evidence quality (read first)
-
-- Vendor domains (OpenAI help centre and developer pages, Raycast manual, Zoom, Slack,
-  1Password, Loom, CleanShot, Alfred, Wispr Flow, Superwhisper) were **not reachable** from the
-  research environment. Most vendor statements below come from **search-result summaries of the
-  official page**, university or IT how-to pages that mirror the vendor knowledge base, and
-  third-party reviews. They are weaker than a direct read.
-- Pages read directly: the Claude desktop and computer-use documentation, one Claude support
-  article, and GitHub issues of public repositories (these quote real dialog text and bundle ids
-  but are user reports, not vendor statements).
-- Nothing was observed on a Mac. A "no wall found" statement means "none documented", never
-  "none exists".
-- Source types: **direct** (page read), **summary** (search summary of the official page),
-  **how-to** (third-party or institutional write-up), **issue** (GitHub issue).
-
-### 3.2 Comparison table
-
-| App | When it asks | Explanation before / after | On denial | Route to System Settings | Confidence, source type |
-|---|---|---|---|---|---|
-| **ChatGPT desktop** | At first use of a feature: Work with Apps (Accessibility), Record and voice (Microphone, Screen & System Audio Recording), Computer Use after an explicit opt-in. No launch wall found. | Help-centre prose plus the OS dialog; an own pre-prompt card was not verified. Computer Use adds app-level approvals independent of TCC ("allow once / Always allow"). | Feature unavailable; Computer Use reports "permissions are still pending" when the grant sits on the wrong client (a helper is a separate TCC client, openai/codex#46776). | Text path to the Privacy & Security pane; a deep link is unverified. | Partly documented. Summary of vendor help pages plus issues (read). |
-| **Claude desktop** | Computer use is off by default; the user flips a Settings toggle and must grant two permissions "before the toggle takes effect". Quick Entry shows an in-app opt-in card at first launch of the updated app (an app-level consent card, not a TCC prompt). | Docs table with one line per permission and a status badge per permission in Settings. | Toggle stays inert until both are granted; if off, Claude says in chat it could do the task if enabled. | "Click the badge to open the relevant System Settings pane" (documented). Restart after a grant: not stated for Desktop. | Documented for computer use (direct). Partly documented for the timing of the OS dialogs and for Quick Entry denial. |
-| **Claude Code** (terminal) | Nothing up front. Computer use is a built-in server, off by default; "the first time Claude tries to use your computer" a prompt appears. Protected folders prompt on first touch (plain OS template). | Inline card in the session with links to the panes and a **Try again** button. | Try again, no nagging. Folder denial surfaces as an unexplained error (issues). | Links in the prompt. "macOS may require you to restart Claude Code after granting Screen Recording." | Documented for the flow (direct). Attribution is mixed: the docs name the terminal app; issues show the Claude binary as its own client (a version path in Automation dialogs, per-update re-prompts). |
-| **Raycast** | Per feature at first use (summary of the manual); feature setup views for Screen Awareness and Dictation. Whether Accessibility is also asked in first-run onboarding is **conflicting** across third-party sources. | Setup view per feature and an inline "Grant Permission" card. | Feature degrades; Screen Recording is optional for Screen Awareness. | Button opens the pane; a changelog entry fixes "would not open System Settings when requesting access for a denied permission" (summary). Auto-restart and resume is asserted by one summary only. | Partly documented. Summary of the manual and changelog; third-party how-tos. |
-| **Zoom** | Camera and microphone at first use; Screen Recording at the first share; Accessibility only when someone requests remote control. No permission onboarding documented. | OS dialog with the usage string; for Accessibility "Open System Preferences" on the dialog, which as far as can be told is the standard macOS dialog, not an own one. | Feature dead; all how-tos tell the user to fix it manually in Privacy & Security. | Button for Accessibility; OS asks to restart Zoom after Screen Recording. | Partly documented. How-tos mirroring the vendor KB. |
-| **Slack** | First huddle (microphone), first video or share (camera, Screen Recording). | OS dialog (inferred). | **Silent degrade**: sharing shows the wallpaper and menu bar. A cautionary example. | Help text, quit and reopen; `tccutil reset ScreenCapture <bundle id>` as a last resort (third party). | Partly documented / inferred. Third-party sources. |
-| **1Password** | Screen Recording at the first QR or setup-code scan; Accessibility only for the opt-in Universal Autofill and shortcuts. The vault works with no permission at all. | OS dialog; the help page is named after the dialog text ("1Password would like to record this screen"). | QR scan unavailable until granted and restarted; core product unaffected. | "Open System Settings" on the dialog, then "Quit & Reopen". | Partly documented. Summary of vendor pages. |
-| **Loom** | The install article says users "will be prompted" when installing the desktop app; microphone and camera when selected (inferred). Exact order not documented. | Unknown. | Manual toggles; `tccutil reset` commands documented as a fix for stuck state (a known pain point). | Help-article steps; no in-app deep link confirmed. | Partly documented. Summary of help articles. |
-| **CleanShot X** | Screen Recording and Accessibility during setup (a screenshot tool whose whole purpose needs Screen Recording, so up front equals first use); microphone when a recording uses it. | Short onboarding; wording unknown. | Capture does not work; the app appears in the Screen Recording list only after a capture attempt. | Quit and reopen needed (third party). | Inferred / partly documented. Third-party reviews. |
-
-### 3.3 Closest comparators (voice, hotkey, insert text)
-
-| App | Finding | Confidence |
-|---|---|---|
-| **Wispr Flow** | First-launch setup with two cards (Accessibility, Microphone), each with an own priming sentence and an Allow button, then Continue and a microphone test; resumable. Input Monitoring only if the user binds Caps Lock alone; screen capture not needed for dictation; re-checks permissions when brought to the foreground (community guide); warns that a missing Accessibility grant is a silent failure. | Documented (summary of vendor docs); runtime recovery behaviour from a community guide. |
-| **Superwhisper** | First-launch wizard for Microphone and Accessibility; a changelog note says a re-prompt after completed onboarding was fixed. | Partly documented. |
-| **Alfred** | Hybrid: a first-launch checklist plus a permanent "Request Permissions..." button in Preferences; Contacts and Automation are asked by macOS only when needed. | Partly documented. |
-| **Codex desktop** | Opt-in toggles (Computer Use, Chronicle) then the OS prompts, then per-app approvals; helper identities are separate TCC clients (issues #46776, #18507); a prompt for a feature the user never enabled is perceived as a bug (#37378, "access data from other apps" about daily with Computer Use off). | Partly documented; issues read. |
-
-### 3.4 What the comparison supports, and what it does not
-
-- Documented only for the Claude products (direct read): the OS dialog hangs off a feature
-  toggle or first use, with a feature-local explanation and a link to the right pane. For the
-  other apps the evidence is summary, how-to or inference. Wispr Flow, Superwhisper, Alfred,
-  CleanShot X and (inferred) Loom run short first-launch permission flows, which is a setup
-  wizard of the kind Jarvis removes. No source found documents a persistent app-wide banner or a
-  "set up everything" wizard, but absence of documentation is not absence of the feature.
-  This comparison is therefore not evidence for the "no wizard" decision; that decision rests on
-  the Apple HIG quotes (3.5).
-- Not supported: "no app asks at launch". Claude desktop shows a first-launch opt-in card;
-  Wispr Flow, Superwhisper, CleanShot X and Alfred have short first-launch flows scoped to what
-  the product cannot work without; Raycast onboarding is uncertain. State it as "none documented
-  as a persistent wall".
-- Two-layer consent for agent features (an app-level toggle, then per-app approvals, then the
-  OS dialog) appears in the Claude and Codex products. Jarvis already has its own risk tiers
-  for tool use; this change adds no new app-level approval layer.
-- Helper-identity pitfall (issues only): when a helper does the capture, the grant must be on the
-  helper. Ask from, and check, the process that will call the API (4.7, attribution).
+The decision in section 4 rests on Apple's own guidance and APIs (3.5 to 3.8). Sections 3.1 to 3.4 held a survey of other products and were removed; the numbering of the remaining sections is kept so existing references stay valid.
 
 ### 3.5 Apple reference points
 

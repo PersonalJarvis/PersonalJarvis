@@ -5,3 +5,11 @@
 name = "native-crypto"
 url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
 explicit = true
+
+# A --config-file replaces pyproject's [tool.uv] settings, so this mirrors the
+# sherpa-onnx metadata fix there: every sherpa-onnx wheel except linux_armv7l
+# requires sherpa-onnx-core, and the universal lock must keep the core package.
+[[dependency-metadata]]
+name = "sherpa-onnx"
+version = "1.13.4"
+requires-dist = ["sherpa-onnx-core==1.13.4"]

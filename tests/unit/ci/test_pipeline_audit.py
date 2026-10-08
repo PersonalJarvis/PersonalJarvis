@@ -379,10 +379,53 @@ def test_workflow_security_policy_and_mutation_regressions():
         lambda w: w["stargazer-map.yml"]["jobs"]["verify"]["steps"][0].update(
             {"uses": "actions/checkout@v4"}
         ),
+        lambda w: w["release-cut.yml"]["jobs"]["cut"].pop("environment"),
+        lambda w: _release_cut_step(w, "Tag the admitted release")["env"].update(
+            {"GH_TOKEN": "${{ github.token }}"}
+        ),
+        lambda w: w["ci.yml"]["jobs"]["gate"]["steps"][0].update(
+            {"env": {"KEY": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"}}
+        ),
     ):
         changed = copy.deepcopy(clean)
         mutate(changed)
         assert check_workflow_policy.audit(changed)
+
+
+def _release_cut_step(definitions: dict, name: str) -> dict:
+    steps = definitions["release-cut.yml"]["jobs"]["cut"]["steps"]
+    return next(step for step in steps if step.get("name") == name)
+
+
+def test_release_cut_writes_with_fresh_bot_tokens_and_reads_with_github_token():
+    definitions = workflows()
+    cut = definitions["release-cut.yml"]["jobs"]["cut"]
+    assert cut["environment"] == "release-cut"
+    assert cut["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - expression
+    assert cut["env"]["TOKEN_IS_BOT"] == "${{ vars.RELEASE_APP_ID == '' }}"  # noqa: S105
+    checkout = cut["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["persist-credentials"] is False
+    # Every write step mints its own token right before it (one-hour lifetime).
+    for writer, minter in (
+        ("Open the candidate PR", "candidate-token"),
+        ("Land the candidate", "land-token"),
+        ("Tag the admitted release", "tag-token"),
+    ):
+        names = [step.get("name") for step in cut["steps"]]
+        assert cut["steps"][names.index(writer) - 1].get("id") == minter
+        token = _release_cut_step(definitions, writer)["env"]["GH_TOKEN"]
+        assert token == f"${{{{ steps.{minter}.outputs.token || github.token }}}}"
+    minters = [s for s in cut["steps"] if s.get("id", "").endswith("-token")]
+    assert len(minters) == 3
+    for step in minters:
+        assert step["uses"].startswith("actions/create-github-app-token@")
+        assert "vars.RELEASE_APP_ID != ''" in step["if"]
+        assert step["with"]["private-key"] == "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
+        assert "permission-workflows" not in step["with"]
+    # Long CI waits never hold a bot token.
+    for reader in ("Wait for the candidate CI gate", "Admit the release commit"):
+        assert "GH_TOKEN" not in _release_cut_step(definitions, reader).get("env", {})
 
 
 def test_all_shards_consume_the_same_detect_output_including_partial_reruns():
@@ -399,8 +442,8 @@ def test_all_shards_consume_the_same_detect_output_including_partial_reruns():
 
 
 def test_release_ci_targets_tag_with_all_platforms():
-    steps = workflows()["release-cut.yml"]["jobs"]["cut"]["steps"]
-    dispatch = next(s["run"] for s in steps if s.get("name") == "Dispatch the publishing workflows on the tag")
+    step = _release_cut_step(workflows(), "Dispatch the publishing workflows on the tag")
+    dispatch = step["run"]
     assert 'ci.yml --ref "v$V" -f full=true -f include_macos=true' in dispatch
 
 
@@ -414,7 +457,8 @@ def test_release_cut_lands_through_protection_and_tags_the_merge_commit():
     cut = workflows()["release-cut.yml"]["jobs"]["cut"]
     commands = "\n".join(step.get("run", "") for step in cut["steps"])
     assert "git push origin HEAD:main" not in commands
-    assert 'gh pr merge "$candidate" --merge --match-head-commit "$sha"' in commands
+    merge = 'gh pr merge "$CANDIDATE" --merge --match-head-commit "$CANDIDATE_SHA"'
+    assert merge in commands
     assert 'git checkout --detach "$merged"' in commands
     assert '[ "$TOKEN_IS_BOT" = "true" ] || [ "$TAG_PUSHED" != "true" ]' in commands
 
@@ -551,6 +595,40 @@ def test_normal_full_run_does_not_require_release_only_evidence():
     needs["detect"]["outputs"]["release"] = "false"
     needs["release-qualification"]["result"] = "skipped"
     assert required_results.evaluate(needs, pipeline=True, strict=True)["ok"]
+
+
+def test_signpath_signing_is_dormant_gated_and_verified_before_shipping():
+    windows = workflows()["desktop-installers.yml"]["jobs"]["windows"]
+    gate = windows["env"]["HAS_SIGNPATH_SIGNING"]
+    for needed in (
+        "github.ref_type == 'tag'",
+        "secrets.SIGNPATH_API_TOKEN",
+        "vars.SIGNPATH_ORGANIZATION_ID",
+        "vars.SIGNPATH_PROJECT_SLUG",
+        "vars.SIGNPATH_SIGNING_POLICY_SLUG",
+    ):
+        assert needed in gate
+    assert "SIGNPATH_API_TOKEN" not in str(windows["env"]).replace(
+        "secrets.SIGNPATH_API_TOKEN != ''", ""
+    )
+    steps = windows["steps"]
+    names = [s.get("name", "") for s in steps]
+    stage = steps[names.index("Stage the unsigned installer for SignPath")]
+    sign = steps[names.index("Sign the installer (SignPath Foundation)")]
+    verify = next(s for s in steps if "Get-AuthenticodeSignature" in s.get("run", ""))
+    upload = steps[names.index("Upload the installer")]
+    for step in (stage, sign, verify):
+        assert step["if"] == "env.HAS_SIGNPATH_SIGNING == 'true'"
+    # The unsigned file must never match the release job's download pattern.
+    assert not stage["with"]["name"].startswith("installer-")
+    artifact_id = "${{ steps.signpath-unsigned.outputs.artifact-id }}"
+    assert sign["with"]["github-artifact-id"] == artifact_id
+    order = [steps.index(s) for s in (stage, sign, verify, upload)]
+    assert order == sorted(order)
+    assert "SignPath Foundation" in verify["run"] and "'Valid'" in verify["run"]
+    azure = steps[names.index("Sign the installer (Azure Trusted Signing)")]
+    assert "env.HAS_SIGNPATH_SIGNING != 'true'" in azure["if"]
+    assert windows["permissions"] == {"contents": "read", "actions": "read"}
 
 
 def test_native_signing_keys_are_imported_only_on_admitted_tags_and_always_removed():

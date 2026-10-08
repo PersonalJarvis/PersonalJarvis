@@ -4,7 +4,7 @@
 # A tag publishes only when scripts/ci/release_admit.py confirms: tag ==
 # pyproject == jarvis.__version__, a CHANGELOG section exists, the commit is on
 # main, and `CI gate` passed on that exact commit (it waits while CI runs).
-# Adapted from Hermes Agent's "admit the claim" stage: a release never builds
+# The "admit the claim" stage: a release never builds
 # anything main has not already proven.
 
 name: Release gate
