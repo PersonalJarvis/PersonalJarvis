@@ -219,6 +219,7 @@
       "model_group_chatgpt": "ChatGPT / Codex subscription",
       "model_group_grok": "Grok subscription",
       "model_group_google": "Google / Gemini subscription",
+      "model_extra_usage": "billed as extra usage",
       "model_scope": "Applies to this agent's next messages and routine runs. Chat history stays.",
       "model_busy": "Wait for the current response before changing models.",
       "model_save_failed": "Could not save the model",
@@ -675,6 +676,12 @@
       "repair": "Repair browser",
       "off": "Browser off",
       "off_hint": "The browser starts only when {0} needs it.",
+      "moved": "The shared browser is open for {0} now. It can only be open for one agent at a time.",
+      "moved_status": "Open for {0}",
+      "open_here": "Open here",
+      "waiting_for": "Waiting for {0}",
+      "busy_task": "{0} is using the shared browser for a task. It opens here as soon as {0} is done.",
+      "stop_holder": "Stop {0}'s task",
       "open": "Open browser"
     },
     "mars": {

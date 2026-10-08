@@ -89,9 +89,6 @@ export type SectionId =
   // My Pets: the desktop pet — which one, its size, its bubble, and custom
   // pets from a sprite sheet (docs/pets.md). A Settings-hub page.
   | "pets"
-  // Jarvis actions: every app action Jarvis can run and the person's
-  // allow / ask / block choice for each. A Settings-hub page.
-  | "jarvis-actions"
   | "dictionary"
   | "dictation"
   // The three tabs added by the merged voice section. "dictation" (default
@@ -144,7 +141,6 @@ export const SECTION_IDS = [
   "appshots",
   "shortcuts",
   "pets",
-  "jarvis-actions",
   "dictionary",
   "dictation",
   // `satisfies` only catches array entries that are missing from the union,
@@ -241,7 +237,6 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   appshots: "Appshots",
   shortcuts: "Keyboard shortcuts",
   pets: "My Pets",
-  "jarvis-actions": "Jarvis actions",
   dictionary: "Dictionary",
   dictation: "Dictation",
   // Plain English, deliberately NOT the "{name} Voice" brand: these labels are

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,11 @@ class Evidence:
     state: str = "unknown"
     at: float = 0.0
     checked_at: float = 0.0
+    # The last lifecycle state recorded BEFORE the current submission. Never
+    # the state of the current job; it only tells a submission that started
+    # no turn (an empty Enter, a slash command) after a finished one apart
+    # from a pane with no history at all.
+    before: str = ""
 
 
 _readings: dict[tuple, Evidence] = {}
@@ -82,6 +87,11 @@ def transition(agent: str, row: dict) -> tuple[str, float] | None:
         if kind not in {"user", "assistant"} or not isinstance(message, dict):
             return None
         content = message.get("content")
+        if kind == "user" and row.get("queueTranscriptOnly"):
+            # Claude Code records a queued notice (e.g. "background command did
+            # not finish before the previous session ended") without starting a
+            # turn. Reading it as work left an idle pane "working" for good.
+            return None
         if kind == "user":
             texts = [content] if isinstance(content, str) else [
                 b.get("text", "") for b in content or [] if isinstance(b, dict)
@@ -120,9 +130,9 @@ def _read(key: tuple, now: float) -> Evidence:
         stat = path.stat()
         signature = (str(path), stat.st_mtime_ns, stat.st_size)
         if cached and cached[0] == signature:
-            old = cached[1]
-            return Evidence(old.state, old.at, now)
+            return replace(cached[1], checked_at=now)
         result = Evidence(checked_at=now)
+        before = ""
         # A bounded tail is enough: tool progress keeps a task working even
         # when its start marker lies outside the window. No marker -> unknown.
         with path.open("rb") as handle:
@@ -132,8 +142,9 @@ def _read(key: tuple, now: float) -> Evidence:
             for raw in handle:
                 try:
                     row = json.loads(raw)
-                except (ValueError, UnicodeDecodeError):  # The writer may still be completing its final JSON line.
-                    result = Evidence(checked_at=now)
+                except (ValueError, UnicodeDecodeError):
+                    # a half-written last line is expected while the writer runs
+                    result, before = Evidence(checked_at=now), ""
                     continue  # The writer may not have completed its last JSON line.
                 if not isinstance(row, dict):
                     continue
@@ -146,11 +157,16 @@ def _read(key: tuple, now: float) -> Evidence:
                     # unanswered question into a successful turn boundary.
                     continue
                 change = transition(agent, row)
-                if (
-                    change and 0 < change[1] <= time.time()
-                    and change[1] >= float(submitted_at or 0)
-                ):
+                if not change or not 0 < change[1] <= time.time():
+                    continue
+                if change[1] >= float(submitted_at or 0):
                     result = Evidence(*change, checked_at=now)
+                elif not (
+                    agent == "claude" and row.get("subtype") == "turn_duration"
+                    and before in {"stopped", "failed", "asking"}
+                ):
+                    before = change[0]
+        result = replace(result, before=before)
         _files[key] = (signature, result)
         return result
     except (OSError, ValueError, TypeError):

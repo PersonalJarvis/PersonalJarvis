@@ -13,6 +13,10 @@ vi.mock("@/i18n", () => ({
     "society.browser_live.live": "Live",
     "society.browser_live.off_hint": "Starts when {0} needs it",
     "society.browser_live.open": "Open browser",
+    "society.browser_live.open_here": "Open here",
+    "society.browser_live.moved": "The shared browser is open for {0} now.",
+    "society.browser_live.busy_task": "{0} is using the shared browser for a task until {0} is done.",
+    "society.browser_live.stop_holder": "Stop {0}'s task",
     "society.browser_profiles.chrome_offline": "Chrome disconnected",
     "society.browser_profiles.profile_unavailable": "Profile disconnected — choose a profile",
     "society.browser_profiles.title": "Browser profiles",
@@ -36,7 +40,8 @@ const { control, state, view, browser } = vi.hoisted(() => ({
   view: vi.fn(),
   browser: { open: true, mode: "own", connected: true, profileName: "" },
   state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, loginMode: false, loginReady: false, loginAvailable: false, manual: false, running: false,
-    url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
+    url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "",
+    busy: undefined as undefined | { holderId: string; holderName: string; running: boolean }, movedTo: "" },
 }));
 vi.mock("./useBrowserView", () => ({
   useBrowserView: (agentId: string, enabled: boolean) => {
@@ -64,6 +69,8 @@ afterEach(() => {
   browser.mode = "own"; browser.connected = true; browser.profileName = "";
   state.url = "https://example.com";
   state.loginMode = false; state.loginReady = false; state.loginAvailable = false;
+  state.busy = undefined; state.movedTo = "";
+  vi.unstubAllGlobals();
 });
 describe("live agent browser", () => {
   test("reload and restart remain visible in the compact full-window login view", () => {
@@ -160,6 +167,33 @@ describe("live agent browser", () => {
     expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Starts when Scout needs it");
     fireEvent.click(screen.getByTestId("agent-browser-open"));
     expect(view).toHaveBeenLastCalledWith("scout", true);
+  });
+  test("a shared browser held by another agent's task names it and can stop that task", () => {
+    const fetch = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    state.ready = false; state.error = "";
+    state.busy = { holderId: "juno", holderName: "Juno", running: true };
+    mount();
+    expect(screen.getByRole("status").textContent).toContain("Juno is using the shared browser for a task until Juno is done.");
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop Juno's task" }));
+    expect(fetch).toHaveBeenCalledWith("/api/society/agents/juno/browser/cancel", expect.objectContaining({ method: "POST" }));
+  });
+  test("a shared browser moved to another agent stops this view until opened here again", () => {
+    browser.open = false;
+    state.movedTo = "Wren";
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", false);
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("The shared browser is open for Wren now.");
+    state.movedTo = "";
+    fireEvent.click(screen.getByRole("button", { name: "Open here" }));
+    expect(view).toHaveBeenLastCalledWith("scout", true);
+  });
+  test("a session error never offers a runtime repair that cannot fix it", () => {
+    state.error = "Browser stream: TimeoutError";
+    mount();
+    expect(screen.getByText("Browser stream: TimeoutError")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
   });
   test("a browser the agent already runs is shown straight away", () => {
     mount();

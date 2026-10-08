@@ -55,10 +55,20 @@ export interface AccessoryItem {
 }
 /** [x, y, scale] in symbol coordinates. */
 export type AnchorPoint = [number, number, number];
-export interface AccessoryShape { top: number; bottom: number; eyeY: number; anchors: Record<AccessorySlot, AnchorPoint> }
+export interface AccessoryShape {
+  top: number; bottom: number; eyeY: number; anchors: Record<AccessorySlot, AnchorPoint>;
+  /** Measured body surface depth (m, toward the viewer) under each slot anchor. */
+  depth?: Partial<Record<AccessorySlot, number>>;
+}
+
+/** Where a slot's free parts rest in front of (or behind) the body centre, in metres. */
+export function slotDepthM(shape: SymbolShape, slot: AccessorySlot): number {
+  return ACCESSORY_CATALOG.shapes[shape].depth?.[slot] ?? ACCESSORY_CATALOG.slotDepth[slot] * ACCESSORY_CATALOG.frontDepthM;
+}
 interface Catalog {
   schema: number;
   slots: AccessorySlot[];
+  /** Fallback depth as a fraction of frontDepthM, for a shape without measured depths. */
   slotDepth: Record<AccessorySlot, number>;
   /** Flat-only x shift that recentres clothing under the tilted flat face. */
   slotFlatShift: Partial<Record<AccessorySlot, number>>;

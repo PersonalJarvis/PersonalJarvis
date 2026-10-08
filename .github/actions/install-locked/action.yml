@@ -1,0 +1,64 @@
+name: Install from uv.lock
+description: >-
+  Install the app and its test dependencies from the committed uv.lock into the
+  interpreter set up by actions/setup-python, with hashes enforced. Versions
+  never float, so an upstream release cannot turn CI red with no code change,
+  and CI tests the dependency set the product ships.
+inputs:
+  extras:
+    description: Space-separated project extras to install (for example "dev telephony").
+    required: false
+    default: ""
+  with:
+    description: Space-separated test tools for a slim base install, pinned through the lock.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # The cache location goes to the uv steps below as a step output, never
+    # through GITHUB_ENV: an environment file write would leak into every
+    # later step of the calling job.
+    - name: Install uv and locate its cache
+      id: uv
+      shell: bash
+      run: |
+        python -m pip install --disable-pip-version-check --quiet uv==0.11.19
+        cache_dir="$(python -c 'import pathlib; print(pathlib.Path.home() / ".cache" / "uv-locked")')"
+        echo "cache_dir=$cache_dir" >> "$GITHUB_OUTPUT"
+        echo "python=$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')" >> "$GITHUB_OUTPUT"
+    # After `uv cache prune --ci` the cache holds only wheels built from
+    # source (a handful of sdist-only packages), so it stays small; pre-built
+    # wheels download faster than a cache restore would unpack them.
+    - name: Restore the uv build cache
+      id: restore
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/uv-locked
+        key: uv-locked-${{ runner.os }}-${{ runner.arch }}-py${{ steps.uv.outputs.python }}-${{ hashFiles('uv.lock') }}
+        restore-keys: |
+          uv-locked-${{ runner.os }}-${{ runner.arch }}-py${{ steps.uv.outputs.python }}-
+    - name: Install the locked set
+      shell: bash
+      env:
+        UV_CACHE_DIR: ${{ steps.uv.outputs.cache_dir }}
+        EXTRAS: ${{ inputs.extras }}
+        TOOLS: ${{ inputs.with }}
+      run: |
+        args=()
+        for extra in $EXTRAS; do args+=(--extra "$extra"); done
+        for tool in $TOOLS; do args+=(--with "$tool"); done
+        python scripts/ci/install_locked.py "${args[@]}"
+    - name: Prune the uv cache to source builds
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        UV_CACHE_DIR: ${{ steps.uv.outputs.cache_dir }}
+      run: python -m uv cache prune --ci
+    - name: Save the uv build cache
+      if: steps.restore.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/uv-locked
+        key: ${{ steps.restore.outputs.cache-primary-key }}

@@ -2,6 +2,7 @@ import { PairConversationBoundary } from "@/components/agentchat/PairConversatio
 import {
   AgentMessageActivity,
   ChatActivity,
+  CodingThreadActivity,
   DelegationActivity,
   RoutineActivity,
   assignmentOf,
@@ -9,6 +10,7 @@ import {
 } from "./ChatActivity";
 import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { foldMemoryNotices } from "./memoryNotices";
+import { foldRepeatedThreadStatus } from "@/components/agentic/threads/openCodingThread";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -682,7 +684,11 @@ export function Transcript({
   const t = useT();
   const sessionId = useAgentChat((state) => state.activeSessionId);
   // Memory receipts are drawn inside the turn they follow, above its reply.
-  const { items, memoryByTurn } = useMemo(() => foldMemoryNotices(rawItems), [rawItems]);
+  // A coding thread's unchanged status is one row, however often it arrived.
+  const { items, memoryByTurn } = useMemo(
+    () => foldMemoryNotices(foldRepeatedThreadStatus(rawItems)),
+    [rawItems],
+  );
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
@@ -779,6 +785,12 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   if (item.kind === "context_rollover") {
     return <p className="py-1 text-center text-[11px] text-muted-foreground">{t("society.chat.context_rollover")}</p>;
   }
+  if (item.kind === "runtime_setup") {
+    const runtime = String(item.data.runtime ?? "");
+    return <p className="py-1 text-center text-[11px] text-muted-foreground" data-testid="runtime-setup-notice">
+      {runtime ? t("society.runtime.setting_up_chat").replace("{0}", t(`society.runtime.${runtime}`)) : item.text}
+    </p>;
+  }
   if (item.kind === "routine_run") {
     const sessionId = String(item.data.session_id ?? "");
     const agentId = item.agentId || String(item.data.agent_id ?? "");
@@ -786,6 +798,10 @@ function NoticeLine({ item }: { item: NoticeItem }) {
       onOpen={sessionId && agentId ? () => useRoutineNavigation.getState().open({
         agentId, sessionId, title: item.text, timestamp: item.tsMs,
       }) : undefined} />;
+  }
+  if (item.kind === "coding_thread") {
+    const label = t("society.chat.coding_thread_started").replace("{0}", String(item.data.agent ?? ""));
+    return <CodingThreadActivity label={`${label} · ${String(item.data.title ?? "")}`} threadId={String(item.data.thread_id ?? "")} />;
   }
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =

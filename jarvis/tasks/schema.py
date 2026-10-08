@@ -280,7 +280,7 @@ class PluginGrant(BaseModel):
 
 class AgentAction(BaseModel):
     """An agentic brain turn — the task runs ``prompt`` and the brain decides
-    how to combine the enabled plugins to reach the goal (Claude-style
+    how to combine the enabled plugins to reach the goal (
     scheduled task). The toggled plugins become the turn's tool allowlist;
     each grant's ``scope`` gates what the unattended run may do.
     """

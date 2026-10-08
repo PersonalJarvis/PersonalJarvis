@@ -174,6 +174,11 @@ If you prefer a regular desktop installer, download one here:
 - [macOS on Intel](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg)
 - [Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
 
+Windows installers are signed under our
+[code signing policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/code-signing-policy.md)
+once the SignPath Foundation program approves the project. Free code signing
+provided by SignPath.io, certificate by SignPath Foundation.
+
 The macOS disk image is not notarized by Apple yet. The first time you open it
 on macOS 15, go to **System Settings > Privacy & Security** and click **Open
 Anyway**. Up to macOS 14, right-click the app and choose **Open**. The one-line

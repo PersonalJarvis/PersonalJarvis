@@ -58,8 +58,9 @@ class WorkspaceOrchestrationTool:
         "the named cli in the named or visible workspace and, with prompt, hands each the "
         "task. Never reuse an existing agent and never use spawn_worker for that. "
         "Mixed CLIs in one request ('five Claude Code and three Codex') go in agents: "
-        "[{cli, count}, ...]. open_workspace opens a NEW workspace for folder (absolute "
-        "path) or a known project, with agents and an optional prompt; restore reopens a "
+        "[{cli, count}, ...]. open_workspace opens a NEW workspace (with NEW panes) for "
+        "folder (absolute path) or a known project (name or project_id), with agents and "
+        "an optional prompt; restore reopens a "
         "closed workspace; show brings one on screen. For one pane (by agent call-sign or "
         "terminal_id): observe reads its screen, question and newest events; respond types "
         "the answer to the question or permission prompt it shows (prompt = the answer); keys "
@@ -75,12 +76,18 @@ class WorkspaceOrchestrationTool:
         "repairs a mistyped request ID only when the target agrees); reuse it for "
         "retries. Explicit background targets never switch the visible workspace. "
         "Accepted means delivered, not completed; uncertain delivery must not be retried. "
+        "A send to an agent in a turn is refused as busy (nothing typed) unless while_busy "
+        "says otherwise. Set while_busy only for the USER's own correction or redirect of "
+        "the work that agent is doing now: steer types it into the running turn (CLIs that "
+        "support it), interrupt stops the turn and then delivers it (the session and its "
+        "context stay), queue delivers it once the turn ends. Retry a busy refusal with the "
+        "same request_id and prompt. Never use while_busy for an ordinary or unrelated task. "
         "The result returns asynchronously to this conversation; keep talking to the user "
         "instead of waiting or polling in a loop. "
         "Creation receipts own their new panes: never send recovery or correction prompts "
         "to existing panes, and never recreate after uncertain startup or delivery. "
-        "After a proven pre-write refusal, resolve the SAME pane for a fresh request_id "
-        "before a new attempt. "
+        "After a proven pre-write refusal (nothing typed), retry the SAME pane with the "
+        "same request_id and prompt. "
         "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed. "
         "A prompt for create, open_workspace or send is a work order the agent carries "
         "out, never a read-only request unless the user asked for one (see prompt). "
@@ -146,6 +153,15 @@ class WorkspaceOrchestrationTool:
             "request_id": {
                 "type": "string",
                 "description": "request_id from resolve; keep it unchanged on retries.",
+            },
+            "while_busy": {
+                "type": "string",
+                "enum": ["refuse", "steer", "interrupt", "queue"],
+                "description": (
+                    "send: what happens when the agent is in a turn. refuse (default) sends "
+                    "nothing. steer/interrupt/queue only for the user's explicit correction "
+                    "of that running work."
+                ),
             },
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
             "cli": {
@@ -216,6 +232,11 @@ class WorkspaceOrchestrationTool:
                 else ""
             ),
             "task": str(args.get("prompt") or "")[:240],
+            **(
+                {"while_busy": str(args["while_busy"])}
+                if args.get("while_busy") not in (None, "", "refuse")
+                else {}
+            ),
         }
 
     async def execute(self, args: dict, ctx: ExecutionContext) -> ToolResult:

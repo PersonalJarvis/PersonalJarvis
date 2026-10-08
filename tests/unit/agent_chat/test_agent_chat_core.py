@@ -582,6 +582,40 @@ def test_resolve_runner_per_surface(monkeypatch):
     assert svc_mod.resolve_runner("no-such-provider", surface="jarvis") == "unknown"
 
 
+def test_an_agent_can_pin_claude_to_its_api_key_or_its_subscription(monkeypatch):
+    """The "New agent" dialog's access choice beats the API Keys page's setting."""
+    from jarvis.agent_chat import agent_provider_prefs
+    from jarvis.agent_chat import service as svc_mod
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+
+    monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: True)
+    monkeypatch.setattr(agent_provider_prefs, "forces_api", lambda *_: False)
+    api_runner = svc_mod.resolve_runner("openai", surface="society")
+    assert svc_mod.resolve_runner("claude-api", surface="society") == "claude-cli"
+    assert (
+        svc_mod.resolve_runner("claude-api", surface="society", account_id=API_KEY_ACCOUNT)
+        == api_runner
+    )
+    monkeypatch.setattr(agent_provider_prefs, "forces_api", lambda *_: True)
+    assert svc_mod.resolve_runner("claude-api", surface="society") == api_runner
+    assert (
+        svc_mod.resolve_runner("claude-api", surface="society", account_id=SUBSCRIPTION_ACCOUNT)
+        == "claude-cli"
+    )
+    # A real login id keeps the page's setting, exactly as before.
+    assert svc_mod.resolve_runner("claude-api", surface="society", account_id="acct") == api_runner
+    # Only the dual row reads the pin.
+    assert svc_mod.resolve_runner("openai-codex", account_id=API_KEY_ACCOUNT) == "codex-cli"
+
+
+def test_a_reserved_access_value_never_names_a_login():
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+    from jarvis.agent_chat.runner_cli import _login_id
+
+    assert _login_id(API_KEY_ACCOUNT) == "" and _login_id(SUBSCRIPTION_ACCOUNT) == ""
+    assert _login_id("acct-1") == "acct-1" and _login_id("") == ""
+
+
 def test_the_jarvis_surface_offers_api_and_cli_seats():
     """Jarvis shares the IDE's provider seats; API-only surfaces remain filtered."""
     from jarvis.agent_chat.catalog import PROVIDER_ROWS, offers, rows_for

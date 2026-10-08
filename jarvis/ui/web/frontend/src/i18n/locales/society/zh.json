@@ -219,6 +219,7 @@
       "model_group_chatgpt": "ChatGPT / Codex 订阅",
       "model_group_grok": "Grok 订阅",
       "model_group_google": "Google / Gemini 订阅",
+      "model_extra_usage": "按额外用量计费",
       "model_scope": "适用于此智能体之后的消息和例程运行。对话历史会保留。",
       "model_busy": "请等当前回复完成后再更换模型。",
       "model_save_failed": "无法保存模型",
@@ -675,7 +676,13 @@
       "repair": "修复浏览器",
       "off": "浏览器已关闭",
       "off_hint": "浏览器仅在 {0} 需要时启动。",
-      "open": "打开浏览器"
+      "open": "打开浏览器",
+      "busy_task": "{0} 正在使用共享浏览器执行任务。{0} 完成后会立即在这里打开。",
+      "moved": "共享浏览器现在为 {0} 打开。它一次只能为一个智能体打开。",
+      "moved_status": "为 {0} 打开",
+      "open_here": "在这里打开",
+      "stop_holder": "停止 {0} 的任务",
+      "waiting_for": "正在等待 {0}"
     },
     "mars": {
       "rover_title": "智能体漫游车",

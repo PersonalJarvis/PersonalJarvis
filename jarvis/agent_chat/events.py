@@ -34,14 +34,25 @@ Kinds (``payload`` keys in brackets):
 ``question_resolved``  [turn_id, question_id, answers]
 ``plan_ready``         [turn_id, build_mode]           — a coding agent's plan card
 ``plan_resolved``      [turn_id, decision]             decision: build | keep
+``subagent_started``   [turn_id, agent_id, description, agent_type, prompt, background,
+                        task_id?, thread_id?] — a coding agent spawned a sub-agent;
+                        ``agent_id`` is the spawning tool call's id
+``subagent_progress``  [turn_id, agent_id, activity, last_tool, tokens?, tool_uses?,
+                        duration_ms?] — live only: what the sub-agent is doing now
+``subagent_finished``  [turn_id, agent_id, status, summary?, tokens?, tool_uses?,
+                        duration_ms?]   status: done | failed | stopped
 ``turn_finished``      [turn_id, status, duration_ms, usage, error, cost_usd]
                         status: done | cancelled | error
 ``session_updated``    [title?, provider?, model?, effort?, cwd?, permission_mode?]
 ``error``              [turn_id?, message]
 ``notice``              [kind, ...]                      — a system line outside a turn
 
-``text_delta`` / ``reasoning_delta`` / ``reasoning_started`` / ``usage_delta``
-are the transient kinds: the finished block carries the whole text and the
+A sub-agent's own text, thoughts and calls are the ordinary kinds with an
+``agent_id`` in the payload: they belong to that sub-agent's conversation,
+never to the main agent's answer.
+
+``text_delta`` / ``reasoning_delta`` / ``reasoning_started`` / ``usage_delta`` /
+``subagent_progress`` are the transient kinds: the finished block carries the whole text and the
 ``turn_finished`` event the whole usage, so the log never stores token dust.
 """
 
@@ -51,7 +62,7 @@ import time
 from typing import Any, Final
 
 TRANSIENT_KINDS: Final[frozenset[str]] = frozenset(
-    {"text_delta", "reasoning_delta", "reasoning_started", "usage_delta"}
+    {"text_delta", "reasoning_delta", "reasoning_started", "usage_delta", "subagent_progress"}
 )
 
 

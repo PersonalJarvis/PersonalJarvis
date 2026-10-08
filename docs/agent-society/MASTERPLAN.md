@@ -311,7 +311,7 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
 3. **Anti-harm blacklist class** seeded in the risk tiers: mass outbound messaging, credential
    probing, repeated actions against non-consenting external endpoints — blocked by pattern, not
    by prompt. Voice/chat never accept secrets (AP-2); secrets only via `get_secret`; per-agent
-   credentials are keyring-scoped (NEVER Hermes-style per-profile `.env` files — AP-12).
+   credentials are keyring-scoped (NEVER per-profile `.env` files — AP-12).
 4. **No spawn tools in any agent tool set**; dispatch is the scheduler's privilege (§2.5).
 5. Loop caps, iteration counters, spend meters, stall watchdogs (AP-19), `WorkerKilled`, and the
    society master kill switch.
@@ -425,7 +425,7 @@ Decided 2026-09-01:
 5. **Section layout:** sidebar | world stage | fixed agents rail; thin top strip (content open)
    (§4.1).
 6. **Model card:** near-full-screen overlay above the world, three columns Specs | 3D | Chat;
-   the chat is the ordinary agent chat (Claude Code / Codex-style timeline); one open chat at a
+   the chat is the ordinary agent chat (the coding-agent timeline); one open chat at a
    time (§4.2).
 7. ~~No Hermes code or UI is copied.~~ Superseded 2026-10-05: well-separated MIT code may be
    adapted with attribution (§7).

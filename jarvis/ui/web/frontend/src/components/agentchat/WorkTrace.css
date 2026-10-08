@@ -31,7 +31,7 @@
   position: relative;
   min-width: 0;
 }
-/* Since 2026-10-02 the rail draws no thread: traces read like the Codex app,
+/* Since 2026-10-02 the rail draws no thread: traces read as quiet prose,
    prose and quiet lines with nothing joining them. */
 .trace-rail > .trace-step::before,
 .trace-rail > .trace-step::after {
@@ -98,7 +98,7 @@
 }
 
 /* The words of the step that is working: a slow light sweep over muted ink,
-   the way the Claude app marks "Thinking". */
+   the way a live "Thinking" mark reads. */
 .trace-shimmer {
   background-image: linear-gradient(
     90deg,
@@ -170,7 +170,7 @@
   border-radius: 0.5rem;
 }
 /* Work lines and reasoning are set in the size of the surface's own text,
-   as in the Codex app: 15/25 on the front page, 13/21 in agent chats. */
+   15/25 on the front page, 13/21 in agent chats. */
 /* !important: the typography plugin's .prose sets its own size. */
 .trace-text {
   font-size: var(--trace-text-size, 15px) !important;

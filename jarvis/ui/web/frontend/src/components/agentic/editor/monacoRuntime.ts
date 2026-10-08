@@ -92,6 +92,9 @@ export function applyTheme(dark: boolean): void {
   const border = tokenHex("--border", dark ? "#2e2e2e" : "#e5e5e5");
   const lift = tokenHex("--secondary", dark ? "#262626" : "#f5f5f5");
   const popover = tokenHex("--popover", background);
+  // The same thumb colours as the app's own scrollbars (index.css), so the
+  // editor's bars and the diff overview's viewport box read as one family.
+  const thumb = tokenHex("--border-strong", dark ? "#404040" : "#bdbdbd");
   monaco.editor.defineTheme("jarvis", {
     base: dark ? "vs-dark" : "vs",
     inherit: true,
@@ -116,6 +119,9 @@ export function applyTheme(dark: boolean): void {
       "input.border": border,
       "focusBorder": border,
       "scrollbar.shadow": "#00000000",
+      "scrollbarSlider.background": thumb.slice(0, 7),
+      "scrollbarSlider.hoverBackground": `${muted.slice(0, 7)}aa`,
+      "scrollbarSlider.activeBackground": `${muted.slice(0, 7)}dd`,
       "diffEditor.border": border,
     },
   });
@@ -132,6 +138,8 @@ export const EDITOR_OPTIONS: monaco.editor.IEditorOptions & monaco.editor.IGloba
   bracketPairColorization: { enabled: true },
   guides: { bracketPairs: "active", indentation: true },
   smoothScrolling: true,
+  // Thin bars like the rest of the app instead of Monaco's 14 px gutters.
+  scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
   cursorSmoothCaretAnimation: "on",
   renderWhitespace: "selection",
   scrollBeyondLastLine: false,

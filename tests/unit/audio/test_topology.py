@@ -9,12 +9,21 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 import time
 
+import numpy as np
 import pytest
 
 import jarvis.audio.topology as topology
 from jarvis.audio.capture import MicrophoneCapture
+from jarvis.audio.player import AudioPlayer
+
+
+@pytest.fixture(autouse=True)
+def _isolated_native_handles(monkeypatch):
+    # Other audio tests deliberately return fake streams without closing them.
+    monkeypatch.setattr(topology, "_native_streams", {})
 
 
 def _tables(names, default_in=0, default_out=0):
@@ -221,3 +230,158 @@ def test_capture_discard_backdates_watchdog_heartbeat() -> None:
         time.monotonic() - capture._last_chunk_monotonic
         > MicrophoneCapture._STALL_THRESHOLD_S
     )
+
+
+@pytest.mark.asyncio
+async def test_watcher_retries_deferred_refresh_without_another_change(monkeypatch):
+    monkeypatch.setattr(topology, "_SETTLE_S", 0.0)
+    signatures = iter(["a", "b"])
+    attempts = []
+    completed = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def refresh():
+        attempts.append(True)
+        if len(attempts) == 1:
+            return False
+        loop.call_soon_threadsafe(completed.set)
+        return True
+
+    task = asyncio.create_task(topology.watch_topology(
+        None, poll_s=0.005, probe=lambda: next(signatures, "b"), refresh=refresh,
+    ))
+    try:
+        await asyncio.wait_for(completed.wait(), 2)
+        await asyncio.sleep(0.03)
+        assert len(attempts) == 2
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_watcher_ignores_change_that_disappears_during_settle(monkeypatch):
+    monkeypatch.setattr(topology, "_SETTLE_S", 0.0)
+    signatures = iter(["a", "b", "a"])
+    refreshes = []
+    task = asyncio.create_task(topology.watch_topology(
+        None, poll_s=0.005, probe=lambda: next(signatures, "a"),
+        refresh=lambda: refreshes.append(True) or True,
+    ))
+    try:
+        await asyncio.sleep(0.1)
+        assert refreshes == []
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+def _idle_player():
+    player = AudioPlayer.__new__(AudioPlayer)
+    player._play_lock = None
+    player._active_stream = None
+    player._device_rate_cache = {}
+    player._device_rate_failed = set()
+    player._device = None
+    return player
+
+
+def test_refresh_waits_for_native_write_even_without_async_playback_owner(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    fake_sd = _FakeSd()
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    player = _idle_player()
+
+    class Stream:
+        latency = 0.0
+
+        def write(self, samples):
+            entered.set()
+            assert release.wait(2)
+            return False
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    player._active_stream = Stream()
+    failures = []
+
+    def write():
+        try:
+            player._write_samples(player._active_stream, np.zeros(16, dtype=np.int16), 16000, 16000)
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=write)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert topology.refresh_audio_backend(player) is False
+        assert fake_sd.calls == []
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive()
+    assert failures == []
+    assert topology.refresh_audio_backend(player) is True
+    assert fake_sd.calls == ["terminate", "initialize"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_defers_between_tts_chunks(monkeypatch):
+    fake_sd = _FakeSd()
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    player = _idle_player()
+    async with player._get_play_lock():
+        assert topology.refresh_audio_backend(player) is False
+        assert fake_sd.calls == []
+    assert topology.refresh_audio_backend(player) is True
+
+
+@pytest.mark.parametrize("owner", ["capture", "player"])
+def test_failed_stream_close_prevents_termination(monkeypatch, owner):
+    fake_sd = _FakeSd()
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+
+    class UnclosableStream:
+        def abort(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            raise RuntimeError("device is still busy")
+
+    stream = UnclosableStream()
+    player = _idle_player()
+    capture = MicrophoneCapture.__new__(MicrophoneCapture)
+    capture._stream = stream
+    if owner == "capture":
+        topology.register_capture(capture)
+    else:
+        player._active_stream = stream
+    try:
+        assert topology.refresh_audio_backend(player) is False
+        assert fake_sd.calls == []
+        assert (capture._stream if owner == "capture" else player._active_stream) is stream
+    finally:
+        topology.unregister_capture(capture)
+
+
+def test_unpublished_or_detached_native_stream_prevents_termination(monkeypatch):
+    fake_sd = _FakeSd()
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    stream = object()
+    with topology.stream_open_guard():
+        topology.register_native_stream(stream)
+    assert topology.refresh_audio_backend(None) is False
+    assert fake_sd.calls == []
+    topology.unregister_native_stream(stream)
+    assert topology.refresh_audio_backend(None) is True

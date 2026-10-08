@@ -17,11 +17,6 @@ rules:
       # checked in `if:` and again by flaky_report.py vet-run), checks out
       # `main`, and reads the downloaded shard reports as JSON data.
       - flaky-tests.yml
-  artipacked:
-    ignore:
-      # This job pushes commits and tags with git after checkout, so the
-      # checkout must keep its credential. It does not upload the workspace.
-      - release-cut.yml
   unpinned-uses:
     config:
       policies:

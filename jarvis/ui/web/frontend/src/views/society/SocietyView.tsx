@@ -17,6 +17,7 @@ import { BUILDING_CARDS, isBuildingPlace, type BuildingPlace } from "@/component
 import { DeferredSocietyDialog } from "@/components/society/card/DeferredSocietyDialog";
 import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useQuickCreateAgent, useSocietyRoster } from "@/components/society/data";
+import { isCreateCancelled } from "@/components/society/create/createAgentStore";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { ChatGroupPanel } from "@/components/society/chat/ChatGroupPanel";
@@ -124,8 +125,8 @@ export function SocietyView() {
     if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
   }, []);
 
-  // One click creates the agent and opens its chat: no form first. The agent
-  // introduces itself there and proposes its own name and role.
+  // The plus opens the "new agent" dialog (name, runtime, companion); the new
+  // agent's chat opens after it. Closing the dialog is not an error.
   const createAgent = useCallback(() => {
     if (creating) return;
     setCreating(true);
@@ -135,7 +136,9 @@ export function SocietyView() {
         selectAgent(agent.agentId);
         switchMode("agents");
       })
-      .catch((error) => setCreateError(error instanceof Error ? error.message : String(error)))
+      .catch((error) => {
+        if (!isCreateCancelled(error)) setCreateError(error instanceof Error ? error.message : String(error));
+      })
       .finally(() => setCreating(false));
   }, [creating, quickCreate, selectAgent, switchMode]);
 

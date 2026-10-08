@@ -393,7 +393,16 @@ def society_mode_supported(runner: str, mode: str) -> bool:
     if mode == "bypass":
         return True
     if mode == "ask":
-        return runner in {"brain", "codex-cli", "claude-cli", "glm-cli"}
+        # Hermes and OpenClaw ask over ACP (session/request_permission) before
+        # the actions their own approval policy marks as risky.
+        return runner in {
+            "brain",
+            "codex-cli",
+            "claude-cli",
+            "glm-cli",
+            "hermes-cli",
+            "openclaw-cli",
+        }
     if mode == "always_ask":
         return runner in {"brain", "codex-cli"}
     return False

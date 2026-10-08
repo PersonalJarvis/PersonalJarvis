@@ -905,7 +905,7 @@ class NativeWindow:
             self._check_owner()
             # Moving far offscreen breaks Chrome's monitor-clamped profile and
             # login bubbles. HWND_BOTTOM does not activate or move the browser.
-            flags, x, y = 0x213, 0, 0
+            flags = 0x213
             c = self.ctypes
 
             class MonitorInfo(c.Structure):
@@ -922,9 +922,21 @@ class NativeWindow:
                 raise RuntimeError("Chrome monitor geometry is unavailable")
             left, top, right, bottom = self._bounds(self.hwnd)
             work = info.rcWork
-            if right <= work.left or left >= work.right or bottom <= work.top or top >= work.bottom:
-                # Older versions persisted the -16000 parking position in the
-                # Chrome profile. Recover that position without activating it.
-                x, y, flags = work.left, work.top, flags & ~0x2
-            if not u.SetWindowPos(self.hwnd, 1, x, y, 0, 0, flags):
+            work_width, work_height = work.right - work.left, work.bottom - work.top
+            width, height = right - left, bottom - top
+            # Chrome restores its saved placement. Older parking positions and
+            # crashed sessions leave thin strips or windows partly offscreen:
+            # the preview then shows a sliver and menus clamp away from it.
+            if width < min(work_width, 1024) or height < min(work_height, 720):
+                width = min(work_width, max(width, round(work_width * 0.75)))
+                height = min(work_height, max(height, round(work_height * 0.75)))
+                flags &= ~0x1
+            width, height = min(width, work_width), min(height, work_height)
+            x = max(work.left, min(left, work.right - width))
+            y = max(work.top, min(top, work.bottom - height))
+            if (x, y) != (left, top):
+                flags &= ~0x2
+            if (width, height) != (right - left, bottom - top):
+                flags &= ~0x1
+            if not u.SetWindowPos(self.hwnd, 1, x, y, width, height, flags):
                 raise RuntimeError("The Chrome window could not be placed in the background")

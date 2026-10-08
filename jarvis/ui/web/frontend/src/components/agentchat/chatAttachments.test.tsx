@@ -131,7 +131,7 @@ describe("chat composer attachments", () => {
     vi.restoreAllMocks();
   });
 
-  it("takes a pasted image and shows what was read from it", async () => {
+  it("takes a pasted image and shows it without a read receipt", async () => {
     composer();
     const box = screen.getByTestId("composer-chip-field");
     const png = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
@@ -141,9 +141,9 @@ describe("chat composer attachments", () => {
     });
 
     await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
-    // The chip says the model could SEE it — that is the outcome a person has
-    // to be able to read before pressing Send.
-    expect(screen.getByTestId("chat-attachment-shot.png").textContent).toContain("described");
+    // The strip shows the file alone, as the thread composer does; the
+    // described / not described receipt is gone.
+    expect(screen.getByTestId("chat-attachment-shot.png").textContent).not.toContain("described");
 
     const [url, init] = fetchMock.mock.calls.find(([u]) =>
       String(u).includes("/attachments"),

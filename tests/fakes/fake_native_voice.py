@@ -54,6 +54,9 @@ class FakeNativeConnection:
     async def send_text(self, text: str) -> None:
         self.calls.append(("send_text", text))
 
+    async def send_image(self, image: bytes, mime: str) -> None:
+        self.calls.append(("send_image", (image, mime)))
+
     async def update_session(self, **changes: Any) -> None:
         self.calls.append(("update_session", changes))
 
@@ -162,6 +165,8 @@ class FakeToolGateway:
         self.gates: dict[str, asyncio.Event] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.finished: list[str] = []
+        self.results: dict[str, ToolResult] = {}
+        self.execution_started = asyncio.Event()
 
     def catalog(self) -> tuple[SupervisorToolDescriptor, ...]:
         return self._descriptors
@@ -174,11 +179,12 @@ class FakeToolGateway:
     async def execute(self, name: str, arguments: dict[str, Any], request: Any) -> ToolResult:
         del request
         self.calls.append((name, arguments))
+        self.execution_started.set()
         gate = self.gates.get(name)
         if gate is not None:
             await gate.wait()
         self.finished.append(name)
-        return ToolResult(True, {"verified": True})
+        return self.results.get(name, ToolResult(True, {"verified": True}))
 
     async def execute_confirmed(self, trace: Any, request: Any) -> ToolResult:
         del trace, request

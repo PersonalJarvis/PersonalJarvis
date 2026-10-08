@@ -325,7 +325,7 @@ class RegistryCommandTool:
                 if tier == "block":
                     from jarvis.app_actions import history
 
-                    history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+                    history.record(entry.id, "blocked", "Blocked by the action policy", via=self.name)
                 return tier
         return base
 

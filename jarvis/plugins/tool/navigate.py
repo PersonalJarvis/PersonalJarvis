@@ -50,8 +50,6 @@ KNOWN: frozenset[str] = frozenset(
         "agent-instructions",
         # Appshots: the shortcut and destination for showing the front window.
         "appshots",
-        # Jarvis actions: which app actions Jarvis may run, ask for or never run.
-        "jarvis-actions",
         "dictionary",
         "dictation",
         "voice-shortcuts",
@@ -198,8 +196,6 @@ _ALIASES: dict[str, str] = {
     "ergebnisse": "visualization",  # i18n-allow: input vocab
     "resultados": "visualization",  # i18n-allow: input vocab
     "appshot": "appshots",
-    "jarvis actions": "jarvis-actions",
-    "jarvis aktionen": "jarvis-actions",  # i18n-allow: speech-input vocabulary
     "app shots": "appshots",
     "app shot": "appshots",
     "task bar": "taskbar",

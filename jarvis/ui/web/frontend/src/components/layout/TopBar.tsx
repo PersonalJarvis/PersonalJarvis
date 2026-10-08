@@ -14,6 +14,12 @@ import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
 import { IDE_SECTIONS } from "@/lib/ideSections";
+import { openExternalUrl } from "@/lib/openExternal";
+import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
+import { ThreadTerminalToggle } from "@/components/agentic/threads/ThreadTerminalToggle";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { WikiInspectorToggle } from "@/components/wiki/WikiInspectorToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 
 /**
@@ -22,7 +28,9 @@ import { useDesktopChrome, WindowControls } from "@/components/layout/WindowCont
  * It is one thin row at the top of the window: back/forward at the left, the
  * empty middle to drag the window, and minimize, maximize and close at the
  * right. Theme, restart and the sidebar toggles are not caption buttons; the
- * theme lives in Settings.
+ * theme lives in Settings. On the Agentic IDE the caption also carries the
+ * panel toggles beside the window buttons: the thread layout's terminal
+ * drawer, then the side panel.
  *
  * The update button below (rendered in the sidebar) restarts through
  * ``/api/settings/restart-app``, which spawns a detached relauncher (see
@@ -95,6 +103,8 @@ export function TopBar() {
       <IdeCaptionSwitch />
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
+        <IdeCaptionPanelToggle />
+        <WikiCaptionPanelToggle />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}
@@ -115,6 +125,30 @@ function IdeCaptionSwitch() {
   return (
     <div className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center">
       <IdeLayoutSwitch className="pointer-events-auto" />
+    </div>
+  );
+}
+
+/** The Wiki inspector's open / close button, only on the Wiki section. */
+function WikiCaptionPanelToggle() {
+  const onWiki = useEventStore((s) => s.activeSection === "memory");
+  return onWiki ? <WikiInspectorToggle /> : null;
+}
+
+/**
+ * The IDE's panel toggles, only on the IDE: the terminal drawer in the thread
+ * layout (the grid is all terminals already, and a maximized side panel covers
+ * the thread), then the side panel in every layout.
+ */
+function IdeCaptionPanelToggle() {
+  const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
+  const threads = useIdeThreadsStore((s) => s.layout === "threads");
+  const panelCovers = useIdeSidePanelStore((s) => s.open && s.maximized);
+  if (!onIde) return null;
+  return (
+    <div className="flex items-center gap-0.5">
+      {threads && !panelCovers && <ThreadTerminalToggle />}
+      <IdeSidePanelToggle />
     </div>
   );
 }
@@ -587,6 +621,16 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
       ? t("topbar.update_now")
       : t("topbar.update_finish_restart");
   const notes = status.notes ? plainNotes(status.notes) : "";
+  // Said in the panel BEFORE any click: this install cannot replace itself
+  // where it runs, so "Update & restart" would only download and then refuse.
+  // A known code is translated; an unknown one shows the server's sentence.
+  const blockedKey = status.blocked_code ? `topbar.update_blocked_${status.blocked_code}` : null;
+  const blockedTranslated = blockedKey ? t(blockedKey) : null;
+  const blocked = hasOffer
+    ? (blockedTranslated && blockedTranslated !== blockedKey
+        ? blockedTranslated
+        : (status.blocked_reason ?? null))
+    : null;
 
   return (
     <div ref={rootRef} className="relative">
@@ -675,10 +719,20 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
                   {notes}
                 </div>
               )}
+              {blocked && (
+                <div
+                  data-testid="update-blocked"
+                  className="mt-2.5 border-t border-border pt-2.5 text-micro leading-relaxed text-warning"
+                >
+                  {blocked}
+                </div>
+              )}
               <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-                <span className="min-w-0 text-micro text-muted-foreground">
-                  {t("topbar.update_restart_note")}
-                </span>
+                {!blocked && (
+                  <span className="min-w-0 text-micro text-muted-foreground">
+                    {t("topbar.update_restart_note")}
+                  </span>
+                )}
                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
                   <button
                     type="button"
@@ -687,19 +741,32 @@ export function UpdateButton({ placement = "titlebar" }: { placement?: "titlebar
                   >
                     {t("topbar.update_later")}
                   </button>
-                  <button
-                    type="button"
-                    onClick={onInstall}
-                    data-testid="update-install"
-                    className={clsx(
-                      "h-7 rounded-md px-2.5 text-micro font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      forceArmed
-                        ? CHROME_ARMED
-                        : "bg-primary text-primary-foreground hover:bg-primary/90",
-                    )}
-                  >
-                    {actionLabel}
-                  </button>
+                  {blocked ? (
+                    status.release_url && (
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(status.release_url!)}
+                        data-testid="update-open-release"
+                        className="h-7 rounded-md bg-primary px-2.5 text-micro font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {t("topbar.update_open_release")}
+                      </button>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onInstall}
+                      data-testid="update-install"
+                      className={clsx(
+                        "h-7 rounded-md px-2.5 text-micro font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        forceArmed
+                          ? CHROME_ARMED
+                          : "bg-primary text-primary-foreground hover:bg-primary/90",
+                      )}
+                    >
+                      {actionLabel}
+                    </button>
+                  )}
                 </div>
               </div>
             </>

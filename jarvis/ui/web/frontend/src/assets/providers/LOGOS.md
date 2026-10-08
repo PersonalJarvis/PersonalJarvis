@@ -59,6 +59,7 @@ Two render paths, chosen per file and recorded in the table:
 | gemini | lobehub/lobe-icons `gemini-color.svg` | MIT | colour | 2026-08-23 |
 | google-cloud | lobehub/lobe-icons `googlecloud-color.svg` (Vertex AI cards) | MIT | colour | 2026-08-23 |
 | groq | lobehub/lobe-icons `groq.svg` | MIT | mono | 2026-08-23 |
+| hermes | lobehub/lobe-icons 1.95.1 `hermesagent.svg` (Hermes agent runtime) | MIT | mono | 2026-10-06 |
 | hetzner | simple-icons `hetzner.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | hostinger | simple-icons `hostinger.svg` (Computers section, cloud import) | CC0-1.0 | mono | 2026-09-28 |
 | inworld | Inworld's own site icon, `https://inworld.ai/icon.png` (PNG, 180 px) | vendor asset | own ground | 2026-08-23 |
@@ -67,6 +68,7 @@ Two render paths, chosen per file and recorded in the table:
 | nvidia | lobehub/lobe-icons `nvidia-color.svg` | MIT | colour | 2026-08-23 |
 | ollama | lobehub/lobe-icons `ollama.svg` | MIT | mono | 2026-08-23 |
 | openai | lobehub/lobe-icons `openai.svg` (also Codex cards) | MIT | mono | 2026-08-23 |
+| openclaw | lobehub/lobe-icons 1.95.1 `openclaw-color.svg` (OpenClaw agent runtime) | MIT | colour | 2026-10-06 |
 | openrouter | lobehub/lobe-icons `openrouter.svg` | MIT | mono | 2026-08-23 |
 | oracle | simple-icons `oracle.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
 | ovhcloud | simple-icons `ovh.svg` (Computers section, provider gallery) | CC0-1.0 | mono | 2026-09-28 |
