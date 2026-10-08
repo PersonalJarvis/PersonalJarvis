@@ -30,9 +30,7 @@ async def test_claude_tool_history_uses_the_declared_names_without_mutating_hist
         BrainMessage("tool", "first", tool_call_id="one"),
         BrainMessage("tool", "second", tool_call_id="two"),
     ), tools=({"name": "github/search"}, {"name": "github_search"}))
-    async with AsyncAnthropic(api_key="test-only", http_client=httpx.AsyncClient(
-        transport=httpx.MockTransport(wire.handle),
-    )) as client:
+    async with AsyncAnthropic(api_key="test-only", http_client=wire.client()) as client:
         assert [d async for d in stream_complete(client, "claude-sonnet-4-6", request)]
     payload = json.loads(wire.requests[0].content)
     declared = [tool["name"] for tool in payload["tools"]]
@@ -50,7 +48,7 @@ async def test_claude_cache_preserves_oauth_header_and_stream_usage(
     wire.intermediate_usage = intermediate_usage
     async with AsyncAnthropic(api_key="", auth_token="test-only",  # noqa: S106 - local fake
         default_headers={"anthropic-beta": "oauth-2025-04-20"},
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(wire.handle)),
+        http_client=wire.client(),
     ) as client:
         deltas = [d async for d in stream_complete(client, "claude-sonnet-4-6",
             BrainRequest(messages=(BrainMessage("user", "Hi"),), system="Be brief."))]
@@ -117,9 +115,7 @@ async def test_claude_never_emits_malformed_executable_tools(arguments):
     wire = AnthropicWire()
     wire.tool_arguments = arguments
     received = []
-    async with AsyncAnthropic(api_key="test-only", http_client=httpx.AsyncClient(
-        transport=httpx.MockTransport(wire.handle),
-    )) as client:
+    async with AsyncAnthropic(api_key="test-only", http_client=wire.client()) as client:
         with pytest.raises(ValueError, match="tool arguments"):
             async for delta in stream_complete(client, "claude-sonnet-4-6",
                 BrainRequest(messages=(BrainMessage("user", "Read"),))):
@@ -271,9 +267,7 @@ async def test_claude_signed_tool_continuation_survives_openai_runtime(
     monkeypatch.setattr(model_map, "login_route", lambda *args: (False, None))
     grant = gateway.Grant("agent", "claude-api")
     body = {"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Read a"}]}
-    async with AsyncAnthropic(api_key="test-only", http_client=httpx.AsyncClient(
-        transport=httpx.MockTransport(wire.handle),
-    )) as client:
+    async with AsyncAnthropic(api_key="test-only", http_client=wire.client()) as client:
         brain = ClaudeAPIBrain(model=body["model"])
         brain._client = client
         monkeypatch.setattr(runner_api, "build_brain", lambda *args: brain)

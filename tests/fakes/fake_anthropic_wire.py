@@ -2,17 +2,24 @@
 
 import json
 
-import httpx
+from anthropic import _base_client
+
+# Fresh SDK installs use httpx2; the pinned older SDK still uses httpx.
+# Keep the request, response and mock transport in the SDK's own HTTP family.
+_HTTP = getattr(_base_client, "httpx2", None) or _base_client.httpx
 
 
 class AnthropicWire:
     def __init__(self) -> None:
-        self.requests: list[httpx.Request] = []
+        self.requests: list[_HTTP.Request] = []
         self.intermediate_usage = False
         self.tool_arguments: str | None = None
         self.thinking = False
 
-    def handle(self, request: httpx.Request) -> httpx.Response:
+    def client(self):
+        return _HTTP.AsyncClient(transport=_HTTP.MockTransport(self.handle))
+
+    def handle(self, request: _HTTP.Request) -> _HTTP.Response:
         self.requests.append(request)
         events = [
             {"type": "message_start", "message": {
@@ -56,4 +63,4 @@ class AnthropicWire:
                 {"type": "content_block_stop", "index": 0},
             ]
         body = "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
-        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+        return _HTTP.Response(200, text=body, headers={"content-type": "text/event-stream"})

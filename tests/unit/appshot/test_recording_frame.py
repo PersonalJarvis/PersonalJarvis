@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from importlib import import_module
 
 import pytest
 
@@ -10,7 +11,10 @@ import pytest
 @pytest.fixture
 def qt():
     gui = pytest.importorskip("PySide6.QtGui")
-    multimedia = pytest.importorskip("PySide6.QtMultimedia")
+    try:
+        multimedia = import_module("PySide6.QtMultimedia")
+    except ImportError as exc:
+        pytest.skip(f"QtMultimedia's native runtime is unavailable: {exc}")
     core = pytest.importorskip("PySide6.QtCore")
     return SimpleNamespace(gui=gui, media=multimedia, core=core)
 

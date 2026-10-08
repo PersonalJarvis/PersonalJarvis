@@ -46,7 +46,8 @@ def test_libx264_recording_is_tagged_with_the_matrix_it_was_converted_with(tmp_p
     container.close()
     with av.open(str(path)) as source:
         decoded = next(source.decode(video=0))
-    assert (decoded.color_primaries, decoded.color_trc, decoded.colorspace) == (1, 13, 5)
+        context = source.streams.video[0].codec_context
+        assert (context.color_primaries, context.color_trc, context.colorspace) == (1, 13, 5)
     y = np.frombuffer(decoded.planes[0], np.uint8).reshape(decoded.height, -1)
     u = np.frombuffer(decoded.planes[1], np.uint8).reshape(decoded.height // 2, -1)
     v = np.frombuffer(decoded.planes[2], np.uint8).reshape(decoded.height // 2, -1)
@@ -76,7 +77,8 @@ def test_hdr_video_round_trips_through_a_software_encoder(tmp_path) -> None:
     container.close()
     with av.open(str(path)) as source:
         decoded = next(source.decode(video=0))
-    assert (decoded.color_primaries, decoded.color_trc, decoded.colorspace) == (9, 16, 9)
+        context = source.streams.video[0].codec_context
+        assert (context.color_primaries, context.color_trc, context.colorspace) == (9, 16, 9)
     assert decoded.format.name in ("yuv420p10le", "p010le")
 
 
