@@ -25,6 +25,7 @@ import { KeepWorking } from "@/views/computers/KeepWorking";
 import { needsAttention } from "@/views/computers/parts";
 import { Empty, Group, Row, Section, sectionActionCls } from "@/views/computers/surface";
 import { ConnectDialog } from "@/views/computers/ConnectDialog";
+import { PairedServers, usePairedServers } from "@/views/computers/PairedServers";
 
 /** Keyframes the provisioning bar uses; scoped by name, shipped with the view. */
 const KEYFRAMES = `@keyframes computers-indeterminate {
@@ -72,6 +73,7 @@ export function ComputersView() {
   const t = useT();
   useLocaleChunk("computers");
   const computers = useComputers();
+  const pairedServers = usePairedServers();
   const checkAll = useCheckAll();
   const [open, setOpen] = useState<{ id: string; tab: DetailTab } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -140,6 +142,7 @@ export function ComputersView() {
               )}
             </div>
 
+            <PairedServers />
             {computers.isSuccess && (
               <Section
                 title={t("computers.list_title")}
@@ -173,7 +176,7 @@ export function ComputersView() {
                   <Empty
                     testId="computers-welcome"
                     icon={<ComputersIcon />}
-                    title={t("computers.empty_title")}
+                    title={t(pairedServers.data?.length ? "computers.paired_no_ssh" : "computers.empty_title")}
                     description={t("computers.empty_body")}
                   >
                     <Button

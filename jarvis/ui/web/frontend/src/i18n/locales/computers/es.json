@@ -375,6 +375,19 @@
     "cx_server_host": "Host",
     "cx_pairing_code": "Código de emparejamiento",
     "cx_pairing_hint": "Pega una URL de emparejamiento completa para rellenar ambos campos automáticamente.",
-    "cx_pairing_unavailable": "La conexión mediante código de emparejamiento aún no está disponible. Usa SSH para conectarte ahora."
+    "paired_servers": "Servidores Jarvis",
+    "paired_load_failed": "No se pudieron cargar las conexiones con servidores.",
+    "paired_verified": "Conectado en la última comprobación",
+    "paired_offline": "Conexión no disponible: comprueba el servidor o vuelve a emparejarlo",
+    "paired_open": "Abrir servidor",
+    "paired_disconnect": "Desconectar y revocar el acceso",
+    "paired_connection_hint": "Usa el código generado en el servidor Jarvis de destino. Las direcciones remotas requieren HTTPS; un túnel SSH puede usar HTTP local.",
+    "pair_this_server": "Permitir que otro ordenador se conecte a este Jarvis",
+    "pair_access_hint": "Genera un código de un solo uso en la instancia de destino. Cualquiera que tenga este código puede abrir y controlar este Jarvis. Caduca a los cinco minutos. El otro ordenador debe poder acceder al servidor mediante HTTPS o un túnel SSH. Revocar un cliente bloquea las conexiones nuevas; las sesiones de navegador ya abiertas siguen conectadas.",
+    "pair_generate": "Generar código de emparejamiento",
+    "pair_link": "URL de emparejamiento",
+    "pair_expires": "Caduca a las",
+    "pair_revoke": "Revocar acceso",
+    "paired_no_ssh": "Aún no hay ordenadores SSH"
   }
 }

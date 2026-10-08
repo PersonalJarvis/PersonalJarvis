@@ -375,6 +375,19 @@
     "cx_server_host": "Host",
     "cx_pairing_code": "Pairing code",
     "cx_pairing_hint": "Paste a full pairing URL here to fill both fields automatically.",
-    "cx_pairing_unavailable": "Connecting with a pairing code is not available yet. Use SSH to connect now."
+    "paired_servers": "Jarvis servers",
+    "paired_load_failed": "Server connections could not be loaded.",
+    "paired_verified": "Connected at the last check",
+    "paired_offline": "Connection unavailable — check the server or pair again",
+    "paired_open": "Open server",
+    "paired_disconnect": "Disconnect and revoke access",
+    "paired_connection_hint": "Use the code generated on the target Jarvis server. Remote addresses require HTTPS; an SSH tunnel can use local HTTP.",
+    "pair_this_server": "Allow another computer to connect to this Jarvis",
+    "pair_access_hint": "Generate a single-use code on the target instance. Anyone with this code can open and control this Jarvis. It expires after five minutes. The other computer must be able to reach this server over HTTPS or an SSH tunnel. Revoking a client blocks new connections; already opened browser sessions remain signed in.",
+    "pair_generate": "Generate pairing code",
+    "pair_link": "Pairing URL",
+    "pair_expires": "Expires at",
+    "pair_revoke": "Revoke access",
+    "paired_no_ssh": "No SSH computers yet"
   }
 }

@@ -1697,3 +1697,19 @@ Agent notebook migration explicitly normalizes the final `USER.md` and
 `MEMORY.md` filename spelling on case-insensitive filesystems. The migration
 journal and backups continue to preserve the original content on every OS.
 The inherited-lock and migration recovery contracts run in the OS test shards.
+
+## Independent server pairing (2026-10-08, T3)
+
+The Computers server-address form pairs running Jarvis instances over HTTPS
+or loopback HTTP through a tunnel. Codes expire after five minutes and are
+single-use; durable credentials use the existing cross-platform secret store.
+The receiving server keeps credential hashes. Browser opening uses one-minute
+single-use tickets and the standard HttpOnly session cookie. Revocation blocks
+new connections; already opened browser sessions retain their normal lifetime.
+This connection opens the remote Jarvis UI; SSH remains the transport for
+remote terminals and IDE offload. No platform-specific native capability,
+inbound port, reverse proxy, or paid provider is activated by pairing.
+
+The protocol, auth-boundary, persistence, and frontend tests run on Windows and
+use portable Python/HTTP paths. Actual macOS/Linux keychains and external
+HTTPS deployments have not been exercised. See [server pairing](server-pairing.md).

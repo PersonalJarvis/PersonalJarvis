@@ -2875,7 +2875,8 @@ async def open_external(body: OpenExternalBody) -> dict[str, object]:
     from jarvis.platform.open_path import open_url
 
     opened = await asyncio.to_thread(open_url, body.url)
-    log.info("open-external: opened=%s url=%s", opened, body.url)
+    # Pairing and OAuth URLs may carry one-time credentials in their fragments.
+    log.info("open-external: opened=%s host=%s", opened, parsed.hostname)
     return {"opened": bool(opened)}
 
 

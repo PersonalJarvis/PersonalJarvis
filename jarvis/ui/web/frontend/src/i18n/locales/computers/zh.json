@@ -375,6 +375,19 @@
     "cx_server_host": "主机",
     "cx_pairing_code": "配对码",
     "cx_pairing_hint": "粘贴完整的配对链接，即可自动填写两个字段。",
-    "cx_pairing_unavailable": "暂不支持通过配对码连接。现在可以使用 SSH 连接。"
+    "paired_servers": "Jarvis 服务器",
+    "paired_load_failed": "无法加载服务器连接。",
+    "paired_verified": "上次检查时已连接",
+    "paired_offline": "连接不可用，请检查服务器或重新配对",
+    "paired_open": "打开服务器",
+    "paired_disconnect": "断开连接并撤销访问权限",
+    "paired_connection_hint": "使用目标 Jarvis 服务器上生成的配对码。远程地址需要 HTTPS；SSH 隧道可以使用本地 HTTP。",
+    "pair_this_server": "允许另一台计算机连接到此 Jarvis",
+    "pair_access_hint": "在目标实例上生成一次性配对码。持有码的人可以打开并控制此 Jarvis。配对码五分钟后过期。另一台计算机必须能够通过 HTTPS 或 SSH 隧道访问此服务器。撤销客户端会阻止新连接，但已打开的浏览器会话仍保持登录。",
+    "pair_generate": "生成配对码",
+    "pair_link": "配对链接",
+    "pair_expires": "有效期至",
+    "pair_revoke": "撤销访问权限",
+    "paired_no_ssh": "尚无 SSH 计算机"
   }
 }

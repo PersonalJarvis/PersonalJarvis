@@ -498,6 +498,7 @@ class WebServer:
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
         from .computers_routes import router as computers_router
+        from .server_pairing_routes import router as server_pairing_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
@@ -705,6 +706,7 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(server_pairing_router)
         app.include_router(computers_router)
         # Desktop pets — the `pet` overlay style's pets, look and visibility.
         app.include_router(pets_router)

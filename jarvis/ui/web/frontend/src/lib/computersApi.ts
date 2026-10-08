@@ -249,6 +249,30 @@ const post = (body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+/** Independent HTTPS Jarvis environments; these are not SSH execution targets. */
+export interface PairedServer {
+  id: string;
+  url: string;
+  name: string;
+  platform: string;
+  created_at: number;
+  checked_at: number;
+  online: boolean;
+}
+
+export interface PairedClient { id: string; name: string; created_at: number }
+
+export const pairedServersApi = {
+  list: () => request<{ servers: PairedServer[] }>("/pairing/servers").then((r) => r.servers),
+  add: (host: string, code: string) => request<PairedServer>("/pairing/servers", post({ host, code })),
+  check: (id: string) => request<PairedServer>(`/pairing/servers/${encodeURIComponent(id)}/check`, post()),
+  open: (id: string) => request<{ url: string }>(`/pairing/servers/${encodeURIComponent(id)}/open`, post()),
+  remove: (id: string) => request<{ removed: boolean }>(`/pairing/servers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  code: () => request<{ code: string; expires_at: number }>("/pairing/code", post()),
+  clients: () => request<{ clients: PairedClient[] }>("/pairing/clients").then((r) => r.clients),
+  revoke: (id: string) => request<{ removed: boolean }>(`/pairing/clients/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
 export const computersApi = {
   list: () => request<{ computers: Computer[] }>("").then((r) => r.computers),
   providers: () => request<{ providers: ProviderInfo[] }>("/providers").then((r) => r.providers),

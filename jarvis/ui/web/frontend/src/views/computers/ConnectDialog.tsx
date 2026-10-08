@@ -423,7 +423,7 @@ export function ConnectDialog({
             />
           )}
 
-          {screen.kind === "form" && <div id="cx-server-panel" hidden={connectionType !== "server"}><ServerAddressForm /></div>}
+          {screen.kind === "form" && <div id="cx-server-panel" hidden={connectionType !== "server"}><ServerAddressForm onConnected={onClose} /></div>}
 
           {screen.kind === "form" && (
             <form
