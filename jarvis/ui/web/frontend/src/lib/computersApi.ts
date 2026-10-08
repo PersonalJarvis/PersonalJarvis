@@ -45,6 +45,22 @@ export interface ComputerHealth {
   mem_used_pct: number | null;
   disk_used_pct: number | null;
   uptime_s: number | null;
+  /** The log correlation id of a failed check, for a bug report. */
+  trace_id?: string | null;
+}
+
+/** Where an address came from: typed in, Tailscale, or this PC's ~/.ssh/config. */
+export type RouteSource = "manual" | "tailscale" | "ssh_config";
+
+/** One address the machine answers on; a computer tries them in list order. */
+export interface ComputerRoute {
+  id: string;
+  host: string;
+  port: number;
+  label: string | null;
+  source: RouteSource;
+  /** When a connection last got through on this address (epoch seconds). */
+  last_ok_at: number | null;
 }
 
 export interface Computer {
@@ -66,8 +82,62 @@ export interface Computer {
   created_at: number;
   facts: ComputerFacts | null;
   health: ComputerHealth;
+  // The fields below are optional because an older backend does not send them;
+  // every reader falls back to the old behaviour (on, one address, normal share).
+  /** Switched off: kept, but nothing connects to it and no picker offers it. */
+  enabled?: boolean;
+  /** Every address, preferred first; `host`/`port` mirror the active one. */
+  routes?: ComputerRoute[];
+  active_route_id?: string | null;
+  /** "Automatic" share: 0 never, 1 less, 2 normal, 3 more. */
+  placement_weight?: number;
+  /** When this PC's GitHub login was shared with the agents here; null = not shared. */
+  github_shared_at?: number | null;
   /** A background job (VM creation) is still running for this record. */
   busy: boolean;
+}
+
+/** A server this PC's own ssh knows (~/.ssh/config or known_hosts). */
+export interface SshConfigHost {
+  alias: string;
+  host: string;
+  port: number;
+  username: string | null;
+  source: "ssh_config" | "known_hosts";
+  has_identity_file: boolean;
+  /** Needs a jump host; the app cannot connect to it directly. */
+  needs_proxy: boolean;
+  /** The computer this address is already connected as, if any. */
+  added_as: string | null;
+}
+
+export interface TailscalePeer {
+  host_name: string;
+  dns_name: string;
+  ips: string[];
+  online: boolean;
+  os: string;
+  address: string;
+}
+
+export interface RouteSuggestion {
+  host: string;
+  port: number;
+  label: string;
+  online: boolean;
+}
+
+export interface TailscaleStatus {
+  available: boolean;
+  peers: TailscalePeer[];
+  /** Per computer id: Tailscale addresses it could add. */
+  suggestions: Record<string, RouteSuggestion[]>;
+}
+
+export interface PlacementSettings {
+  enabled: boolean;
+  /** This PC's share, 0-3 like a computer's. */
+  local_weight: number;
 }
 
 export interface Identity {
@@ -137,6 +207,8 @@ export interface AddServerInput {
   auth: LoginMode;
   password?: string;
   keep_password?: boolean;
+  /** A Host alias from this PC's ~/.ssh/config: its IdentityFile keys are offered too. */
+  ssh_alias?: string;
   /** The user's own private key (OpenSSH/PEM text), for ``auth: "private_key"``. */
   private_key?: string;
   passphrase?: string;
@@ -286,7 +358,10 @@ export const computersApi = {
   add: (input: AddServerInput) => request<Computer>("", post(input)),
   checkAll: () => request<{ computers: Computer[] }>("/check-all", post()).then((r) => r.computers),
   check: (id: string) => request<Computer>(`/${encodeURIComponent(id)}/check`, post()),
-  update: (id: string, patch: Partial<Pick<Computer, "name" | "host" | "port" | "username">>) =>
+  update: (
+    id: string,
+    patch: Partial<Pick<Computer, "name" | "host" | "port" | "username" | "enabled" | "placement_weight">>,
+  ) =>
     request<Computer>(`/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
@@ -321,6 +396,27 @@ export const computersApi = {
   ) => request<Computer>(`/cloud/${provider}/import`, post(body)),
   localStatus: () => request<LocalStatus>("/local"),
   createLocalVm: (input: LocalVmInput) => request<Computer>("/local", post(input)),
+  sshHosts: () => request<{ hosts: SshConfigHost[] }>("/ssh-hosts").then((r) => r.hosts),
+  tailscale: () => request<TailscaleStatus>("/tailscale"),
+  addRoute: (id: string, route: { host: string; port: number; label?: string; source?: RouteSource }) =>
+    request<Computer>(`/${encodeURIComponent(id)}/routes`, post(route)),
+  orderRoutes: (id: string, routeIds: string[]) =>
+    request<Computer>(`/${encodeURIComponent(id)}/routes/order`, {
+      method: "PUT",
+      body: JSON.stringify({ route_ids: routeIds }),
+    }),
+  removeRoute: (id: string, routeId: string) =>
+    request<Computer>(`/${encodeURIComponent(id)}/routes/${encodeURIComponent(routeId)}`, {
+      method: "DELETE",
+    }),
+  placement: () => request<PlacementSettings>("/placement"),
+  setPlacement: (patch: Partial<PlacementSettings>) =>
+    request<PlacementSettings>("/placement", { method: "PUT", body: JSON.stringify(patch) }),
+  pickPlacement: () =>
+    request<{ computer_id: string | null }>("/placement/pick", post()).then((r) => r.computer_id),
+  shareGithub: (id: string) => request<Computer>(`/${encodeURIComponent(id)}/github`, post()),
+  unshareGithub: (id: string) =>
+    request<Computer>(`/${encodeURIComponent(id)}/github`, { method: "DELETE" }),
 };
 
 // ---------------------------------------------------------------------------

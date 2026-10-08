@@ -15,7 +15,7 @@ import { Panel } from "@/components/extensions/primitives";
 import { ComputersIcon } from "@/components/icons/sectionIcons";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { useCheckAll, useComputers, useIdentity } from "@/hooks/useComputers";
+import { useCheckAll, useComputers, useIdentity, useTailscale } from "@/hooks/useComputers";
 import { useLocaleChunk, useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import type { Computer } from "@/lib/computersApi";
@@ -23,6 +23,7 @@ import { ComputerDetail, type DetailTab } from "@/views/computers/ComputerDetail
 import { ComputerRow } from "@/views/computers/ComputerRow";
 import { KeepWorking } from "@/views/computers/KeepWorking";
 import { needsAttention } from "@/views/computers/parts";
+import { PlacementSection } from "@/views/computers/Placement";
 import { Empty, Group, Row, Section, sectionActionCls } from "@/views/computers/surface";
 import { ConnectDialog } from "@/views/computers/ConnectDialog";
 import { PairedServers, usePairedServers } from "@/views/computers/PairedServers";
@@ -79,11 +80,15 @@ export function ComputersView() {
   const [adding, setAdding] = useState(false);
 
   const rows = useMemo(() => computers.data ?? [], [computers.data]);
+  // Tailscale addresses to suggest per computer; nothing without Tailscale.
+  const tailscale = useTailscale(rows.length > 0);
   const current = open ? rows.find((c) => c.id === open.id) ?? null : null;
-  const attention = rows.filter(needsAttention).length;
-  const online = rows.filter((c) => c.health.status === "online").length;
+  // A switched-off computer is neither online nor missing: it is left out of the count.
+  const inUse = rows.filter((c) => c.enabled !== false);
+  const attention = inUse.filter(needsAttention).length;
+  const online = inUse.filter((c) => c.health.status === "online").length;
   const summary = [
-    t("computers.list_summary").replace("{online}", String(online)).replace("{total}", String(rows.length)),
+    t("computers.list_summary").replace("{online}", String(online)).replace("{total}", String(inUse.length)),
     attention > 0 ? t("computers.list_attention").replace("{count}", String(attention)) : null,
   ]
     .filter(Boolean)
@@ -199,6 +204,7 @@ export function ComputersView() {
                           computer={computer}
                           checking={checkAll.isPending}
                           onOpen={() => setOpen({ id: computer.id, tab: "overview" })}
+                          suggestions={tailscale.data?.suggestions?.[computer.id]}
                         />
                       </li>
                     ))}
@@ -206,6 +212,8 @@ export function ComputersView() {
                 )}
               </Section>
             )}
+
+            {computers.isSuccess && rows.length > 0 && <PlacementSection computers={rows} />}
           </div>
         )}
       </ScrollArea>

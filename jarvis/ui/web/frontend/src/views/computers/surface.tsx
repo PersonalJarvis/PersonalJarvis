@@ -97,7 +97,11 @@ const DOT: Record<Tone, string> = {
 /** The connection dot: a halo pings only while the state is in motion. */
 export function StatusDot({ tone, label }: { tone: Tone; label?: string }) {
   return (
-    <span className="relative flex h-3 w-3 shrink-0 items-center justify-center" title={label} aria-label={label}>
+    <span
+      className="relative flex h-3 w-3 shrink-0 items-center justify-center"
+      role={label ? "img" : undefined}
+      aria-label={label}
+    >
       {tone === "busy" && (
         <span className="absolute inline-flex h-full w-full rounded-full bg-warning/60 motion-safe:animate-ping" />
       )}
