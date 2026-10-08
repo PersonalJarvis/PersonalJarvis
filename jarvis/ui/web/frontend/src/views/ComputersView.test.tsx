@@ -304,6 +304,7 @@ describe("ComputersView", () => {
     renderView();
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.click(await screen.findByTestId("cx-additional-options"));
     fireEvent.click(await screen.findByTestId("cx-account-hostinger"));
     expect(await screen.findByTestId("wz-token")).toBeTruthy();
   });
@@ -369,6 +370,35 @@ describe("ComputersView", () => {
     // And back to the automatic way.
     fireEvent.click(screen.getByTestId("cx-auto-back"));
     expect(screen.getByTestId("cx-auto")).toBeTruthy();
+  });
+
+  it("validates the visible SSH port and sends explicit login overrides", async () => {
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/test": () => ({
+        ok: false, kind: "unreachable", message: null, facts: null,
+        host_fingerprint: null, latency_ms: null,
+      }),
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByLabelText("SSH host"), { target: { value: "ssh root@192.0.2.10:2222" } });
+    fireEvent.change(screen.getByTestId("cx-username"), { target: { value: "deploy" } });
+    const port = screen.getByTestId("cx-port");
+    for (const value of ["0", "65536", "1.5", "-1"]) {
+      fireEvent.change(port, { target: { value } });
+      expect((screen.getByTestId("cx-connect") as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByRole("alert").textContent).toContain("between 1 and 65535");
+    }
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    fireEvent.change(port, { target: { value: "2200" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
+    await screen.findByTestId("cx-edit");
+    expect(calls.find((call) => call.url === "/api/computers/test")?.body).toMatchObject({
+      host: "192.0.2.10", username: "deploy", port: 2200, auth: "auto",
+    });
   });
 
   it("lists a machine, opens it and runs a console command", async () => {

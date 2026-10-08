@@ -367,6 +367,10 @@
     "cx_key_only_body": "Run this line once on the server, in your hosting panel's web console or any SSH session. It adds {name}'s key. Then press Try again.",
     "cx_key_only_line": "Line for the server",
     "cx_key_only_agent": "Or let a coding agent on the server do it",
-    "cx_try_again": "Try again"
+    "cx_try_again": "Try again",
+    "cx_ssh_host": "SSH host",
+    "cx_ssh_placeholder": "Enter a host or IP address",
+    "cx_invalid_port": "Enter a port between 1 and 65535.",
+    "cx_additional_options": "More ways to add a computer"
   }
 }
