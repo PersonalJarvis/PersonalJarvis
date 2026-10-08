@@ -75,6 +75,11 @@ Copyright (c) 2026 T3 Tools Inc. The full text ships in
 [`third_party/t3code/LICENSE`](../third_party/t3code/LICENSE), and every adapted
 file names its source in a header comment.
 
+The Computers settings page (`jarvis/ui/web/frontend/src/views/computers/surface.tsx`
+and `ComputerRow.tsx`) contains portions of the settings layout, environment row,
+status dot and empty state adapted from T3 Code @ `12069ee` under the same MIT
+license; both files name their source in a header comment.
+
 The Agentic IDE explorer's coloured file-type icons
 (`jarvis/ui/web/frontend/src/components/agentic/sidePanel/explorer/fileIconSprite.ts`
 and `fileIcon.ts`) contain SVG symbols and file-name rules copied from
