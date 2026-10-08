@@ -171,7 +171,7 @@ async def test_selected_effort_reaches_api_brain(monkeypatch, isolated_gateway):
             yield BrainDelta(content="OK", finish_reason="stop")
 
     monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
-    monkeypatch.setattr(model_map, "login_token_for", lambda *args: None)
+    monkeypatch.setattr(model_map, "login_route", lambda *args: (False, None))
     monkeypatch.setattr(runner_api, "build_brain", lambda *args: Brain())
     token = gateway.grant_token("agent", "ollama", require_active_turn=True)
     gateway.watch_failure(token, effort="high")
@@ -203,10 +203,16 @@ async def test_openai_compatible_streams_never_emit_broken_tool_calls(arguments,
     async with AsyncOpenAI(api_key="test-only", http_client=httpx.AsyncClient(
         transport=httpx.MockTransport(wire.handle),
     )) as client:
-        with pytest.raises(ValueError, match="tool"):
-            async for delta in stream_openai(client, "test", BrainRequest(messages=(
-                BrainMessage("user", "Read"),))):
-                received.append(delta)
+        if finish == "length":
+            received = [delta async for delta in stream_openai(client, "test", BrainRequest(
+                messages=(BrainMessage("user", "Read"),),
+            ))]
+            assert any(delta.finish_reason == "length" for delta in received)
+        else:
+            with pytest.raises(ValueError, match="tool"):
+                async for delta in stream_openai(client, "test", BrainRequest(messages=(
+                    BrainMessage("user", "Read"),))):
+                    received.append(delta)
     assert not any(delta.tool_call for delta in received)
 
 
@@ -262,7 +268,7 @@ async def test_claude_signed_tool_continuation_survives_openai_runtime(
     wire.tool_arguments = '{"path":"a"}'
     wire.thinking = True
     monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
-    monkeypatch.setattr(model_map, "login_token_for", lambda *args: None)
+    monkeypatch.setattr(model_map, "login_route", lambda *args: (False, None))
     grant = gateway.Grant("agent", "claude-api")
     body = {"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "Read a"}]}
     async with AsyncAnthropic(api_key="test-only", http_client=httpx.AsyncClient(
@@ -300,7 +306,7 @@ async def test_claude_signed_tool_continuation_survives_openai_runtime(
     ("FinishReason.MAX_TOKENS", "length"), ("SAFETY", "content_filter"), ("end_turn", "stop"),
 ])
 def test_provider_finish_reasons_keep_their_meaning(provider_reason, wire_reason):
-    assert gateway._finish_reason(provider_reason) == wire_reason
+    assert gateway._finish(provider_reason) == wire_reason
 
 
 @pytest.mark.parametrize("partial", [False, True])
@@ -346,6 +352,7 @@ async def test_poisoned_openclaw_gateway_is_reaped_before_reuse(monkeypatch, tmp
     runtime = openclaw.OpenClawRuntime()
     old = openclaw._Gateway("agent", tmp_path, 12345,
         hashlib.sha256(b"[]").hexdigest(), SimpleNamespace(returncode=None), None, None,
+        None, None,
         poisoned=True)
     runtime._gateways["agent"] = old
     actions = []
@@ -355,11 +362,11 @@ async def test_poisoned_openclaw_gateway_is_reaped_before_reuse(monkeypatch, tmp
         assert current is old
         current.proc.returncode = 0
 
-    async def start(key, home, port, env_hash, launcher, env):
+    async def start(turn, key, home, port, token, env_hash, launcher, env):
         actions.append("start")
         assert old.proc.returncode == 0
         return openclaw._Gateway(key, home, port, env_hash,
-            SimpleNamespace(returncode=None), None, None)
+            SimpleNamespace(returncode=None), None, None, None, None)
 
     monkeypatch.setattr(runtime, "_stop_gateway", stop)
     monkeypatch.setattr(runtime, "_start_gateway", start)

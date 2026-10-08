@@ -129,30 +129,35 @@ def test_hermes_discovers_connected_tools_with_explicit_persona_guidance(tmp_pat
 
 
 def test_hermes_profiles_share_installation_but_keep_agent_state_separate(tmp_path, monkeypatch):
-    from jarvis.agent_runtimes import base
+    from jarvis.agent_runtimes import base, hermes
 
     monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
-    first = base.agent_home("hermes", "first")
-    second = base.agent_home("hermes", "second")
-    routine = base.agent_home("hermes", base.home_key("first", "society:first:routine:1"))
-    assert first.parent == second.parent == routine.parent == tmp_path / "hermes" / "profiles"
+    monkeypatch.setattr(base, "legacy_runtimes_root", lambda: tmp_path / "legacy")
+    monkeypatch.setattr(hermes, "hermes_root", lambda: tmp_path / "hermes-home")
+    first = hermes.profile_home("first")
+    second = hermes.profile_home("second")
+    routine = hermes.profile_home(base.home_key("first", "society:first:routine:1"))
+    assert first.parent == second.parent == routine.parent == tmp_path / "hermes-home" / "profiles"
     assert len({first, second, routine}) == 3
     (first / "state.db").write_bytes(b"private conversation")
     assert not (second / "state.db").exists()
     assert not (routine / "state.db").exists()
-    assert base.agent_home("hermes", "first") == first
-    assert base.agent_home("hermes", "profiles") == first.parent / "profiles"
+    assert hermes.profile_home("first") == first
+    assert hermes.profile_home("profiles") == first.parent / "profiles"
 
 
 def test_existing_runtime_homes_keep_their_native_sessions(tmp_path, monkeypatch):
-    from jarvis.agent_runtimes import base
+    from jarvis.agent_runtimes import base, hermes
 
     monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
-    legacy = tmp_path / "hermes" / "existing"
+    monkeypatch.setattr(base, "legacy_runtimes_root", lambda: tmp_path / "legacy")
+    monkeypatch.setattr(hermes, "hermes_root", lambda: tmp_path / "hermes-home")
+    legacy = tmp_path / "legacy" / "hermes" / "existing"
     legacy.mkdir(parents=True)
     (legacy / "state.db").write_bytes(b"existing session")
-    assert base.agent_home("hermes", "existing") == legacy
-    assert (legacy / "state.db").read_bytes() == b"existing session"
+    home = hermes.profile_home("existing")
+    assert home == tmp_path / "hermes-home" / "profiles" / "existing"
+    assert (home / "state.db").read_bytes() == b"existing session"
     assert base.agent_home("openclaw", "first") == tmp_path / "openclaw" / "first"
 
 

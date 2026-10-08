@@ -679,7 +679,11 @@ async def stream_complete(
             finish = getattr(choice, "finish_reason", None)
             if finish:
                 if tool_buffer and finish not in {"tool_calls", "stop"}:
-                    raise ValueError("The provider stopped before completing its tool calls.")
+                    # Preserve the stop reason so the caller can retry with a
+                    # larger budget; no partial tool arguments may execute.
+                    tool_buffer.clear()
+                    yield BrainDelta(finish_reason=finish)
+                    continue
                 # Finalize tool calls if present
                 completed_calls = []
                 for idx, buf in sorted(tool_buffer.items()):

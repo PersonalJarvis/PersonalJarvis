@@ -206,7 +206,7 @@ class VideoEncoder:
         while True:
             try:
                 samples, pts = self._audio.chunks.get_nowait()
-            except queue.Empty:
+            except queue.Empty:  # All currently queued audio has been encoded.
                 return
             if self.stopping.is_set():
                 remaining = max(0, round(self.duration * 48000) - pts)

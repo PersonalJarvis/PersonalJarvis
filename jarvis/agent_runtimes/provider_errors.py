@@ -146,6 +146,7 @@ TERMINAL_CODES: Final[frozenset[str]] = frozenset(
         "invalid_tool_schema",
         "tools_unsupported",
         "rate_limited",
+        "incomplete",
     }
 )
 

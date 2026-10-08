@@ -255,7 +255,7 @@ class CredentialVault:
         path = self._index_path(agent_id)
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except FileNotFoundError:  # An agent without saved credentials has no index yet.
             return {}
         except (OSError, ValueError):
             log.warning("society credentials: unreadable index %s", path, exc_info=True)
