@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ComputersView } from "@/views/ComputersView";
 import { loadLocaleChunk, setUiLanguage } from "@/i18n";
@@ -370,6 +370,33 @@ describe("ComputersView", () => {
     // And back to the automatic way.
     fireEvent.click(screen.getByTestId("cx-auto-back"));
     expect(screen.getByTestId("cx-auto")).toBeTruthy();
+  });
+
+  it("switches connection forms without losing drafts or sending pairing data to SSH", async () => {
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Server address" }));
+    expect(screen.queryByRole("textbox", { name: "SSH host" })).toBeNull();
+    expect(screen.queryByTestId("cx-additional-options")).toBeNull();
+    fireEvent.paste(screen.getByRole("textbox", { name: "Host" }), {
+      clipboardData: { getData: () => "https://backend.example.com/pair?code=ExampleCode" },
+    });
+    expect((screen.getByTestId("cx-server-host") as HTMLInputElement).value).toBe("https://backend.example.com");
+    expect((screen.getByTestId("cx-pairing-code") as HTMLInputElement).value).toBe("ExampleCode");
+    expect((within(screen.getByTestId("cx-server-form")).getByRole("button", { name: "Add computer" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(screen.getByTestId("cx-server-form"));
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "SSH" }));
+    expect((screen.getByRole("textbox", { name: "SSH host" }) as HTMLInputElement).value).toBe("192.0.2.10");
+    expect(screen.queryByRole("textbox", { name: "Pairing code" })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Server address" }));
+    expect((screen.getByRole("textbox", { name: "Pairing code" }) as HTMLInputElement).value).toBe("ExampleCode");
   });
 
   it("validates the visible SSH port and sends explicit login overrides", async () => {

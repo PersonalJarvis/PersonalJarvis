@@ -367,6 +367,14 @@
     "cx_ssh_host": "SSH host",
     "cx_ssh_placeholder": "Enter a host or IP address",
     "cx_invalid_port": "Enter a port between 1 and 65535.",
-    "cx_additional_options": "More ways to add a computer"
+    "cx_additional_options": "More ways to add a computer",
+    "cx_connection_hint": "Choose how to connect this computer.",
+    "cx_connection_type": "Connection type",
+    "cx_connection_server": "Server address",
+    "cx_connection_ssh": "SSH",
+    "cx_server_host": "Host",
+    "cx_pairing_code": "Pairing code",
+    "cx_pairing_hint": "Paste a full pairing URL here to fill both fields automatically.",
+    "cx_pairing_unavailable": "Connecting with a pairing code is not available yet. Use SSH to connect now."
   }
 }

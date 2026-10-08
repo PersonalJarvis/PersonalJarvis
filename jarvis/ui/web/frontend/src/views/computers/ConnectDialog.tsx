@@ -29,6 +29,7 @@ import {
   ChevronDown,
   Copy,
   FileKey,
+  Globe,
   KeyRound,
   Lock,
   MonitorSmartphone,
@@ -51,6 +52,7 @@ import { CopyField, Field, inputClass } from "./parts";
 import { ApiImportStep } from "./wizard/ApiImportStep";
 import { LocalVmStep } from "./wizard/LocalVmStep";
 import { errorText } from "./wizard/shared";
+import { ServerAddressForm } from "./ServerAddressForm";
 
 type Screen = { kind: "form" } | { kind: "check" } | { kind: "account"; provider: ProviderInfo } | { kind: "vm" };
 type Method = "auto" | "password" | "ssh_key" | "agent";
@@ -123,6 +125,7 @@ export function ConnectDialog({
   const catalog = useProviderCatalog();
   const identity = useIdentity();
   const [screen, setScreen] = useState<Screen>({ kind: "form" });
+  const [connectionType, setConnectionType] = useState<"server" | "ssh">("ssh");
   const connecting = useRef(false);
   const [additionalOptions, setAdditionalOptions] = useState(false);
   const assistantName = useEventStore((s) => s.assistantName) || "Jarvis";
@@ -220,7 +223,7 @@ export function ConnectDialog({
   }
 
   async function connect() {
-    if (!ready || !detected.host || connecting.current) return;
+    if (connectionType !== "ssh" || !ready || !detected.host || connecting.current) return;
     connecting.current = true;
     try {
       await connectSsh();
@@ -351,7 +354,29 @@ export function ConnectDialog({
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
             {screen.kind === "form" && (
-              <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_subtitle")}</p>
+              <>
+                <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_connection_hint")}</p>
+                <fieldset className="mt-4 inline-flex max-w-full gap-1 rounded-xl border border-border bg-card p-1">
+                  <legend className="sr-only">{t("computers.cx_connection_type")}</legend>
+                  {(["server", "ssh"] as const).map((type) => (
+                    <label key={type} className="relative min-w-0 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="computer-connection-type"
+                        value={type}
+                        checked={connectionType === type}
+                        onChange={() => setConnectionType(type)}
+                        aria-controls={`cx-${type}-panel`}
+                        className="peer sr-only"
+                      />
+                      <span className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground peer-checked:bg-secondary peer-checked:text-foreground-strong peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
+                        {type === "server" ? <Globe className="h-4 w-4 shrink-0" aria-hidden /> : <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden />}
+                        {t(`computers.cx_connection_${type}`)}
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              </>
             )}
             {screen.kind === "check" && check?.computer && (
               <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_verified_body")}</p>
@@ -398,8 +423,12 @@ export function ConnectDialog({
             />
           )}
 
+          {screen.kind === "form" && <div id="cx-server-panel" hidden={connectionType !== "server"}><ServerAddressForm /></div>}
+
           {screen.kind === "form" && (
             <form
+              id="cx-ssh-panel"
+              hidden={connectionType !== "ssh"}
               className="space-y-5"
               onSubmit={(e) => {
                 e.preventDefault();
@@ -769,7 +798,7 @@ export function ConnectDialog({
           )}
         </div>
 
-        {screen.kind === "form" && (
+        {screen.kind === "form" && connectionType === "ssh" && (
           <footer className="space-y-3 border-t border-border bg-secondary/30 px-6 py-4">
             <button
               type="button"
