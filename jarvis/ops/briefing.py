@@ -12,8 +12,9 @@ never on an API key. Everywhere else the deterministic text stands. Phrasing
 gets no tools, and the facts it receives are marked as data.
 
 Nothing here sends, schedules or writes anything: composing reads the agenda,
-the marks and the calendar (through the ToolExecutor, read-only
-``list_events``) and returns a value.
+the marks and the calendar (``jarvis/ops/calendar_day.py``: upcoming,
+cancelled and moved events, through the ToolExecutor, read-only) and returns
+a value.
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
-from typing import Any, Final, Protocol
-from uuid import uuid4
+from typing import Any, Final
 
+from jarvis.ops.calendar_day import CalendarDay, CalendarReader, ToolCalendarReader
 from jarvis.ops.ledger import WorkSnapshot
 from jarvis.ops.priority import PriorityMark
 from jarvis.ops.ranking import Agenda, RankedItem, build_agenda
@@ -42,117 +43,11 @@ SECTION_KEYS: Final[tuple[str, ...]] = (
     "blocked",
     "failed_recently",
     "calendar",
+    "calendar_cancelled",
 )
 #: Items listed per section; the count always shows the full number.
 SECTION_MAX_ITEMS: Final = 8
 _DAY = timedelta(days=1)
-
-
-# ---------------------------------------------------------------- calendar
-
-
-@dataclass(frozen=True, slots=True)
-class CalendarDay:
-    """Today's events, or why there are none.
-
-    ``status``: ``ok`` / ``empty`` / ``not_connected`` / ``unavailable`` /
-    ``skipped``. Never carries a provider error text (AP-34).
-    """
-
-    status: str
-    events: tuple[dict[str, Any], ...] = ()
-
-
-class CalendarReader(Protocol):
-    async def read_day(self, day: date, now: datetime) -> CalendarDay: ...
-
-
-class ToolCalendarReader:
-    """Today's events through the existing artifact source-data reader: the
-    ``google_calendar`` tool run by the ``ToolExecutor`` (AP-3), read-only."""
-
-    def __init__(
-        self,
-        tools: Callable[[], Mapping[str, Any] | None],
-        executor: Callable[[], Any],
-    ) -> None:
-        self._tools = tools
-        self._executor = executor
-
-    async def read_day(self, day: date, now: datetime) -> CalendarDay:
-        from jarvis.artifacts.source_data import CALENDAR, fetch_source_data
-
-        tools = self._tools() or {}
-        executor = self._executor()
-        if executor is None or CALENDAR.tool not in tools:
-            return CalendarDay("not_connected")
-        data = await fetch_source_data(
-            (CALENDAR,),
-            tools=tools,
-            executor=executor,
-            trace_id=uuid4(),
-            utterance="ops briefing: today's calendar",
-            now=now,
-        )
-        section = data.sections[0] if data.sections else None
-        if section is None or section.status == "unavailable":
-            return CalendarDay("unavailable")
-        events = events_on(day, section.items, tz=now.tzinfo)
-        return CalendarDay("ok" if events else "empty", events)
-
-
-def _event_bounds(event: Mapping[str, Any], tz: Any) -> tuple[datetime, datetime] | None:
-    def _parse(value: Any) -> datetime | None:
-        if not isinstance(value, str) or not value:
-            return None
-        try:
-            if len(value) == 10:  # all-day: a bare date
-                return datetime.combine(date.fromisoformat(value), time.min, tzinfo=tz)
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:  # an unreadable event time is left out, not guessed
-            return None
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
-
-    start = _parse(event.get("start"))
-    finish = _parse(event.get("end")) or start
-    if start is None or finish is None:
-        return None
-    return start, max(start, finish)
-
-
-def events_on(
-    day: date, events: Sequence[Mapping[str, Any]], *, tz: Any
-) -> tuple[dict[str, Any], ...]:
-    """The events that touch *day* (local), sorted by start; cancelled ones dropped."""
-    day_start = datetime.combine(day, time.min, tzinfo=tz)
-    day_end = day_start + _DAY
-    kept: list[tuple[datetime, dict[str, Any]]] = []
-    for event in events:
-        if str(event.get("status") or "") == "cancelled":
-            continue
-        bounds = _event_bounds(event, tz)
-        if bounds is None:
-            continue
-        start, finish = bounds
-        all_day = isinstance(event.get("start"), str) and len(str(event.get("start"))) == 10
-        overlaps = start < day_end and (finish > day_start or start >= day_start)
-        if not overlaps:
-            continue
-        kept.append(
-            (
-                start,
-                {
-                    "title": " ".join(str(event.get("summary") or "").split())[:160],
-                    "start": event.get("start"),
-                    "end": event.get("end"),
-                    "all_day": all_day,
-                    "time": "" if all_day else start.astimezone(tz).strftime("%H:%M"),
-                    "location": " ".join(str(event.get("location") or "").split())[:120],
-                },
-            )
-        )
-    kept.sort(key=lambda pair: (not pair[1]["all_day"], pair[0]))
-    return tuple(entry for _start, entry in kept)
 
 
 # ---------------------------------------------------------------- briefing
@@ -257,6 +152,12 @@ def build_sections(
         calendar.events[: SECTION_MAX_ITEMS * 2],
         status=calendar.status,
     )
+    cancelled_section = BriefingSection(
+        "calendar_cancelled",
+        len(calendar.cancelled),
+        calendar.cancelled[: SECTION_MAX_ITEMS * 2],
+        status=calendar.status,
+    )
     return (
         _section("needs_you", needs_you),
         _section("focus", focus),
@@ -266,6 +167,7 @@ def build_sections(
         _section("blocked", blocked),
         _section("failed_recently", failed_recently),
         calendar_section,
+        cancelled_section,
     )
 
 
@@ -287,10 +189,14 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "priorities": "Top priorities",
         "blocked": "Blocked or paused",
         "failed_recently": "Failed in the last 24 hours",
-        "calendar": "Calendar today",
+        "calendar": "Upcoming appointments",
+        "calendar_cancelled": "Cancelled appointments",
+        "moved_from": "moved from {old}",
+        "short_notice": "short-notice change",
+        "tentative": "tentative",
         "more": "… and {n} more",
         "nothing": "Nothing needs you right now, nothing is running and nothing is due today.",
-        "cal_empty": "No events today.",
+        "cal_empty": "No upcoming appointments today.",
         "cal_not_connected": "Calendar not connected.",
         "cal_unavailable": "Calendar could not be read.",
         "all_day": "all day",
@@ -317,12 +223,16 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "priorities": "Wichtigste Prioritäten",  # i18n-allow
         "blocked": "Blockiert oder pausiert",  # i18n-allow
         "failed_recently": "In den letzten 24 Stunden fehlgeschlagen",  # i18n-allow
-        "calendar": "Kalender heute",  # i18n-allow
+        "calendar": "Anstehende Termine",  # i18n-allow
+        "calendar_cancelled": "Abgesagte Termine",  # i18n-allow
+        "moved_from": "verschoben von {old}",  # i18n-allow
+        "short_notice": "kurzfristig geändert",  # i18n-allow
+        "tentative": "vorläufig",  # i18n-allow
         "more": "… und {n} weitere",  # i18n-allow
         "nothing": (
             "Gerade braucht dich nichts, nichts läuft und heute ist nichts fällig."  # i18n-allow
         ),
-        "cal_empty": "Heute keine Termine.",  # i18n-allow
+        "cal_empty": "Heute keine anstehenden Termine.",  # i18n-allow
         "cal_not_connected": "Kalender nicht verbunden.",  # i18n-allow
         "cal_unavailable": "Kalender konnte nicht gelesen werden.",  # i18n-allow
         "all_day": "ganztägig",  # i18n-allow
@@ -351,12 +261,16 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "priorities": "Prioridades principales",  # i18n-allow
         "blocked": "Bloqueado o en pausa",  # i18n-allow
         "failed_recently": "Fallido en las últimas 24 horas",  # i18n-allow
-        "calendar": "Calendario de hoy",  # i18n-allow
+        "calendar": "Próximas citas",  # i18n-allow
+        "calendar_cancelled": "Citas canceladas",  # i18n-allow
+        "moved_from": "movida desde {old}",  # i18n-allow
+        "short_notice": "cambio de último momento",  # i18n-allow
+        "tentative": "provisional",  # i18n-allow
         "more": "… y {n} más",  # i18n-allow
         "nothing": (
             "Ahora nada te necesita, nada está en curso y nada vence hoy."  # i18n-allow
         ),
-        "cal_empty": "Hoy no hay eventos.",  # i18n-allow
+        "cal_empty": "Hoy no hay más citas.",  # i18n-allow
         "cal_not_connected": "Calendario no conectado.",  # i18n-allow
         "cal_unavailable": "No se pudo leer el calendario.",  # i18n-allow
         "all_day": "todo el día",  # i18n-allow
@@ -385,10 +299,14 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "priorities": "最高优先级",  # i18n-allow
         "blocked": "受阻或已暂停",  # i18n-allow
         "failed_recently": "过去 24 小时内失败",  # i18n-allow
-        "calendar": "今日日程",  # i18n-allow
+        "calendar": "即将到来的日程",  # i18n-allow
+        "calendar_cancelled": "已取消的日程",  # i18n-allow
+        "moved_from": "已从 {old} 改期",  # i18n-allow
+        "short_notice": "临时变更",  # i18n-allow
+        "tentative": "待定",  # i18n-allow
         "more": "… 还有 {n} 项",  # i18n-allow
         "nothing": "目前没有需要你处理的事，没有进行中的任务，今天也没有到期事项。",  # i18n-allow
-        "cal_empty": "今天没有日程。",  # i18n-allow
+        "cal_empty": "今天没有即将到来的日程。",  # i18n-allow
         "cal_not_connected": "日历未连接。",  # i18n-allow
         "cal_unavailable": "无法读取日历。",  # i18n-allow
         "all_day": "全天",  # i18n-allow
@@ -417,7 +335,7 @@ def normalize_language(language: str | None) -> str:
     return head if head in LANGUAGES else "en"
 
 
-def _item_line(entry: Mapping[str, Any], table: Mapping[str, str]) -> str:
+def item_line(entry: Mapping[str, Any], table: Mapping[str, str]) -> str:
     source = table.get(f"src_{entry.get('source')}", str(entry.get("source") or ""))
     detail = (
         table["capacity_decision"]
@@ -431,10 +349,23 @@ def _item_line(entry: Mapping[str, Any], table: Mapping[str, str]) -> str:
     return f"- {prefix}{entry.get('title')} ({source}, {detail})"
 
 
-def _event_line(event: Mapping[str, Any], table: Mapping[str, str]) -> str:
+def event_line(event: Mapping[str, Any], table: Mapping[str, str], *, day: date) -> str:
     when = table["all_day"] if event.get("all_day") else str(event.get("time") or "")
     where = f" — {event['location']}" if event.get("location") else ""
-    return f"- {when} {event.get('title')}{where}"
+    notes: list[str] = []
+    if event.get("state") == "tentative":
+        notes.append(table["tentative"])
+    moved = event.get("moved_from")
+    if isinstance(moved, Mapping):
+        old = str(moved.get("time") or "") or table["all_day"]
+        if moved.get("day") and moved.get("day") != day.isoformat():
+            old = f"{moved['day']} {old}".strip()
+        notes.append(table["moved_from"].format(old=old))
+    if event.get("short_notice"):
+        notes.append(table["short_notice"])
+    flag = "(!) " if event.get("short_notice") else ""
+    tail = f" ({'; '.join(notes)})" if notes else ""
+    return f"- {flag}{when} {event.get('title')}{where}{tail}"
 
 
 def render_text(
@@ -452,10 +383,17 @@ def render_text(
     if all(s.count == 0 for s in sections if s.key in work_keys):
         lines += ["", table["nothing"]]
     for section in sections:
+        if section.key == "calendar_cancelled":
+            if section.count:
+                lines += ["", f"{table['calendar_cancelled']} ({section.count}):"]
+                lines += [event_line(e, table, day=day) for e in section.items]
+                if section.count > len(section.items):
+                    lines.append(table["more"].format(n=section.count - len(section.items)))
+            continue
         if section.key == "calendar":
             lines += ["", f"{table['calendar']}:"]
             if section.status in ("ok",) and section.items:
-                lines += [_event_line(e, table) for e in section.items]
+                lines += [event_line(e, table, day=day) for e in section.items]
                 if section.count > len(section.items):
                     lines.append(table["more"].format(n=section.count - len(section.items)))
             else:
@@ -468,7 +406,7 @@ def render_text(
         if section.count == 0:
             continue
         lines += ["", f"{table[section.key]} ({section.count}):"]
-        lines += [_item_line(entry, table) for entry in section.items]
+        lines += [item_line(entry, table) for entry in section.items]
         if section.count > len(section.items):
             lines.append(table["more"].format(n=section.count - len(section.items)))
     return "\n".join(lines).strip() + "\n"
@@ -657,7 +595,8 @@ __all__ = [
     "Phrasing",
     "ToolCalendarReader",
     "build_sections",
-    "events_on",
+    "event_line",
+    "item_line",
     "normalize_language",
     "phrase_briefing",
     "phrasing_allowed",

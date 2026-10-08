@@ -173,6 +173,10 @@ class GoogleCalendarRestTool:
                 "description": "RFC3339 upper bound for list_events (local day end)",
             },
             "query": {"type": "string", "description": "free-text filter (list_events)"},
+            "show_deleted": {
+                "type": "boolean",
+                "description": "list_events: also return cancelled events (status 'cancelled')",
+            },
             "max_results": {"type": "integer", "default": 25},
             "summary": {"type": "string", "description": "event title (create/update)"},
             "start": {"type": "string", "description": "RFC3339 datetime or YYYY-MM-DD"},
@@ -233,6 +237,7 @@ class GoogleCalendarRestTool:
         time_max: str | None = None,
         query: str = "",
         max_results: int = 25,
+        show_deleted: bool = False,
     ) -> dict[str, Any]:
         return await self._call(
             "list_events",
@@ -241,6 +246,7 @@ class GoogleCalendarRestTool:
                 "time_max": time_max,
                 "query": query,
                 "max_results": max_results,
+                "show_deleted": bool(show_deleted),
             },
         )
 
@@ -323,6 +329,7 @@ class GoogleCalendarRestTool:
                     time_max=args.get("time_max"),
                     query=args.get("query", ""),
                     max_results=int(args.get("max_results", 25)),
+                    show_deleted=bool(args.get("show_deleted", False)),
                 )
             elif action == "create_event":
                 if not args.get("summary"):

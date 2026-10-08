@@ -115,6 +115,13 @@ function summarizeEvent(rawEvent, calendarId, calendarName) {
     end: rawEvent.end?.dateTime || rawEvent.end?.date || null,
     location: rawEvent.location || null,
     status: rawEvent.status || null,
+    // Change facts the API itself states (never inferred): when the event was
+    // last modified, and — for a moved instance of a recurring series — the
+    // slot it originally had.
+    updated: rawEvent.updated || null,
+    original_start:
+      rawEvent.originalStartTime?.dateTime || rawEvent.originalStartTime?.date || null,
+    recurring_event_id: rawEvent.recurringEventId || null,
   };
 }
 
@@ -150,6 +157,8 @@ async function listEvents(token, args) {
     singleEvents: "true",
     orderBy: "startTime",
     maxResults: String(args.max_results || 50),
+    // Opt-in: also return cancelled events (status "cancelled").
+    showDeleted: args.show_deleted ? "true" : undefined,
   };
 
   // Discover every calendar; if the scope is too narrow to list them, fall back

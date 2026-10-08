@@ -265,3 +265,69 @@ async def test_node_runner_graceful_when_node_missing(monkeypatch):
     out = await _default_node_runner("list_events", {}, "at_1")
     assert out["ok"] is False
     assert "node" in out["error"].lower()
+
+
+# --- The Node bot itself, with a stubbed fetch (no network) --------------------
+
+_FETCH_STUB = r"""
+globalThis.__urls = [];
+globalThis.fetch = async (url) => {
+  globalThis.__urls.push(String(url));
+  const body = String(url).includes("/calendarList")
+    ? { items: [{ id: "primary", summary: "Me" }] }
+    : { items: [
+        { id: "a", summary: "Moved standup", status: "confirmed",
+          start: { dateTime: "2026-10-07T10:00:00+02:00" },
+          end: { dateTime: "2026-10-07T10:15:00+02:00" },
+          updated: "2026-10-07T06:00:00Z", recurringEventId: "series",
+          originalStartTime: { dateTime: "2026-10-07T09:00:00+02:00" } },
+        { id: "b", summary: "Dropped", status: "cancelled",
+          start: { dateTime: "2026-10-07T12:00:00+02:00" },
+          end: { dateTime: "2026-10-07T13:00:00+02:00" } },
+      ] };
+  return { ok: true, status: 200, text: async () => JSON.stringify(body),
+           json: async () => body };
+};
+process.on("exit", () => process.stderr.write(JSON.stringify(globalThis.__urls)));
+"""
+
+
+def _run_bot(tmp_path, payload):  # noqa: ANN001, ANN202
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+
+        pytest.skip("node is not installed")
+    stub = tmp_path / "fetch_stub.mjs"
+    stub.write_text(_FETCH_STUB, encoding="utf-8")
+    bot = Path(__file__).resolve().parents[4] / "jarvis/plugins/tool/calendar_bot.mjs"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, test-only
+        [node, "--import", stub.as_uri(), str(bot)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    return json.loads(proc.stdout), json.loads(proc.stderr or "[]")
+
+
+def test_bot_reports_change_facts_and_asks_for_deleted_only_on_request(tmp_path):  # noqa: ANN001, ANN201
+    base = {"access_token": "at_fake", "action": "list_events"}
+    out, urls = _run_bot(tmp_path, {**base, "show_deleted": True})
+    assert out["ok"] is True
+    moved, dropped = out["data"]["events"]
+    assert moved["original_start"] == "2026-10-07T09:00:00+02:00"
+    assert moved["updated"] == "2026-10-07T06:00:00Z"
+    assert moved["recurring_event_id"] == "series"
+    assert dropped["status"] == "cancelled" and dropped["original_start"] is None
+    assert any("showDeleted=true" in u for u in urls if "/events" in u)
+
+    _out, urls = _run_bot(tmp_path, base)
+    assert not any("showDeleted" in u for u in urls)

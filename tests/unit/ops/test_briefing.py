@@ -22,10 +22,10 @@ from jarvis.ops.briefing import (
     BriefingComposer,
     CalendarDay,
     ToolCalendarReader,
-    events_on,
     phrase_briefing,
     render_text,
 )
+from jarvis.ops.calendar_day import classify_day
 from jarvis.ops.ledger import SourceReport, WorkItem, WorkSnapshot
 from jarvis.ops.priority import PriorityMark
 
@@ -87,13 +87,18 @@ EVENTS = (
         "end": "2026-10-08T11:00:00+02:00",
     },
     {
-        "summary": "Cancelled",
+        "summary": "Dropped call",
         "start": "2026-10-07T12:00:00+02:00",
         "end": "2026-10-07T13:00:00+02:00",
         "status": "cancelled",
     },
     {"summary": "Late UTC", "start": "2026-10-07T20:00:00Z", "end": "2026-10-07T21:00:00Z"},
 )
+
+
+def _cal_day(events: Any = EVENTS) -> CalendarDay:
+    upcoming, cancelled = classify_day(TODAY, events, tz=TZ, now=NOW)
+    return CalendarDay("ok", upcoming, cancelled)
 
 
 class FakeCalendar:
@@ -130,9 +135,10 @@ def _ids(section: Any) -> list[str]:
 # --- Calendar day ---------------------------------------------------------------
 
 
-def test_events_on_keeps_only_todays_events_in_order() -> None:
-    events = events_on(TODAY, EVENTS, tz=TZ)
+def test_the_day_keeps_only_todays_events_in_order() -> None:
+    events, cancelled = classify_day(TODAY, EVENTS, tz=TZ, now=NOW)
     assert [e["title"] for e in events] == ["Trip", "Holiday", "Standup", "Late UTC"]
+    assert [e["title"] for e in cancelled] == ["Dropped call"]
     assert [e["all_day"] for e in events] == [True, True, False, False]
     assert events[2]["time"] == "09:00"
     assert events[3]["time"] == "22:00"  # 20:00 UTC in the person's zone
@@ -142,9 +148,7 @@ def test_events_on_keeps_only_todays_events_in_order() -> None:
 
 
 async def test_sections_group_the_facts_without_double_listing() -> None:
-    briefing = await _composer(
-        FakeCalendar(CalendarDay("ok", events_on(TODAY, EVENTS, tz=TZ)))
-    ).compose(now=NOW, language="en")
+    briefing = await _composer(FakeCalendar(_cal_day())).compose(now=NOW, language="en")
     assert [s.key for s in briefing.sections] == list(SECTION_KEYS)
     sec = briefing.section
     assert _ids(sec("needs_you")) == ["parked"]
@@ -156,29 +160,32 @@ async def test_sections_group_the_facts_without_double_listing() -> None:
     assert _ids(sec("blocked")) == ["paused"]  # the parked mission sits under needs_you
     assert _ids(sec("failed_recently")) == ["broke"]
     assert sec("calendar").status == "ok" and sec("calendar").count == 4
-    listed = [i for s in briefing.sections if s.key != "calendar" for i in _ids(s)]
+    assert [e["title"] for e in sec("calendar_cancelled").items] == ["Dropped call"]
+    calendar_keys = ("calendar", "calendar_cancelled")
+    listed = [i for s in briefing.sections if s.key not in calendar_keys for i in _ids(s)]
     assert len(listed) == len(set(listed))
     assert "done" not in listed and "tomorrow" not in listed
 
 
 async def test_the_briefing_is_deterministic() -> None:
-    cal = CalendarDay("ok", events_on(TODAY, EVENTS, tz=TZ))
+    cal = _cal_day()
     first = await _composer(FakeCalendar(cal)).compose(now=NOW, language="de")
     second = await _composer(FakeCalendar(cal)).compose(now=NOW, language="de")
     assert first.to_dict() == second.to_dict()
 
 
 async def test_the_text_states_only_the_facts() -> None:
-    briefing = await _composer(
-        FakeCalendar(CalendarDay("ok", events_on(TODAY, EVENTS, tz=TZ)))
-    ).compose(now=NOW, language="en")
+    briefing = await _composer(FakeCalendar(_cal_day())).compose(now=NOW, language="en")
     text = briefing.text
     assert text.startswith("Briefing for Dennis, 2026-10-07")
     assert "Needs you (1):" in text
     assert "Title parked (mission, waiting for subscription capacity" in text
     assert "- [!!] Title hot (task, queued)" in text
     assert "- 09:00 Standup" in text and "- all day Holiday" in text
-    assert "Cancelled" not in text and "Title done" not in text
+    upcoming = text.split("Upcoming appointments:")[1].split("Cancelled appointments")[0]
+    assert "Dropped call" not in upcoming  # a cancelled event is never upcoming
+    assert "Cancelled appointments (1):\n- 12:00 Dropped call" in text
+    assert "Title done" not in text
 
 
 @pytest.mark.parametrize(
@@ -186,7 +193,7 @@ async def test_the_text_states_only_the_facts() -> None:
     [
         (CalendarDay("not_connected"), "Calendar not connected."),
         (CalendarDay("unavailable"), "Calendar could not be read."),
-        (CalendarDay("empty"), "No events today."),
+        (CalendarDay("empty"), "No upcoming appointments today."),
     ],
 )
 async def test_calendar_states_are_said_plainly(day: CalendarDay, expected: str) -> None:
@@ -279,8 +286,9 @@ async def test_the_calendar_is_read_through_the_executor_with_list_events_only()
     day = await reader.read_day(TODAY, NOW)
     assert day.status == "ok"
     assert [e["title"] for e in day.events] == ["Trip", "Holiday", "Standup", "Late UTC"]
-    assert [(name, args["action"]) for name, args in executor.calls] == [
-        ("google_calendar", "list_events")
+    assert [e["title"] for e in day.cancelled] == ["Dropped call"]
+    assert [(name, args["action"], args["show_deleted"]) for name, args in executor.calls] == [
+        ("google_calendar", "list_events", True)
     ]
 
 
