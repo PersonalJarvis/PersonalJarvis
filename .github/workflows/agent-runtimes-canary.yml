@@ -1,9 +1,15 @@
 name: Agent runtimes canary
-# Installs the LATEST Hermes and OpenClaw with their own official installers and
-# drives two turns through Jarvis' runtime drivers against a scripted fake model
-# (scripts/spikes/agent_runtimes_e2e.py, tests/fakes/fake_openai_server.py).
-# Not part of the CI gate: an upstream release that breaks the integration
-# opens an issue here before a person runs into it. See docs/agent-runtimes.md.
+# Installs the LATEST Hermes and OpenClaw through the app's own setup job (the
+# pin is pointed at upstream latest in the canary's checkout only) and runs
+# scripts/ci/agent_runtime_e2e.py: two turns per model-gateway protocol against
+# scripted providers, the fake-model driver check, the runtime unit tests and
+# the PATH / shell-profile checks. No key, no network to a model. Every pull
+# request already proves the PINNED versions (ci.yml, agent-runtimes-e2e); this
+# checks what upstream ships next:
+#   * green on every OS -> a pull request raises the pin in
+#     jarvis/agent_runtimes/runtime-versions.json (scripts/ci/agent_runtime_suite.py);
+#   * red on a schedule -> an issue, and the pin stays where it is.
+# See docs/agent-runtimes.md ("CI and release gates").
 on:
   schedule:
     - cron: '17 5 * * 1'
@@ -23,31 +29,77 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - name: Install the base app
         run: python scripts/pip_install.py -e "."
-      - name: Install Hermes (official installer, Linux/macOS)
-        if: matrix.runtime == 'hermes' && runner.os != 'Windows'
-        run: |
-          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --non-interactive --skip-browser
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Install Hermes (official installer, Windows)
-        if: matrix.runtime == 'hermes' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -SkipSetup -NonInteractive
-          "$env:LOCALAPPDATA\hermes\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: matrix.runtime == 'openclaw'
+      # The app's own setup installs whatever the pin names; in this checkout
+      # only, the pin points at upstream latest (newest OpenClaw on npm, the
+      # head of Hermes' default branch).
+      - name: Aim the app's setup at upstream latest
+        run: python scripts/ci/agent_runtime_suite.py --point-at-latest ${{ matrix.runtime }}
+      - name: Set up through the app, drive it, prove nothing else changed
+        run: python scripts/ci/agent_runtime_e2e.py ${{ matrix.runtime }} --allow-untested
+      - name: Record the version that passed
+        run: python scripts/ci/agent_runtime_suite.py --report ${{ matrix.runtime }} --out canary-report.json
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
-          node-version: '24'
-      - name: Install OpenClaw (latest)
-        if: matrix.runtime == 'openclaw'
-        run: npm install -g openclaw@latest
-      - name: Drive two turns through the Jarvis driver
-        run: python scripts/spikes/agent_runtimes_e2e.py ${{ matrix.runtime }}
+          name: canary-report-${{ matrix.runtime }}-${{ matrix.os }}
+          path: canary-report.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Keep the runtime log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: canary-log-${{ matrix.runtime }}-${{ matrix.os }}
+          path: eval-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Only what passed on all three OSes is recorded; a runtime with a red or
+  # missing OS keeps its pin (bump_from). A pull request opened with the
+  # workflow token starts no workflow by itself: CI runs when the merge train
+  # or a maintainer dispatches it, and that run is the pin's admission.
+  raise-pin:
+    needs: canary
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          pattern: canary-report-*
+          path: reports
+      - name: Raise the pins every OS agreed on
+        id: bump
+        run: python3 scripts/ci/agent_runtime_suite.py --bump-from reports
+      - name: Open a pull request with the new pins
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          branch="ci/agent-runtime-pins-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add jarvis/agent_runtimes/runtime-versions.json
+          git commit -m "chore(agent-runtimes): raise the tested runtime versions" \
+            -m "The weekly canary passed both model-gateway protocols on Linux, Windows and macOS: $RUN_URL"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$DEFAULT_BRANCH" \
+            --title "chore(agent-runtimes): raise the tested runtime versions" \
+            --body "The weekly canary drove the latest Hermes / OpenClaw through Jarvis' model gateway on every OS: $RUN_URL. Merging raises the version the app installs (see docs/agent-runtimes.md)."
+
   report:
     needs: canary
     if: failure() && github.event_name == 'schedule'
@@ -62,4 +114,4 @@ jobs:
         run: |
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "Agent runtimes canary failed" \
-            --body "The weekly canary could not drive the latest Hermes or OpenClaw release through Jarvis' runtime drivers. Run: $RUN_URL (see docs/agent-runtimes.md)."
+            --body "The weekly canary could not drive the latest Hermes or OpenClaw release through Jarvis' model gateway. The pinned versions stay in place. Run: $RUN_URL (see docs/agent-runtimes.md)."

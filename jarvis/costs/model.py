@@ -88,6 +88,14 @@ SURFACES: tuple[str, ...] = (
     SURFACE_BACKGROUND,
 )
 
+# The ledger caller of every model call a Hermes / OpenClaw agent makes
+# through Jarvis' model gateway, and the chat runners those agents run on.
+# Once the gateway metered its calls, its ledger rows are the bill for those
+# turns: a runtime's own usage report may be missing or approximate, and
+# counting both would bill each call twice.
+RUNTIME_CALLER = "agent-runtime"
+RUNTIME_RUNNERS: frozenset[str] = frozenset({"hermes-cli", "openclaw-cli"})
+
 # Runners whose usage object follows the OpenAI convention: ``input_tokens``
 # INCLUDES the cached share, so the cached count is subtracted before pricing.
 # Anthropic-style runners report the two disjoint and need nothing.

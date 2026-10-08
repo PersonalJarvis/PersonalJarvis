@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -136,10 +137,10 @@ def test_a_failure_mid_stream_arrives_as_response_failed(fake, guarded) -> None:
     answer = _post(guarded, token, {"model": "gpt-5.6-sol", "input": "Hi", "stream": True})
     frames = [json.loads(line[5:]) for line in answer.text.splitlines() if line.startswith("data:")]
     assert frames[-1]["type"] == "response.failed"
-    message = frames[-1]["response"]["error"]["message"]
-    # Fixed wording only: the client's exception text never leaves the gateway.
-    assert "login expired" not in message
-    assert message == "The ChatGPT subscription needs a new sign-in in Jarvis."
+    # Fixed wording only: no exception text leaves the gateway (CodeQL 769).
+    assert frames[-1]["response"]["error"]["message"] == (
+        "The ChatGPT subscription needs a new sign-in in Jarvis."
+    )
 
 
 def test_models_are_listed_in_the_openai_shape(fake, guarded) -> None:
@@ -149,7 +150,8 @@ def test_models_are_listed_in_the_openai_shape(fake, guarded) -> None:
     )
     assert answer.json() == {
         "object": "list",
-        "data": [{"id": "gpt-5.6-sol", "object": "model", "owned_by": "openai"}],
+        "data": [{"id": "gpt-5.6-sol", "object": "model", "owned_by": "openai",
+                  "context_length": 128000}],
     }
 
 
@@ -171,9 +173,10 @@ def test_a_gateway_token_opens_nothing_but_the_gateway(fake, guarded) -> None:
 
 
 class _ProviderError(Exception):
-    def __init__(self, status: int) -> None:
+    def __init__(self, status: int, headers: dict[str, str] | None = None) -> None:
         super().__init__("provider body that must never reach the runtime")
         self.status_code = status
+        self.headers = headers or {}
 
 
 @pytest.fixture
@@ -186,10 +189,10 @@ def brain(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def deltas(grant: gateway.Grant, model: str, request: Any) -> AsyncIterator[Any]:
         state["requests"].append((grant, model, request))
         if state["fail"] is not None:
-            raise _ProviderError(state["fail"])
+            raise _ProviderError(state["fail"], state.get("headers"))
         yield BrainDelta(content="Looking")
         if state["fail_late"] is not None:
-            raise _ProviderError(state["fail_late"])
+            raise _ProviderError(state["fail_late"], state.get("headers"))
         yield BrainDelta(
             tool_call={
                 "id": "call_1",
@@ -280,7 +283,12 @@ def test_chat_streams_text_and_tool_calls_in_the_openai_shape(brain, guarded) ->
     calls = [call for d in deltas for call in d.get("tool_calls") or []]
     assert calls[0]["function"] == {"name": "read_file", "arguments": '{"path": "a.txt"}'}
     assert chunks[-1]["choices"][0]["finish_reason"] == "tool_calls"
-    assert chunks[-1]["usage"] == {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+    assert chunks[-1]["usage"] == {
+        "prompt_tokens": 12,
+        "completion_tokens": 3,
+        "total_tokens": 15,
+        "prompt_tokens_details": {"cached_tokens": 0},
+    }
     grant, model, _request = brain["requests"][0]
     assert grant.provider == "openai" and model == "gpt-5.2"
 
@@ -323,12 +331,147 @@ def test_a_rate_limit_up_front_is_a_429_without_the_provider_body(brain, guarded
     assert "never reach" not in answer.text
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_retry_after_blocks_repeated_calls_and_expires(brain, guarded, monkeypatch, stream):
+    now = [100.0]
+    monkeypatch.setattr(gateway.time, "monotonic", lambda: now[0])
+    brain.update(fail=429, headers={"Retry-After": "90"})
+    token = gateway.grant_token("agent-1", "openai", scope="chat")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    assert answer.status_code == 429 and answer.headers["Retry-After"] == "90"
+    assert "Try again in 90 s" in signal.result(timeout=1)
+    assert "/continue" not in signal.result()  # only the person's own turns resume
+    assert "fallback provider was called" in answer.text
+    assert "never reach" not in signal.result()
+    gateway.unwatch_failure(token, signal)
+
+    # A second agent on the same model/key must also respect the cooldown.
+    other = gateway.grant_token("agent-2", "openai")
+    now[0] += 40
+    assert _chat(guarded, other, _CHAT).headers["Retry-After"] == "50"
+    assert len(brain["requests"]) == 1
+    brain["fail"] = None
+    now[0] += 50
+    assert _chat(guarded, token, _CHAT).status_code == 200
+    assert len(brain["requests"]) == 2
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("12.3", 12.3),
+        ("0", 0),
+        ("-1", 0),
+        ("NaN", None),
+        ("Infinity", None),
+        ("invalid", None),
+        ("Wed, 21 Oct 2015 07:28:00 GMT", 60),
+    ],
+)
+def test_retry_after_parses_numeric_and_http_date_without_provider_body(monkeypatch, raw, expected):
+    monkeypatch.setattr(gateway.time, "time", lambda: 1445412420.0)
+    failure = gateway._failure("openai", _ProviderError(429, {"rEtRy-AfTeR": raw}))
+    assert failure.retry_after == expected
+    assert "never reach" not in str(failure)
+
+
+def test_a_long_limit_returns_immediately_without_waiting_or_fallback(brain, guarded):
+    brain.update(fail=429, headers={"Retry-After": "86400"})
+    token = gateway.grant_token("agent-1", "claude-api")
+    answer = _chat(guarded, token, _CHAT)
+    assert answer.headers["Retry-After"] == "86400"
+    assert len(brain["requests"]) == 1
+    assert brain["requests"][0][0].provider == "claude-api"
+
+
+def test_missing_retry_after_uses_short_conservative_cooldown(brain, guarded):
+    brain["fail"] = 429
+    token = gateway.grant_token("agent-1", "openai")
+    assert _chat(guarded, token, _CHAT).headers["Retry-After"] == "30"
+    assert _chat(guarded, token, _CHAT).status_code == 429
+    assert len(brain["requests"]) == 1
+
+
+def test_routine_failure_cannot_end_the_direct_chat(brain, guarded):
+    chat = gateway.grant_token("agent-1", "openai", scope="agent-1")
+    routine = gateway.grant_token("agent-1", "openai", scope="agent-1~runs")
+    assert chat != routine
+    chat_signal, routine_signal = gateway.watch_failure(chat), gateway.watch_failure(routine)
+    brain["fail"] = 429
+    _chat(guarded, routine, _CHAT)
+    assert routine_signal.done() and not chat_signal.done()
+    gateway.unwatch_failure(chat, chat_signal)
+    gateway.unwatch_failure(routine, routine_signal)
+
+
+def test_late_failure_keeps_the_old_turn_identity(brain):
+    token = gateway.grant_token("agent-1", "openai", scope="chat")
+    old = gateway.watch_failure(token)
+    gateway.unwatch_failure(token, old)
+    current = gateway.watch_failure(token)
+    gateway._report_failure(
+        gateway.verify(token), "m", gateway._failure("openai", _ProviderError(429)), old
+    )
+    assert old.done() and not current.done()
+    gateway.unwatch_failure(token, current)
+
+
+def test_midstream_rate_limit_stops_the_runner_without_done(brain, guarded):
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    brain.update(fail_late=429, headers={"Retry-After": "3"})
+    response = _chat(guarded, token, {**_CHAT, "stream": True})
+    assert "Looking" in response.text and "[DONE]" not in response.text
+    assert "HTTP 429" in signal.result(timeout=1)
+    gateway.unwatch_failure(token, signal)
+
+
+def test_subscription_limit_never_uses_the_api_path(fake, guarded, monkeypatch):
+    async def limited(**kwargs):
+        fake.calls.append(kwargs)
+        raise SubscriptionReasoningError("usage limit", status=429, retry_after="120")
+        yield  # pragma: no cover - keep this a stream
+
+    monkeypatch.setattr(fake, "stream", limited)
+    token = gateway.grant_token("agent-1", "openai-codex", "account-a")
+    signal = gateway.watch_failure(token)
+    answer = _post(guarded, token, {"model": "m", "input": "hello"})
+    assert answer.status_code == 429 and answer.headers["Retry-After"] == "120"
+    assert "openai-codex" in signal.result(timeout=1)
+    _post(guarded, token, {"model": "m", "input": "hello"})
+    assert len(fake.calls) == 1
+    gateway.check_cooldown("openai-codex", "m", "account-b")
+    gateway.unwatch_failure(token, signal)
+
+
 def test_a_failure_mid_stream_is_an_error_chunk(brain, guarded) -> None:
     brain["fail_late"] = 500
     token = gateway.grant_token("agent-1", "openai")
     answer = _chat(guarded, token, {**_CHAT, "stream": True})
     assert '"error"' in answer.text and "[DONE]" not in answer.text
     assert "never reach" not in answer.text
+
+
+async def test_a_closed_stream_releases_the_provider_generator(monkeypatch):
+    from jarvis.core.protocols import BrainDelta
+
+    closed = []
+
+    async def deltas(*_args):
+        try:
+            yield BrainDelta(content="partial")
+            yield BrainDelta(content="more")
+        finally:
+            closed.append(True)
+
+    gateway.reset()
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    model, request = gateway.chat_request(_CHAT)
+    stream = await gateway.open_chat_stream(gateway.Grant("a", "openai"), model, request)
+    await anext(stream)
+    await stream.aclose()
+    assert closed == [True]
 
 
 def test_each_shape_answers_only_its_own_providers(brain, guarded) -> None:
@@ -343,7 +486,8 @@ def test_api_key_models_come_from_jarvis_catalog(guarded) -> None:
     from jarvis.agent_chat.catalog import provider_row
 
     with_catalog = next(
-        name for name in ("claude-api", "openai", "gemini", "grok")
+        name
+        for name in ("claude-api", "openai", "gemini", "grok")
         if (row := provider_row(name)) is not None and row.curated_models
     )
     token = gateway.grant_token("agent-1", with_catalog)
@@ -379,3 +523,360 @@ def test_a_streamed_answer_ends_cleanly_with_the_real_key_and_cost_context(
     assert answer.status_code == 200
     assert '"error"' not in answer.text
     assert answer.text.rstrip().endswith("data: [DONE]")
+
+
+# ------------------------------------------------ which failures end the turn
+
+
+class _Overflow(Exception):
+    status_code = 400
+    body = {"error": {"code": "context_length_exceeded", "type": "invalid_request_error"}}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_context_overflow_goes_back_to_the_runtime_to_compress(brain, guarded, monkeypatch,
+                                                                  stream) -> None:
+    async def deltas(grant, model, request):
+        raise _Overflow("This model's maximum context length is 400000 tokens.")
+        yield  # pragma: no cover — keep this a stream
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    assert answer.status_code == 400
+    error = answer.json()["error"]
+    assert error["code"] == "context_length_exceeded"
+    assert "context length exceeded" in error["message"].lower()
+    # The runtime compresses and resends; the Jarvis turn keeps running.
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+@pytest.mark.parametrize(("status", "expected"), [(500, 502), (529, 503)])
+def test_a_transient_provider_failure_leaves_the_retry_to_the_runtime(
+    brain, guarded, status, expected
+) -> None:
+    brain["fail"] = status
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    assert _chat(guarded, token, {**_CHAT, "stream": True}).status_code == expected
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_refused_key_ends_the_turn_at_once(brain, guarded) -> None:
+    brain["fail"] = 401
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, _CHAT)
+    assert answer.status_code == 401 and answer.json()["error"]["code"] == "provider_auth"
+    assert "API keys" in signal.result(timeout=1)
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_subscription_overflow_tells_the_runtime_to_compress(fake, guarded, monkeypatch):
+    async def overflow(**kwargs):
+        raise SubscriptionReasoningError(
+            "This request exceeds the selected ChatGPT model's context limit. (HTTP 400)",
+            code="context_length_exceeded",
+            status=400,
+        )
+        yield  # pragma: no cover - keep this a stream
+
+    monkeypatch.setattr(fake, "stream", overflow)
+    token = gateway.grant_token("agent-1", "openai-codex")
+    signal = gateway.watch_failure(token)
+    answer = _post(guarded, token, {"model": "m", "input": "hello", "stream": True})
+    assert answer.status_code == 400
+    assert answer.json()["error"]["code"] == "context_length_exceeded"
+    assert "context length exceeded" in answer.json()["error"]["message"].lower()
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_subscription_overflow_mid_stream_keeps_its_code(fake, guarded, monkeypatch):
+    async def overflow(**kwargs):
+        yield {"type": "response.created", "response": {"id": "r1"}}
+        raise SubscriptionReasoningError("ChatGPT subscription reasoning failed.",
+                                         code="context_length_exceeded")
+
+    monkeypatch.setattr(fake, "stream", overflow)
+    token = gateway.grant_token("agent-1", "openai-codex")
+    answer = _post(guarded, token, {"model": "m", "input": "hello", "stream": True})
+    failed = [json.loads(line[5:]) for line in answer.text.splitlines()
+              if line.startswith("data:") and "response.failed" in line]
+    assert failed[0]["response"]["error"]["code"] == "context_length_exceeded"
+
+
+async def test_an_expired_claude_login_says_how_to_renew_it(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+    import jarvis.core.config as config
+    from jarvis.agent_runtimes.provider_errors import ProviderRefusal
+    from jarvis.core.protocols import BrainMessage, BrainRequest
+
+    monkeypatch.setattr(model_map, "login_route", lambda provider, account: (True, None))
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    request = BrainRequest(messages=(BrainMessage("user", "Hi"),), max_tokens=16)
+    with pytest.raises(ProviderRefusal) as caught:
+        async for _ in gateway._deltas(gateway.Grant("a", "claude-api"), "claude-x", request):
+            pass
+    failure = gateway._failure("claude-api", caught.value)
+    assert (failure.status, failure.code) == (401, "claude_login_expired")
+    assert "Open Claude Code" in str(failure)
+
+
+async def test_a_request_the_subscription_client_refuses_is_a_400_not_a_retry():
+    from jarvis.live.subscription_reasoning import SubscriptionReasoning
+
+    async def credentials(**kwargs):
+        raise AssertionError("refused before any credential is read")
+
+    client = SubscriptionReasoning(credentials)
+    with pytest.raises(SubscriptionReasoningError) as caught:
+        async for _ in client.stream(model="m", input=[], instructions="", tools=[],
+                                     reasoning_effort="NOT AN EFFORT"):
+            pass
+    failure = gateway._subscription_failure(gateway.Grant("a", "openai-codex"), caught.value)
+    assert (failure.status, failure.code) == (400, "invalid_request")
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_the_prompt_size_includes_cached_tokens(brain, guarded, monkeypatch, stream) -> None:
+    """Hermes compresses from ``prompt_tokens``; the plugins report only the
+    uncached share as ``input_tokens``. A long tool loop is mostly cache."""
+    from jarvis.core.protocols import BrainDelta
+
+    async def deltas(grant, model, request):
+        yield BrainDelta(content="ok", finish_reason="stop")
+        yield BrainDelta(usage={"input_tokens": 1_200, "output_tokens": 40,
+                                "cache_hit_tokens": 98_000, "cache_write_tokens": 500})
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    if stream:
+        lines = [line[5:].strip() for line in answer.text.splitlines()
+                 if line.startswith("data:")]
+        usage = json.loads(lines[-2])["usage"]
+    else:
+        usage = answer.json()["usage"]
+    assert usage == {
+        "prompt_tokens": 99_700,
+        "completion_tokens": 40,
+        "total_tokens": 99_740,
+        "prompt_tokens_details": {"cached_tokens": 98_000, "cache_write_tokens": 500},
+    }
+
+
+class _StreamOf:
+    """An OpenAI SDK stream stand-in: async-iterates prepared chunks."""
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def chunks() -> AsyncIterator[Any]:
+            for chunk in self._chunks:
+                yield chunk
+
+        return chunks()
+
+
+def _sdk_chunk(*, finish: str | None = None, tool_args: str | None = None) -> Any:
+    from types import SimpleNamespace
+
+    calls = None
+    if tool_args is not None:
+        calls = [SimpleNamespace(index=0, id="call_9", function=SimpleNamespace(
+            name="write_file", arguments=tool_args))]
+    delta = SimpleNamespace(content=None, tool_calls=calls)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)],
+                           usage=None)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_tool_call_cut_off_by_the_output_limit_stays_length(
+    brain, guarded, monkeypatch, stream
+) -> None:
+    """The real OpenAI-compatible adapter on a stream the output limit cut
+    off mid-arguments: the runtime must see "length", never a finished
+    tool call it would run with broken input."""
+    from types import SimpleNamespace
+
+    from jarvis.plugins.brain import _openai_base
+
+    class Completions:
+        async def create(self, **kwargs: Any) -> Any:
+            return _StreamOf([_sdk_chunk(tool_args='{"path": "a.py", "content": "def f():'),
+                              _sdk_chunk(finish="length")])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()), base_url="fake")
+
+    async def deltas(grant, model, request):
+        async for delta in _openai_base.stream_complete(client, model, request):
+            yield delta
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    if stream:
+        lines = [line[5:].strip() for line in answer.text.splitlines()
+                 if line.startswith("data:")]
+        finish = json.loads(lines[-2])["choices"][0]["finish_reason"]
+    else:
+        finish = answer.json()["choices"][0]["finish_reason"]
+    assert finish == "length"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("FinishReason.MAX_TOKENS", "length"),  # google-genai's enum as str()
+        ("max_tokens", "length"),
+        ("model_context_window_exceeded", "length"),
+        ("FinishReason.SAFETY", "content_filter"),
+        ("refusal", "content_filter"),
+        ("end_turn", "stop"),
+        ("tool_use", "stop"),
+    ],
+)
+def test_provider_stop_reasons_become_chat_completions_ones(raw, expected) -> None:
+    assert gateway._finish(raw) == expected
+
+
+def test_every_gateway_call_lands_in_the_cost_ledger(monkeypatch, guarded, tmp_path) -> None:
+    import jarvis.agent_chat.runner_api as runner_api
+    import jarvis.core.config as config
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+    from jarvis.core.protocols import BrainDelta
+    from jarvis.costs import ledger
+
+    class Brain:
+        _model = "gpt-5.2"
+
+        async def complete(self, request: Any) -> AsyncIterator[BrainDelta]:
+            yield BrainDelta(content="OK", finish_reason="stop")
+            yield BrainDelta(usage={"input_tokens": 200, "output_tokens": 9,
+                                    "cache_hit_tokens": 1_800})
+
+    monkeypatch.setattr(runner_api, "build_brain", lambda provider, model: Brain())
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    ledger.set_ledger_path(tmp_path / "llm_usage.db")
+    gateway.reset()
+    try:
+        token = gateway.grant_token("agent-1", "openai")
+        gateway.register_model(token, "gpt-5.2", ModelLimits(400_000, 128_000))
+        assert _chat(guarded, token, {**_CHAT, "stream": True}).status_code == 200
+        assert _chat(guarded, token, _CHAT).status_code == 200
+        ledger.flush()
+        rows = list(ledger.read_usage(tmp_path / "llm_usage.db", 0, 2**62))
+    finally:
+        ledger.set_ledger_path(None)
+        gateway.reset()
+    assert [(r.provider, r.model, r.caller) for r in rows] == [
+        ("openai", "gpt-5.2", "agent-runtime")
+    ] * 2
+    assert (rows[0].tokens_in, rows[0].tokens_out, rows[0].tokens_cached) == (200, 9, 1_800)
+
+
+# --------------------------------------------------------- grant lifecycle
+
+
+def test_a_token_only_speaks_for_the_models_its_route_registered(brain, guarded) -> None:
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+
+    token = gateway.grant_token("agent-1", "openai")
+    gateway.register_model(token, "gpt-5.2", ModelLimits())
+    assert _chat(guarded, token, _CHAT).status_code == 200
+    costly = _chat(guarded, token, {**_CHAT, "model": "gpt-5.5-pro"})
+    assert costly.status_code == 404
+    assert costly.json()["error"]["code"] == "model_not_found"
+    assert len(brain["requests"]) == 1
+
+
+def test_an_ollama_tag_and_its_latest_alias_are_one_model(brain, guarded) -> None:
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+
+    token = gateway.grant_token("agent-1", "ollama")
+    gateway.register_model(token, "qwen3.5:latest", ModelLimits())
+    assert _chat(guarded, token, {**_CHAT, "model": "qwen3.5"}).status_code == 200
+
+
+def test_a_revoked_agent_token_is_refused(brain, guarded) -> None:
+    token = gateway.grant_token("agent-1", "openai", scope="s1")
+    other = gateway.grant_token("agent-2", "openai")
+    assert gateway.revoke_agent("agent-1") == 1
+    assert _chat(guarded, token, _CHAT).status_code == 401
+    assert _chat(guarded, other, _CHAT).status_code == 200
+    assert gateway.grant_token("agent-1", "openai", scope="s1") != token
+
+
+def test_old_session_grants_are_forgotten_but_never_a_running_turn(monkeypatch) -> None:
+    gateway.reset()
+    monkeypatch.setattr(gateway, "_GRANTS_MAX", 2)
+    first = gateway.grant_token("agent-1", "openai", scope="s1")
+    running = gateway.watch_failure(first)
+    second = gateway.grant_token("agent-1", "openai", scope="s2")
+    third = gateway.grant_token("agent-1", "openai", scope="s3")
+    fourth = gateway.grant_token("agent-1", "openai", scope="s4")
+    assert gateway.verify(first) is not None  # its turn is still running
+    assert gateway.verify(second) is None
+    assert gateway.verify(third) is not None and gateway.verify(fourth) is not None
+    gateway.unwatch_failure(first, running)
+    gateway.reset()
+
+
+@pytest.mark.parametrize(
+    ("requested", "offered", "expected"),
+    [
+        ("max", ("low", "medium", "high", "xhigh"), "xhigh"),
+        ("high", ("low", "medium", "high"), "high"),
+        ("none", ("low", "medium"), "low"),
+        ("xhigh", ("medium",), "medium"),
+        ("turbo", ("low", "medium"), "low"),
+    ],
+)
+async def test_a_runtime_thinking_level_snaps_to_one_the_model_offers(requested, offered,
+                                                                      expected) -> None:
+    from jarvis.live.subscription_reasoning import SubscriptionReasoning
+
+    async def credentials(**kwargs):
+        raise AssertionError("no catalog request is needed")
+
+    client = SubscriptionReasoning(credentials)
+    client._model_efforts = {"gpt-x": offered}
+    args = {"model": "gpt-x", "input": [], "instructions": "", "tools": [],
+            "reasoning_effort": requested}
+    assert (await gateway._snapped_effort(client, args))["reasoning_effort"] == expected
+
+
+def test_a_developer_message_also_moves_into_the_instructions() -> None:
+    args = gateway.request_args(
+        {
+            "model": "m",
+            "instructions": "",
+            "input": [
+                {"type": "message", "role": "developer", "content": "You are Probe."},
+                {"role": "user", "content": [{"type": "input_text", "text": "Hi"}]},
+            ],
+        }
+    )
+    assert args["instructions"] == "You are Probe."
+    assert [item["role"] for item in args["input"]] == ["user"]
+
+
+def test_vertex_runs_on_a_cloud_project_without_a_key(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+    import jarvis.core.config as config
+    from jarvis.core.config import override_provider_secrets
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(providers={}))
+    assert "vertex" in model_map.supported_providers()
+    with override_provider_secrets({"vertex": None}):
+        monkeypatch.setattr(config, "vertex_credential_configured", lambda *a: False)
+        with pytest.raises(model_map.RouteUnavailable, match="No API key"):
+            model_map._checked_model(cfg, "vertex", "gemini-3-pro")
+        monkeypatch.setattr(config, "vertex_credential_configured", lambda *a: True)
+        assert model_map._checked_model(cfg, "vertex", "gemini-3-pro") == "gemini-3-pro"
+

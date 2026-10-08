@@ -164,6 +164,7 @@ class OllamaBrain:
         self._client: Any = None
         self._server_root: str | None = None
         self._credential: str | None = None
+        self._requested_context_window: int | None = None
         # Discovery cache per requirement profile (tools, vision) — a plain
         # chat turn may run a smaller model than a tool turn or an image turn
         # without re-asking the server every time.
@@ -175,6 +176,12 @@ class OllamaBrain:
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
+
+    def set_context_window(self, tokens: int) -> None:
+        """Allocate the gateway's resolved context on this instance only."""
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:
+            raise ValueError("Context window must be a positive integer")
+        self._requested_context_window = tokens
 
     def _resolve_root(self) -> str:
         if self._server_root is None:
@@ -347,10 +354,16 @@ class OllamaBrain:
             # the next synchronous resolver question.
             self.supports_vision = True
         run_model, req = await self._apply_model_options(model, req)
+        # A temperature the person set on the model card is sent even to an
+        # agent that chose none; otherwise the agent request profile decides.
+        options = self._model_options(model)
+        send_temperature = True if options is not None and options.temperature is not None else None
         # Invariant at this point: either the request carries no images, or the
         # model just negotiated declares ``vision`` — so the streamer may encode
         # them.
-        async for delta in stream_complete(client, run_model, req, supports_vision=True):
+        async for delta in stream_complete(
+            client, run_model, req, supports_vision=True, send_temperature=send_temperature
+        ):
             yield delta
 
     def _model_options(self, model: str) -> OllamaModelOptions | None:
@@ -382,6 +395,12 @@ class OllamaBrain:
         against the real window instead of the class floor.
         """
         opts = self._model_options(model)
+        if self._requested_context_window is not None:
+            if opts is not None and opts.num_ctx and opts.num_ctx < self._requested_context_window:
+                raise RuntimeError("The local model context changed. Start the turn again.")
+            opts = (opts or OllamaModelOptions()).model_copy(
+                update={"num_ctx": self._requested_context_window}
+            )
         if opts is None:
             return model, req
         from jarvis.brain.ollama_profiles import (  # noqa: PLC0415 — lazy (AP-26)
@@ -397,6 +416,12 @@ class OllamaBrain:
             try:
                 run_model = await ensure_profile(root, model, opts)
             except Exception as exc:  # noqa: BLE001 — degrade to the base model, say so
+                if self._requested_context_window is not None:
+                    # The runtime already budgets against this window. Sending
+                    # to the base model would silently serve a smaller context.
+                    raise RuntimeError(
+                        "Could not prepare the selected local model context."
+                    ) from exc
                 log.warning(
                     "ollama: profile for %s unavailable, running the base model (%s)",
                     model,

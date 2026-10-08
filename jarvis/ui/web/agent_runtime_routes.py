@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.agent_runtimes import RUNTIME_NAMES, manager
 from jarvis.agent_runtimes.model_map import (
+    access_blocked,
     access_choices,
     login_providers,
     subscription_providers,
@@ -25,9 +26,10 @@ from jarvis.agent_runtimes.model_map import (
 
 router = APIRouter(prefix="/api/agent-runtimes", tags=["agent-runtimes"])
 
-#: ``[checked_at, providers, login_providers, access_choices]``: the keyring is read at most
-#: every few seconds, since the UI polls this route while an install runs.
-_USABLE_CACHE: list[Any] = [float("-inf"), [], [], {}]
+#: ``[checked_at, providers, login_providers, access_choices, access_blocked]``: the
+#: keyring is read at most every few seconds, since the UI polls this route while an
+#: install runs.
+_USABLE_CACHE: list[Any] = [float("-inf"), [], [], {}, {}]
 _USABLE_TTL_S = 10.0
 
 
@@ -39,7 +41,10 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
     every provider the runtimes can drive once connected; ``login_providers``:
     usable ones that answer on a Claude login, billed as extra usage;
     ``access``: for a provider that can pay two ways, which ways work now —
-    ``"api"`` and/or ``"subscription"``)."""
+    ``"api"`` and/or ``"subscription"``; ``access_blocked``: per provider and
+    way, the reason code a way is refused right now, e.g.
+    ``{"claude-api": {"subscription": "extra_usage_off"}}`` — the dialog shows
+    that way disabled with its reason)."""
     now = time.monotonic()
     if refresh or now - _USABLE_CACHE[0] > _USABLE_TTL_S:
         config = getattr(request.app.state, "config", None)
@@ -53,6 +58,7 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
             usable,
             await asyncio.to_thread(login_providers),
             await asyncio.to_thread(access_choices),
+            await asyncio.to_thread(access_blocked),
         ]
     return {
         "runtimes": await manager.statuses(refresh=refresh),
@@ -61,6 +67,7 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
         "subscription_providers": sorted(subscription_providers()),
         "login_providers": list(_USABLE_CACHE[2]),
         "access": dict(_USABLE_CACHE[3]),
+        "access_blocked": dict(_USABLE_CACHE[4]),
     }
 
 

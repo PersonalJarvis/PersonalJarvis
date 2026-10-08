@@ -152,6 +152,12 @@ def _run_runtime(agent: Any, provider: str) -> str:
     return "" if resolve_runner(provider, surface=SURFACE).endswith("-cli") else runtime
 
 
+def _left_runtime(agent: Any, run_runtime: str) -> str:
+    """The owner's Hermes / OpenClaw runtime this run does NOT use, or ""."""
+    owner = str(getattr(agent, "runtime", "") or "jarvis")
+    return owner if owner != "jarvis" and not run_runtime else ""
+
+
 async def run_owned_routine(
     runtime: Any,
     task_id: str,
@@ -189,6 +195,7 @@ async def run_owned_routine(
         # conservative; later permission expansion never widens the saved grant.
         order = {"ask": 0, "accept-edits": 1, "bypass": 2}
         permission_mode = min((saved_mode, origin.permission_mode), key=lambda m: order.get(m, -1))
+    run_runtime = _run_runtime(agent, provider)
     session = service.store.create_session(
         session_id=f"{agent.session_id}{ROUTINE_SESSION_MARKER}{task_id}:{uuid4().hex}",
         surface=SURFACE,
@@ -199,7 +206,7 @@ async def run_owned_routine(
         cwd=_workspace(cfg, agent),
         permission_mode=permission_mode,
         title=f"{agent.name} · Routine {task_id}",
-        runtime=_run_runtime(agent, provider),
+        runtime=run_runtime,
     )
     # Persist the link before starting work, including runs that fail or are cancelled.
     task_store, _ = runtime.task_services()
@@ -207,6 +214,28 @@ async def run_owned_routine(
         await task_store.append_step(
             task_id, "log", {"event": "routine_chat", "session_id": session.session_id}
         )
+    left = _left_runtime(agent, run_runtime)
+    if left:
+        # A run pinned to a seat its owner's runtime cannot drive runs on
+        # Jarvis' own loop; the run log and its chat say so instead of silently.
+        note = (
+            f"This run uses Jarvis' own runtime, not {left}: its model "
+            f"({provider}) is a seat {left} cannot drive."
+        )
+        if task_store is not None:
+            await task_store.append_step(
+                task_id,
+                "log",
+                {"event": "routine_runtime_fallback", "runtime": left, "provider": provider,
+                 "text": note},
+            )
+        try:
+            await service.post_notice(
+                session.session_id,
+                {"kind": "routine_runtime_fallback", "runtime": left, "text": note},
+            )
+        except Exception:  # noqa: BLE001 — the run log above already holds the note
+            log.warning("society: runtime note not posted for %s", task_id, exc_info=True)
     # Legacy tasks contain an identity snapshot. The live briefing owns identity now.
     _, separator, original = prompt.partition("\nRoutine:\n")
     task = original if separator else prompt

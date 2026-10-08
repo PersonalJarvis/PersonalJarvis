@@ -17,15 +17,15 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import type { AgentRuntime } from "@/lib/societyApi";
-import { cn } from "@/lib/utils";
-import { AgentNameTaken, useCreateSocietyAgent } from "../data";
+import { AgentNameTaken, RuntimeProviderUnsupported, useCreateSocietyAgent } from "../data";
 import { defaultCompanion, type CompanionAppearance } from "../companion/appearance";
 import { RuntimeChoice, useAgentRuntimes } from "../card/RuntimePicker";
 import { modelSeats, runtimeSeats } from "../chat/modelChoices";
 import { useModelMenuData } from "../chat/useModelMenuData";
 import { accountChoice, accountHint } from "./brainPicker";
 import { useCreateAgentDialog } from "./createAgentStore";
-import { accessModels, defaultModel, providerChoices, type AccessOption } from "./seatChoice";
+import { AccessChoice } from "./AccessChoice";
+import { accessModels, defaultModel, pickableOption, providerChoices, type AccessBlocked, type AccessOption } from "./seatChoice";
 
 const CompanionEditor = lazy(() =>
   import("../companion/CompanionEditor").then((m) => ({ default: m.CompanionEditor })),
@@ -71,17 +71,21 @@ function CreateAgentDialog() {
   const gatewayKey = list(data?.subscription_providers).join(",");
   const loginKey = list(data?.login_providers).join(",");
   const accessKey = JSON.stringify(data?.access && typeof data.access === "object" ? data.access : {});
+  // Refusals only concern Hermes / OpenClaw (Claude's login billed as Extra Usage).
+  const blockedKey = JSON.stringify(external && data?.access_blocked && typeof data.access_blocked === "object" ? data.access_blocked : {});
   const choices = useMemo(() => {
     const all = modelSeats(menu.options, Array.isArray(menu.providers) ? menu.providers : [], menu.live, defaultModelLabel);
     const split = (key: string) => key.split(",").filter(Boolean);
     const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey)) : all;
-    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external);
-  }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey]);
+    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external, JSON.parse(blockedKey) as AccessBlocked);
+  }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey, blockedKey]);
 
   // The person's picks stay while they are offered; a pick that disappears (a
   // key removed, another runtime chosen) falls back to the first one left.
-  const chosen = choices.find((choice) => choice.id === providerId) ?? choices[0] ?? null;
-  const option: AccessOption | null = chosen?.options.find((entry) => entry.kind === kind) ?? chosen?.options[0] ?? null;
+  const chosen = choices.find((choice) => choice.id === providerId)
+    ?? choices.find((choice) => pickableOption(choice)) ?? choices[0] ?? null;
+  // A refused access is listed with its reason but never picked.
+  const option: AccessOption | null = pickableOption(chosen, kind);
   const models = accessModels(option);
   const accounts = accountChoice(option?.seat ?? null);
   const modelValue = models.some((entry) => entry.id === model) ? model : defaultModel(option);
@@ -116,7 +120,9 @@ function CreateAgentDialog() {
       setError(
         exc instanceof AgentNameTaken
           ? t("society.create_agent.name_taken")
-          : exc instanceof Error ? exc.message : String(exc),
+          : exc instanceof RuntimeProviderUnsupported
+            ? t("society.runtime.provider_unsupported")
+            : exc instanceof Error ? exc.message : String(exc),
       );
       setSaving(false);
     }
@@ -167,7 +173,7 @@ function CreateAgentDialog() {
 
               <div className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium">{t("society.create_agent.provider_label")}</span>
-                {chosen && option ? (
+                {chosen ? (
                   <BrandedSelect
                     value={chosen.id}
                     onValueChange={(next) => { setProviderId(next); setKind(""); setAccount(""); }}
@@ -192,38 +198,14 @@ function CreateAgentDialog() {
                 )}
               </div>
 
-              {chosen && option ? (
-                <div className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium">{t("society.create_agent.access_label")}</span>
-                  <div
-                    className="flex gap-1 rounded-lg border border-border p-1"
-                    role="radiogroup"
-                    aria-label={t("society.create_agent.access_label")}
-                    data-testid="create-agent-access"
-                  >
-                    {chosen.options.map((entry) => (
-                      <button
-                        key={entry.kind}
-                        type="button"
-                        role="radio"
-                        aria-checked={entry.kind === option.kind}
-                        disabled={saving}
-                        onClick={() => { setKind(entry.kind); setAccount(""); }}
-                        className={cn(
-                          "min-w-0 flex-1 truncate rounded-md px-3 py-1.5 text-sm transition-colors disabled:opacity-50",
-                          entry.kind === option.kind
-                            ? "bg-secondary text-foreground"
-                            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                        )}
-                      >
-                        {t(`society.create.kind_${entry.kind}`)}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {t(option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`)}
-                  </p>
-                </div>
+              {chosen ? (
+                <AccessChoice
+                  options={chosen.options}
+                  value={option?.kind ?? ""}
+                  hint={option ? t(option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`) : ""}
+                  disabled={saving}
+                  onChange={(next) => { setKind(next); setAccount(""); }}
+                />
               ) : null}
 
               {chosen && option && accounts.length ? (

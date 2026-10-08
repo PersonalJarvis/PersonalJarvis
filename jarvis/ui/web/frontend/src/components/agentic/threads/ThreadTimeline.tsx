@@ -1,11 +1,13 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
+import { QuestionCard } from "@/components/agentchat/QuestionCard";
 import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
-import { readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
-import { useT } from "@/i18n";
+import { plural, readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
+import { fill, useT } from "@/i18n";
+import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { buildThreadRows, isFailed, thoughtGist, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
@@ -163,6 +165,7 @@ export function callPictures(blocks: TurnBlock[]): CallPictures {
 
 /** What a call opened to: its pictures, the diff it made, else what ran and what came back. */
 function CallDetails({ call }: { call: Call }) {
+  const t = useT();
   const block = call.block;
   const pictures = useContext(CallMedia).get(block.callId);
   const diff = useMemo(() => toolDiff(block.name, block.input, block.output), [block.name, block.input, block.output]);
@@ -179,7 +182,7 @@ function CallDetails({ call }: { call: Call }) {
     {input && input !== "{}" && <pre className="m-0 max-h-48 overflow-auto rounded-lg bg-secondary px-3 py-2 font-mono text-xs leading-5 text-muted-foreground scrollbar-jarvis">{input}</pre>}
     {output
       ? <pre className={cn("m-0 max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border border-border px-3 py-2 font-mono text-xs leading-5 scrollbar-jarvis", block.isError ? "text-destructive" : "text-foreground-secondary")}>{output}</pre>
-      : block.output === null ? null : <p className="text-xs text-muted-foreground">No output.</p>}
+      : block.output === null ? null : <p className="text-xs text-muted-foreground">{t("thread_turn.no_output")}</p>}
   </div>;
 }
 
@@ -196,11 +199,12 @@ function useDisclosure(onOpenChange?: OpenChange): [boolean, () => void] {
 }
 
 function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; stamp?: number; grouped?: boolean; onOpenChange?: OpenChange }) {
+  const t = useT();
   const [open, toggle] = useDisclosure(onOpenChange);
   const failed = isFailed(call);
   const running = call.status === "running";
   const detail = call.detail || call.result;
-  const tail = failed && call.reason ? call.reason : call.status === "interrupted" ? "interrupted" : "";
+  const tail = failed && call.reason ? call.reason : call.status === "interrupted" ? t("thread_turn.interrupted") : "";
   // The shine paints the label's own text, so a running row is one run of words.
   const label = running
     ? [call.text, detail].filter(Boolean).join("  ")
@@ -212,7 +216,7 @@ function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; s
   return <WorkRow
     icon={<span className={cn("flex items-center justify-center", failed && "text-destructive/70")}><CallMark call={call} /></span>}
     label={label}
-    ariaLabel={failed ? `${call.text}, failed` : undefined}
+    ariaLabel={failed ? fill(t("thread_turn.call_failed"), { call: call.text }) : undefined}
     trailing={<>
       <DiffStat added={call.added} removed={call.removed} />
       {failed && <X aria-hidden className="h-3 w-3 shrink-0 text-destructive/70" />}
@@ -251,7 +255,8 @@ function ThoughtView({ text }: { text: string }) {
 
 /** The wordless thought the running turn is having: one live "Thinking" step. */
 function ThinkingRow({ grouped = false }: { grouped?: boolean }) {
-  return <WorkRow icon={<Brain strokeWidth={1.75} />} label="Thinking" grouped={grouped} live />;
+  const t = useT();
+  return <WorkRow icon={<Brain strokeWidth={1.75} />} label={t("thread_turn.thinking")} grouped={grouped} live />;
 }
 
 /**
@@ -273,6 +278,7 @@ const FADE = "1.5rem";
  * its end; opening a step lifts the height cap so its detail reads in full.
  */
 function StepList({ items, running, follow }: { items: WorkItem[]; running: boolean; follow: boolean }) {
+  const t = useT();
   const box = useRef<HTMLDivElement | null>(null);
   const atEnd = useRef(true);
   const [edges, setEdges] = useState({ top: false, bottom: false });
@@ -306,7 +312,7 @@ function StepList({ items, running, follow }: { items: WorkItem[]; running: bool
   const mask = edges.top || edges.bottom
     ? `linear-gradient(to bottom, ${edges.top ? "transparent" : "black"} 0, black ${FADE}, black calc(100% - ${FADE}), ${edges.bottom ? "transparent" : "black"} 100%)`
     : undefined;
-  return <div ref={box} role="region" aria-label="Steps" tabIndex={-1} onScroll={measure}
+  return <div ref={box} role="region" aria-label={t("thread_turn.steps")} tabIndex={-1} onScroll={measure}
     className="overflow-y-auto overflow-x-hidden rounded-md scrollbar-jarvis"
     style={{ maxHeight: openSteps > 0 ? undefined : "min(18rem, 50dvh)", maskImage: mask, WebkitMaskImage: mask }}>
     <div className="flex min-w-0 flex-col">
@@ -335,12 +341,13 @@ function GroupMark({ group }: { group: WorkGroup }) {
  * still close it.
  */
 function WorkGroupView({ group, running }: { group: WorkGroup; running: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(group.live);
   if (group.items.length === 1) return <StepRow item={group.items[0]} running={running} />;
   return <WorkRow
     icon={<GroupMark group={group} />}
     label={group.summary}
-    ariaLabel={group.live ? `${group.summary}, ${group.items.length} steps so far` : undefined}
+    ariaLabel={group.live ? fill(t("thread_turn.steps_so_far"), { summary: group.summary, count: group.items.length }) : undefined}
     trailing={<DiffStat added={group.added} removed={group.removed} />}
     stamp={group.startedMs}
     live={group.live}
@@ -464,6 +471,8 @@ function ChangeCount({ added, removed, className }: { added: number; removed: nu
  * "Show changes" opens every diff at once.
  */
 export function ChangedFiles({ turn }: { turn: TurnItem }) {
+  const t = useT();
+  const lang = t("trace_report.locale");
   const root = useContext(ThreadFolder);
   const rows = useMemo(() => changedFiles(turn), [turn]);
   const [openPaths, setOpenPaths] = useState<ReadonlySet<string>>(() => new Set());
@@ -484,8 +493,8 @@ export function ChangedFiles({ turn }: { turn: TurnItem }) {
     setOpenPaths(new Set(rows.map((row) => row.path)));
     setExpanded(true);
   };
-  const title = `${rows.length} ${rows.length === 1 ? "file" : "files"} changed`;
-  return <section aria-label="Changed files" data-testid="thread-changed-files" className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
+  const title = fill(t(`thread_turn.files_changed_${plural(lang, rows.length)}`), { count: rows.length });
+  return <section aria-label={t("thread_turn.changed_files")} data-testid="thread-changed-files" className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
     <div className="flex items-center gap-3 border-b border-border px-3 py-3">
       <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary">
         <span className="flex h-5 w-5 items-center justify-center rounded-[5px] border-[1.5px] border-current"><Diff className="h-3 w-3" strokeWidth={2.25} /></span>
@@ -496,7 +505,7 @@ export function ChangedFiles({ turn }: { turn: TurnItem }) {
       </div>
       <button type="button" aria-pressed={allOpen} onClick={toggleAll}
         className="shrink-0 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        {allOpen ? "Hide changes" : "Show changes"}
+        {t(allOpen ? "thread_turn.hide_changes" : "thread_turn.show_changes")}
       </button>
     </div>
     <ul>
@@ -521,7 +530,7 @@ export function ChangedFiles({ turn }: { turn: TurnItem }) {
     </ul>
     {hidden > 0 && <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}
       className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-sm text-foreground-secondary hover:bg-secondary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-      {expanded ? "Collapse files" : `Show ${hidden} more ${hidden === 1 ? "file" : "files"}`}
+      {expanded ? t("thread_turn.collapse_files") : fill(t(`thread_turn.more_files_${plural(lang, hidden)}`), { count: hidden })}
       <ChevronDown aria-hidden className={cn("h-4 w-4 transition-transform duration-200", expanded && "rotate-180")} />
     </button>}
   </section>;
@@ -531,12 +540,57 @@ function answerText(turn: TurnItem): string {
   return turn.blocks.filter((block): block is TextBlock => block.kind === "text").map((block) => block.text.trim()).filter(Boolean).join("\n\n");
 }
 
-function pendingLabel(block: ToolBlock): { icon: ReactNode; text: string } | null {
-  if (block.question && !block.question.closed) return { icon: <MessageCircleQuestion className="h-3.5 w-3.5" />, text: "Waiting for your answer below" };
+/** How a surface answers an approval: by its id, with the person's decision. */
+export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
+
+/** A call still waiting for the person: an open question or an undecided approval. */
+function waitsForPerson(block: ToolBlock): boolean {
+  return Boolean(block.question && !block.question.closed) || Boolean(block.approval && block.approval.decision === null);
+}
+
+function pendingLabel(block: ToolBlock, t: (key: string) => string): { icon: ReactNode; text: string } | null {
+  if (block.question && !block.question.closed) return { icon: <MessageCircleQuestion className="h-3.5 w-3.5" />, text: t("thread_turn.waiting_answer") };
   if (block.approval && block.approval.decision === null) {
-    return { icon: <ShieldAlert className="h-3.5 w-3.5" />, text: `Waiting for approval — ${block.approval.summary || block.name}` };
+    return { icon: <ShieldAlert className="h-3.5 w-3.5" />, text: fill(t("thread_turn.waiting_approval"), { summary: block.approval.summary || block.name }) };
   }
   return null;
+}
+
+/**
+ * An approval answered in the turn itself: the waiting line, what the agent
+ * asks for, and the three answers under it.
+ */
+function ApprovalPrompt({ block, onDecide }: { block: ToolBlock; onDecide?: Decide }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const approval = block.approval;
+  if (!approval) return null;
+  const decide = async (decision: ApprovalDecision) => {
+    if (!onDecide || busy) return;
+    setBusy(true);
+    setError(null);
+    try { await onDecide(approval.approvalId, decision); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+  return <div className="min-w-0" role="group" aria-label={t("work_trace.approval")} data-testid="thread-approval">
+    <WorkRow icon={<ShieldAlert strokeWidth={1.75} />} label={t("thread_turn.approval_waiting")} live />
+    <div className="mb-1.5 ml-7 space-y-2 text-sm">
+      {approval.summary && <p className="m-0 text-foreground [overflow-wrap:anywhere]">{approval.summary}</p>}
+      {onDecide
+        ? <div className="flex flex-wrap gap-2">
+          {(["allow", "allow_always", "deny"] as const).map((decision) => <button key={decision} type="button" disabled={busy}
+            onClick={() => void decide(decision)}
+            className={cn("rounded-md px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+              decision === "allow" ? "bg-primary text-primary-foreground hover:opacity-90" : "border border-border text-foreground hover:bg-secondary")}>
+            {t(`work_trace.${decision}`)}
+          </button>)}
+        </div>
+        : <p className="m-0 text-xs text-muted-foreground">{t("work_trace.approval_elsewhere")}</p>}
+      {error && <p role="alert" className="m-0 text-xs text-destructive">{error}</p>}
+    </div>
+  </div>;
 }
 
 /**
@@ -552,10 +606,42 @@ export function foldFinished(rows: ThreadRow[]): { work: ThreadRow[]; answer: Th
   return { work: rows.slice(0, last + 1), answer: rows.slice(last + 1) };
 }
 
-const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
+/** "Working for 12s" with the ticking clock in place of the duration. */
+function WorkingFor({ since }: { since: number }) {
+  const t = useT();
+  const [before, after = ""] = t("thread_turn.working_for").split("{duration}");
+  return <>{before}<Elapsed since={since} />{after}</>;
+}
+
+export interface ThreadTurnProps {
+  turn: TurnItem;
+  /**
+   * Where the person answers a waiting call. A thread answers in its
+   * composer, so the turn only says it waits; an agent chat ("inline") draws
+   * the question card and the approval buttons in the turn itself.
+   */
+  prompts?: "composer" | "inline";
+  onDecide?: Decide;
+  /**
+   * Steps that belong to this turn's work without being blocks of it (a
+   * memory receipt posted after the turn). They sit with the work, above the
+   * answer, and fold with it.
+   */
+  extras?: { key: string; node: ReactNode }[];
+  /** A quiet note on a finished turn's closing line: tokens, cost. */
+  receipt?: ReactNode;
+}
+
+/**
+ * One turn of a conversation the way a thread reads it. The Agentic IDE's
+ * threads and every agent chat draw their turns with it, so a turn looks and
+ * behaves the same wherever it is read — streaming, finished or reloaded.
+ */
+export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer", onDecide, extras, receipt }: ThreadTurnProps) {
   const t = useT();
   const lang = t("trace_report.locale");
   const running = turn.status === "running";
+  const inline = prompts === "inline";
   const pictures = useMemo(() => callPictures(turn.blocks), [turn.blocks]);
   const rows = useMemo(
     () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) => !(row.kind === "text" && pictures.moved.has(row.block.id))),
@@ -567,47 +653,72 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
   const { work, answer: tail } = useMemo(() => (running ? { work: rows, answer: [] } : foldFinished(rows)), [rows, running]);
   // The sub-agents it spawned stay in view under the fold: each opens its own conversation.
   const agents = useMemo(() => work.filter((row) => row.kind === "agent"), [work]);
+  // A call that still waits for the person never folds away.
+  const waiting = useMemo(() => work.filter((row) => row.kind === "pending" && waitsForPerson(row.block)), [work]);
   const agentsWorking = useMemo(() => running ? listSubagents([turn]).filter((entry) => entry.status === "running").length : 0, [turn, running]);
-  const folded = !running && work.length > 0;
+  const extraRows = extras ?? [];
+  const folded = !running && (work.length > 0 || extraRows.length > 0);
   const duration = turn.durationMs != null ? traceDuration(turn.durationMs) : "";
-  const foldLabel = turn.status === "cancelled" ? `Stopped${duration ? ` after ${duration}` : ""}`
-    : turn.status === "error" ? `Failed${duration ? ` after ${duration}` : ""}`
-      : `Worked${duration ? ` for ${duration}` : ""}`;
+  const timed = (key: string) => duration ? fill(t(`thread_turn.${key}_after`), { duration }) : t(`thread_turn.${key}`);
+  const workedFor = duration ? fill(t("thread_turn.worked_for"), { duration }) : "";
+  const foldLabel = turn.status === "cancelled" ? timed("stopped")
+    : turn.status === "error" ? timed("failed")
+      : workedFor || t("thread_turn.worked");
+  const closing = turn.status === "cancelled" ? timed("stopped")
+    : turn.status === "error" ? timed("failed")
+      : answer ? workedFor : timed("no_answer");
   const renderRow = (row: ThreadRow) => {
     if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
     if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
     if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     if (row.kind === "agent") return <SubagentCard key={row.id} block={row.block} turn={turn} />;
-    const pending = pendingLabel(row.block);
+    if (inline) {
+      if (row.block.question) return <QuestionCard key={row.id} question={row.block.question} />;
+      if (row.block.approval && row.block.approval.decision === null) return <ApprovalPrompt key={row.id} block={row.block} onDecide={onDecide} />;
+      return null;
+    }
+    const pending = pendingLabel(row.block, t);
     return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
   };
-  return <CallMedia.Provider value={pictures.byCall}><div className="space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
+  const extraNodes = extraRows.map((extra) => <div key={`extra:${extra.key}`} className="min-w-0">{extra.node}</div>);
+  // A running turn's streaming answer is its tail; extra steps go above it.
+  const shown = folded ? tail : rows;
+  let extraAt = shown.length;
+  if (!folded) while (extraAt > 0 && shown[extraAt - 1].kind === "text") extraAt--;
+  return <CallMedia.Provider value={pictures.byCall}><div className="min-w-0 space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
     {folded && <div>
       <button type="button" aria-expanded={workOpen} onClick={() => setWorkOpen((value) => !value)} data-testid="thread-worked-for"
         className="flex h-7 items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <span className="tabular-nums">{foldLabel}</span>
         <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 transition-transform duration-150", workOpen && "rotate-90")} />
       </button>
-      {workOpen && <div className="space-y-1.5 pb-2 pt-1" data-testid="thread-worked-steps">{work.filter((row) => row.kind !== "agent").map(renderRow)}</div>}
+      {workOpen && <div className="space-y-1.5 pb-2 pt-1" data-testid="thread-worked-steps">
+        {work.filter((row) => row.kind !== "agent" && !waiting.includes(row)).map(renderRow)}
+        {extraNodes}
+      </div>}
       <div aria-hidden className="mt-1 border-b border-border/70" />
     </div>}
     {folded && agents.length > 0 && <div className="space-y-1.5 pt-1" data-testid="thread-turn-subagents">{agents.map(renderRow)}</div>}
-    {(folded ? tail : rows).map(renderRow)}
+    {folded && waiting.map(renderRow)}
+    {shown.slice(0, extraAt).map(renderRow)}
+    {!folded && extraNodes}
+    {shown.slice(extraAt).map(renderRow)}
     {running
       ? <div className="flex h-6 min-w-0 items-center px-1 text-sm leading-relaxed text-muted-foreground" data-testid="thread-working">
-        <span className="whitespace-nowrap">Working for <Elapsed since={turn.startedMs} />
-          {agentsWorking > 0 && <> · {agentsWorking} {agentsWorking === 1 ? "sub-agent" : "sub-agents"} working</>}</span>
+        <span className="whitespace-nowrap"><WorkingFor since={turn.startedMs} />
+          {agentsWorking > 0 && <> · {fill(t(`thread_turn.subagents_working_${plural(lang, agentsWorking)}`), { count: agentsWorking })}</>}</span>
       </div>
       : <>
         {turn.status === "error" && turn.error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{turn.error}</p>}
         <ChangedFiles turn={turn} />
-        <div className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
-          {!folded && <span>
-            {turn.status === "cancelled" ? "Stopped" : turn.status === "error" ? "Failed" : answer ? "" : "Finished without an answer"}
-            {duration && <>{turn.status === "done" && answer ? "Worked for " : " after "}{duration}</>}
+        <div className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground" data-testid="thread-turn-closing">
+          {!folded && closing && <span>{closing}</span>}
+          {folded && !answer && <span>{t("thread_turn.no_answer")}</span>}
+          {receipt && <span className="inline-flex items-center gap-1.5 tabular-nums">
+            {((!folded && closing) || (folded && !answer)) && <span aria-hidden className="text-muted-foreground/50">·</span>}
+            {receipt}
           </span>}
-          {folded && !answer && <span>Finished without an answer</span>}
-          {answer && <CopyButton text={answer} label="Copy answer" />}
+          {answer && <CopyButton text={answer} label={t("thread_turn.copy_answer")} />}
         </div>
       </>}
   </div></CallMedia.Provider>;
@@ -620,7 +731,7 @@ function ErrorLine({ text }: { text: string }) {
 /** One item of the conversation, drawn by its kind. */
 function ItemView({ item }: { item: TimelineItem }) {
   if (item.type === "user") return <UserBubble item={item} />;
-  if (item.type === "turn") return <TurnView turn={item} />;
+  if (item.type === "turn") return <ThreadTurn turn={item} />;
   if (item.type === "error") return <ErrorLine text={item.text} />;
   if (item.type === "notice") {
     return <p className="text-center text-xs text-muted-foreground">{item.agentName ? `${item.agentName}: ` : ""}{item.text}</p>;

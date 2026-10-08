@@ -12,8 +12,12 @@ import { shortCount, subagentCounts, subagentEntry, type SubagentEntry } from ".
  * and the header of an opened sub-agent's own conversation.
  */
 
-/** Opens a sub-agent's conversation by the id of the call that spawned it. */
-export const OpenSubagent = createContext<(id: string) => void>(() => {});
+/**
+ * Opens a sub-agent's conversation by the id of the call that spawned it.
+ * Null where no conversation can be opened (an agent chat): the card then
+ * only reports the sub-agent.
+ */
+export const OpenSubagent = createContext<((id: string) => void) | null>(null);
 
 const STATUS_WORD: Record<SubagentStatus, string> = {
   running: "Working",
@@ -76,15 +80,30 @@ function statusLine(entry: SubagentEntry): string {
 
 /**
  * Where the main agent spawned a sub-agent: one card with its task, what it
- * is doing or how it ended, and what it spent. A click opens its conversation.
+ * is doing or how it ended, and what it spent. Where its conversation can be
+ * opened, a click opens it.
  */
 export function SubagentCard({ block, turn }: { block: ToolBlock; turn: TurnItem }) {
   const open = useContext(OpenSubagent);
   const entry = useMemo(() => subagentEntry(block, turn), [block, turn]);
   const running = entry.status === "running";
+  const card = "group/agent flex w-full min-w-0 items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left";
+  const body = <SubagentCardBody entry={entry} running={running} />;
+  if (!open) return <div data-testid="thread-subagent-card" data-status={entry.status} className={card}>{body}</div>;
   return <button type="button" onClick={() => open(entry.id)} data-testid="thread-subagent-card" data-status={entry.status}
     aria-label={`Open sub-agent ${entry.title}, ${STATUS_WORD[entry.status].toLowerCase()}`}
-    className="group/agent flex w-full min-w-0 items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 text-left transition-colors hover:border-border-strong hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    className={cn(card, "transition-colors hover:border-border-strong hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
+    {body}
+    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors group-hover/agent:text-foreground">
+      <MessageSquare aria-hidden className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">Open</span>
+      <ChevronRight aria-hidden className="h-3.5 w-3.5" />
+    </span>
+  </button>;
+}
+
+function SubagentCardBody({ entry, running }: { entry: SubagentEntry; running: boolean }) {
+  return <>
     <span aria-hidden className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary">
       <Bot className="h-4 w-4" strokeWidth={1.75} />
       <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-card">
@@ -102,12 +121,7 @@ export function SubagentCard({ block, turn }: { block: ToolBlock; turn: TurnItem
         <SubagentMeta entry={entry} />
       </span>
     </span>
-    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors group-hover/agent:text-foreground">
-      <MessageSquare aria-hidden className="h-3.5 w-3.5" />
-      <span className="hidden sm:inline">Open</span>
-      <ChevronRight aria-hidden className="h-3.5 w-3.5" />
-    </span>
-  </button>;
+  </>;
 }
 
 /** "3 sub-agents · 2 working · 1 waiting" — the switcher's own count. */
