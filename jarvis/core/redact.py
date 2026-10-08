@@ -21,6 +21,7 @@ import upward into ``jarvis.memory``. The two differ in intent: ``secret_guard``
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
@@ -146,4 +147,42 @@ def safe_preview(value: Any, *, max_chars: int = DEFAULT_PREVIEW_CHARS) -> str:
     return text
 
 
-__all__ = ["DEFAULT_PREVIEW_CHARS", "redact_secrets", "safe_preview"]
+class RedactingLogFilter(logging.Filter):
+    """Mask credential shapes in a record before any handler formats it.
+
+    httpx logs every request at INFO with its full URL, and some APIs carry
+    the credential IN the URL (the Telegram Bot API: ``/bot<token>/...``).
+    Rewriting the record here protects every handler — file, console, test
+    capture — not only the desktop log sink.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 — a malformed record is passed on untouched
+            return True
+        cleaned = redact_secrets(message)
+        if cleaned != message:
+            record.msg = cleaned
+            record.args = ()
+        return True
+
+
+_REDACTED_LOGGERS: set[str] = set()
+
+
+def redact_logger(name: str) -> None:
+    """Attach one :class:`RedactingLogFilter` to logger *name* (idempotent)."""
+    if name in _REDACTED_LOGGERS:
+        return
+    logging.getLogger(name).addFilter(RedactingLogFilter())
+    _REDACTED_LOGGERS.add(name)
+
+
+__all__ = [
+    "DEFAULT_PREVIEW_CHARS",
+    "RedactingLogFilter",
+    "redact_logger",
+    "redact_secrets",
+    "safe_preview",
+]

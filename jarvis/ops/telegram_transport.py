@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from jarvis.core.http_pool import HttpClientPool
+from jarvis.core.redact import redact_logger
 from jarvis.ops.notify import TELEGRAM_MAX_CHARS, TransportError
 
 API_ROOT: Final = "https://api.telegram.org"
@@ -105,6 +106,8 @@ class TelegramBotTransport:
         self._monotonic = monotonic
         self._min_interval_s = min_interval_s
         self._last_send: float | None = None
+        # httpx logs each request URL at INFO, and this URL carries the token.
+        redact_logger("httpx")
 
     async def send(self, text: str) -> None:
         if not text.strip():

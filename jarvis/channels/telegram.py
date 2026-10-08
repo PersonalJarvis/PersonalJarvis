@@ -197,6 +197,11 @@ class TelegramChannel:
                 "Install via: pip install 'python-telegram-bot>=22,<23'"
             ) from exc
 
+        # python-telegram-bot polls through httpx, which logs every request URL
+        # at INFO — and every Bot API URL carries the token.
+        from jarvis.core.redact import redact_logger
+
+        redact_logger("httpx")
         await self._validate_token(token)
 
         try:

@@ -186,3 +186,41 @@ async def test_workflow_http_error_carries_no_provider_body(
     with pytest.raises(RuntimeError) as exc:
         await _runner()._run_telegram_send(telegram_step, {}, {})
     assert str(exc.value) == "Telegram HTTP 400"
+
+
+# --- httpx request log lines (INFO, full URL) -----------------------------------------
+
+
+def test_the_redacting_filter_masks_a_bot_url_in_any_log_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from jarvis.core.redact import redact_logger
+
+    logger = logging.getLogger("jarvis.test.redact_probe")
+    redact_logger("jarvis.test.redact_probe")
+    with caplog.at_level(logging.INFO, logger="jarvis.test.redact_probe"):
+        logger.info(
+            'HTTP Request: POST %s "HTTP/1.1 200 OK"',
+            f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage",
+        )
+    assert caplog.records and FAKE_TOKEN not in caplog.text
+    assert "api.telegram.org" in caplog.text  # the rest of the line stays readable
+
+
+async def test_a_successful_workflow_send_logs_no_token(
+    monkeypatch: pytest.MonkeyPatch, telegram_step: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    real_client = httpx.AsyncClient
+
+    def _client(*_a: Any, **kw: Any) -> httpx.AsyncClient:
+        return real_client(
+            transport=httpx.MockTransport(lambda _r: httpx.Response(200, json={"ok": True})),
+            timeout=kw.get("timeout", 5),
+        )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _client)
+    with caplog.at_level(logging.DEBUG):
+        result = await _runner()._run_telegram_send(telegram_step, {}, {})
+    assert result.startswith("sent to chat_id=")
+    assert "HTTP Request" in caplog.text  # httpx did log the request…
+    assert FAKE_TOKEN not in caplog.text  # …without the token

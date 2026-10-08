@@ -679,6 +679,9 @@ class WorkflowRunner:
 
         import httpx
 
+        from jarvis.core.redact import redact_logger
+
+        redact_logger("httpx")  # its request log line would carry the token in the URL
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload: dict[str, Any] = {
             "chat_id": chat_id,
