@@ -58,6 +58,11 @@ class PatPasteAuth(_BaseAuth):
     token_prefixes: list[str] = Field(default_factory=list)
     validation_endpoint: str
     instruction_md: str
+    # How the pasted token is proven to work. ``http_get`` expects a 200 from
+    # ``validation_endpoint``; ``mcp_initialize`` sends an MCP handshake to it
+    # with the plugin's own auth header, for custom connectors whose server
+    # has no REST "who am I" endpoint to ask.
+    validation_method: Literal["http_get", "mcp_initialize"] = "http_get"
     # Set for self-hosted services: the user supplies the address, so
     # `validation_endpoint` above is ignored in favour of
     # `instance_url.validation_path` appended to what they entered.
@@ -135,6 +140,18 @@ class LocalAuth(_BaseAuth):
     mode: Literal["local"]
 
 
+class HostedMcpOpenAuth(_BaseAuth):
+    """A remote MCP server that answers without any sign-in.
+
+    Connecting is still an explicit step: the server is probed once, and only
+    an answered handshake marks it connected, so the on/off state stays the
+    user's choice like every other plugin's.
+    """
+
+    mode: Literal["hosted_mcp_open"]
+    mcp_url: str
+
+
 AuthConfig = Annotated[
     PatPasteAuth
     | InstanceBrowserAuth
@@ -142,7 +159,8 @@ AuthConfig = Annotated[
     | HostedMcpOAuthDcrAuth
     | OAuthPkceLoopbackAuth
     | HostedMcpAllowlistAuth
-    | LocalAuth,
+    | LocalAuth
+    | HostedMcpOpenAuth,
     Field(discriminator="mode"),
 ]
 

@@ -12,7 +12,8 @@ spec + token into a claude-cli `mcpServers` entry:
 * ``transport: "stdio"``  -> ``{"command", "args", "env"}`` (token resolved
   into the env_template / argv placeholders).
 * ``transport: "http"``   -> ``{"type": "http", "url", "headers"}`` (token
-  resolved into the Authorization bearer header).
+  resolved into the Authorization bearer header); ``"sse"`` likewise with
+  ``"type": "sse"``.
 * ``transport: "rest_wrapper"`` (or anything else) -> skipped: it is not a
   real MCP server claude-cli can speak to.
 
@@ -69,7 +70,8 @@ def _http_entry(spec: dict[str, Any], repl: dict[str, str]) -> dict[str, Any] | 
     url = spec.get("url")
     if not url:
         return None
-    entry: dict[str, Any] = {"type": "http", "url": str(url)}
+    kind = "sse" if str(spec.get("transport") or "").lower() == "sse" else "http"
+    entry: dict[str, Any] = {"type": kind, "url": str(url)}
     header_template = spec.get("auth_header_template")
     if header_template:
         resolved = _resolve_placeholders(str(header_template), repl)
@@ -117,10 +119,10 @@ def assemble_claude_mcp_servers(
                 entry.setdefault("env", {})["JARVIS_CONNECTOR_AUTH_TYPE"] = (
                     "oauth" if tokens.extra.get("client_id") else "pat"
                 )
-        elif transport == "http":
+        elif transport in ("http", "sse"):
             entry = _http_entry(spec, repl)
         else:
-            # rest_wrapper / sse / unknown -> not a claude-cli MCP server
+            # rest_wrapper / unknown -> not a claude-cli MCP server
             entry = None
 
         if entry is not None:

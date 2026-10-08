@@ -17,14 +17,18 @@ import {
   X,
   Loader2,
   AlertTriangle,
-  Upload,
   Store,
   MoreHorizontal,
   ArrowRight,
+  Link2,
+  FolderUp,
+  Trash2,
 } from "lucide-react";
 import { CommunityTab } from "@/views/PluginsCommunity";
 import { PluginUploadDialog } from "@/views/PluginUploadDialog";
-import { fill, translate } from "@/i18n";
+import { AddConnectorDialog, AddPluginTabs, type AddPluginMode } from "@/views/AddConnectorDialog";
+import { removeAddedPlugin, takePluginFocus } from "@/lib/customConnector";
+import { fill, translate, useLocaleChunk } from "@/i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BrandedSelect } from "@/components/ui/select";
 import {
@@ -69,7 +73,8 @@ type AuthMode =
   | "oauth_pkce_loopback"
   | "instance_browser"
   | "local"
-  | "hosted_mcp_allowlist";
+  | "hosted_mcp_allowlist"
+  | "hosted_mcp_open";
 
 type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
 /** Deliberately a plain string, mirroring the backend. The catalog serves the
@@ -160,6 +165,8 @@ interface CatalogPlugin {
   publisher?: string | null;
   version?: string | null;
   source_url?: string | null;
+  /** Transport block; a custom connector's `url` is the server it reaches. */
+  mcp_server?: { transport?: string; url?: string; [key: string]: unknown } | null;
 }
 
 interface CatalogResponse {
@@ -266,6 +273,8 @@ export interface Plugin {
   selfUploaded: boolean;
   publisher?: string;
   sourceUrl?: string;
+  /** Remote MCP address, shown for plugins the owner added by URL. */
+  mcpUrl?: string;
 }
 
 function adapt(p: CatalogPlugin): Plugin {
@@ -300,6 +309,7 @@ function adapt(p: CatalogPlugin): Plugin {
     selfUploaded: p.source === "local",
     publisher: p.publisher ?? undefined,
     sourceUrl: p.source_url ?? undefined,
+    mcpUrl: typeof p.mcp_server?.url === "string" ? p.mcp_server.url : undefined,
   };
 }
 
@@ -378,6 +388,7 @@ const AUTH_LABELS: Record<AuthMode, string> = {
   hosted_mcp_oauth_dcr: "One-Click",
   oauth_pkce_loopback: "Browser Login",
   hosted_mcp_allowlist: "Allowlist",
+  hosted_mcp_open: "No sign-in",
 };
 
 // Provider families supporting an optional expert OAuth client override: use their
@@ -585,7 +596,16 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   const [view, setView] = useState<"list" | "community" | "custom-apis">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listFilter, setListFilter] = useState<ListFilter>(inDialog ? "recommended" : "all");
-  const [uploadOpen, setUploadOpen] = useState(false);
+  // Which half of the "Add a plugin" dialog is open: a server URL or a folder.
+  const [addMode, setAddMode] = useState<AddPluginMode | null>(null);
+  const [removingPlugin, setRemovingPlugin] = useState<Plugin | null>(null);
+  const pushToast = useEventStore((s) => s.pushToast);
+  useLocaleChunk("marketplace");
+  // Another surface (the composer's Add menu) asked for one plugin's page.
+  useEffect(() => {
+    const focus = takePluginFocus();
+    if (focus) setSelectedId(focus);
+  }, []);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
@@ -839,6 +859,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     }
     if (
       p.authMode === "hosted_mcp_oauth_dcr" ||
+      p.authMode === "hosted_mcp_open" ||
       p.authMode === "local" ||
       p.authMode === "oauth_device_flow" ||
       p.authMode === "oauth_pkce_loopback"
@@ -898,7 +919,8 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           p.status === "connected" ||
           p.status === "needs_reauth" ||
           p.status === "error" ||
-          p.fromMarketplace,
+          p.fromMarketplace ||
+          p.selfUploaded,
       ),
     [allPlugins],
   );
@@ -969,14 +991,42 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
           </div>
         </div>
       )}
+      <AddConnectorDialog
+        open={addMode === "connector"}
+        onClose={() => setAddMode(null)}
+        tabs={<AddPluginTabs mode="connector" onChange={setAddMode} />}
+        onAdded={(result) => {
+          setAddMode(null);
+          pushToast(
+            "success",
+            fill(translate("custom_connector.added"), { name: result.plugin.display_name }),
+          );
+          void handleFreshInstall(result.plugin.id);
+        }}
+      />
       <PluginUploadDialog
-        open={uploadOpen}
-        onClose={() => setUploadOpen(false)}
+        open={addMode === "folder"}
+        onClose={() => setAddMode(null)}
+        tabs={<AddPluginTabs mode="folder" onChange={setAddMode} />}
         onInstalled={(id) => {
-          setUploadOpen(false);
+          setAddMode(null);
           void handleFreshInstall(id);
         }}
       />
+
+      {removingPlugin && (
+        <RemovePluginDialog
+          plugin={removingPlugin}
+          onCancel={() => setRemovingPlugin(null)}
+          onRemoved={() => {
+            const name = removingPlugin.name;
+            setRemovingPlugin(null);
+            setSelectedId(null);
+            pushToast("success", fill(translate("custom_connector.removed"), { name }));
+            void qc.refetchQueries({ queryKey: ["marketplace-plugins"] });
+          }}
+        />
+      )}
 
       {connectingPlugin && (
         <PatConnectDialog
@@ -1125,6 +1175,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
             plugin={selectedPlugin}
             onConnect={handleConnect}
             onDisconnect={handleDisconnect}
+            onRemove={setRemovingPlugin}
           />
         ) : (
           <p className="mt-6 text-sm text-muted-foreground">
@@ -1155,7 +1206,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         onCategory={(value) => { setFilter(value); setListFilter("all"); }}
         loading={isLoading} error={error instanceof Error ? error.message : null}
         refreshing={isFetching} onRefresh={() => void refetch()}
-        onBrowse={() => setView("community")} onUpload={() => setUploadOpen(true)}
+        onBrowse={() => setView("community")} onAdd={setAddMode}
         onCustomApis={() => setView("custom-apis")}
         onOpen={setSelectedId} onConnect={handleConnect} onDisconnect={handleDisconnect}
         onReset={() => { resetFilters(); setListFilter("all"); }}
@@ -1193,15 +1244,22 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
               label={translate("plugins_view.add")}
               actions={[
                 {
+                  id: "connector",
+                  label: translate("custom_connector.menu_connector"),
+                  icon: <Link2 className="h-3.5 w-3.5" />,
+                  onSelect: () => setAddMode("connector"),
+                },
+                {
                   id: "upload",
-                  label: translate("plugins_view.add_upload"),
-                  icon: <Upload className="h-3.5 w-3.5" />,
-                  onSelect: () => setUploadOpen(true),
+                  label: translate("custom_connector.menu_folder"),
+                  icon: <FolderUp className="h-3.5 w-3.5" />,
+                  onSelect: () => setAddMode("folder"),
                 },
                 {
                   id: "community",
                   label: translate("plugins_view.add_community"),
                   icon: <Store className="h-3.5 w-3.5" />,
+                  separatorAbove: true,
                   onSelect: () => setView("community"),
                 },
                 {
@@ -1321,13 +1379,13 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
 function PluginWindowCatalog({
   plugins, installed, total, listFilter, onListFilter, query, onQuery,
   category, categories, onCategory, loading, error, refreshing, onRefresh,
-  onBrowse, onUpload, onCustomApis, onOpen, onConnect, onDisconnect, onReset, attention, subtitle,
+  onBrowse, onAdd, onCustomApis, onOpen, onConnect, onDisconnect, onReset, attention, subtitle,
 }: {
   plugins: Plugin[]; installed: Plugin[]; total: number; listFilter: ListFilter;
   onListFilter: (value: ListFilter) => void; query: string; onQuery: (value: string) => void;
   category: string; categories: string[]; onCategory: (value: string) => void;
   loading: boolean; error: string | null; refreshing: boolean; onRefresh: () => void;
-  onBrowse: () => void; onUpload: () => void; onOpen: (id: string) => void;
+  onBrowse: () => void; onAdd: (mode: AddPluginMode) => void; onOpen: (id: string) => void;
   onCustomApis: () => void;
   onReset: () => void; attention: number; subtitle: string;
 } & ConnectHandlers) {
@@ -1352,9 +1410,28 @@ function PluginWindowCatalog({
             </IconButton>
             <SoftButton onClick={onBrowse}>{translate("plugins_view.browse")}</SoftButton>
             <SoftButton onClick={onCustomApis}>{translate("custom_apis.title")}</SoftButton>
-            <IconButton label={translate("plugins_view.add_upload")} onClick={onUpload}>
-              <Plus className="h-4 w-4" />
-            </IconButton>
+            <ActionMenu
+              label={translate("plugins_view.add")}
+              actions={[
+                {
+                  id: "connector",
+                  label: translate("custom_connector.menu_connector"),
+                  icon: <Link2 className="h-3.5 w-3.5" />,
+                  onSelect: () => onAdd("connector"),
+                },
+                {
+                  id: "upload",
+                  label: translate("custom_connector.menu_folder"),
+                  icon: <FolderUp className="h-3.5 w-3.5" />,
+                  onSelect: () => onAdd("folder"),
+                },
+              ]}
+              trigger={({ open, toggle }) => (
+                <IconButton label={translate("plugins_view.add")} onClick={toggle} active={open}>
+                  <Plus className="h-4 w-4" />
+                </IconButton>
+              )}
+            />
           </div>
         </div>
         <p className="sr-only">{subtitle}</p>
@@ -1623,7 +1700,12 @@ async function fetchPluginFiles(pluginId: string): Promise<{ files: CardFile[] }
   return res.json();
 }
 
-function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & ConnectHandlers) {
+function PluginDetail({
+  plugin,
+  onConnect,
+  onDisconnect,
+  onRemove,
+}: { plugin: Plugin; onRemove?: (plugin: Plugin) => void } & ConnectHandlers) {
   const { busy, run } = useConnectLock(() => onConnect(plugin));
   const filesQuery = useQuery({
     queryKey: ["marketplace-plugin-files", plugin.id],
@@ -1653,6 +1735,20 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
             destructive: true,
             separatorAbove: Boolean(plugin.sourceUrl),
             onSelect: () => onDisconnect(plugin.id),
+          },
+        ]
+      : []),
+    // A plugin the owner added (URL, folder or community install) can leave
+    // again; a built-in one can only be disconnected.
+    ...(onRemove && (plugin.selfUploaded || plugin.fromMarketplace)
+      ? [
+          {
+            id: "remove",
+            label: translate("custom_connector.remove"),
+            icon: <Trash2 className="h-3.5 w-3.5" />,
+            destructive: true,
+            separatorAbove: Boolean(plugin.sourceUrl) || connected || needsReconnect,
+            onSelect: () => onRemove(plugin),
           },
         ]
       : []),
@@ -1779,6 +1875,13 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
                     ? fill(translate("plugins_view.oauth_client_own"), { family: family.label })
                     : "Browser sign-in is pending publisher setup. No developer setup is required from you."
                   : null,
+              },
+              {
+                label: translate("custom_connector.fact_server"),
+                value:
+                  plugin.selfUploaded && plugin.mcpUrl ? (
+                    <code className="break-all font-mono text-meta">{plugin.mcpUrl}</code>
+                  ) : null,
               },
               { label: translate("plugins_view.fact_publisher"), value: plugin.publisher ?? null },
               {
@@ -2945,6 +3048,90 @@ function DisconnectConfirmDialog({
   );
 }
 
+/** "Remove {name}?" for a plugin the owner added: drops the catalog entry,
+ *  its stored sign-in and its tools. Built-in plugins never reach here. */
+function RemovePluginDialog({
+  plugin,
+  onCancel,
+  onRemoved,
+}: {
+  plugin: Plugin;
+  onCancel: () => void;
+  onRemoved: () => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !pending) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, pending]);
+
+  const remove = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await removeAddedPlugin(plugin.id);
+      onRemoved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setPending(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="remove-plugin-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim/70 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !pending) onCancel();
+      }}
+    >
+      <div className="relative w-full max-w-sm overflow-hidden rounded-lg bg-popover shadow-float">
+        <header className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <BrandTile plugin={plugin} />
+          <h2 id="remove-plugin-title" className="font-display text-base font-semibold tracking-tight">
+            {fill(translate("custom_connector.remove_title"), { name: plugin.name })}
+          </h2>
+        </header>
+        <div className="px-5 py-5">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {translate("custom_connector.remove_body")}
+          </p>
+          {error && (
+            <div role="alert" className="mt-3 rounded-md bg-secondary px-3 py-2 text-xs text-destructive">
+              {error}
+            </div>
+          )}
+        </div>
+        <footer className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={pending}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-30"
+          >
+            {translate("common.cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void remove()}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3.5 py-1.5 text-xs font-semibold text-destructive-foreground transition-all hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {pending && <Loader2 className="h-3 w-3 animate-spin" />}
+            {translate("custom_connector.remove")}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Pat-Paste Connect Dialog — used by Vercel & Supabase. Opens the token-
 // creation page in a new tab, takes a paste, sends it to the backend.
@@ -3145,6 +3332,7 @@ export function PatConnectDialog({
               {notice}
             </p>
           )}
+          {auth.token_creation_url ? (
           <Step
             num={1}
             title={`Generate a token at ${plugin.name}`}
@@ -3170,6 +3358,11 @@ export function PatConnectDialog({
               />
             </div>
           </Step>
+          ) : (
+            // A custom connector: no page is known that issues its key, so
+            // the step only says which key and where it goes.
+            <Step num={1} title={`Get the key for ${plugin.name}`} body={auth.instruction_md} />
+          )}
 
           {instanceField && (
             <Step num={2} title={instanceField.label} body={instanceField.help_md ?? undefined}>
@@ -3318,7 +3511,7 @@ function Step({
   num: number;
   title: string;
   body?: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   return (
     <div className="flex gap-3">

@@ -25,6 +25,8 @@ export interface ToolChoice {
   available: boolean;
   tool_names: string[];
   skill: string;
+  /** A plugin the owner added (custom connector or upload). */
+  user_added?: boolean;
 }
 
 export interface ToolSearchResult {
@@ -44,13 +46,14 @@ export async function searchTools(
 
 /**
  * The Add menu lists connectors, not the skills and commands behind them.
- * Disconnected plugins stay hidden until someone searches for them.
+ * Disconnected plugins stay hidden until someone searches for them — except
+ * the ones the owner added, which show with a Connect action.
  */
 export function browseToolRows(items: ToolChoice[], query = ""): ToolChoice[] {
   const searching = Boolean(query.trim());
   return items.filter((row) => {
     if (row.category === "plugins" && row.id.startsWith("tool:")) return false;
-    if (row.category === "plugins" && !row.available && !searching) return false;
+    if (row.category === "plugins" && !row.available && !searching && !row.user_added) return false;
     if (row.category === "skills" && isPluginOwnedSkill(row.skill || row.label || row.id)) return false;
     return true;
   });
