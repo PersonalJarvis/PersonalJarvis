@@ -1,5 +1,5 @@
 import { createRef } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { ComposerChipField, type ComposerChipFieldHandle } from "./ComposerChipField";
@@ -73,5 +73,22 @@ describe("ComposerChipField", () => {
     handle.current?.insertChip(gmail);
     handle.current?.insertChip(gmail);
     expect(handle.current?.getDraft().choices.map((row) => row.id)).toEqual(["plugin:gmail"]);
+  });
+
+  it("sends selection changes only to the current draft owner after switching sessions", () => {
+    const handle = createRef<ComposerChipFieldHandle>();
+    const blank = vi.fn();
+    const assigned = vi.fn();
+    const { rerender } = render(
+      <ComposerChipField ref={handle} placeholder="Message" onSubmit={() => {}} onDraftChange={blank} />,
+    );
+    handle.current?.hydrate("Followup draft");
+    blank.mockClear();
+    rerender(
+      <ComposerChipField ref={handle} placeholder="Message" onSubmit={() => {}} onDraftChange={assigned} />,
+    );
+    document.dispatchEvent(new Event("selectionchange"));
+    expect(blank).not.toHaveBeenCalled();
+    expect(assigned).toHaveBeenCalledWith(expect.objectContaining({ text: "Followup draft" }));
   });
 });

@@ -24,6 +24,7 @@ live in the credential store under ``society_credential.<agent>.<ENV>``.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -102,7 +103,90 @@ class _OsSecrets:
 
 
 class CredentialError(ValueError):
-    """A credential request or value that cannot be accepted."""
+    """A safe, user-facing reason for a failed credential submission."""
+
+    def __init__(self, message: str, *, code: str = "invalid_token") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def normalize_value(value: str) -> str:
+    """Reject malformed input before validation or storage, without echoing it."""
+    value = value.strip()
+    if not value:
+        raise CredentialError("Enter the credential before saving.")
+    if len(value) > MAX_VALUE_CHARS:
+        raise CredentialError("The credential is too long.")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise CredentialError("A credential must be a single line without control characters.")
+    return value
+
+
+async def validate_token(env: str, value: str, *, label: str = "") -> None:
+    """Check identifiable Discord tokens only at the fixed, official endpoint.
+
+    Other credentials receive local input validation; arbitrary service names
+    and descriptions can never select a URL or send credentials elsewhere.
+    """
+    import httpx
+
+    value = normalize_value(value)
+    discord = ("DISCORD" in env.split("_") and "TOKEN" in env.split("_")) or (
+        "discord" in label.casefold() and "token" in label.casefold()
+    )
+    if not discord:
+        return
+    if not value.isascii() or any(ch.isspace() for ch in value):
+        raise CredentialError("Paste only the Discord bot token, without an authorization prefix.")
+    try:
+        # One user-triggered validation, no retry, redirect, paid generation or
+        # token in the URL. A context-managed client closes its resources.
+        async with asyncio.timeout(12):
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                response = await client.get(
+                    "https://discord.com/api/v10/users/@me",
+                    headers={"Authorization": f"Bot {value}"},
+                )
+    except (TimeoutError, httpx.TimeoutException):
+        raise CredentialError(
+            "Discord did not respond in time. Please try saving again.",
+            code="validation_timeout",
+        ) from None
+    except httpx.RequestError:
+        raise CredentialError(
+            "Discord could not be reached. Check your connection and try again.",
+            code="network_error",
+        ) from None
+    if response.status_code in {401, 403}:
+        raise CredentialError("Discord rejected this bot token. Check it or create a new one.")
+    if response.status_code != 200:
+        raise CredentialError(
+            "Discord could not validate the token right now. Please try again later.",
+            code="network_error",
+        )
+    try:
+        user = response.json()
+    except ValueError:
+        raise CredentialError(
+            "Discord returned an unreadable response. Please try again.", code="network_error",
+        ) from None
+    if not isinstance(user, dict) or not user.get("id") or user.get("bot") is not True:
+        raise CredentialError("Use a Discord bot token from the Bot page in the Developer Portal.")
+
+
+async def save_requested_credential(
+    agent_id: str, env: str, value: str, *, label: str = "",
+) -> None:
+    """The shared validation and storage path for new and restored fields."""
+    validate_env_name(env)
+    value = normalize_value(value)
+    vault = current_vault()
+    if vault is None:
+        raise CredentialError(
+            "The credential store is unavailable. Please try again shortly.", code="storage_failed",
+        )
+    await validate_token(env, value, label=label)
+    await asyncio.to_thread(vault.store, agent_id, env, value, label=label)
 
 
 def validate_env_name(raw: Any) -> str:
@@ -217,15 +301,7 @@ class CredentialVault:
     def store(self, agent_id: str, env: str, value: str, *, label: str = "") -> CredentialInfo:
         """Save ``value`` for ``agent_id`` as ``env``; raises ``CredentialError``."""
         env = validate_env_name(env)
-        value = value.strip()
-        if not value:
-            raise CredentialError("the credential is empty")
-        if len(value) > MAX_VALUE_CHARS:
-            raise CredentialError("the credential is too long")
-        if any(ch in value for ch in "\r\n\x00"):
-            raise CredentialError("a credential is a single line without control characters")
-        if not self._secrets.set(self._slot(agent_id, env), value):
-            raise CredentialError("the credential store refused the value")
+        value = normalize_value(value)
         now = int(time.time() * 1000)
         with self._lock:
             rows = self._read_index(agent_id)
@@ -236,9 +312,38 @@ class CredentialVault:
                 created_ms=previous.created_ms if previous else now,
                 updated_ms=now,
             )
-            rows[env] = info
-            self._write_index(agent_id, rows)
-            self._forget(agent_id)
+            slot = self._slot(agent_id, env)
+            previous_value: str | None = None
+            attempted = False
+            try:
+                previous_value = self._secrets.get(slot)
+                attempted = True
+                if not self._secrets.set(slot, value) or self._secrets.get(slot) != value:
+                    raise CredentialError(
+                        "The credential store could not verify the saved value. Please try again.",
+                        code="storage_failed",
+                    )
+                rows[env] = info
+                self._write_index(agent_id, rows)
+            except Exception:
+                # Neither keyring errors nor their tracebacks are safe: a
+                # backend may include the submitted value in its exception.
+                if attempted:
+                    try:
+                        restored = (
+                            self._secrets.set(slot, previous_value)
+                            if previous_value is not None else self._secrets.delete(slot)
+                        )
+                        if not restored:
+                            log.error("society credentials: rollback failed for %s", env)
+                    except Exception:
+                        log.error("society credentials: rollback failed for %s", env)
+                raise CredentialError(
+                    "The credential could not be stored. Please try saving again.",
+                    code="storage_failed",
+                ) from None
+            finally:
+                self._forget(agent_id)
         log.info("society credentials: stored %s for %s", env, agent_id)
         return info
 

@@ -45,10 +45,11 @@ import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/compone
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
-import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import { ComposerChipField, type ComposerChipFieldHandle, type ComposerDraft } from "@/components/agentchat/ComposerChipField";
+import { captureComposerDraftTarget, readComposerDraft, useComposerDraft, writeComposerDraft } from "@/components/agentchat/composerDrafts";
 import { MessageWithChips } from "@/components/agentchat/ToolChoiceChips";
 import { choiceToken } from "@/components/agentchat/composerChips";
-import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { releaseHeldFiles, restoreHeldFiles, useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { DictationButton } from "@/components/agentchat/DictationButton";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
@@ -1188,19 +1189,27 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const t = useT();
   const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
-  const [value, setValue] = useState("");
+  const messageDraft = useComposerDraft(chatStore, sessionId);
+  const value = messageDraft.text;
+  const setValue = (text: string) => writeComposerDraft(chatStore, sessionId, {
+    ...readComposerDraft(chatStore, sessionId), text,
+  });
   const [plusOpen, setPlusOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [selectedTools, setSelectedTools] = useState<MentionItem[]>([]);
-  useEffect(() => { setSelectedTools([]); }, [sessionId, agent.agentId]);
   const fieldRef = useRef<ComposerChipFieldHandle>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
-  const attachmentsRef = useRef(attachments.attachments);
-  attachmentsRef.current = attachments.attachments;
+  const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message),
+    { owner: chatStore, key: sessionId ?? "" });
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    const current = field?.getDraft();
+    if (current && (current.text !== messageDraft.text || JSON.stringify(current.choices) !== JSON.stringify(messageDraft.choices))) {
+      field?.hydrate(messageDraft.text, messageDraft.choices);
+    }
+  }, [messageDraft, sessionId]);
   const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
     attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
@@ -1216,9 +1225,10 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   // `busy` on this composer also covers "session not open yet". Stop is only
   // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
   const live = runningTurn(timeline) !== null || sending;
-  // A created agent's one chat never refuses its person: a message written
-  // while it works waits and starts as its next turn (MASTERPLAN §2.10).
-  const canQueue = surface === "society" && agent.tier !== "lead" && !sending && runningTurn(timeline) !== null;
+  // Admission is serialized by the store; execution waits in the backend.
+  // A pending HTTP request or credential card does not lock this composer.
+  const canQueue = surface === "jarvis" || surface === "society";
+  const sessionReady = surface !== "society" || Boolean(sessionId && chatStore.getState().activeSessionId === sessionId);
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1259,8 +1269,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (activeIndex >= matches.length) setActiveIndex(Math.max(0, matches.length - 1));
   }, [matches.length, activeIndex]);
 
-  const onDraftChange = (draft: { text: string; caret: number }) => {
-    setValue(draft.text);
+  const onDraftChange = (draft: ComposerDraft) => {
+    writeComposerDraft(chatStore, sessionId, { text: draft.text, choices: draft.choices });
     setMention(mentionToken(draft.text, draft.caret));
   };
 
@@ -1279,21 +1289,18 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
       const row = mentionChoice(item);
       const next = `${before}${choiceToken(row)} ${after}`;
       field?.hydrate(next, [...(draft?.choices ?? []), row]);
-      setSelectedTools((items) => (items.some((row) => row.key === item.key) ? items : [...items, item]));
     }
     setMention(null);
   };
 
   const submit = async () => {
+    if (await commands.execute(fieldRef.current?.getDraft().text.trim() ?? value.trim())) return;
     const draft = fieldRef.current?.getDraft();
     const fullDraft = draft?.text ?? value;
     const draftText = fullDraft.trim();
     const submittedFolder = codingFolder;
-    const selected = selectedTools;
-    const sentAttachments = attachments.attachments;
     const text = draftText;
-    if (await commands.execute(text)) return;
-    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
+    if ((!text && attachments.attachments.length === 0) || !sessionReady || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1326,25 +1333,34 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
     setProblem(null);
+    const held = attachments.take();
+    if (!text && held.attachments.length === 0) return;
+    const draftTarget = captureComposerDraftTarget(chatStore, sessionId);
+    const sentDraft = { text: fullDraft, choices: draft?.choices ?? messageDraft.choices };
+    writeComposerDraft(chatStore, sessionId, { text: "", choices: [] });
+    fieldRef.current?.clear();
+    setMention(null);
+    setCodingFolder("");
     try {
-      const result = await onSend(hint ? `${text}\n\n${hint}` : text, sentAttachments);
-      if (result === "stale" || sessionId && chatStore.getState().activeSessionId !== sessionId) return;
+      const result = await onSend(hint ? `${text}\n\n${hint}` : text, held.attachments);
       const sendError = chatStore.getState().lastError;
       if (result === "failed" || result === undefined && sendError) throw new Error(sendError ?? t("common.error_generic"));
-      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
-        setValue("");
-        fieldRef.current?.clear();
-        setMention(null);
-        setSelectedTools([]);
-      }
-      if (attachmentsRef.current === sentAttachments) attachments.clear();
-      else sentAttachments.forEach((file) => attachments.remove(file.name));
+      releaseHeldFiles(held);
     } catch (err) {
-      // The input and files stay in place until the server accepts them.
-      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
-        setSelectedTools(selected);
-        setCodingFolder(submittedFolder);
+      if (draftTarget.superseded) {
+        releaseHeldFiles(held);
+        useEventStore.getState().pushToast("error", t("society.chat.message_not_sent").replace("{0}", sentDraft.text));
+        return;
       }
+      // Restore only this submission's draft, even after changing agents.
+      // Preserve anything typed while the HTTP request was pending.
+      const current = readComposerDraft(chatStore, draftTarget.sessionId);
+      writeComposerDraft(chatStore, draftTarget.sessionId, {
+        text: [sentDraft.text, current.text].filter(Boolean).join("\n"),
+        choices: [...sentDraft.choices, ...current.choices.filter((row) => !sentDraft.choices.some((sent) => sent.id === row.id))],
+      });
+      restoreHeldFiles(chatStore, draftTarget.sessionId ?? "", held);
+      setCodingFolder(submittedFolder);
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1498,7 +1514,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
-        {live && !commands.isCommand && !((commands.canSteer || canQueue) && value.trim()) ? (
+        {live && (
           <button
             type="button"
             onClick={() => void onCancel()}
@@ -1509,13 +1525,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           >
             <Square className="h-3.5 w-3.5" aria-hidden />
           </button>
-        ) : (
+        )}
+        {(
           <button
             type="button"
             // While recording, Send ends the dictation and sends once the
             // words land, so it is live before the box holds any text.
             onClick={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
-            disabled={modelSaving || attachments.analyzing > 0 || (!value.trim() && selectedTools.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
+            disabled={!sessionReady || modelSaving || attachments.analyzing > 0 || (!value.trim() && messageDraft.choices.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"

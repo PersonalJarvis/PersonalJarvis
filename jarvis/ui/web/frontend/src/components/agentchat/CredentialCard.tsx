@@ -1,8 +1,8 @@
-import { memo, useRef, useState, type FormEvent } from "react";
+import { memo, useId, useRef, useState, type FormEvent } from "react";
 import { Check, KeyRound, ShieldCheck, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { AgentChatApiError, declineAgentChatCredential, submitAgentChatCredential } from "@/lib/agentChatApi";
+import { AgentChatApiError, declineAgentChatCredential, submitAgentChatCredential, type CredentialResult } from "@/lib/agentChatApi";
 import { useAgentChat } from "./AgentChatStoreContext";
 import type { CredentialState } from "./reduce";
 
@@ -17,7 +17,7 @@ import type { CredentialState } from "./reduce";
 
 export const CredentialCard = memo(function CredentialCard({ credential }: { credential: CredentialState }) {
   if (credential.status !== null) return <ClosedCard credential={credential} />;
-  return <OpenCard credential={credential} />;
+  return <OpenCard key={credential.requestId} credential={credential} />;
 });
 
 function OpenCard({ credential }: { credential: CredentialState }) {
@@ -26,23 +26,39 @@ function OpenCard({ credential }: { credential: CredentialState }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolved, setResolved] = useState<CredentialResult["status"] | null>(null);
+  const errorId = useId();
   const sending = useRef(false);
   const agent = credential.asker || t("credential_card.fallback_agent");
 
   const failure = (err: unknown): string => {
+    if (err instanceof AgentChatApiError) {
+      const keys: Record<string, string> = {
+        invalid_token: "invalid_token", network_error: "network_error", validation_timeout: "validation_timeout",
+        storage_failed: "storage_failed", request_busy: "request_busy", request_closed: "expired",
+      };
+      const key = keys[err.code];
+      if (key) return t(`credential_card.${key}`);
+    }
     if (err instanceof AgentChatApiError && (err.status === 400 || err.status === 422)) return t("credential_card.invalid");
     if (err instanceof AgentChatApiError && (err.status === 404 || err.status === 410)) return t("credential_card.expired");
+    if (err instanceof TypeError) return t("credential_card.network_error");
     return t("credential_card.failed");
   };
 
-  const run = async (action: (sid: string) => Promise<void>, clear: boolean) => {
+  const run = async (action: (sid: string) => Promise<CredentialResult>, expected: CredentialResult["status"]) => {
     if (sending.current || !sessionId) return;
     sending.current = true;
     setBusy(true);
     setError(null);
     try {
-      await action(sessionId);
-      if (clear) setValue("");
+      const result = await action(sessionId);
+      if (!result.ok || result.status !== expected || result.request_id !== credential.requestId) {
+        throw new AgentChatApiError("credential-unconfirmed", 502);
+      }
+      setValue("");
+      // The HTTP receipt is sufficient even while the event stream reconnects.
+      setResolved(result.status);
     } catch (err) {
       setError(failure(err));
       sending.current = false;
@@ -53,8 +69,10 @@ function OpenCard({ credential }: { credential: CredentialState }) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const secret = value.trim();
-    if (secret) void run((sid) => submitAgentChatCredential(sid, credential.requestId, secret), true);
+    if (secret) void run((sid) => submitAgentChatCredential(sid, credential.requestId, secret), "saved");
   };
+
+  if (resolved) return <ClosedCard credential={{ ...credential, status: resolved }} />;
 
   return (
     <section
@@ -78,7 +96,7 @@ function OpenCard({ credential }: { credential: CredentialState }) {
         </div>
         <button
           type="button"
-          onClick={() => void run((sid) => declineAgentChatCredential(sid, credential.requestId), true)}
+          onClick={() => void run((sid) => declineAgentChatCredential(sid, credential.requestId), "declined")}
           disabled={busy}
           aria-label={t("credential_card.decline")}
           title={t("credential_card.decline")}
@@ -104,6 +122,8 @@ function OpenCard({ credential }: { credential: CredentialState }) {
           maxLength={16384}
           placeholder={credential.placeholder || fill(t("credential_card.placeholder"), { label: credential.label })}
           aria-label={credential.label}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? errorId : undefined}
           className="min-w-0 flex-1 rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
         />
         <button
@@ -124,8 +144,9 @@ function OpenCard({ credential }: { credential: CredentialState }) {
           <ShieldCheck aria-hidden className="h-3.5 w-3.5 shrink-0" />
           <span>{t("credential_card.footer")}</span>
         </p>
+        <p>{t("credential_card.stays_open")}</p>
         {error ? (
-          <p role="alert" className="text-destructive">
+          <p id={errorId} role="alert" className="text-destructive">
             {error}
           </p>
         ) : null}
@@ -140,6 +161,7 @@ function ClosedCard({ credential }: { credential: CredentialState }) {
   const key = saved ? "saved" : credential.status === "declined" ? "declined" : credential.status === "timeout" ? "timeout" : "cancelled";
   return (
     <div
+      role="status"
       data-testid="credential-card"
       data-state={credential.status ?? ""}
       className="my-1 flex w-full max-w-2xl items-center gap-2 rounded-xl border border-border px-4 py-2.5 text-sm text-muted-foreground"

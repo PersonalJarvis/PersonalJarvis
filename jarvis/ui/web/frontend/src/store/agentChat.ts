@@ -1,4 +1,6 @@
-import { create } from "zustand";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
+import { bindComposerDraftTarget, captureComposerDraftTarget, resetBlankComposerDraftTarget, type ComposerDraftTarget } from "@/components/agentchat/composerDrafts";
+import { discardHeldFiles, moveHeldFiles } from "@/components/agentchat/useChatAttachments";
 
 import {
   agentChatSocketUrl,
@@ -330,7 +332,7 @@ function onLadder(value: string, ladder: readonly string[], fallback: string): s
 /** How many left-behind transcripts the store keeps for an instant switch-back. */
 const TIMELINE_CACHE_LIMIT = 24;
 
-export function createAgentChatStore(surface: AgentChatSurface, draftNamespace = "") {
+export function createAgentChatStore(surface: AgentChatSurface, draftNamespace = ""): UseBoundStore<StoreApi<AgentChatStore>> {
   const DRAFT_KEY = draftKey(surface) + (draftNamespace ? `:${draftNamespace}` : "");
 
   /**
@@ -350,6 +352,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
   let catalogRequest = 0;
   const patchQueues = new Map<string, Promise<void>>();
   const patchRevisions = new Map<string, number>();
+  type SendLane = { tail: Promise<unknown>; pending: number; sessionId: string | null; draftTarget?: ComposerDraftTarget };
+  const sendLanes = new Map<string, SendLane>();
+  const emptySendLane = (): SendLane => ({ tail: Promise.resolve(), pending: 0, sessionId: null });
+  let newChatLane = emptySendLane();
   let selectionRevision = 0;
   let selectionWrite: Promise<unknown> = Promise.resolve();
   let socket: WebSocket | null = null;
@@ -397,7 +403,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
     }
   }
 
-  return create<AgentChatStore>((set, get) => {
+  const chatStore = create<AgentChatStore>((set, get) => {
     function connect(sessionId: string, afterSeq: number): void {
       if (typeof WebSocket === "undefined") return;
       closeSocket();
@@ -735,11 +741,15 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
 
       newChat: (opts) => {
         closeSocket();
+        newChatLane = emptySendLane();
+        resetBlankComposerDraftTarget(chatStore);
+        discardHeldFiles(chatStore, "");
         ++catalogRequest;
         set({
           ...(surface === "jarvis" ? { draft: readDraft(DRAFT_KEY) } : {}),
           activeSessionId: null,
           activeSession: null,
+          busy: false,
           timeline: EMPTY_TIMELINE,
           socketState: "idle",
           lastError: null,
@@ -762,7 +772,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           activeSessionId: sessionId,
           activeSession: prev.sessions.find((s) => s.session_id === sessionId) ?? null,
           timeline: timelineCache.get(sessionId) ?? EMPTY_TIMELINE,
-          busy: false,
+          busy: (sendLanes.get(sessionId)?.pending ?? 0) > 0,
           lastError: null,
         });
         bindVoice(sessionId);
@@ -790,11 +800,23 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         // Enter is a complete gesture — but never nothing at all.
         if (!content && attachments.length === 0) return "failed";
         const st = get();
+        const lane = st.activeSessionId
+          ? sendLanes.get(st.activeSessionId) ?? { ...emptySendLane(), sessionId: st.activeSessionId }
+          : newChatLane;
+        lane.draftTarget ??= captureComposerDraftTarget(chatStore, st.activeSessionId);
+        if (lane.sessionId) sendLanes.set(lane.sessionId, lane);
+        const isVisible = () => lane.sessionId
+          ? get().activeSessionId === lane.sessionId
+          : get().activeSessionId === null && newChatLane === lane;
+        const previous = lane.tail;
+        lane.pending += 1;
         set({ busy: true, lastError: null });
-        let sid = st.activeSessionId;
+        // Serialize transport admission, not agent execution. A second send
+        // shares an unfinished session creation and reaches the server in order.
+        const submission = previous.catch(() => undefined).then(async () => {
         try {
           await selectionWrite;
-          if (!sid) {
+          if (!lane.sessionId) {
             const d = st.draft;
             const session = await createAgentChatSession({
               provider: d.provider,
@@ -805,28 +827,39 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
               permission_mode: d.permissionMode,
               surface,
             });
-            sid = session.session_id;
-            set({
-              activeSessionId: sid,
-              activeSession: session,
-              timeline: EMPTY_TIMELINE,
-              sessions: [session, ...get().sessions],
-            });
-            bindVoice(sid);
-            connect(sid, 0);
+            const visible = isVisible();
+            if (bindComposerDraftTarget(chatStore, lane.draftTarget!, session.session_id)) {
+              moveHeldFiles(chatStore, "", session.session_id);
+            }
+            lane.sessionId = session.session_id;
+            sendLanes.set(session.session_id, lane);
+            set({ sessions: [session, ...get().sessions] });
+            if (visible) {
+              set({ activeSessionId: session.session_id, activeSession: session, timeline: EMPTY_TIMELINE });
+              bindVoice(session.session_id);
+              connect(session.session_id, 0);
+            }
           }
+          const sid = lane.sessionId;
           await sendAgentChatMessage(sid, content, attachments, toolChoices);
           if (surface === "jarvis") writeDraft(DRAFT_KEY, st.draft);
           if (get().activeSessionId === sid) void get().loadSessions();
-          return get().activeSessionId === sid ? "sent" : "stale";
+          return isVisible() ? "sent" as const : "stale" as const;
         } catch (err) {
-          if (get().activeSessionId === sid) set({ lastError: errorText(err) });
-          return get().activeSessionId === sid ? "failed" : "stale";
+          if (isVisible()) set({ lastError: errorText(err) });
+          return "failed" as const;
         } finally {
           // A switch away from this session already cleared `busy`; do not
           // unlock (or error) the chat that is on screen now.
-          if (get().activeSessionId === sid) set({ busy: false });
+          lane.pending -= 1;
+          if (isVisible()) set({ busy: lane.pending > 0 });
+          if (lane.pending === 0 && lane.sessionId && sendLanes.get(lane.sessionId) === lane) {
+            sendLanes.delete(lane.sessionId);
+          }
         }
+        });
+        lane.tail = submission;
+        return submission;
       },
 
       cancel: async () => {
@@ -891,6 +924,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
       },
     };
   });
+  return chatStore;
 }
 
 /** The front page's store — every existing call site reads this one. */

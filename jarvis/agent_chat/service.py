@@ -416,7 +416,10 @@ class AgentChatService:
         self._questions: dict[str, _OpenQuestion] = {}
         self._question_tasks: set[asyncio.Task[None]] = set()
         # Credential cards (credential_requests.py): the value never enters a chat event.
-        self._credentials = CredentialRequests(self._emit, self._running_turn_id)
+        self._credentials = CredentialRequests(
+            self._emit, self._running_turn_id,
+            history=self.store.credential_events, restore_save=self._restore_credential_save,
+        )
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -2184,7 +2187,7 @@ class AgentChatService:
         # Tolerates a service built without __init__ (test doubles), like _controls.
         credentials: CredentialRequests | None = getattr(self, "_credentials", None)
         if credentials is not None:
-            credentials.cancel_session(session_id)
+            credentials.finish_turn(session_id)
         questions: dict[str, _OpenQuestion] = getattr(self, "_questions", {})
         for qid, open_q in list(questions.items()):
             if open_q.session_id != session_id:
@@ -2195,6 +2198,26 @@ class AgentChatService:
             questions.pop(qid, None)
 
     # ------------------------------------------------------------ credentials
+
+    @staticmethod
+    def _restore_credential_save(session_id: str, spec: CredentialSpec) -> Callable | None:
+        """Rebuild only a Society field's save callback, never a stored secret."""
+        from jarvis.society.credentials import save_requested_credential, validate_env_name
+        from jarvis.society.surface import agent_id_of
+
+        agent_id = agent_id_of(session_id)
+        if agent_id is None:
+            return None
+        try:
+            validate_env_name(spec.env)
+        except ValueError:
+            log.warning("agent chat: ignored invalid stored credential field metadata")
+            return None
+
+        async def save(value: str) -> None:
+            await save_requested_credential(agent_id, spec.env, value, label=spec.label)
+
+        return save
 
     def _running_turn_id(self, session_id: str) -> str | None:
         run = self._running.get(session_id)
@@ -2224,18 +2247,28 @@ class AgentChatService:
     async def wait_credential_request(
         self, session_id: str, request_id: str, timeout_s: float | None = None
     ) -> str | None:
-        """``saved`` | ``declined`` | ``timeout`` | ``cancelled``, or ``None`` while open."""
+        """``saved`` or ``declined``, or ``None`` while the field remains open."""
         return await self._credentials.wait(session_id, request_id, timeout_s)
 
     def credential_request_spec(self, session_id: str, request_id: str) -> CredentialSpec:
         return self._credentials.spec(session_id, request_id)
 
+    async def restore_credential_requests(self, session_id: str) -> None:
+        await self._credentials.restore(session_id)
+
     async def submit_credential(self, session_id: str, request_id: str, value: str) -> bool:
         """The person's pasted value; ``ValueError`` when the vault refuses it."""
+        if self.store.get_session(session_id) is None:
+            return False
         return await self._credentials.submit(session_id, request_id, value)
 
     async def decline_credential(self, session_id: str, request_id: str) -> bool:
+        if self.store.get_session(session_id) is None:
+            return False
         return await self._credentials.decline(session_id, request_id)
+
+    async def discard_credential_requests(self, session_id: str) -> None:
+        await self._credentials.discard_session(session_id)
 
     def pending_credential_requests(self, session_id: str) -> list[str]:
         credentials: CredentialRequests | None = getattr(self, "_credentials", None)

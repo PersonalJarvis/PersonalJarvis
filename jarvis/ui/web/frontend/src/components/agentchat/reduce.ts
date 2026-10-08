@@ -109,8 +109,8 @@ export function isQuestionTool(name: string): boolean {
 /**
  * An agent's secure credential field (jarvis/agent_chat/credential_requests.py).
  * The person pastes a secret that goes straight to the agent's vault; no event
- * ever carries the value. `status` is `null` while the field is open, else
- * `saved`, `declined`, `timeout` or `cancelled`.
+ * ever carries the value. `status` is `null` until the person saves or declines.
+ * Older event logs can also contain `timeout` or `cancelled` resolutions.
  */
 export interface CredentialState {
   requestId: string;
@@ -1185,9 +1185,8 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
                     answers: b.question.answers.map((a) => a ?? { text: "", optionIndex: null, source: "closed" }),
                   },
                 }
-              : b.kind === "tool" && b.credential && b.credential.status === null
-                ? { ...b, credential: { ...b.credential, status: "cancelled" } }
-                : b,
+              // Credential entry belongs to the person, not the turn's lifetime.
+              : b,
         ),
         durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),
         usage:

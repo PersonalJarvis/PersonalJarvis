@@ -659,8 +659,12 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
   const running = turn.status === "running";
   const inline = prompts === "inline";
   const pictures = useMemo(() => callPictures(turn.blocks), [turn.blocks]);
+  // Keep credential fields mounted while the surrounding work folds at turn end.
+  // The pasted value lives only in the field, so a remount would discard it.
+  const credentials = turn.blocks.filter((block): block is ToolBlock => block.kind === "tool" && Boolean(block.credential));
   const rows = useMemo(
-    () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) => !(row.kind === "text" && pictures.moved.has(row.block.id))),
+    () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) =>
+      !(row.kind === "text" && pictures.moved.has(row.block.id)) && !(row.kind === "pending" && row.block.credential)),
     [turn.blocks, t, lang, turn.status, pictures],
   );
   const answer = answerText(turn);
@@ -720,6 +724,7 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
     </div>}
     {folded && agents.length > 0 && <div className="space-y-1.5 pt-1" data-testid="thread-turn-subagents">{agents.map(renderRow)}</div>}
     {folded && waiting.map(renderRow)}
+    {credentials.map((block) => <CredentialCard key={block.credential!.requestId} credential={block.credential!} />)}
     {shown.slice(0, extraAt).map(renderRow)}
     {!folded && extraNodes}
     {shown.slice(extraAt).map(renderRow)}

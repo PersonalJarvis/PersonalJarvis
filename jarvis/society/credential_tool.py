@@ -19,11 +19,9 @@ from typing import Any, Final
 
 from jarvis.agent_chat.credential_requests import (
     CANCELLED,
-    CREDENTIAL_TIMEOUT_S,
     DECLINED,
     MAX_REQUESTS_PER_TURN,
     SAVED,
-    TIMEOUT,
     CredentialSpec,
     TooManyCredentialRequests,
 )
@@ -42,7 +40,6 @@ CREDENTIAL_TOOL_NAME: Final[str] = "society_request_credential"
 #: One call waits this long for the card, then hands back "waiting" (CLI
 #: seats drop an MCP call after about a minute).
 WAIT_SLICE_S: Final[float] = 45.0
-_MINUTES: Final[int] = int(CREDENTIAL_TIMEOUT_S // 60)
 
 
 def usage_note(env: str) -> str:
@@ -79,7 +76,9 @@ class RequestCredentialTool:
         "A credential you already have is not asked for again: the call returns 'available'. "
         "Set replace only when the stored value was rejected by the service. While the user "
         "has not answered yet, the call returns status 'waiting' with a request_id: then call "
-        "this tool again with only wait_for set to that id, and do nothing else meanwhile."
+        "this tool again with only wait_for set to that id when you need to wait. The field "
+        "stays open until the user saves or cancels, even if the turn ends. Continue unrelated "
+        "work and respond to new messages while the user obtains the credential."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -163,19 +162,19 @@ class RequestCredentialTool:
         agent_id = self._agent_id
 
         async def save(value: str) -> None:
-            await asyncio.to_thread(vault.store, agent_id, env, value, label=spec.label)
+            await credentials.save_requested_credential(agent_id, env, value, label=spec.label)
 
         try:
             request_id = await service.open_credential_request(
                 self._session_id, spec, save, asker=self._asker()
             )
-        except TooManyCredentialRequests:
+        except TooManyCredentialRequests as exc:
             return ToolResult(
                 success=False,
                 output={"status": "limit", "env": env},
                 error=(
-                    f"This turn already asked for {MAX_REQUESTS_PER_TURN} credentials. Ask for "
-                    "the rest in one later turn and say which ones are still missing."
+                    f"Credential field limit reached: {exc}. At most {MAX_REQUESTS_PER_TURN} "
+                    "new fields can be opened per turn. Reuse existing pending fields."
                 ),
             )
         except RuntimeError as exc:
@@ -186,6 +185,7 @@ class RequestCredentialTool:
     async def _keep_waiting(self, request_id: str) -> ToolResult:
         service = self._runtime.chat_service()
         try:
+            await service.restore_credential_requests(self._session_id)
             spec = service.credential_request_spec(self._session_id, request_id)
         except (AttributeError, KeyError):
             # Unknown request id is reported to the agent in the result.
@@ -193,8 +193,8 @@ class RequestCredentialTool:
                 success=False,
                 output=None,
                 error=(
-                    "No open credential field with that id in this chat (it closed with the "
-                    "turn). Do not ask again in this turn; tell the user what is missing."
+                    "No credential field with that id in this chat. Check whether the "
+                    "credential is already available before opening a new field."
                 ),
             )
         return await self._wait(service, request_id, spec.env)
@@ -209,9 +209,10 @@ class RequestCredentialTool:
                     "request_id": request_id,
                     "env": env,
                     "note": (
-                        "The user has not saved the credential yet; the field stays open for "
-                        f"{_MINUTES} minutes. Call {CREDENTIAL_TOOL_NAME} again now with only "
-                        f'{{"wait_for": "{request_id}"}}. Do nothing else meanwhile.'
+                        "The user has not saved the credential yet. The field stays open "
+                        "until they save or cancel, including after this turn ends. Continue "
+                        "unrelated work and respond to new messages. To wait again, call "
+                        f'{CREDENTIAL_TOOL_NAME} with {{"wait_for": "{request_id}"}}.'
                     ),
                 },
             )
@@ -228,8 +229,6 @@ class RequestCredentialTool:
         reason = (
             "The user declined to provide it."
             if status == DECLINED
-            else f"Nobody filled the field within {_MINUTES} minutes."
-            if status == TIMEOUT
             else "The field closed without a value."
         )
         return ToolResult(

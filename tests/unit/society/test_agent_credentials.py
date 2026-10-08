@@ -98,8 +98,11 @@ def test_a_vanished_store_entry_is_not_available(tmp_path: Path) -> None:
 
 def test_a_save_during_a_load_is_never_lost(tmp_path: Path) -> None:
     class SlowStore(FakeSecretStore):
+        armed = False
+
         def get(self, slot: str) -> str | None:
-            if self.reads == 0:
+            if self.armed:
+                self.armed = False
                 # Another caller saves while this load reads the store.
                 vault.store("ada", "DISCORD_BOT_TOKEN", "d" * 30)
             return super().get(slot)
@@ -107,6 +110,7 @@ def test_a_save_during_a_load_is_never_lost(tmp_path: Path) -> None:
     secrets = SlowStore()
     CredentialVault(tmp_path, secrets=secrets).store("ada", "GITHUB_TOKEN", SECRET)
     vault = CredentialVault(tmp_path, secrets=secrets)
+    secrets.armed = True
     assert vault.values("ada") == {"GITHUB_TOKEN": SECRET, "DISCORD_BOT_TOKEN": "d" * 30}
 
 
@@ -128,6 +132,7 @@ def test_values_are_masked_everywhere_in_a_payload(vault: CredentialVault) -> No
 def test_values_load_from_the_store_once(tmp_path: Path) -> None:
     secrets = FakeSecretStore()
     CredentialVault(tmp_path, secrets=secrets).store("ada", "GITHUB_TOKEN", SECRET)
+    secrets.reads = 0
     fresh = CredentialVault(tmp_path, secrets=secrets)  # a new process
     assert not fresh.is_loaded("ada")
     assert fresh.values("ada") == {"GITHUB_TOKEN": SECRET}
@@ -187,7 +192,8 @@ async def test_the_value_goes_to_save_and_never_into_the_chat(tmp_path: Path, va
         "turn_id": "turn-1", "request_id": rid, "env": "GITHUB_TOKEN", "status": "saved"
     }
     assert await svc.wait_credential_request(sid, rid, 1) == "saved"
-    assert not await svc.submit_credential(sid, rid, SECRET)  # closed
+    assert await svc.submit_credential(sid, rid, SECRET)  # a lost success receipt is retryable
+    assert saved == [SECRET]
     assert SECRET not in _logged(svc, sid)
     task.cancel()
 
@@ -205,32 +211,32 @@ async def test_a_refused_value_keeps_the_field_open(tmp_path: Path) -> None:
     task.cancel()
 
 
-async def test_decline_timeout_and_turn_end_close_the_field(tmp_path: Path) -> None:
+async def test_only_explicit_decline_closes_an_unsaved_field(tmp_path: Path) -> None:
     svc, sid, task = await _service_with_turn(tmp_path)
     q = svc.subscribe(sid)
     declined = await svc.open_credential_request(sid, _SPEC, lambda _v: None)
     assert await svc.decline_credential(sid, declined)
     assert await svc.wait_credential_request(sid, declined, 1) == "declined"
     late = await svc.open_credential_request(sid, _SPEC, lambda _v: None, timeout_s=0.05)
-    assert await svc.wait_credential_request(sid, late, 2) == "timeout"
+    assert await svc.wait_credential_request(sid, late, 0.1) is None
     assert (await _next(q, "credential_resolved"))["status"] == "declined"
-    assert (await _next(q, "credential_resolved"))["status"] == "timeout"
+    assert svc.pending_credential_requests(sid) == [late]
     task.cancel()
     svc2, sid2, task2 = await _service_with_turn(tmp_path, "society:bob")
-    q2 = svc2.subscribe(sid2)
     open_rid = await svc2.open_credential_request(sid2, _SPEC, lambda _v: None)
     svc2._cancel_questions(sid2)  # what a finished or stopped turn runs
-    assert (await _next(q2, "credential_resolved"))["status"] == "cancelled"
-    assert svc2.pending_credential_requests(sid2) == []
-    with pytest.raises(KeyError):
-        await svc2.wait_credential_request(sid2, open_rid, 0)
+    assert svc2.pending_credential_requests(sid2) == [open_rid]
+    assert await svc2.wait_credential_request(sid2, open_rid, 0) is None
+    assert await svc2.submit_credential(sid2, open_rid, SECRET)
     task2.cancel()
 
 
 async def test_a_turn_runs_out_of_fields_and_needs_a_turn(tmp_path: Path) -> None:
     svc, sid, task = await _service_with_turn(tmp_path)
-    for _ in range(MAX_REQUESTS_PER_TURN):
-        await svc.open_credential_request(sid, _SPEC, lambda _v: None)
+    for index in range(MAX_REQUESTS_PER_TURN):
+        await svc.open_credential_request(
+            sid, CredentialSpec.build(f"TOKEN_{index}", "Token"), lambda _v: None,
+        )
     with pytest.raises(TooManyCredentialRequests):
         await svc.open_credential_request(sid, _SPEC, lambda _v: None)
     task.cancel()
