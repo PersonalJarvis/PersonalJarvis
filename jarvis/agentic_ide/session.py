@@ -848,6 +848,43 @@ def account_home(agent: str, account_id: str | None) -> Path | None:
     return agent_accounts.config_dir_for(agent, account_id)  # type: ignore[arg-type]
 
 
+def seat_homes(agent: str) -> list[Path]:
+    """Every config dir a conversation of ``agent`` may live in, one per seat."""
+    if not has_accounts(agent):
+        return []
+    from jarvis import agent_accounts
+
+    return [account.config_dir for account in agent_accounts.list_accounts(agent)]  # type: ignore[arg-type]
+
+
+def _carry_to_seat(term: Terminal) -> bool:
+    """Make the pane's conversation resumable from the seat it runs on now.
+
+    Cheap for the common case: a pane that was never moved and whose seat
+    already holds its conversation costs one lookup. The cross-seat search
+    runs only after a move, or when the pane's own seat lacks the
+    conversation (a thread or an earlier switch ran it elsewhere). Filesystem
+    work: callers run it off the event loop.
+    """
+    from . import seat_handoff
+
+    handle = term.resume
+    home = account_home(term.agent, term.account)
+    if handle is None or home is None or not seat_handoff.can_carry(handle.kind):
+        return False
+    if not term.seat_carry and has_conversation(term.agent, handle, home):
+        return True
+    carried = seat_handoff.carry_conversation(
+        handle.kind,
+        handle.id,
+        home,
+        seat_homes(term.agent),
+        captured_at=handle.captured_at,
+    )
+    term.seat_carry = False
+    return carried
+
+
 def remote_agent_argv(agent: str) -> tuple[str, ...] | None:
     """argv for ``agent`` on a connected computer (a POSIX server).
 
@@ -1016,6 +1053,19 @@ class Terminal:
     # the 2026-08-12 report: "I changed my subscriptions twice and it doesn't
     # change", with every split resurrecting the seat the user had just left.
     account_pinned: bool = False
+    # A seat switch that waits for this pane's turn to end (see
+    # `seat_switch`): moving a working agent would cut its step off, so the
+    # move is recorded here and carried out the moment the pane is idle.
+    pending_account: str | None = None
+    # Set by a seat move: the next start must look for the NEWEST copy of the
+    # conversation across every seat of this CLI (`seat_handoff`), because
+    # the seat it now runs on may hold none, or an older one from before an
+    # earlier switch.
+    seat_carry: bool = False
+    # The usage-limit stop (epoch seconds) a seat switch already answered. The
+    # carried transcript still ends in that stop; without this the new seat
+    # would read it as its own limit and switch again.
+    limit_handled_at: float = 0.0
     # What this pane was OPENED on: the model, the effort level and the
     # permission stance picked for it before it started
     # (:mod:`jarvis.workspace.launch_picks`). Empty means "whatever the CLI
@@ -3009,6 +3059,12 @@ class Registry:
             notifications.start(self)
         except Exception as exc:  # noqa: BLE001 - the bell is additive
             logger.warning("Agentic IDE: pane notifications not started: {}", exc)
+        try:
+            from . import seat_switch
+
+            seat_switch.start(self)
+        except Exception as exc:  # noqa: BLE001 - switching seats is additive
+            logger.warning("Agentic IDE: seat watch not started: {}", exc)
         await self._persist()
         return session
 
@@ -4182,6 +4238,11 @@ class Registry:
             await asyncio.to_thread(self._sync_hooked_session, term)
         home = account_home(term.agent, term.account)
         continuing = resume_argv(term.agent, term.resume)
+        if continuing is not None and not term.computer_id and home is not None:
+            # The conversation may live on another seat of this CLI: the pane
+            # was just moved, or a thread ran it there. Bring the newest copy
+            # here before asking whether there is one (`seat_handoff`).
+            await asyncio.to_thread(_carry_to_seat, term)
         # A remote pane's history lives on that computer; its handle was
         # carried there with it (``remote.push_conversation``), so trust it.
         if (
@@ -6020,6 +6081,84 @@ class Registry:
             )
         except SessionError as exc:
             logger.warning("Agentic IDE: {} did not start after its move: {}", term.name, exc)
+
+    async def move_to_seat(
+        self,
+        term: Terminal,
+        account_id: str,
+        *,
+        idle: Callable[[Terminal], Awaitable[bool]] | None = None,
+    ) -> str:
+        """Put one pane on another subscription seat of its CLI.
+
+        The same three steps a move to another computer takes: end the
+        process, re-point the pane, start it again on its own conversation.
+        The conversation follows the pane (``_carry_to_seat`` in the start
+        path copies it into the new seat), so the agent continues exactly
+        where it was; only the plan it spends changes.
+
+        Returns ``moved`` (a running agent was restarted on the new seat),
+        ``repointed`` (a stopped pane will start there next time),
+        ``deferred`` (``idle`` said the agent is busy: the move is recorded in
+        ``pending_account`` for when its turn ends) or ``unchanged``. Never
+        moves a pane on a connected computer: its CLI uses that server's own
+        login.
+
+        A working agent must not be moved — ending its process cuts the step
+        in flight off. ``idle`` is asked UNDER the pane's lock, right before
+        the process ends, so a prompt that arrived after the caller last
+        looked is never cut off; without it the caller vouches that the turn
+        is over (a pane stopped by a usage limit).
+        """
+        session = self._owner_of(term)
+        if session is None or term.computer_id or not has_accounts(term.agent):
+            return "unchanged"
+        async with term.attach_lock:
+            if term.account == account_id:
+                term.pending_account = None
+                return "unchanged"
+            live = term.status == "live" and bool(term.pty_id)
+            if live and idle is not None and not await idle(term):
+                term.pending_account = account_id
+                return "deferred"
+            if live:
+                if reports_session_starts(term.agent):
+                    await asyncio.to_thread(self._sync_hooked_session, term)
+                elif term.resume is None and term.started_at and can_resume(term.agent):
+                    # A CLI whose id is discovered afterwards may not have been
+                    # looked up yet; the move must not cost its conversation.
+                    taken = {
+                        other.resume.id for other in session.terminals if other.resume is not None
+                    }
+                    found = await asyncio.to_thread(
+                        discover,
+                        term.agent,
+                        term.cwd(session.folder),
+                        term.started_at,
+                        taken,
+                        account_home(term.agent, term.account),
+                    )
+                    if found is not None:
+                        term.resume = found
+                await self._stop_for_move(term, self._pool(term))
+            previous = term.account
+            term.account = account_id
+            # Following a switch is not a deliberate pick of this seat: the
+            # next switch moves the pane again, and its splits follow too.
+            term.account_pinned = False
+            term.pending_account = None
+            term.seat_carry = True
+            if live:
+                await self._restart_in_place(session, term)
+        logger.info(
+            "Agentic IDE: {} moved from seat {} to {} ({})",
+            term.name,
+            account_label(previous) or previous,
+            account_label(account_id) or account_id,
+            "its own conversation" if term.resumed else "a fresh conversation",
+        )
+        await self._persist()
+        return "moved" if live else "repointed"
 
     async def fork_terminal(
         self,

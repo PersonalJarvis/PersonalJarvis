@@ -6632,6 +6632,26 @@
         "weekly_scoped": "Límite semanal · {scope}",
         "monthly": "Límite mensual",
         "other": "Otro límite"
+      },
+      "switch": {
+        "use": "Cambiar",
+        "use_tip": "Usar {tool} con esta suscripción: los terminales nuevos empiezan aquí y cada agente en marcha se traslada y continúa su propia conversación.",
+        "switching": "Cambiando…",
+        "done": "Ahora funciona con {label}.",
+        "moved": "{n} agente(s) trasladado(s) con su conversación.",
+        "queued": "{n} agente(s) en marcha seguirán cuando termine su paso actual.",
+        "failed": "El cambio no se completó ({error}).",
+        "empty_until": "Agotada hasta {when}",
+        "auto": "Cambiar automáticamente",
+        "auto_tip": "Cuando una suscripción se queda corta o llega a su límite, los agentes en marcha pasan a la suscripción con más presupuesto y siguen trabajando.",
+        "threshold": "Cuándo cambiar",
+        "at_left": "con un {left} % restante",
+        "at_limit": "solo al llegar al límite",
+        "event_manual": "{time} · {tool} cambió a {to}",
+        "event_limit": "{time} · {tool}: {from} llegó a su límite, el trabajo siguió en {to}",
+        "event_threshold": "{time} · {tool}: {from} casi agotada, el trabajo pasó a {to}",
+        "event_no_seat": "{time} · {tool}: {from} está agotada y ninguna otra suscripción tiene presupuesto",
+        "event_refilled": "{time} · {tool}: {from} se ha recargado, el trabajo interrumpido continúa"
       }
     },
     "git": {

@@ -6632,6 +6632,26 @@
         "weekly_scoped": "Wochenlimit · {scope}",
         "monthly": "Monatslimit",
         "other": "Weiteres Limit"
+      },
+      "switch": {
+        "use": "Wechseln",
+        "use_tip": "{tool} auf diesem Abo betreiben: Neue Terminals starten hier, und jeder laufende Agent zieht um und setzt seine eigene Unterhaltung fort.",
+        "switching": "Wechselt…",
+        "done": "Läuft jetzt auf {label}.",
+        "moved": "{n} Agent(s) samt Unterhaltung umgezogen.",
+        "queued": "{n} arbeitende(r) Agent(s) folgen, sobald ihr aktueller Schritt endet.",
+        "failed": "Der Wechsel hat nicht geklappt ({error}).",
+        "empty_until": "Aufgebraucht bis {when}",
+        "auto": "Automatisch wechseln",
+        "auto_tip": "Wenn ein Abo knapp wird oder sein Limit erreicht, ziehen laufende Agents auf das Abo mit dem meisten Restbudget um und arbeiten weiter.",
+        "threshold": "Wann wechseln",
+        "at_left": "bei {left} % Rest",
+        "at_limit": "erst am Limit",
+        "event_manual": "{time} · {tool} auf {to} gewechselt",
+        "event_limit": "{time} · {tool}: {from} hat das Limit erreicht, weiter auf {to}",
+        "event_threshold": "{time} · {tool}: {from} fast aufgebraucht, umgezogen auf {to}",
+        "event_no_seat": "{time} · {tool}: {from} ist aufgebraucht, und kein anderes Abo hat noch Budget",
+        "event_refilled": "{time} · {tool}: {from} wieder aufgefüllt, unterbrochene Arbeit läuft weiter"
       }
     },
     "git": {

@@ -6632,6 +6632,26 @@
         "weekly_scoped": "Weekly limit · {scope}",
         "monthly": "Monthly limit",
         "other": "Other limit"
+      },
+      "switch": {
+        "use": "Switch",
+        "use_tip": "Run {tool} on this subscription: new terminals start here and every running agent moves over, continuing its own conversation.",
+        "switching": "Switching…",
+        "done": "Now running on {label}.",
+        "moved": "{n} agent(s) moved with their conversation.",
+        "queued": "{n} working agent(s) follow when their current step ends.",
+        "failed": "The switch did not go through ({error}).",
+        "empty_until": "Used up until {when}",
+        "auto": "Switch automatically",
+        "auto_tip": "When a subscription runs low or hits its limit, running agents move to the subscription with the most budget left and keep working.",
+        "threshold": "When to switch",
+        "at_left": "at {left}% left",
+        "at_limit": "only at the limit",
+        "event_manual": "{time} · {tool} switched to {to}",
+        "event_limit": "{time} · {tool}: {from} hit its limit, work continued on {to}",
+        "event_threshold": "{time} · {tool}: {from} nearly used up, work moved to {to}",
+        "event_no_seat": "{time} · {tool}: {from} is used up and no other subscription has budget left",
+        "event_refilled": "{time} · {tool}: {from} refilled, interrupted work continued"
       }
     },
     "git": {
