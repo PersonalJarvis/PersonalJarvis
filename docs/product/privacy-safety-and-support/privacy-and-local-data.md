@@ -1,7 +1,7 @@
 ---
 title: "Privacy and Local Data"
 slug: privacy-and-local-data
-summary: "Learn what Jarvis stores locally, what may be sent to connected services or the project's OAuth service, and how each optional feature changes that boundary."
+summary: "Learn what Jarvis stores locally, what may be sent to a connected service, and how each optional feature changes that boundary."
 section: "Privacy, safety, and support"
 section_order: 6
 order: 1
@@ -15,11 +15,9 @@ tags: [privacy, local-data, retention, deletion, providers, backups]
 related: [credentials-and-secrets, permissions, wiki-and-memory, jarvis-board]
 ---
 
-Jarvis keeps much of its working history on the computer or server where the
-app runs. It contacts another service only when a feature needs that service,
-such as a remote Brain, speech provider, connected tool, phone service, or a
-sharing destination you choose. Some plugin sign-in flows also use the project's
-OAuth token service, so a local installation does not keep every request local.
+Jarvis stores history on its host and contacts configured services for remote
+AI, speech, tools, calls, or sharing. A local installation also contacts the
+project's OAuth service for some plugin sign-ins.
 
 This page explains those boundaries and their current limits. It is a product
 map, not a promise about a provider's own storage, training, or deletion rules.
@@ -47,9 +45,8 @@ A normal request can cross several boundaries:
 
 ## Know What Is Stored
 
-Jarvis currently uses several local storage areas rather than one single data
-file. The important areas are the installation data folder, the app's user-data
-folder, the Wiki vault, the Jarvis-Agent output area, and any exports you save.
+Local stores include the installation data folder, app user-data folder, Wiki
+vault, Jarvis-Agent output area, and saved exports.
 
 | Area | What it can contain | Current retention or removal boundary |
 |---|---|---|
@@ -105,25 +102,15 @@ Removing the local Jarvis record does not send a deletion request to them.
 
 ### Understand the Project OAuth Service
 
-The shipped Google and Slack sign-in clients use `token.personaljarvis.ai`, a
-project-run OAuth token service hosted on Cloudflare. This service performs
-token exchange and refresh for those clients. The browser still opens the
-provider's sign-in page for you to sign in and approve access. Slack then
-routes its browser callback through the service before returning to the app.
+Shipped Google and Slack clients use the project-run `token.personaljarvis.ai`
+service on Cloudflare for token exchange and refresh. Slack's browser callback
+also passes through it. You sign in and approve access at the provider.
 
-The desktop sends authentication fields to the service, including an
-authorization code and PKCE verifier during token exchange, or a refresh token
-during renewal. It receives the provider's token response through the service.
-These token requests do not include chat histories or local files. Connected
-plugins can separately send tool arguments and content to their providers.
-
-The service runs outside the Jarvis host. This page does not establish its
-server-side logging, storage, or retention behavior, and it does not promise
-that authentication data is never received or processed by project
-infrastructure. Local data deletion does not establish that remote records
-have been removed. An explicitly configured alternative OAuth client can use
-the provider's token endpoint directly; other integrations use their own
-configured authentication paths.
+These requests exclude chat histories and local files; plugins separately send
+tool arguments and content. This page makes no server-side logging, storage, or
+retention guarantee. Local deletion does not prove remote erasure. Explicit
+alternative OAuth clients may contact provider endpoints directly; other
+integrations follow their configured authentication paths.
 
 An optional feedback API relay can send a report title, description, screenshot,
 app and runtime versions, operating-system description, and submission time to
@@ -214,24 +201,18 @@ it for sensitive material.
 
 ## How It Fits Together
 
-1. **Chats and Voice collect requests.** Remote Brain, speech, or vision
-   providers receive the context or media needed for their capabilities.
-2. **Tasks preserve future work.** They can call providers or connections
-   later. Deleting a task does not undo an action that already ran.
-3. **Profile, Contacts, and Wiki supply durable context.** Contact mirroring
+1. **Chats and Voice** collect requests for local or remote providers.
+2. **Tasks** schedule future work; deletion does not undo completed actions.
+3. **Profile, Contacts, and Wiki** supply durable context. Contact mirroring
    excludes structured phone, email, and address fields, but can copy names,
-   relationships, aliases, and notes into the Wiki.
-4. **Jarvis-Agents keep a separate mission trail.** Prompts, evidence, and
-   outputs live outside Chats, and exported copies have their own life.
-5. **Board derives summaries.** Share cards leave when you share them. The
-   background biography can still use the selected Brain provider.
-6. **Feedback is an external handoff.** Review text and screenshots before
-   posting them to the community destination.
+   relationships, aliases, and notes.
+4. **Jarvis-Agents** retain a separate mission trail and exported copies.
+5. **Board** derives summaries and optional share cards.
+6. **Feedback** opens an external handoff for you to review before posting.
 
-If a provider or connection is unavailable, the corresponding remote step can
-fail or use another compatible provider you configured. Local records and
-unrelated features remain available, but switching providers changes who
-receives the next request; it does not move or erase older provider-side data.
+Unavailable remote steps can fail or use another compatible configured
+provider. Switching changes who receives the next request; it does not move or
+erase older provider-side data.
 
 ## Check That It Works
 
