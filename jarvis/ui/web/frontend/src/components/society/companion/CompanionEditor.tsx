@@ -73,8 +73,8 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
     </div>
     <AccessoryPicker value={value} onChange={accessories => update({ accessories })} agentId={agentId} />
     </>}
-    {/* The colour is the agent's in chats and on the map, whatever it wears. */}
-    {!lead && <div><span className="mb-2 block text-sm font-medium">{t("society.companion.color")}</span>
+    {/* A shape is painted in the agent's colour; a pet brings its own colours. */}
+    {!lead && kind === "shape" && <div><span className="mb-2 block text-sm font-medium">{t("society.companion.color")}</span>
       <div className="flex flex-wrap items-center gap-2">{COMPANION_COLORS.map(color => <button key={color} type="button" aria-label={`${t("society.companion.color")} ${color}`} aria-pressed={value.color === color}
         onClick={() => update({ color })} className={`h-8 w-8 rounded-full border-2 ${value.color === color ? "border-foreground ring-2 ring-background" : "border-transparent"}`} style={{ background: color }} />)}
         <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="h-8 w-10 rounded border border-border bg-background" />

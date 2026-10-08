@@ -90,6 +90,8 @@ it("lets an agent wear a pet instead of its shape, and take the shape back", asy
   fireEvent.click(screen.getByRole("button", { name: "society.companion.look_pet" }));
   fireEvent.click(await screen.findByRole("button", { name: "cocoa" }));
   expect(screen.queryByRole("button", { name: "society.companion.shapes.cloud" })).toBeNull();
+  // A pet brings its own colours: no colour picker beside it.
+  expect(screen.queryByLabelText("society.companion.custom_color")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
   await waitFor(() => expect(saves()).toHaveLength(1));
   const worn = JSON.parse((saves()[0] as unknown as [string, RequestInit])[1].body as string);
