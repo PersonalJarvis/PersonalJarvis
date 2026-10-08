@@ -21,7 +21,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from jarvis.core.protocols import RiskTier
+from jarvis.core.protocols import RiskTier, Tool
 from jarvis.marketplace.catalog import PluginCatalog, PluginSpec
 from jarvis.marketplace.catalog_data import load_catalog
 from jarvis.marketplace.plugin_mcp import plugin_to_mcp_server_spec
@@ -139,6 +139,7 @@ class PluginToolRegistry:
         refresh_handler_builder: Callable[[str], Any | None] | None = None,
         retry_initial_s: float = 5.0,
         retry_max_s: float = 300.0,
+        custom_api_runtime: Any = None,
     ) -> None:
         self._catalog = catalog or load_catalog()
         self._store = token_store or TokenStore()
@@ -166,9 +167,20 @@ class PluginToolRegistry:
         # tokenless client or double-register a plugin's tools. asyncio.Lock is
         # not loop-bound at construction (py3.10+), so building it here is safe.
         self._lock = asyncio.Lock()
+        from jarvis.marketplace.custom_api_runtime import CustomApiRuntime
 
-    def active_tools(self) -> list[MCPToolAdapter]:
-        return list(self._tools.values())
+        self.custom_apis = custom_api_runtime or CustomApiRuntime()
+
+    def active_tools(self) -> list[Tool]:
+        return [*self._tools.values(), *self.custom_apis.tools.values()]
+
+    async def refresh_custom_apis(self) -> None:
+        if self._stopping:
+            return
+        await self.custom_apis.refresh()
+        await self._publish_brain_tools_changed(
+            "custom-apis", connected=bool(self.custom_apis.tools)
+        )
 
     def is_bootstrapped(self) -> bool:
         return self._bootstrapped
@@ -192,6 +204,10 @@ class PluginToolRegistry:
             if self._bootstrapped or self._stopping:
                 return
             plugins = list(self._catalog.plugins)
+        try:
+            await self.refresh_custom_apis()
+        except Exception:  # noqa: BLE001 - user definitions must not block shipped plugins
+            log.warning("Custom API tools could not be loaded", exc_info=True)
         # Per-plugin lock + per-plugin publish: an early plugin's tools reach
         # the live brain IMMEDIATELY, even while a later plugin is still
         # connecting or timing out. Holding one lock across the whole loop let
@@ -259,6 +275,7 @@ class PluginToolRegistry:
                     task.cancel()
                 await drained
         self._retry_tasks.clear()
+        await self.custom_apis.stop()
         async with self._lock:
             for pid in list(self._clients):
                 await self._disconnect_plugin(pid)

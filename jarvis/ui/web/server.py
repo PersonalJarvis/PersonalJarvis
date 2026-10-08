@@ -501,6 +501,7 @@ class WebServer:
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
+        from .custom_api_routes import router as custom_api_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
@@ -651,6 +652,7 @@ class WebServer:
         app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
+        app.include_router(custom_api_router)
         app.include_router(marketplace_publish_router)
         app.state.friend_registry = None
         app.state.channel_manager = None

@@ -224,6 +224,7 @@ dependencies = [
     "uvicorn>=0.32",
     "websockets>=13",
     "filelock>=3.16",
+    "jsonschema>=4.23",
     "packaging>=24.0",
     # Skill-System + MCP (Phase 1c). The loaders already parse frontmatter via
     # PyYAML, so the redundant python-frontmatter wrapper is not required.
