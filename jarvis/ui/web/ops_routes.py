@@ -416,3 +416,40 @@ async def set_morning_settings(request: Request, body: MorningSettingsBody) -> d
         "task_id": task_id,
         "notifications": await _notify_summary(request),
     }
+
+
+# ------------------------------------------------------------------ telegram
+
+
+@router.get("/notify/telegram")
+async def telegram_readiness(request: Request) -> dict[str, Any]:
+    """Whether live Telegram delivery COULD be switched on — read-only.
+
+    Reports only yes/no facts and reason codes: never the token, never the
+    chat id. Live delivery itself stays off (``live_enabled`` is always false
+    until the owner approves the activation step).
+    """
+    import asyncio
+
+    from jarvis.ops.telegram_transport import default_token, owner_chat
+
+    config = getattr(request.app.state, "config", None)
+    telegram = getattr(getattr(config, "integrations", None), "telegram", None)
+    token_stored = bool(await asyncio.to_thread(default_token))
+    owner = owner_chat(telegram)
+    steps: list[str] = []
+    if not token_stored:
+        steps.append("store_bot_token")
+    if owner.chat_id is None:
+        steps.append("pair_owner_chat")
+    return {
+        "live_enabled": False,
+        "token_stored": token_stored,
+        "channel_enabled": bool(getattr(telegram, "enabled", False)),
+        "owner_paired": owner.chat_id is not None,
+        "owner_reason": owner.reason,
+        "pairing_open": bool(getattr(telegram, "pair_on_first_private_message", False))
+        and owner.chat_id is None,
+        "ready_for_activation": token_stored and owner.chat_id is not None,
+        "next_steps": steps,
+    }

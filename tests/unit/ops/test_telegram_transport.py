@@ -249,14 +249,60 @@ def test_no_app_path_uses_the_live_transport_yet() -> None:
         if path.name == "telegram_transport.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if "TelegramBotTransport" not in text and "telegram_transport" not in text:
+        if "TelegramBotTransport" not in text:
             continue
         tree = ast.parse(text)
         for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
-                "telegram_transport"
+            if isinstance(node, ast.ImportFrom) and any(
+                alias.name in ("TelegramBotTransport", "*") for alias in node.names
             ):
                 users.append(str(path.relative_to(root)))
             elif isinstance(node, ast.Name) and node.id == "TelegramBotTransport":
                 users.append(str(path.relative_to(root)))
     assert users == []
+
+
+# --- Readiness endpoint: facts only, never the token or the chat ---------------------
+
+
+async def _readiness(monkeypatch: pytest.MonkeyPatch, token: str | None, telegram: Any) -> dict:
+    from fastapi import FastAPI
+
+    from jarvis.ui.web import ops_routes
+
+    monkeypatch.setattr("jarvis.ops.telegram_transport.default_token", lambda: token)
+    app = FastAPI()
+    app.include_router(ops_routes.router)
+    app.state.config = SimpleNamespace(integrations=SimpleNamespace(telegram=telegram))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        res = await client.get("/api/ops/notify/telegram")
+    assert res.status_code == 200
+    assert FAKE_TOKEN not in res.text and str(OWNER) not in res.text
+    return res.json()
+
+
+async def test_readiness_before_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    telegram = SimpleNamespace(
+        allowed_user_ids=[], chat_id="", enabled=False, pair_on_first_private_message=True
+    )
+    body = await _readiness(monkeypatch, None, telegram)
+    assert body == {
+        "live_enabled": False,
+        "token_stored": False,
+        "channel_enabled": False,
+        "owner_paired": False,
+        "owner_reason": "owner_not_paired",
+        "pairing_open": True,
+        "ready_for_activation": False,
+        "next_steps": ["store_bot_token", "pair_owner_chat"],
+    }
+
+
+async def test_readiness_after_setup_stays_not_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    telegram = SimpleNamespace(
+        allowed_user_ids=[OWNER], chat_id="", enabled=True, pair_on_first_private_message=False
+    )
+    body = await _readiness(monkeypatch, FAKE_TOKEN, telegram)
+    assert body["ready_for_activation"] is True and body["next_steps"] == []
+    assert body["live_enabled"] is False  # activation is a separate, approved step
