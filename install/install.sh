@@ -96,7 +96,7 @@ err()  { printf '%s  %s✗ %s%s\n' "$GUT" "$RED" "$1" "$RST"; }
 run_spin() {
     _spin_label="$1"; shift
     if [ ! -t 1 ]; then
-        note "$_spin_label…"
+        note "${_spin_label}…"
         "$@" </dev/null
         return $?
     fi
