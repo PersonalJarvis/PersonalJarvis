@@ -122,7 +122,7 @@ def test_environ_pins_or_clears_the_variable() -> None:
 
 
 def test_dev_icons_ship_in_both_icon_homes() -> None:
-    # Rendered by scripts/make_dev_icon.py; the taskbar/tray/dock resolve them.
+    # Rendered by scripts/make_app_icon.py; the taskbar/tray/dock resolve them.
     root = Path(inst.__file__).resolve().parents[2]
     for home in (root / "jarvis" / "assets" / "icons", root / "assets" / "icons"):
         assert (home / inst.DEV_ICON_FILE_NAME).is_file(), home

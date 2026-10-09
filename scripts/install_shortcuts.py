@@ -286,7 +286,7 @@ def install_dev_shortcut() -> int:
         return 2
     if not DEV_ICON_PATH.is_file():
         print(
-            f"Error: {DEV_ICON_PATH} is missing — run scripts/make_dev_icon.py first.",
+            f"Error: {DEV_ICON_PATH} is missing — run scripts/make_app_icon.py first.",
             file=sys.stderr,
         )
         return 2

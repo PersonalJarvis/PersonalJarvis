@@ -12,7 +12,7 @@ export function RuntimeMark({ runtime, label }: { runtime: AgentRuntime; label: 
   // The built-in runtime carries the Jarvis app logo, not the user's pet:
   // here it names a product beside Hermes and OpenClaw, not the companion.
   return runtime === "jarvis"
-    ? <img src="/jarvis-gigi-256.png" alt="" aria-hidden="true" width={16} height={16} className="size-4 shrink-0 rounded-[4px]" data-testid="runtime-mark-jarvis" />
+    ? <img src="/jarvis-gigi-256.png?v=hood" alt="" aria-hidden="true" width={16} height={16} className="size-4 shrink-0 rounded-[4px]" data-testid="runtime-mark-jarvis" />
     : <ProviderLogo providerId={runtime} label={label} size="sm" />;
 }
 

@@ -100,7 +100,7 @@ def _instance_icon(default_name: str) -> Path | None:
     """The icon file for the running *instance* (``jarvis.core.instance``).
 
     The dev app carries a DEV-badged copy (``jarvis-dev.ico`` / ``.png``,
-    rendered by ``scripts/make_dev_icon.py``) so its taskbar, dock and tray
+    rendered by ``scripts/make_app_icon.py``) so its taskbar, dock and tray
     entries are told apart from the default app's at a glance. A missing badged
     file falls back to the default icon rather than to no icon at all.
     """

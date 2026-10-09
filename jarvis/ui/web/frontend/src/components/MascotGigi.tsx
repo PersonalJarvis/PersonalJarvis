@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { JARVIS_LOGO_PATH } from "@/components/brand/jarvisLogoPath";
 import { cn } from "@/lib/utils";
 import { translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
@@ -59,7 +60,6 @@ export function MascotGigi({
   cue,
 }: Props) {
   const t = useT();
-  const uid = `gigi${useId().replace(/:/g, "")}`;
   const [action, setAction] = useState<MascotAction>("idle");
   const voiceState = useEventStore((s) => s.voiceState);
   const transcription = useEventStore((s) => s.transcription);
@@ -104,11 +104,8 @@ export function MascotGigi({
   }, [cueAction, cueKey]);
 
   const voiceClass = reactToVoice ? voiceClassFor(voiceState) : "";
-  // Below ~80px blur-halos turn into a muddy disc. The mark is then just
-  // ink: black body, white eyes and outline, no plate behind it.
+  // Small marks hold still: a floating 20px figure only reads as jitter.
   const compact = size < 80;
-  const glow = compact ? undefined : `url(#${uid}YGlow)`;
-  const soft = compact ? undefined : `url(#${uid}SoftGlow)`;
 
   return (
     <div
@@ -120,129 +117,9 @@ export function MascotGigi({
         aria-label={t("mascot_gigi.aria_label")}
         title="Gigi"
       >
+        {/* The Personal Jarvis mark: ink on paper, paper on charcoal. */}
         <svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" className="gigi-svg">
-          <defs>
-            <filter id={`${uid}YGlow`} x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="3" result="b" />
-              <feMerge>
-                <feMergeNode in="b" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id={`${uid}SoftGlow`} x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="6" result="b" />
-              <feMerge>
-                <feMergeNode in="b" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <radialGradient id={`${uid}Body`} cx="50%" cy="35%">
-              <stop offset="0%" stopColor="#232323" />
-              <stop offset="55%" stopColor="#0E0E0E" />
-              <stop offset="100%" stopColor="#050505" />
-            </radialGradient>
-            <linearGradient id={`${uid}YAccent`} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="hsl(var(--gigi-on-body))" />
-              <stop offset="100%" stopColor="hsl(var(--gigi-on-body))" stopOpacity="0.78" />
-            </linearGradient>
-          </defs>
-
-          {!compact && (
-            <path
-              className="gigi-halo"
-              d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
-              fill="hsl(var(--gigi-trim))"
-              opacity="0.18"
-              filter={soft}
-            />
-          )}
-
-          {/* Body */}
-          <path
-            className="gigi-body"
-            d="M 58 90 Q 58 36 128 36 Q 198 36 198 90 L 198 208 L 180 186 L 160 208 L 140 186 L 120 208 L 100 186 L 80 208 L 58 186 Z"
-            fill={`url(#${uid}Body)`}
-            stroke="hsl(var(--gigi-trim))"
-            strokeWidth={compact ? 3.2 : 2.2}
-            strokeOpacity="1"
-          />
-
-          {/* Scanlines */}
-          <g className="gigi-scanlines">
-            <rect x="58" y="132" width="140" height="2.4" fill="hsl(var(--gigi-on-body))" opacity="0.55" />
-            <rect x="58" y="160" width="140" height="1.4" fill="hsl(var(--gigi-on-body))" opacity="0.3" />
-          </g>
-
-          {/* Glitch pixels right */}
-          <g className="gigi-glitch-right" fill="hsl(var(--gigi-trim))" filter={glow}>
-            <rect x="200" y="104" width="6" height="6" />
-            <rect x="208" y="128" width="4" height="4" />
-            <rect x="202" y="146" width="9" height="3" />
-            <rect x="197" y="168" width="3" height="5" />
-            <rect x="206" y="176" width="5" height="3" />
-          </g>
-          {/* Glitch pixels left */}
-          <g className="gigi-glitch-left" fill="hsl(var(--gigi-trim))" opacity="0.7" filter={glow}>
-            <rect x="44" y="96" width="6" height="4" />
-            <rect x="48" y="124" width="4" height="6" />
-            <rect x="40" y="148" width="8" height="3" />
-            <rect x="50" y="170" width="3" height="5" />
-          </g>
-
-          {/* Chromatic displacement slices */}
-          <rect x="64" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
-          <rect x="170" y="118" width="18" height="10" fill="hsl(var(--gigi-on-body))" opacity="0.32" />
-
-          {!compact && (
-            <>
-              <ellipse cx="102" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={soft} />
-              <ellipse cx="154" cy="108" rx="13" ry="17" fill="hsl(var(--gigi-on-body))" opacity="0.35" filter={soft} />
-            </>
-          )}
-
-          {/* Eye sockets — auto-blinkend */}
-          <g className="gigi-eyes">
-            <ellipse cx="102" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={glow} />
-            <ellipse cx="154" cy="108" rx="10" ry="14" fill={`url(#${uid}YAccent)`} filter={glow} />
-          </g>
-
-          {/* Pupils — driften sanft */}
-          <g className="gigi-pupils">
-            <ellipse className="gigi-pupil gigi-pupil-left" cx="104" cy="112" rx="4" ry="6" fill="#050505" />
-            <ellipse className="gigi-pupil gigi-pupil-right" cx="156" cy="112" rx="4" ry="6" fill="#050505" />
-          </g>
-
-          {/* Eye sparkle */}
-          <g className="gigi-sparkle">
-            <circle cx="106" cy="105" r="2" fill="hsl(var(--gigi-on-body))" />
-            <circle cx="158" cy="105" r="2" fill="hsl(var(--gigi-on-body))" />
-          </g>
-
-          {/* Mouth — subtile Atmung */}
-          <g className="gigi-mouth">
-            <ellipse cx="128" cy="146" rx="7" ry="10" fill={`url(#${uid}YAccent)`} filter={glow} />
-            <ellipse cx="128" cy="146" rx="3" ry="5" fill="#050505" />
-          </g>
-
-          {/* Left arm — waves (pivot point at the shoulder via fill-box) */}
-          <path
-            className="gigi-arm gigi-arm-left"
-            d="M 58 140 Q 40 148 42 162"
-            stroke="hsl(var(--gigi-trim))"
-            strokeWidth="5.5"
-            fill="none"
-            strokeLinecap="round"
-            filter={glow}
-          />
-          <path
-            className="gigi-arm gigi-arm-right"
-            d="M 198 140 Q 216 148 214 162"
-            stroke="hsl(var(--gigi-trim))"
-            strokeWidth="5.5"
-            fill="none"
-            strokeLinecap="round"
-            filter={glow}
-          />
+          <path className="gigi-body" d={JARVIS_LOGO_PATH} fillRule="evenodd" fill="hsl(var(--gigi-trim))" />
         </svg>
       </div>
 

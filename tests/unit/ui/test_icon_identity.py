@@ -132,8 +132,8 @@ def test_bundled_ico_carries_taskbar_sizes() -> None:
     assert (256, 256) in sizes
 
 
-def test_bundled_app_icon_png_is_dark_rounded_tile() -> None:
-    """Desktop PNG keeps the dark rounded tile and transparent corners."""
+def test_bundled_app_icon_png_is_paper_rounded_tile() -> None:
+    """Desktop PNG is the white rounded tile with transparent corners."""
     from PIL import Image
 
     from jarvis.assets import bundled_app_icon_png
@@ -144,8 +144,8 @@ def test_bundled_app_icon_png_is_dark_rounded_tile() -> None:
     width, height = image.size
     assert width == height
     assert image.getpixel((0, 0))[3] < 10
-    tile = image.getpixel((width // 2, 2))
-    assert max(tile[:3]) < 80 and tile[3] > 240
+    tile = image.getpixel((width // 2, 4))
+    assert min(tile[:3]) > 200 and tile[3] > 240
 
 
 def test_bundled_app_icon_png_exists_for_linux() -> None:
