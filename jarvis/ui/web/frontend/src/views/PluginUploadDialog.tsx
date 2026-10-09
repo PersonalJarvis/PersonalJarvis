@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Loader2, Plug, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { UploadDropzone, useUploadInputs } from "@/components/UploadDropzone";
-import { useT } from "@/i18n";
+import { useLocaleChunk, useT } from "@/i18n";
 import { collectDroppedFiles, formatBytes, type PickedFile } from "@/lib/filePicking";
 import {
   inspectPluginUpload,
@@ -24,17 +24,24 @@ import {
  * The one thing it must not do is imply a review that never happened. An
  * uploaded plugin carries no publisher and no source URL, because there is
  * nothing here to vouch for either — and the dialog says so before the yes.
+ *
+ * With ``tabs`` it is the folder half of the shared "Add a plugin" dialog:
+ * same title, same size, the connector/folder switch under the title.
  */
 export function PluginUploadDialog({
   open,
   onClose,
   onInstalled,
+  tabs,
 }: {
   open: boolean;
   onClose: () => void;
   onInstalled?: (id: string) => void;
+  /** The connector/folder switch, rendered under the title. */
+  tabs?: ReactNode;
 }) {
   const t = useT();
+  useLocaleChunk("marketplace");
   const qc = useQueryClient();
   const [picked, setPicked] = useState<PickedFile[]>([]);
   const [report, setReport] = useState<PluginUploadReport | null>(null);
@@ -119,25 +126,43 @@ export function PluginUploadDialog({
         void collectDroppedFiles(event.dataTransfer).then(inspect);
       }}
     >
-      <div className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-lg border border-border bg-card">
-        <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
-          <div>
-            <h3 className="flex items-center gap-2 text-base font-semibold">
-              <Upload className="h-4 w-4 text-primary" />
-              {t("plugin_upload.title")}
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("plugin_upload.subtitle")}
-            </p>
-          </div>
-          <Button size="sm" variant="ghost" onClick={onClose} aria-label={t("common.cancel")}>
-            <X className="h-4 w-4" />
-          </Button>
-        </header>
+      <div
+        className="flex max-h-full w-[640px] max-w-full flex-col overflow-hidden rounded-lg border border-border bg-card shadow-float"
+        data-testid="plugin-upload-dialog"
+      >
+        {tabs ? (
+          <header className="px-6 pt-5">
+            <div className="flex items-start justify-between gap-4">
+              <h3 className="text-lg font-semibold tracking-tight text-foreground-strong">
+                {t("custom_connector.dialog_title")}
+              </h3>
+              <Button size="sm" variant="ghost" onClick={onClose} aria-label={t("common.cancel")}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="mt-3">{tabs}</div>
+          </header>
+        ) : (
+          <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-semibold">
+                <Upload className="h-4 w-4 text-primary" />
+                {t("plugin_upload.title")}
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {t("plugin_upload.subtitle")}
+              </p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={onClose} aria-label={t("common.cancel")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </header>
+        )}
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-4 px-6 py-5">
             {inputs}
+            {tabs && <p className="text-sm text-muted-foreground">{t("plugin_upload.subtitle")}</p>}
 
             {picked.length === 0 ? (
               <UploadDropzone

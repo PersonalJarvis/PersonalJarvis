@@ -34,6 +34,11 @@ export const SECTION_PARAM = "view";
  */
 export function hrefWithSection(href: string, section: string): string | null {
   const url = new URL(href);
+  if (url.searchParams.get("solo") === "1" && !url.searchParams.has("window")) {
+    url.searchParams.set("window", url.searchParams.get(SECTION_PARAM) || section);
+    url.searchParams.set(SECTION_PARAM, section);
+    return `${url.pathname}${url.search}${url.hash}`;
+  }
   if (url.searchParams.get(SECTION_PARAM) === section) return null;
   url.searchParams.set(SECTION_PARAM, section);
   return `${url.pathname}${url.search}${url.hash}`;

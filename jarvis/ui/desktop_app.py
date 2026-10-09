@@ -33,6 +33,7 @@ from filelock import FileLock, Timeout
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
 from jarvis.core.process_utils import drop_inherited_electron_node_mode, ensure_standard_streams
+from jarvis.ui.section_windows import SECTION_WINDOW_TITLES, WINDOW_GROUPS, section_window
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -98,9 +99,8 @@ TEXT_SELECTABLE: dict[str, Any] = {"text_select": True}
 # names, NOT the wake-word brand — the product/window title is a compatibility
 # contract (see ``jarvis/core/branding.py``), only agent names are dynamic.
 DETACHABLE_VIEWS: dict[str, str] = {
-    "agentic-ide": "Agents",
-    "agentic-ide-classic": "Agents",
-    "chat-workspace": "Agents",
+    **SECTION_WINDOW_TITLES,
+    **{tab: SECTION_WINDOW_TITLES[owner] for owner, tabs in WINDOW_GROUPS.items() for tab in tabs},
     "chats": "Voice",
     # The Voice hub family (one VoiceHubView with internal tabs). Each id keeps
     # its own label so two detached voice windows can never share a title —
@@ -1958,6 +1958,7 @@ class DesktopApp:
         # pywebview event hooks, the tray bridge) — never from the asyncio
         # loop, and never from the GUI MainThread.
         self._detached_windows: dict[str, Any] = {}
+        self._detached_open_lock = threading.Lock()
         self._shutdown_done = False
         self._tray: Any = None
         self._user_requested_quit = False
@@ -5393,15 +5394,13 @@ class DesktopApp:
     def window_command(self, action: str, view: str | None) -> dict[str, Any]:
         """Minimize, maximize or close one live window. Worker-thread safe.
 
-        A detached view targets that window. Anything else targets the main
+        A detached view targets only that window. An omitted view targets the main
         window. Maximize toggles, using the real zoomed state on Windows when
         the frame hook can read it.
         """
         from jarvis.ui.window_command import run_window_command
 
-        window = self._detached_windows.get(view) if view else None
-        if window is None:
-            window = self._window
+        window = self._detached_windows.get(section_window(view)) if view else self._window
         maximized: bool | None = None
         if sys.platform == "win32" and window is not None:
             try:
@@ -5419,14 +5418,12 @@ class DesktopApp:
     def set_window_zoom(self, factor: float, view: str | None) -> dict[str, Any]:
         """Zoom one live window's page. Worker-thread safe.
 
-        A detached view targets that window. Anything else targets the main
+        A detached view targets only that window. An omitted view targets the main
         window. See ``jarvis.ui.window_zoom`` for the per-engine details.
         """
         from jarvis.ui.window_zoom import set_window_zoom
 
-        window = self._detached_windows.get(view) if view else None
-        if window is None:
-            window = self._window
+        window = self._detached_windows.get(section_window(view)) if view else self._window
         return set_window_zoom(window, factor)
 
     def _arm_window_frame(self, window: Any) -> None:
@@ -5501,8 +5498,19 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
+        # Serialize check/create/register: two tabs must not open duplicate owners.
+        lock = getattr(self, "_detached_open_lock", None)
+        if lock is None:  # Lightweight test/legacy hosts that bypass __init__.
+            lock = self._detached_open_lock = threading.Lock()
+        with lock:
+            return self._open_detached_window(view, query)
+
+    def _open_detached_window(self, view: str, query: str) -> dict[str, Any]:
+        requested = view
+        view = section_window(view)
         suffix = f"&{query}" if query else ""
-        fallback = f"/?view={view}&solo=1{suffix}"
+        identity = f"&window={view}" if requested != view else ""
+        fallback = f"/?view={requested}&solo=1{identity}{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
@@ -5662,6 +5670,7 @@ class DesktopApp:
         window's ``closed`` hook, so this path and the user's own X on the
         window behave identically.
         """
+        view = section_window(view)
         window = self._detached_windows.get(view)
         if window is None:
             return {"ok": False, "reason": "not_detached"}

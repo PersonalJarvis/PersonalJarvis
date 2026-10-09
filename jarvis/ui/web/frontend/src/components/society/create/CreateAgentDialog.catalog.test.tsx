@@ -49,6 +49,37 @@ function openDialog() {
   act(() => { void useCreateAgentDialog.getState().request().catch(() => undefined); });
 }
 
+test.each(["jarvis", "hermes", "openclaw"])("%s creates Ollama agents from the tool-capable local catalog", async (runtime) => {
+  const row: AgentChatProvider = { ...fallback, id: "ollama", label: "Ollama", family: "ollama",
+    runner: "brain", cli_installed: null, keyless: true, models_source: "live", hidden_models: [],
+    default_model: "text-only", curated_models: [] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.includes("/catalog")) return new Response(JSON.stringify(catalog(row)));
+    if (url.includes("/agent-runtimes")) return new Response(JSON.stringify({ runtimes: [], supported_providers: ["ollama"] }));
+    if (url.includes("/status")) return new Response(JSON.stringify({ mapping: [{ jarvis: "ollama", key_set: false }] }));
+    if (url === "/api/providers/ollama/models") return new Response(JSON.stringify({ models: [
+      { id: "text-only", label: "Text only", tools: false },
+      { id: "qwen:4b", label: "Local tools", tools: true },
+      { id: "llamacpp:96f38c742e", label: "Imported tools", tools: true },
+    ] }));
+    if (url.endsWith("/providers")) return new Response(JSON.stringify({ providers: [{ id: "ollama",
+      label: "Ollama", family: "ollama", runner: "brain", subscription: false, keyless: true, accounts: [] }] }));
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  openDialog();
+  await waitFor(() => expect(screen.getByTestId("create-agent-model").textContent).toContain("Local tools"));
+  fireEvent.click(screen.getByTestId("create-agent-model"));
+  expect(screen.queryByRole("option", { name: "Text only" })).toBeNull();
+  expect(screen.getByRole("option", { name: "Imported tools" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("option", { name: "Imported tools" }));
+  if (runtime !== "jarvis") fireEvent.click(screen.getByRole("radio", { name: runtime === "hermes" ? "Hermes" : "OpenClaw" }));
+  expect(screen.getByTestId("create-agent-model").textContent).toContain("Imported tools");
+  fireEvent.click(screen.getByTestId("create-agent-submit"));
+  await waitFor(() => expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({
+    runtime, provider: "ollama", model: "llamacpp:96f38c742e",
+  })));
+});
+
 test("opening replaces a fresh cached GPT-5.2 fallback with the enabled live subscription models", async () => {
   writeModelMenuSnapshot({ version: 1, savedAt: Date.now(), catalog: catalog(fallback), connections, providers, live: {} });
   let release!: () => void;

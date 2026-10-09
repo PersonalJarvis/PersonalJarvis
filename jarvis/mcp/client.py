@@ -189,10 +189,19 @@ class MCPClient:
             elif self.spec.transport == "sse":
                 from mcp.client.sse import sse_client
 
-                command, args, _env = self._resolve_install_command()
-                # install_command for SSE transport = [url] (by convention)
-                url = args[0] if args else command
-                read, write = await stack.enter_async_context(sse_client(url))
+                headers: dict[str, str] = {}
+                if self.spec.url:
+                    # Marketplace connectors name the stream and its auth
+                    # header the same way an http server does.
+                    url = self.spec.url
+                    headers = self._resolve_headers()
+                else:
+                    command, args, _env = self._resolve_install_command()
+                    # install_command for SSE transport = [url] (by convention)
+                    url = args[0] if args else command
+                read, write = await stack.enter_async_context(
+                    sse_client(url, headers=headers or None)
+                )
             elif self.spec.transport == "http":
                 from mcp.client.streamable_http import streamablehttp_client
 

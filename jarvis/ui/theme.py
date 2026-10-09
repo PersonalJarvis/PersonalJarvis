@@ -56,6 +56,20 @@ HOLDING_PAGE_MUTED: dict[str, str] = {
 
 _DEFAULT_THEME: Theme = "dark"
 
+# Native popup tokens, matching index.css and docs/BRAND.md.
+POPOVER_COLORS = {
+    "dark": {
+        "background": "#1c1c1c", "hover": "#262626", "border": "#383838",
+        "foreground": "#fafafa", "muted": "#a1a1a1", "faint": "#7a7a7a",
+        "accent": "#3d8bff",
+    },
+    "light": {
+        "background": "#ffffff", "hover": "#f5f5f5", "border": "#dbdbdb",
+        "foreground": "#171717", "muted": "#545454", "faint": "#6b6b6b",
+        "accent": "#096cdc",
+    },
+}
+
 
 def detect_os_theme() -> Theme | None:
     """The desktop's own light/dark preference, or ``None`` if unknowable.

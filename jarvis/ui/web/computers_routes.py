@@ -6,6 +6,11 @@
     GET    /api/computers/identity                Jarvis's public key + fingerprint
     GET    /api/computers/providers               provider catalog (SSH guides, API)
     POST   /api/computers/test                    try a login without saving
+    GET    /api/computers/ssh-hosts               servers in this PC's ~/.ssh/config
+    GET    /api/computers/tailscale               tailnet peers + address suggestions
+    GET    /api/computers/placement               "Automatic" switch + this PC's share
+    PUT    /api/computers/placement               change them
+    POST   /api/computers/placement/pick          the machine a new workspace goes to
     PUT    /api/computers/{id}/credentials        switch the login method
     GET    /api/computers/cloud                   hosting providers + token state
     PUT    /api/computers/cloud/{provider}/token  save an API token (keyring)
@@ -15,7 +20,12 @@
     GET    /api/computers/local                   Multipass state + instances
     POST   /api/computers/local                   create a local VM (background)
     GET    /api/computers/{id}                    one computer
-    PATCH  /api/computers/{id}                    rename / edit address
+    PATCH  /api/computers/{id}                    rename / edit address / switch on-off
+    POST   /api/computers/{id}/routes             add another address (same identity)
+    PUT    /api/computers/{id}/routes/order       set the preferred order of addresses
+    DELETE /api/computers/{id}/routes/{route}     forget one address
+    POST   /api/computers/{id}/github             share this PC's GitHub login there
+    DELETE /api/computers/{id}/github             remove it again
     DELETE /api/computers/{id}                    remove (optionally destroy the VM)
     POST   /api/computers/{id}/check              connect and read vitals
     POST   /api/computers/{id}/run                run one shell command
@@ -42,7 +52,15 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.computers import cloud, identity, local_vm, providers, toolbox
+from jarvis.computers import (
+    cloud,
+    github_access,
+    identity,
+    local_vm,
+    placement,
+    providers,
+    toolbox,
+)
 from jarvis.computers.models import Computer
 from jarvis.computers.service import ComputerError, get_service
 
@@ -81,6 +99,8 @@ class AddServerBody(BaseModel):
     private_key: str | None = Field(default=None, max_length=32_000)
     passphrase: str | None = Field(default=None, max_length=1024)
     provider: str = Field(default="generic", max_length=40)
+    #: A ``Host`` alias from this PC's ``~/.ssh/config`` (``GET /ssh-hosts``).
+    ssh_alias: str | None = Field(default=None, max_length=253)
 
 
 class TestBody(BaseModel):
@@ -94,6 +114,7 @@ class TestBody(BaseModel):
     private_key: str | None = Field(default=None, max_length=32_000)
     passphrase: str | None = Field(default=None, max_length=1024)
     provider: str = Field(default="generic", max_length=40)
+    ssh_alias: str | None = Field(default=None, max_length=253)
 
 
 class CredentialsBody(BaseModel):
@@ -109,6 +130,24 @@ class UpdateBody(BaseModel):
     host: str | None = Field(default=None, max_length=253)
     port: int | None = Field(default=None, ge=1, le=65535)
     username: str | None = Field(default=None, max_length=64)
+    enabled: bool | None = None
+    placement_weight: int | None = Field(default=None, ge=0, le=3)
+
+
+class RouteBody(BaseModel):
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(default=22, ge=1, le=65535)
+    label: str | None = Field(default=None, max_length=40)
+    source: Literal["manual", "tailscale", "ssh_config"] = "manual"
+
+
+class RouteOrderBody(BaseModel):
+    route_ids: list[str] = Field(min_length=1, max_length=8)
+
+
+class PlacementBody(BaseModel):
+    enabled: bool | None = None
+    local_weight: int | None = Field(default=None, ge=0, le=3)
 
 
 class RunBody(BaseModel):
@@ -178,6 +217,7 @@ async def add_computer(body: AddServerBody) -> dict[str, Any]:
             private_key=body.private_key,
             passphrase=body.passphrase,
             provider=body.provider,
+            ssh_alias=body.ssh_alias,
         )
     except ComputerError as exc:
         raise _fail(exc) from exc
@@ -195,7 +235,49 @@ async def test_computer(body: TestBody) -> dict[str, Any]:
         password=body.password,
         private_key=body.private_key,
         passphrase=body.passphrase,
+        ssh_alias=body.ssh_alias,
     )
+
+
+@router.get("/ssh-hosts")
+def list_ssh_hosts() -> dict[str, Any]:
+    """Servers this PC's own ``ssh`` knows (``~/.ssh/config``, ``known_hosts``)."""
+    return {"hosts": get_service().ssh_config_hosts()}
+
+
+@router.get("/tailscale")
+async def tailscale_status() -> dict[str, Any]:
+    """This PC's tailnet and the Tailscale addresses each computer could add."""
+    return await get_service().tailscale_status()
+
+
+def _placement_view() -> dict[str, Any]:
+    from dataclasses import asdict
+
+    return asdict(placement.load())
+
+
+@router.get("/placement")
+def get_placement() -> dict[str, Any]:
+    return _placement_view()
+
+
+@router.put("/placement")
+def put_placement(body: PlacementBody) -> dict[str, Any]:
+    current = placement.load()
+    placement.save(
+        placement.PlacementSettings(
+            enabled=current.enabled if body.enabled is None else body.enabled,
+            local_weight=current.local_weight if body.local_weight is None else body.local_weight,
+        )
+    )
+    return _placement_view()
+
+
+@router.post("/placement/pick")
+def pick_placement() -> dict[str, Any]:
+    """Where "Automatic" sends the next new workspace (``null`` = this PC)."""
+    return {"computer_id": placement.pick(placement.load(), get_service().all())}
 
 
 @router.get("/providers")
@@ -340,6 +422,49 @@ def get_computer(computer_id: str) -> dict[str, Any]:
 def update_computer(computer_id: str, body: UpdateBody) -> dict[str, Any]:
     try:
         return _row(get_service().update(computer_id, **body.model_dump(exclude_none=True)))
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/{computer_id}/routes")
+async def add_route(computer_id: str, body: RouteBody) -> dict[str, Any]:
+    try:
+        computer = await get_service().add_route(
+            computer_id, host=body.host, port=body.port, label=body.label, source=body.source
+        )
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+    return _row(computer)
+
+
+@router.put("/{computer_id}/routes/order")
+def order_routes(computer_id: str, body: RouteOrderBody) -> dict[str, Any]:
+    try:
+        return _row(get_service().order_routes(computer_id, body.route_ids))
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+
+
+@router.delete("/{computer_id}/routes/{route_id}")
+def remove_route(computer_id: str, route_id: str) -> dict[str, Any]:
+    try:
+        return _row(get_service().remove_route(computer_id, route_id))
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/{computer_id}/github")
+async def share_github(computer_id: str) -> dict[str, Any]:
+    try:
+        return _row(await github_access.share(computer_id))
+    except ComputerError as exc:
+        raise _fail(exc) from exc
+
+
+@router.delete("/{computer_id}/github")
+async def unshare_github(computer_id: str) -> dict[str, Any]:
+    try:
+        return _row(await github_access.unshare(computer_id))
     except ComputerError as exc:
         raise _fail(exc) from exc
 

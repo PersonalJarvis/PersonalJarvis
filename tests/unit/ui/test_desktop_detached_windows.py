@@ -29,6 +29,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.ui.desktop_app import DETACHABLE_VIEWS, WINDOW_TITLE, DesktopApp
+from jarvis.ui.section_windows import WINDOW_GROUPS, section_window
 from jarvis.ui.web.desktop_routes import router as desktop_router
 
 
@@ -39,7 +40,9 @@ class _FakeWindow:
         self.destroyed = False
         self.shown = 0
         self.evaluated: list[str] = []
-        self.events = SimpleNamespace(loaded=_List(), closed=_List(), closing=_List())
+        self.events = SimpleNamespace(
+            loaded=_List(), closed=_List(), closing=_List(), shown=_List(),
+        )
 
     def show(self) -> None:
         self.shown += 1
@@ -131,7 +134,7 @@ def test_open_detached_creates_titled_solo_window(monkeypatch, platform) -> None
     assert window.frameless is (platform != "darwin")
     assert window.resizable is True
     # Distinct title: FindWindowW-exact focus and the icon setter key on it.
-    assert window.title == f"{WINDOW_TITLE} — Agents"
+    assert window.title == f"{WINDOW_TITLE} — Agentic IDE"
     assert window.title != WINDOW_TITLE
     assert "?view=agentic-ide&solo=1" in window.url
     assert app._detached_windows == {"agentic-ide": window}
@@ -162,10 +165,60 @@ def test_open_detached_is_idempotent_and_focuses(monkeypatch) -> None:
 
 def test_open_detached_rejects_unknown_view(monkeypatch) -> None:
     app = _app(monkeypatch)
-    assert app.open_detached_window("settings") == {
+    assert app.open_detached_window("nonexistent") == {
         "ok": False,
         "reason": "unknown_view",
     }
+
+
+@pytest.mark.parametrize("owner,tabs", WINDOW_GROUPS.items())
+def test_tabs_share_one_window_and_keep_the_requested_initial_page(
+    monkeypatch, owner, tabs,
+) -> None:
+    import sys
+
+    app = _app(monkeypatch)
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+    initial = tabs[-1]
+    app.open_detached_window(initial)
+    assert f"?view={initial}&solo=1&window={owner}" in created[0].url
+    for tab in tabs:
+        assert app.open_detached_window(tab)["already_open"] is True
+    assert len(created) == 1
+    assert app.detached_views_snapshot() == [owner]
+    assert app.close_detached_window(initial)["ok"] is True
+    assert created[0].destroyed is True
+
+
+@pytest.mark.parametrize("view", ["agents", "docs", "memory", "board", "sessions", "marketplace"])
+def test_primary_sections_have_independent_windows(monkeypatch, view) -> None:
+    import sys
+
+    app = _app(monkeypatch)
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+    app.open_detached_window("profile")
+    app.open_detached_window("agentic-ide")
+    assert app.open_detached_window(view)["ok"] is True
+    assert len(created) == 3
+    assert len({window.title for window in created}) == 3
+
+
+def test_missing_detached_window_never_closes_main(monkeypatch) -> None:
+    app = _app(monkeypatch)
+    result = app.window_command("close", "settings")
+    assert result["ok"] is False
+    assert app._window.destroyed is False
+
+
+def test_window_command_targets_the_settings_owner(monkeypatch) -> None:
+    app = _app(monkeypatch)
+    settings = _FakeWindow()
+    app._detached_windows["settings"] = settings
+    assert app.window_command("close", "profile")["ok"] is True
+    assert settings.destroyed is True
+    assert app._window.destroyed is False
 
 
 def test_open_detached_reports_backend_failure_with_fallback(monkeypatch) -> None:
@@ -487,7 +540,6 @@ def test_detachable_views_have_distinct_titles_per_label() -> None:
     # shares one label deliberately: only one coding view can be live at once
     # (single-IDE rule), so their titles can never coexist.
     app = DesktopApp.__new__(DesktopApp)
-    coding = {"agentic-ide", "agentic-ide-classic", "chat-workspace"}
     seen: dict[str, str] = {}
     for view in DETACHABLE_VIEWS:
         title = app._detached_title(view)
@@ -495,7 +547,7 @@ def test_detachable_views_have_distinct_titles_per_label() -> None:
         assert title.startswith(WINDOW_TITLE)
         clash = seen.get(title)
         if clash is not None:
-            assert view in coding and clash in coding, (
+            assert section_window(view) == section_window(clash), (
                 f"'{view}' and '{clash}' share the title '{title}' but can be "
                 "detached simultaneously"
             )

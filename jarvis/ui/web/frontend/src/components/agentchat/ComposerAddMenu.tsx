@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 import { createPortal } from "react-dom";
 import { Check, FolderOpen, Loader2, Paperclip, Plus, Search, X } from "lucide-react";
 import { useT } from "@/i18n";
+import { requestPluginFocus } from "@/lib/customConnector";
 import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
@@ -334,6 +335,8 @@ export function ComposerAddMenu({
                         onClick={() => {
                           if (!row.available) {
                             close();
+                            // Land on this plugin's own page, not the top of the list.
+                            if (row.category === "plugins" && row.brand) requestPluginFocus(row.brand);
                             onConnect(row);
                             return;
                           }

@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
@@ -26,7 +27,7 @@ from jarvis.marketplace.token_store import Tokens, TokenStore
 
 log = logging.getLogger(__name__)
 _ID = re.compile(r"^[a-f0-9]{32}$")
-_PARAM = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_PARAM = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_.\[\]-]*)\}")
 
 
 def validate_path(value: str) -> str:
@@ -47,8 +48,8 @@ def validate_path(value: str) -> str:
 
 class ApiAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mode: Literal["none", "bearer", "header"] = "bearer"
-    header_name: str = Field(default="X-API-Key", pattern=r"^[A-Za-z][A-Za-z0-9-]{0,63}$")
+    mode: Literal["none", "bearer", "header", "query"] = "bearer"
+    header_name: str = Field(default="X-API-Key", pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 
     @model_validator(mode="after")
     def allowed_header(self) -> ApiAuth:
@@ -68,21 +69,26 @@ class ApiAuth(BaseModel):
 
 class ApiParameter(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(pattern=r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
-    location: Literal["path", "query"] = "query"
-    type: Literal["string", "integer", "number", "boolean"] = "string"
+    name: str = Field(pattern=r"^[a-zA-Z_][a-zA-Z0-9_.\[\]-]{0,127}$")
+    location: Literal["path", "query", "header"] = "query"
+    type: Literal["string", "integer", "number", "boolean", "array", "object"] = "string"
     required: bool = False
     description: str = Field(default="", max_length=500)
+    value_schema: dict[str, Any] | None = None
 
 
 class ApiAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,23}$")
     description: str = Field(min_length=1, max_length=1500)
-    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "GET"
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] = "GET"
     path: str = Field(max_length=2000)
     parameters: list[ApiParameter] = Field(default_factory=list, max_length=64)
     body_schema: dict[str, Any] | None = None
+    body_required: bool = True
+    body_encoding: Literal["json", "multipart", "form", "binary"] = "json"
+    file_fields: list[str] = Field(default_factory=list)
+    content_type: str = "application/json"
     risk_tier: Literal["monitor", "ask", "block"] = "monitor"
     response: Literal["auto", "json", "text", "file"] = "auto"
 
@@ -97,7 +103,7 @@ class ApiAction(BaseModel):
         from jsonschema.exceptions import SchemaError
 
         raw = json.dumps(value)
-        if len(raw) > 32_000:
+        if len(raw) > 128_000:
             raise ValueError("Request schema is too large")
 
         # Reference resolution must never make hidden network requests.
@@ -130,12 +136,14 @@ class ApiAction(BaseModel):
             raise ValueError("Every {path_parameter} must have a matching path parameter")
         if self.method == "GET" and self.body_schema is not None:
             raise ValueError("GET actions use path and query parameters, not a body")
+        for parameter in self.parameters:
+            self.valid_schema(parameter.value_schema)
         return self
 
     def input_schema(self) -> dict[str, Any]:
         properties: dict[str, Any] = {}
         required = []
-        for location in ("path", "query"):
+        for location in ("path", "query", "header"):
             params = [p for p in self.parameters if p.location == location]
             if not params:
                 continue
@@ -144,21 +152,46 @@ class ApiAction(BaseModel):
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    p.name: {"type": p.type, "description": p.description} for p in params
+                    p.name: deepcopy(
+                        p.value_schema or {"type": p.type, "description": p.description}
+                    )
+                    for p in params
                 },
                 "required": needed,
             }
             if needed:
                 required.append(location)
         if self.body_schema is not None:
-            properties["body"] = self.body_schema
-            required.append("body")
+            properties["body"] = deepcopy(self.body_schema)
+            if self.body_required:
+                required.append("body")
         return {
             "type": "object",
             "properties": properties,
             "required": required,
             "additionalProperties": False,
         }
+
+
+class ApiConnectionInfo(BaseModel):
+    """Public provenance and presentation for an automatically configured service."""
+
+    model_config = ConfigDict(extra="forbid")
+    service_id: str
+    website: str
+    spec_url: str
+    brand_id: str = ""
+    logo_data: str = Field(default="", max_length=100_000)
+    categories: list[str] = Field(default_factory=list)
+    status: Literal["configured", "verified", "limited"] = "configured"
+    omitted_operations: int = 0
+
+    @field_validator("logo_data")
+    @classmethod
+    def safe_logo(cls, value: str) -> str:
+        if value and not re.fullmatch(r"data:image/png;base64,[A-Za-z0-9+/=]+", value):
+            raise ValueError("Connection artwork must be a cached PNG")
+        return value
 
 
 class ApiDefinition(BaseModel):
@@ -169,7 +202,8 @@ class ApiDefinition(BaseModel):
     base_url: str = Field(max_length=2000)
     auth: ApiAuth = Field(default_factory=ApiAuth)
     enabled: bool = True
-    actions: list[ApiAction] = Field(min_length=1, max_length=64)
+    actions: list[ApiAction] = Field(min_length=1, max_length=4096)
+    connection: ApiConnectionInfo | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -206,6 +240,7 @@ class CustomApiStore:
         )
         self.directory = directory if directory is not None else data_root / "custom-apis"
         self.tokens = tokens if tokens is not None else TokenStore()
+        self._cache: dict[str, tuple[int, int, ApiDefinition]] = {}
 
     def _path(self, api_id: str) -> Path:
         if not _ID.fullmatch(api_id):
@@ -219,8 +254,15 @@ class CustomApiStore:
     def get(self, api_id: str) -> ApiDefinition | None:
         path = self._path(api_id)
         try:
-            return ApiDefinition.model_validate_json(path.read_text(encoding="utf-8"))
+            stat = path.stat()
+            cached = self._cache.get(api_id)
+            if cached and cached[:2] == (stat.st_mtime_ns, stat.st_size):
+                return cached[2].model_copy(deep=True)
+            definition = ApiDefinition.model_validate_json(path.read_text(encoding="utf-8"))
+            self._cache[api_id] = (stat.st_mtime_ns, stat.st_size, definition)
+            return definition.model_copy(deep=True)
         except FileNotFoundError:
+            self._cache.pop(api_id, None)
             log.debug("Custom API %s has no saved definition", api_id)
             return None
 

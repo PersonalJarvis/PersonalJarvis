@@ -157,7 +157,7 @@ function LevelToast({ toast, name, look, onClose, label }: { toast: Celebration;
               return (
                 <span key={id} className="level-toast-look">
                   {/* Looks dress the shape; an agent that wears a pet shows only the words. */}
-                  {!look.pet && <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={30}
+                  {!look.pet && <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} skin={look.skin} size={30}
                     accessories={{ ...look.accessories, ...lookSlot(id) }} />}
                   <span>{label("society.level.new_look").replace("{0}", label(`society.companion.items.${id}`))}</span>
                 </span>

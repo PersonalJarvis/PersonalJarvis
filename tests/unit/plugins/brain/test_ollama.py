@@ -88,6 +88,7 @@ def test_client_defaults_to_localhost_v1_with_dummy_key(monkeypatch) -> None:
     assert _FakeOpenAI.last_kwargs["base_url"] == "http://localhost:11434/v1"
     # Keyless: the SDK insists on a non-empty key, Ollama ignores it.
     assert _FakeOpenAI.last_kwargs["api_key"] == "ollama"
+    assert _FakeOpenAI.last_kwargs["max_retries"] == 0
 
 
 def test_client_uses_config_override_root(monkeypatch) -> None:
@@ -371,9 +372,9 @@ async def test_image_turn_without_a_vision_download_errors_honestly(monkeypatch,
     with pytest.raises(RuntimeError) as err:
         await brain._resolve_model(need_vision=True)
     assert f"ollama pull {RECOMMENDED_VISION_PULL}" in str(err.value)
-    # The instance corrects its own advertisement so the next synchronous
-    # resolver question gets the informed answer.
-    assert brain.supports_vision is False
+    # Auto-discovery may see a new download on the next turn. This failed
+    # attempt must not permanently disable the retained provider instance.
+    assert brain.supports_vision is True
 
 
 async def test_unprobeable_model_is_never_used_for_an_image_turn(monkeypatch, fake_tags) -> None:

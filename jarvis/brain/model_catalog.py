@@ -894,6 +894,8 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
     """
     out: list[ModelInfo] = []
     if provider == "ollama":
+        from jarvis.brain.ollama_inventory import is_hidden_alias
+
         # Native /api/tags: {"models": [{"name": "qwen3.5:9b", ...}, ...]} —
         # the installed-model list of the user's own server. DOWNLOADED models
         # only: ``:cloud`` entries are ollama.com-proxied references, not
@@ -901,7 +903,7 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
         # the machine (maintainer report 2026-07-25).
         for m in payload.get("models", []) or []:
             raw = (m.get("name") or "").strip()
-            if not raw or raw.endswith(":cloud") or m.get("remote"):
+            if not raw or raw.endswith(":cloud") or m.get("remote") or is_hidden_alias(raw):
                 continue
             out.append(ModelInfo(id=raw, label=raw))
         return out
@@ -1829,6 +1831,13 @@ class ModelCatalog:
             return None
         aliases = {model, f"{model}:latest"} if provider == "ollama" else {model}
         return next((item for item in entry[1] if item.id in aliases), None)
+
+    async def invalidate(self, provider: str) -> None:
+        """Forget a previous endpoint's models and failed-fetch cooldown."""
+        async with self._lock:
+            self._cache.pop(provider, None)
+            self._fetch_failed_at.pop(provider, None)
+            await asyncio.to_thread(self._save_cache)
 
     async def list_models(self, provider: str, *, force_refresh: bool = False) -> CatalogResult:
         """Return the catalog for ``provider`` with an honest ``source`` flag.
