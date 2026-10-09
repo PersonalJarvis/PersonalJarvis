@@ -3,6 +3,13 @@
 LABELS = {
     "en": {
         "title": "AppShots — Screen recording",
+        "play": "Play video",
+        "video": "Video",
+        "save": "Save video",
+        "close": "Close",
+        "pin": "Keep on screen",
+        "saved": "Saved to Downloads",
+        "failed": "That did not work",
         "select": "Drag an area to record · Esc cancels",
         "full": "Record entire screen",
         "portal": "Choose a screen in the system sharing dialog.",
@@ -15,6 +22,13 @@ LABELS = {
     },
     "de": {
         "title": "AppShots — Bildschirmaufnahme",  # i18n-allow: product UI
+        "play": "Video abspielen",  # i18n-allow: product UI
+        "video": "Video",
+        "save": "Video speichern",  # i18n-allow: product UI
+        "close": "Schließen",  # i18n-allow: product UI
+        "pin": "Auf dem Bildschirm behalten",  # i18n-allow: product UI
+        "saved": "In Downloads gespeichert",  # i18n-allow: product UI
+        "failed": "Das hat nicht geklappt",  # i18n-allow: product UI
         "select": "Bereich zum Aufnehmen ziehen · Esc bricht ab",  # i18n-allow: product UI
         "full": "Gesamten Bildschirm aufnehmen",  # i18n-allow: product UI
         "portal": "Bildschirm im Freigabedialog wählen.",  # i18n-allow: product UI
@@ -27,6 +41,13 @@ LABELS = {
     },
     "es": {
         "title": "AppShots — Grabación de pantalla",
+        "play": "Reproducir vídeo",
+        "video": "Vídeo",
+        "save": "Guardar vídeo",
+        "close": "Cerrar",
+        "pin": "Mantener en pantalla",
+        "saved": "Guardado en Descargas",
+        "failed": "No se pudo completar",
         "select": "Arrastra un área para grabar · Esc cancela",
         "full": "Grabar pantalla completa",
         "portal": "Elige una pantalla en el diálogo de compartir del sistema.",
@@ -39,6 +60,13 @@ LABELS = {
     },
     "zh": {
         "title": "AppShots — 屏幕录制",  # i18n-allow: product UI
+        "play": "播放视频",  # i18n-allow: product UI
+        "video": "视频",  # i18n-allow: product UI
+        "save": "保存视频",  # i18n-allow: product UI
+        "close": "关闭",  # i18n-allow: product UI
+        "pin": "固定在屏幕上",  # i18n-allow: product UI
+        "saved": "已保存到“下载”",  # i18n-allow: product UI
+        "failed": "操作未成功",  # i18n-allow: product UI
         "select": "拖动选择录制区域 · 按 Esc 取消",  # i18n-allow: product UI
         "full": "录制整个屏幕",  # i18n-allow: product UI
         "portal": "请在系统共享对话框中选择一个屏幕。",  # i18n-allow: product UI

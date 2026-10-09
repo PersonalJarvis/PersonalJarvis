@@ -143,7 +143,7 @@ describe("Escape takes back a message the agent has not started on", () => {
 
     await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
 
-    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1");
+    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1", "thread-recall");
     expect(box.value).toBe("fix the login");
     expect(screen.getByTestId("chat-attachment-shot.png")).toBeTruthy();
   });
@@ -165,7 +165,7 @@ describe("Escape takes back a message the agent has not started on", () => {
 
     await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
 
-    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1");
+    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1", "thread-recall");
     expect(box.value).toBe("fix the login");
     expect(screen.getByTestId("chat-attachment-shot.png")).toBeTruthy();
   });
@@ -206,7 +206,7 @@ describe("Escape takes back a message the agent has not started on", () => {
 
     await act(async () => { fireEvent.keyDown(box, { key: "Escape" }); });
 
-    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1");
+    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1", "thread-recall");
     expect(box.value).toBe(typed);
     expect(screen.getAllByTestId("thread-user-message")).toHaveLength(1);
   });

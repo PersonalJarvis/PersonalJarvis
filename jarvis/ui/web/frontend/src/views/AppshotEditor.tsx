@@ -1786,7 +1786,9 @@ function ImportPanel({
   useEffect(() => {
     let alive = true;
     fetchAppshotLibrary()
-      .then((body) => alive && setItems(Array.isArray(body.items) ? body.items : []))
+      .then((body) => alive && setItems(
+        Array.isArray(body.items) ? body.items.filter((item) => item.mime.startsWith("image/")) : [],
+      ))
       .catch(() => {
         // The gallery is optional here: a file still works without it.
         if (alive) {

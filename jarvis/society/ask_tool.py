@@ -35,6 +35,7 @@ from jarvis.agent_chat.questions import (
     parse_questions,
     recommended_answer,
 )
+from jarvis.agent_chat.secret_requests import asks_for_secret
 from jarvis.core.protocols import ToolResult
 
 from .routine_runner import is_routine_session
@@ -103,6 +104,7 @@ class AskUserTool:
         f"{_MINUTES} minutes, your recommendations are applied, so recommend the safest "
         "sensible choice. Never ask for permission to do what you were asked, never ask "
         "what you could look up, and never ask again what was already answered. "
+        "Never ask for a token, key or password here: use society_request_credential. "
         f"A turn can show at most {MAX_ASKS_PER_TURN} question cards. While the user has "
         "not answered yet, the call returns status 'waiting' with a question_id: then call "
         "this tool again with only wait_for set to that id, and do nothing else meanwhile."
@@ -141,6 +143,18 @@ class AskUserTool:
         except ValueError as exc:
             # Bad questions go back to the agent as the tool error to fix.
             return ToolResult(success=False, output=None, error=f"invalid questions: {exc}")
+        if any(asks_for_secret(spec.question, value_only=True) for spec in specs):
+            # A typed answer would carry the secret into the chat and the model.
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "A question card never asks for a token, key or password: its answer is "
+                    "plain chat text. Call society_request_credential instead; it opens a "
+                    "secure field and its description can say where the user creates the "
+                    "credential."
+                ),
+            )
         if is_routine_session(self._session_id):
             return _unattended(
                 specs,

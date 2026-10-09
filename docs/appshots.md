@@ -43,9 +43,12 @@ Jarvis X screenshots (`[jarvisx].copy_to_clipboard`) use the same code.
 
 ## Selecting an area
 
-The area picker is a short-lived PySide6 process (`python -m
-jarvis.appshot.picker`) that starts on the shortcut and exits after one
-selection, so nothing stays resident. The picker provides:
+The area picker uses a prepared PySide6 process (`python -m
+jarvis.appshot.picker --resident`). The main instance prepares it after the
+wake-ready gate when Appshots are enabled. Standby creates no selection
+windows and captures no pixels. Each shortcut samples the current screens
+and window layout; completing or cancelling releases the frozen images,
+blur previews, markings and windows while keeping Qt loaded. The picker provides:
 
 - every screen is frozen under a light dim the moment the picker opens, so
   nothing moves under the selection (where a frozen frame cannot be grabbed,
@@ -277,7 +280,8 @@ it outside the editor; **not done** = not built, with the reason.
 | Corner card (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
 | Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |
 | Scrolling capture, self-timer | Not done (the page's "in 3 s" button is the only timer) |
-| Screen recording, video editor, GIF | Not done |
+| Screen recording and video editor | Local MP4 recordings with quality controls and optional system audio |
+| GIF export | Not done |
 | Cloud upload and sharing | Not done — appshots stay on this machine by design |
 | Text recognition (OCR), QR codes | Not done in the editor; the model reads the picture itself when it gets it |
 | Pin to screen (floating screenshot) | Not done: needs an always-on-top native window per OS |
@@ -309,14 +313,19 @@ to the assistant; they are the screenshot-tool half.
 
 ## The gallery
 
-Below the settings, **Your appshots** shows every appshot taken with the
+Below the settings, **Your captures** shows every appshot taken with the
 shortcuts, the page's buttons or the assistant's `take_appshot` tool, and every
 edit saved in the editor, newest first. An edit sits right before its original
 and wears an **Edited** badge; the **Edited** filter shows only those. A look
-a conversation turn took on its own is never kept.
+a conversation turn took on its own is never kept. Finished screen recordings
+appear in the same grid, with a video badge and duration. The **Recordings**
+filter shows only videos. Existing recordings appear automatically, including
+ones created before this gallery supported video.
 
 - **Click** a picture to open it in the editor again. Saving there keeps the
   new edit beside the original and hands it to the assistant like any edit.
+- **Click** a video to play it with playback and seeking controls. The player
+  also offers an MP4 download. Closing it returns to the same gallery.
 - **Drag** a picture into a chat composer or a terminal pane to attach it.
   The drag carries the picture's real path the way a row from the workspace
   explorer does, so both drop targets take it unchanged. In a browser the
@@ -324,7 +333,9 @@ a conversation turn took on its own is never kept.
   Inside the desktop shell the grip on a tile starts a native file drag that
   reaches any other app (mail, Explorer/Finder, a browser upload).
 - **Delete** on an edited tile removes only that edit; on an original it
-  removes the appshot and its edit. **Delete all** asks once more first.
+  removes the appshot and its edit. On a video it removes that recording.
+  **Delete all** confirms that both pictures and videos will be removed;
+  a recording still in progress is never included.
 
 The pictures live in `<data dir>/appshots/<id>/` (`original.<ext>`,
 `edited.png`, `meta.json`, small thumbnails made on first view). Only the
@@ -332,6 +343,50 @@ finished, privacy-filtered appshot is written — never the raw frame or the
 on-screen text. The library keeps the newest 500 appshots and removes the
 oldest first. **Keep appshot history** (`[appshot].library`) turns it off;
 what is already kept stays until it is deleted.
+
+Screen recordings are finalized as MP4 files under the app's user-data
+directory (`appshot-recordings/`) and remain there across navigation and app
+restarts, independently of the screenshot-history switch. The gallery indexes
+these existing files rather than duplicating them. It loads only small video
+posters for tiles and streams the full file when playback is opened. The image
+editor's Add Picture panel continues to offer images only.
+
+### Recording quality and system audio
+
+The recording panel saves preferences for both button and shortcut starts.
+Defaults are **1080p, 60 FPS, 12 Mbps**, with system audio off. Available
+resolutions are 720p, 1080p, 1440p, 2160p and native (including displays above
+4K). Presets are bounding boxes: the source keeps its aspect ratio, portrait
+sources use the corresponding portrait bounds, and smaller areas are never
+enlarged. Encoders may add a single padding pixel for even H.264 dimensions.
+
+Frame-rate choices are 30, 60 and 120 FPS. The monitor on which the user selects
+an area determines the limit; another monitor's faster refresh rate does not
+raise it. Selection remains confined to one monitor per recording. If the
+capture portal cannot expose its refresh rate, the conservative cap is 60 FPS.
+Actual output dimensions and FPS are shown while recording. Capture and encoding
+can skip frames under load; the completion state reports skipped frames.
+
+The video target bitrate accepts whole values from 1 to 100 Mbps. It is an
+encoding target, not a promised file size: simple scenes can need fewer bits.
+MP4 prefers an available hardware H.264 encoder, falls back to software H.264,
+and finally MPEG-4. A codec must open successfully at the selected dimensions;
+the presence of a GPU or codec name alone is not treated as support.
+Streaming Qt Multimedia capture replaces repeated screenshots. High-resolution
+timestamps preserve real frames despite desktop timer jitter. The video editor retains
+the source timing and includes audio when trimming or changing playback speed.
+
+**Include system audio** captures the default playback device using
+[SoundCard output loopback](https://github.com/bastibe/SoundCard), at 48 kHz
+stereo, encoded as AAC. This includes applications on other monitors using that
+output. It never falls back to a microphone. Device selection is fixed for the
+recording; switch outputs before starting a new recording. An audio failure
+reports an error instead of silently producing a successful video without sound.
+Windows output loopback was verified locally with an audible test signal.
+Linux uses a PulseAudio/PipeWire monitor source and still requires live device
+verification. macOS system audio is currently unavailable and is disabled in
+the UI; silent screen recording remains available. Optional desktop packages
+are lazy imports and are not needed for base/headless startup.
 
 ## Where a shortcut appshot goes
 
@@ -408,12 +463,37 @@ original any-order behaviour.
 Only the instance that owns ambient duties (the default app, not the dev
 instance) arms the shortcuts.
 
+## Capture startup latency
+
+Previously every area shortcut started Python, imported Qt and initialized
+the GUI before freezing the screens. The shutter effect also started its
+own process when the previous card had closed. Both startup costs sat on
+the interaction path and could show the operating system's busy cursor.
+
+The area picker now reuses its prepared runtime. The shutter runtime stays
+ready while Appshots and their effect are enabled. Neither preparation
+takes a screenshot or opens an overlay. Disabling Appshots releases the
+picker and the idle shutter runtime; active Computer-Use borders and open
+cards keep their existing ownership. Application shutdown reaps both helpers.
+Timeouts and interrupted requests discard the picker before a later request
+can use it, and a dead idle process is recreated on the next request.
+
+Windows verification on Python 3.11 measured about 399 ms from cold picker
+spawn to its visible-ready acknowledgement, versus 94–133 ms per selection
+in a prepared process. A separate native drag/toolbar/Enter check measured
+141–168 ms and verified no remaining selection windows after either pick.
+These are local renderer measurements, not a universal shortcut latency
+guarantee; configuration, privacy checks, display capture and image processing
+still take time. macOS and X11 share the lifecycle but were not tested live;
+Wayland, headless hosts and installations without PySide6 remain unavailable.
+
 ## Code
 
 `jarvis/appshot/` — `service.py` (take and deliver), `store.py` (pending and
 last appshot, memory only), `library.py` (the gallery's history on disk), `gesture.py` (both-Alt watcher), `hotkey.py`
 (both shortcuts' lifecycle), `region.py` (area selection and its coordinate
-mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
+mapping), `picker_host.py` (prepared-process lifecycle), `picker/` (the area
+picker sidecar), `effect.py` (shutter hook),
 `delivery.py` (voice calls). The corner card lives in the indicator sidecar
 (`jarvis/cu/indicator/renderer.py`, `_CardWindow`); the editor is
 `frontend/src/views/AppshotEditor.tsx`, hosted by

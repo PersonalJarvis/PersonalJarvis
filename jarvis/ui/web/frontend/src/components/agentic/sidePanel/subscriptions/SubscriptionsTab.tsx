@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, Loader2, RefreshCw } from "lucide-react";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import {
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
+import { BankedResets } from "./BankedResets";
 import {
   groupSubscriptions,
   planName,
@@ -52,6 +53,7 @@ function useSubscriptions() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [force, setForce] = useState(0);
+  const identities = useRef(new Map<string, string>());
   useEffect(() => {
     let alive = true;
     let timer: number | undefined;
@@ -65,10 +67,18 @@ function useSubscriptions() {
           refresh = false;
           if (nextUsage) pollMs = Math.max(MIN_POLL_MS, nextUsage.ttl_seconds * 1000);
           if (alive) {
+            const nextIdentities = new Map(nextAccounts.platforms.flatMap((group) => group.accounts.map((account) =>
+              [account.id, JSON.stringify([account.email, account.config_dir, account.mode])] as const)));
+            const previousIdentities = identities.current;
+            identities.current = nextIdentities;
             setAccounts(nextAccounts);
             // A backend without the usage route answers null: the rows still
             // show, just without numbers.
-            setUsage(nextUsage?.accounts ?? []);
+            setUsage((previous) => (nextUsage?.accounts ?? []).map((reading) => {
+              const newer = previous.find((item) => item.account_id === reading.account_id);
+              return newer && previousIdentities.get(reading.account_id) === nextIdentities.get(reading.account_id)
+                && (newer.as_of ?? 0) > (reading.as_of ?? 0) ? newer : reading;
+            }));
             setError("");
           }
         } catch (err) {
@@ -86,7 +96,10 @@ function useSubscriptions() {
     };
   }, [force]);
   const refresh = useCallback(() => setForce((value) => value + 1), []);
-  return { accounts, usage, error, loading, refresh };
+  const updateUsage = useCallback((reading: AccountUsage) => {
+    setUsage((previous) => [...previous.filter((item) => item.account_id !== reading.account_id), reading]);
+  }, []);
+  return { accounts, usage, error, loading, refresh, updateUsage, revision: force };
 }
 
 /** Wall-clock minutes, so reset countdowns stay true between polls. */
@@ -191,7 +204,9 @@ function UsageDetails({ usage, now }: { usage: AccountUsage | null; now: number 
   );
 }
 
-function SubscriptionLine({ row, now }: { row: SubscriptionRow; now: number }) {
+interface ResetProps { revision: number; onUsage: (usage: AccountUsage) => void }
+
+function SubscriptionLine({ row, now, revision, onUsage }: { row: SubscriptionRow; now: number } & ResetProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const detailsId = useId();
@@ -251,13 +266,14 @@ function SubscriptionLine({ row, now }: { row: SubscriptionRow; now: number }) {
       {open && (
         <div id={detailsId} data-testid="subscription-details" className="pb-2 pl-7 pr-2 pt-1">
           <UsageDetails usage={row.usage} now={now} />
+          <BankedResets key={`${account.id}:${account.email ?? ""}`} accountId={account.id} accountName={title} revision={revision} onUsage={onUsage} />
         </div>
       )}
     </li>
   );
 }
 
-function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: number }) {
+function SubscriptionBlock({ group, now, revision, onUsage }: { group: SubscriptionGroup; now: number } & ResetProps) {
   return (
     <section data-testid="subscription-group" data-platform={group.platform} className="px-2 py-2">
       <header className="flex items-center gap-2 px-2 pb-1">
@@ -267,7 +283,7 @@ function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: numb
       </header>
       <ul className="space-y-0.5">
         {group.rows.map((row) => (
-          <SubscriptionLine key={row.account.id} row={row} now={now} />
+          <SubscriptionLine key={row.account.id} row={row} now={now} revision={revision} onUsage={onUsage} />
         ))}
       </ul>
     </section>
@@ -281,7 +297,7 @@ function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: numb
  */
 export function SubscriptionsTab() {
   const t = useT();
-  const { accounts, usage, error, loading, refresh } = useSubscriptions();
+  const { accounts, usage, error, loading, refresh, updateUsage, revision } = useSubscriptions();
   const now = useMinuteClock();
   const groups = groupSubscriptions(accounts, usage);
   return (
@@ -325,7 +341,7 @@ export function SubscriptionsTab() {
         )}
         <div className="divide-y divide-border/60">
           {groups.map((group) => (
-            <SubscriptionBlock key={group.platform} group={group} now={now} />
+            <SubscriptionBlock key={group.platform} group={group} now={now} revision={revision} onUsage={updateUsage} />
           ))}
         </div>
       </div>

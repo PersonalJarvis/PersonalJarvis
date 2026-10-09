@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from jarvis.society.agent_template import public_avatar
 from jarvis.society.companion import AccessorySlot, CompanionAppearance, validate_avatar_companion
 from jarvis.society.runtime import SocietyRuntime
 from jarvis.ui.web.society_routes import router
@@ -46,6 +47,20 @@ def test_worn_accessories_survive_and_bare_looks_stay_unchanged():
     assert worn["accessories"] == CASES["valid"][3]["accessories"]
     bare = validate_avatar_companion({"companion": CASES["valid"][0]})["companion"]
     assert "accessories" not in bare
+
+
+def test_a_worn_pet_survives_and_a_look_without_one_stores_no_pet_key():
+    worn = validate_avatar_companion({"companion": {"shape": "drop", "color": "#79c7c4", "pet": "cocoa"}})
+    assert worn["companion"]["pet"] == "cocoa"
+    bare = validate_avatar_companion({"companion": {"shape": "drop", "color": "#79c7c4", "pet": None}})
+    assert "pet" not in bare["companion"]
+
+
+def test_a_shared_template_keeps_a_builtin_pet_and_drops_a_drawn_one():
+    builtin = public_avatar({"companion": {"shape": "drop", "color": "#79c7c4", "pet": "cocoa"}})
+    assert builtin["companion"]["pet"] == "cocoa"
+    drawn = public_avatar({"companion": {"shape": "drop", "color": "#79c7c4", "pet": "u0123456789abcdef"}})
+    assert drawn["companion"] == {"shape": "drop", "color": "#79c7c4"}
 
 
 def test_legacy_and_imported_characters_survive_companion_validation():

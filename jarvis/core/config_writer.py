@@ -1001,8 +1001,9 @@ def set_screen_context_settings(
 #: The master switch is ``[screen_context].enabled``, written by the setter above.
 APPSHOT_SETTING_KEYS: frozenset[str] = frozenset(
     {"keep_newest",
-     "hotkey", "region_hotkey", "recording_hotkey", "target", "sound", "effect", "card_seconds", "library",
-     "copy_to_clipboard"}
+     "hotkey", "region_hotkey", "recording_hotkey", "target", "sound", "effect", "card_seconds",
+     "library", "copy_to_clipboard", "recording_resolution", "recording_fps", "recording_bitrate_mbps",
+     "recording_system_audio"}
 )
 
 
@@ -1253,6 +1254,19 @@ def set_background_keep_running(enabled: bool, *, path: Path = DEFAULT_CONFIG_FI
     not track it. Read at quit time, so it applies without a restart.
     """
     _patch_table(path, "background", "keep_agents_running", bool(enabled))
+
+
+def set_agent_server(
+    *, persistent: bool, server_url: str = "", path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Select independent server ownership for the next desktop launch."""
+    from jarvis.core.server_endpoint import server_endpoint
+
+    origin = server_endpoint(server_url) if server_url.strip() else ""
+    _patch_table(
+        path, "background", "persistent_server", bool(persistent),
+        extra={"server_url": origin},
+    )
 
 
 def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:

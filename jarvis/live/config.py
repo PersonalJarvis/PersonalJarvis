@@ -73,6 +73,10 @@ class LiveConfig(BaseModel):
             from jarvis.brain.identity import name_directive
 
             identity = name_directive("")
+        # The computer tool is declared by name whenever it exists
+        # (``live.tools._DIRECT_TOOLS``); with Computer Use switched off its
+        # rules would send the model to a tool it does not have.
+        computer = any(isinstance(t, dict) and t.get("name") == "computer" for t in tools)
         backend: dict = {
             "model": self.backend_model,
             "instructions": (
@@ -113,13 +117,14 @@ class LiveConfig(BaseModel):
                 "count and the task as prompt; never an existing agent and never spawn_worker. "
                 + AGENT_BRIEF_RULE
                 + " "
-                + COMPUTER_CONTROL_RULES
+                + (COMPUTER_CONTROL_RULES if computer else "")
                 + " Appshots: when asked to take an appshot, screenshot, or look at the "
                 "current screen, call take_appshot for a fresh capture, even if an earlier "
                 "image is already in context. This tool owns the capture animation and "
                 "privacy filtering. Use scope window by default; scope screen only for "
-                "an explicit whole-screen request. Use computer for operating the desktop. "
-                "An attached image is a static snapshot, never proof that you performed a "
+                "an explicit whole-screen request. "
+                + ("Use computer for operating the desktop. " if computer else "")
+                + "An attached image is a static snapshot, never proof that you performed a "
                 "new capture. Describe an existing supplied image when asked about that "
                 "image. Confirm a requested new capture only after take_appshot succeeds "
                 "in this request; if it fails, explain the failure without describing the "

@@ -37,6 +37,11 @@ from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import turn_prompts
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_row
+from jarvis.agent_chat.credential_requests import (
+    CREDENTIAL_TIMEOUT_S,
+    CredentialRequests,
+    CredentialSpec,
+)
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import default_permission, ladder_key, normalize_permission
@@ -67,6 +72,10 @@ from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
+#: A ``[tools: a, b]`` capability-pin line. The list starts with a
+#: non-space character, so the padding and the list cannot both claim the
+#: same spaces: matching stays linear on long lines of spaces.
+_TOOL_PIN_LINE = re.compile(r"(?m)^\[tools:[ \t]*([^\]\s][^\]\r\n]*)\][ \t\r]*$")
 
 
 def _stop_caller() -> str:
@@ -322,6 +331,47 @@ def _expires_ms(timeout_s: float) -> int:
     return int(time.time() * 1000 + timeout_s * 1000)
 
 
+async def _redact_credentials(session_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """``event`` with the society agent's stored credential values masked.
+
+    A command that prints a token shows ``[credential ENV]`` in the chat, its
+    log and the live stream instead of the value (jarvis/society/credentials.py).
+    """
+    try:
+        from jarvis.society.credentials import current_vault
+        from jarvis.society.surface import agent_id_of
+
+        vault = current_vault()
+        agent_id = agent_id_of(session_id)
+        if vault is None or agent_id is None:
+            return event
+        if not vault.is_loaded(agent_id):
+            await asyncio.to_thread(vault.values, agent_id)
+        payload = event.get("payload")
+        redacted = vault.redact_payload(agent_id, payload)
+    except Exception:  # noqa: BLE001 — fails closed: the text is withheld, the event stays
+        log.warning("agent chat: credential redaction failed for %s", session_id, exc_info=True)
+        return {**event, "payload": _withheld(event.get("payload"))}
+    return event if redacted is payload else {**event, "payload": redacted}
+
+
+#: Payload keys that name an event, never carry printed text.
+_EVENT_IDS: Final[frozenset[str]] = frozenset(
+    {"turn_id", "call_id", "message_id", "agent_id", "name", "request_id", "question_id"}
+)
+
+
+def _withheld(payload: Any) -> Any:
+    """``payload`` with all its text replaced: what an unmaskable event shows."""
+    if isinstance(payload, dict):
+        return {k: v if k in _EVENT_IDS else _withheld(v) for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_withheld(item) for item in payload]
+    if isinstance(payload, str):
+        return "[hidden: the credential check failed]" if payload else payload
+    return payload
+
+
 def _current_task() -> asyncio.Task[Any] | None:
     try:
         return asyncio.current_task()
@@ -386,6 +436,11 @@ class AgentChatService:
         # Questions an agent is waiting on (questions.py), by question id.
         self._questions: dict[str, _OpenQuestion] = {}
         self._question_tasks: set[asyncio.Task[None]] = set()
+        # Credential cards (credential_requests.py): the value never enters a chat event.
+        self._credentials = CredentialRequests(
+            self._emit, self._running_turn_id,
+            history=self.store.credential_events, restore_save=self._restore_credential_save,
+        )
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -912,6 +967,8 @@ class AgentChatService:
     async def _emit(self, session_id: str, event: dict[str, Any]) -> None:
         # One delivery path for every runner. Normalize only finished receipts;
         # token deltas and voice-critical streaming never perform file I/O.
+        if session_id.startswith("society:"):
+            event = await _redact_credentials(session_id, event)
         if event.get("kind") in {"assistant_text", "tool_result", "user_message"}:
             from jarvis.agent_chat.media import normalize_media_event
             from jarvis.core.paths import repo_root
@@ -1196,7 +1253,7 @@ class AgentChatService:
             # browser pin to the same validated receipt used by the root composer.
             if session.surface == "jarvis" and any(
                 "core:browser" in {item.strip() for item in match.split(",")}
-                for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+                for match in _TOOL_PIN_LINE.findall(text)
             ):
                 tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
             selected = []
@@ -2247,6 +2304,9 @@ class AgentChatService:
 
     def _cancel_questions(self, session_id: str) -> None:
         # Tolerates a service built without __init__ (test doubles), like _controls.
+        credentials: CredentialRequests | None = getattr(self, "_credentials", None)
+        if credentials is not None:
+            credentials.finish_turn(session_id)
         questions: dict[str, _OpenQuestion] = getattr(self, "_questions", {})
         for qid, open_q in list(questions.items()):
             if open_q.session_id != session_id:
@@ -2255,6 +2315,83 @@ class AgentChatService:
                 open_q.closing = CANCELLED
                 open_q.wake.set()
             questions.pop(qid, None)
+
+    # ------------------------------------------------------------ credentials
+
+    @staticmethod
+    def _restore_credential_save(session_id: str, spec: CredentialSpec) -> Callable | None:
+        """Rebuild only a Society field's save callback, never a stored secret."""
+        from jarvis.society.credentials import save_requested_credential, validate_env_name
+        from jarvis.society.surface import agent_id_of
+
+        agent_id = agent_id_of(session_id)
+        if agent_id is None:
+            return None
+        try:
+            validate_env_name(spec.env)
+        except ValueError:
+            log.warning("agent chat: ignored invalid stored credential field metadata")
+            return None
+
+        async def save(value: str) -> None:
+            await save_requested_credential(agent_id, spec.env, value, label=spec.label)
+
+        return save
+
+    def _running_turn_id(self, session_id: str) -> str | None:
+        run = self._running.get(session_id)
+        if run is None or run.task is None or run.task.done():
+            return None
+        return run.turn_id
+
+    async def open_credential_request(
+        self,
+        session_id: str,
+        spec: CredentialSpec,
+        save: Callable[[str], Any],
+        *,
+        asker: str = "",
+        timeout_s: float = CREDENTIAL_TIMEOUT_S,
+    ) -> str:
+        """Show a secure credential field in the running turn; returns its request id.
+
+        ``save`` receives the pasted value and is its only destination. Raises
+        ``RuntimeError`` without a running turn and ``TooManyCredentialRequests``
+        once the turn used its cards.
+        """
+        return await self._credentials.open(
+            session_id, spec, save, asker=asker, timeout_s=timeout_s
+        )
+
+    async def wait_credential_request(
+        self, session_id: str, request_id: str, timeout_s: float | None = None
+    ) -> str | None:
+        """``saved`` or ``declined``, or ``None`` while the field remains open."""
+        return await self._credentials.wait(session_id, request_id, timeout_s)
+
+    def credential_request_spec(self, session_id: str, request_id: str) -> CredentialSpec:
+        return self._credentials.spec(session_id, request_id)
+
+    async def restore_credential_requests(self, session_id: str) -> None:
+        await self._credentials.restore(session_id)
+
+    async def submit_credential(self, session_id: str, request_id: str, value: str) -> bool:
+        """The person's pasted value; ``ValueError`` when the vault refuses it."""
+        if self.store.get_session(session_id) is None:
+            return False
+        return await self._credentials.submit(session_id, request_id, value)
+
+    async def decline_credential(self, session_id: str, request_id: str) -> bool:
+        if self.store.get_session(session_id) is None:
+            return False
+        return await self._credentials.decline(session_id, request_id)
+
+    async def discard_credential_requests(self, session_id: str) -> None:
+        await self._credentials.discard_session(session_id)
+
+    def pending_credential_requests(self, session_id: str) -> list[str]:
+        credentials: CredentialRequests | None = getattr(self, "_credentials", None)
+        return credentials.pending(session_id) if credentials is not None else []
 
     # ------------------------------------------------------------ end-of-turn cards
 

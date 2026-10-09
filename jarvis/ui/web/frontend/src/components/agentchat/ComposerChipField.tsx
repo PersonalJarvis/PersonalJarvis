@@ -179,6 +179,8 @@ export const ComposerChipField = forwardRef<
 ) {
   const elRef = useRef<HTMLDivElement>(null);
   const savedRange = useRef<Range | null>(null);
+  const onDraftChangeRef = useRef(onDraftChange);
+  onDraftChangeRef.current = onDraftChange;
 
   const rememberRange = (root: HTMLElement) => {
     const range = liveRange(root);
@@ -196,7 +198,9 @@ export const ComposerChipField = forwardRef<
   const emit = () => {
     const root = elRef.current;
     if (!root) return;
-    onDraftChange(serialize(root));
+    // The document selection listener outlives a render or session switch.
+    // Always notify the current draft owner, including after session creation.
+    onDraftChangeRef.current(serialize(root));
   };
 
   const insertNode = (node: Node, afterSpace = true) => {

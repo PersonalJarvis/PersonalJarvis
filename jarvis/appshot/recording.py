@@ -49,7 +49,7 @@ def recent_recordings() -> list[dict[str, Any]]:
 
 
 def capability() -> dict[str, Any]:
-    from jarvis.platform.probes import display_present, is_wayland
+    from jarvis.platform.probes import display_present
     from jarvis.platform.qt_sidecar import missing_system_library as qt_missing
 
     detail = ""
@@ -58,8 +58,8 @@ def capability() -> dict[str, Any]:
         detail = "Screen recording requires an interactive desktop."
     elif not all(importlib.util.find_spec(name) for name in ("PySide6", "av", "numpy")):
         detail = "Screen recording requires the desktop capture and video packages."
-    elif is_wayland() and importlib.util.find_spec("PySide6.QtMultimedia") is None:
-        detail = "Wayland recording requires Qt Multimedia, PipeWire and a ScreenCast portal."
+    elif importlib.util.find_spec("PySide6.QtMultimedia") is None:
+        detail = "Screen recording requires the desktop multimedia package."
     elif qt_missing():
         detail = f"{qt_missing()}."
     elif sys.platform == "darwin":
@@ -68,7 +68,10 @@ def capability() -> dict[str, Any]:
         permission = not screen_access.state_allows_capture(screen_access.screen_recording_state())
         if permission:
             detail = "Allow Screen Recording for Personal Jarvis in macOS System Settings."
-    return {"available": not detail, "detail": detail, "permission_required": permission}
+    from jarvis.appshot.recording_audio import capability as audio_capability
+
+    return {"available": not detail, "detail": detail, "permission_required": permission,
+            "system_audio": audio_capability()}
 
 
 class RecordingService:
@@ -80,6 +83,43 @@ class RecordingService:
         self._reader: asyncio.Task[None] | None = None
         self._state: dict[str, Any] = {"phase": "idle", "id": "", "message": ""}
         self._started: float | None = None
+        from jarvis.appshot.recording_runtime import RecordingRuntime
+
+        self._runtime = RecordingRuntime()
+        self._warm_enabled = False
+        self._warm_task: asyncio.Task[None] | None = None
+        self._requested: float | None = None
+
+    async def set_warm(self, enabled: bool) -> None:
+        """Prepare after boot; disabling/reloading shortcuts never stops an active video."""
+        self._warm_enabled = enabled
+        if enabled:
+            self._schedule_warm()
+            return
+        task, self._warm_task = self._warm_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await self._runtime.close()
+
+    def _schedule_warm(self) -> None:
+        if self._process is None and (self._warm_task is None or self._warm_task.done()):
+            self._warm_task = asyncio.create_task(self._prepare(), name="appshot-recorder-warm")
+
+    async def _prepare(self) -> None:
+        try:
+            ready = await asyncio.to_thread(capability)
+            if ready["available"] or ready.get("permission_required"):
+                await self._runtime.prewarm()
+        except Exception:
+            log.warning(
+                "appshot: recorder preparation failed; next start will retry", exc_info=True
+            )
+
+    async def close(self) -> None:
+        await self.set_warm(False)
+        await self.stop()
 
     def status(self) -> dict[str, Any]:
         state = dict(self._state)
@@ -89,7 +129,6 @@ class RecordingService:
 
     async def start(self) -> dict[str, Any]:
         from jarvis.core.config import load_config
-        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
         async with self._lock:
             if self._process is not None:
@@ -110,36 +149,29 @@ class RecordingService:
             ready = await asyncio.to_thread(capability)
             if not ready["available"]:
                 raise ValueError(ready["detail"])
+            from jarvis.appshot.recording_audio import capability as audio_capability
+            from jarvis.appshot.recording_options import RecordingOptions
+
+            options = RecordingOptions.from_config(getattr(config, "appshot", None))
+            if options.system_audio:
+                audio_ready = audio_capability()
+                if not audio_ready["available"]:
+                    raise ValueError(audio_ready["detail"])
             recording_id = uuid.uuid4().hex
             folder = recording_dir()
             await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
             self._started = None
             self._state = {"phase": "selecting", "id": recording_id, "message": ""}
-            # A cancelled HTTP request must not lose ownership during spawn.
-            spawn = asyncio.create_task(
-                asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-m",
-                    "jarvis.appshot.recording_worker",
-                    "--output",
-                    str(folder / f"{recording_id}.mp4"),
-                    "--language",
-                    str(getattr(config.ui, "language", "en")),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    creationflags=NO_WINDOW_CREATIONFLAGS,
-                )
-            )
+            self._requested = time.perf_counter()
             try:
-                self._process = await asyncio.shield(spawn)
+                self._process = await self._runtime.take(
+                    folder / f"{recording_id}.mp4", str(getattr(config.ui, "language", "en")),
+                    options=options.model_dump(),
+                )
             except asyncio.CancelledError:
-                process = await spawn
-                process.kill()
-                await process.wait()
                 self._state["phase"] = "cancelled"
                 raise
-            except OSError as exc:
+            except (OSError, TimeoutError) as exc:
                 self._state.update(phase="error", message="The recorder could not start.")
                 log.exception("appshot: recorder spawn failed")
                 raise ValueError(self._state["message"]) from exc
@@ -148,6 +180,7 @@ class RecordingService:
 
     async def _read(self, process: asyncio.subprocess.Process) -> None:
         assert process.stdout is not None
+        preview = None
         try:
             async for raw in process.stdout:
                 try:
@@ -158,23 +191,37 @@ class RecordingService:
                 if not isinstance(event, dict):
                     continue
                 phase = event.get("phase")
+                if phase == "selection_ready" and self._requested is not None:
+                    log.info(
+                        "appshot: recording picker visible in %.1f ms",
+                        (time.perf_counter() - self._requested) * 1000,
+                    )
+                    continue
                 if phase not in {"selecting", "recording", "saved", "cancelled", "error"}:
                     continue
                 self._state.update(
                     {
                         key: event[key]
-                        for key in ("phase", "message", "width", "height", "duration_s")
+                        for key in ("phase", "message", "width", "height", "duration_s", "fps",
+                                    "bitrate_mbps", "system_audio", "display_name", "refresh_hz",
+                                    "dropped_frames")
                         if key in event
                     }
                 )
                 if phase == "recording" and self._started is None:
                     self._started = time.monotonic()
+                if phase == "saved" and event.get("preview"):
+                    preview = event
             code = await process.wait()
             if self._state["phase"] in ACTIVE_PHASES or (
                 code != 0 and self._state["phase"] != "error"
             ):
                 self._state.update(phase="error", message="The recorder stopped unexpectedly.")
                 log.warning("appshot: recorder exited with code %s", code)
+            elif preview is not None and self._state["phase"] == "saved":
+                from jarvis.appshot.recording_cards import show_recording_preview
+
+                await show_recording_preview(self._state["id"], preview)
             if self._state["phase"] == "saved":
                 await _trim_old_captures()
         except Exception:
@@ -187,6 +234,9 @@ class RecordingService:
             if process.stdin:
                 process.stdin.close()
             self._process = None
+            self._runtime.release()
+            if self._warm_enabled:
+                self._schedule_warm()
 
     async def stop(self) -> dict[str, Any]:
         async with self._lock:
@@ -237,3 +287,17 @@ def get_recording_service() -> RecordingService:
     if _service is None:
         _service = RecordingService()
     return _service
+
+
+async def warm_recording_service(enabled: bool) -> None:
+    if enabled:
+        await get_recording_service().set_warm(True)
+    elif _service is not None:
+        await _service.set_warm(False)
+
+
+async def close_recording_service() -> None:
+    global _service
+    service, _service = _service, None
+    if service is not None:
+        await service.close()

@@ -52,7 +52,7 @@ async def test_fresh_agent_applies_its_first_identity_from_the_user_turn(world):
     rt, svc = world
     fresh, _ = await rt.roster.create()
     placeholder = fresh.name
-    assert placeholder == "New Bot"
+    assert placeholder == "New Agent"
     tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
     token = _user_turn(fresh.session_id, "You handle my Gmail inbox.")
     try:
@@ -150,6 +150,109 @@ async def test_a_long_first_role_goes_to_a_card(world):  # noqa: F811
         current_chat_turn.reset(token)
     assert result.output["status"] == "pending"
     assert is_fresh(await rt.roster.get(fresh.agent_id))
+
+
+async def _lead(rt):
+    from jarvis.society.roster import LEAD_AGENT_ID
+
+    lead = await rt.roster.get(LEAD_AGENT_ID)
+    if lead is None:
+        lead, _ = await rt.roster.create(name="Jarvis", tier="lead", title="Lead")
+    return lead
+
+
+async def test_naming_a_new_agent_in_its_own_chat_leaves_jarvis_alone(world):  # noqa: F811
+    rt, svc = world
+    lead = await _lead(rt)
+    fresh, _ = await rt.roster.create()
+    request = "Your name is Miro. Just a Discord mod in every single thread."
+    tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
+    token = _user_turn(fresh.session_id, request)
+    try:
+        result = await tool.execute(
+            {
+                "kind": "identity",
+                "mode": "apply",
+                "request_quote": "Just a Discord mod in every single thread.",
+                "payload": {"name": "Miro", "title": "Discord moderator"},
+            },
+            None,
+        )
+    finally:
+        current_chat_turn.reset(token)
+    assert result.success, result.error
+    assert (await rt.roster.get(fresh.agent_id)).name == "Miro"
+    unchanged = await rt.roster.get(lead.agent_id)
+    assert (unchanged.name, unchanged.title) == (lead.name, lead.title)
+    outcome = _identity_notices(svc, "proposal_resolved")[-1]
+    assert outcome["agent_id"] == fresh.agent_id
+    assert outcome["previous"]["name"] == fresh.name  # what Undo restores
+
+
+async def test_jarvis_itself_is_never_renamed_by_an_identity_change(world):  # noqa: F811
+    rt, _svc = world
+    lead = await _lead(rt)
+    tool = ProposeChangeTool(rt, lead.agent_id, session_id=lead.session_id)
+    token = _user_turn(lead.session_id, "Set up a Discord mod called Miro.")
+    try:
+        result = await tool.execute(
+            {
+                "kind": "identity",
+                "mode": "apply",
+                "request_quote": "Set up a Discord mod called Miro.",
+                "payload": {"name": "Miro"},
+            },
+            None,
+        )
+    finally:
+        current_chat_turn.reset(token)
+    assert not result.success
+    assert (await rt.roster.get(lead.agent_id)).name == lead.name
+
+
+async def test_a_request_from_another_chat_never_renames_an_agent(world):  # noqa: F811
+    rt, _svc = world
+    lead = await _lead(rt)
+    fresh, _ = await rt.roster.create()
+    tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
+    # The person is talking to Jarvis, not to the new agent.
+    token = _user_turn(lead.session_id, "Make the new agent Miro.")
+    try:
+        result = await tool.execute(
+            {
+                "kind": "identity",
+                "mode": "apply",
+                "request_quote": "Make the new agent Miro.",
+                "payload": {"name": "Miro"},
+            },
+            None,
+        )
+    finally:
+        current_chat_turn.reset(token)
+    assert not result.success
+    assert (await rt.roster.get(fresh.agent_id)).name == fresh.name
+
+
+async def test_an_explicit_rename_of_an_established_agent_applies_at_once(world):  # noqa: F811
+    rt, svc = world
+    tool = ProposeChangeTool(rt, "mailbox", session_id="society:mailbox")
+    token = _user_turn("society:mailbox", "Call yourself Inbox from now on.")
+    try:
+        result = await tool.execute(
+            {
+                "kind": "identity",
+                "mode": "apply",
+                "request_quote": "Call yourself Inbox from now on.",
+                "payload": {"name": "Inbox"},
+            },
+            None,
+        )
+    finally:
+        current_chat_turn.reset(token)
+    assert result.success, result.error
+    assert (await rt.roster.get("mailbox")).name == "Inbox"
+    outcome = _identity_notices(svc, "proposal_resolved")[-1]
+    assert outcome["status"] == "applied" and outcome["previous"]["name"] == "Mailbox"
 
 
 async def test_undo_data_includes_the_approval_rules(world):  # noqa: F811

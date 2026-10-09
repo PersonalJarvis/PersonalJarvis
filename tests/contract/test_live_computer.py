@@ -114,11 +114,27 @@ def test_backend_instructions_hand_the_screen_to_the_thinking_model():
     from jarvis.live.config import LiveConfig
 
     config = LiveConfig(configured=True, backend_model="thinking-model")
+    computer = [{"type": "function", "name": "computer", "parameters": tool_schema()}]
+    instructions = config.session_config(language="en", tools=computer)["delegation"][
+        "responses"
+    ]["instructions"]
+    assert "computer tool" in instructions
+    assert "no separate computer-use agent" in instructions
+    assert "Use computer for operating the desktop." in instructions
+
+
+def test_instructions_never_name_a_computer_tool_that_is_switched_off():
+    """With Computer Use off the voice catalog has no computer tool; its rules
+    would send the model to a tool it cannot call."""
+    from jarvis.live.config import LiveConfig
+
+    config = LiveConfig(configured=True, backend_model="thinking-model")
     instructions = config.session_config(language="en", tools=[])["delegation"]["responses"][
         "instructions"
     ]
-    assert "computer tool" in instructions
-    assert "no separate computer-use agent" in instructions
+    assert "computer tool" not in instructions
+    assert "Use computer for operating" not in instructions
+    assert "call take_appshot for a fresh capture" in instructions
 
 
 @pytest.mark.parametrize("auth_mode", ["api_key", "chatgpt_subscription"])

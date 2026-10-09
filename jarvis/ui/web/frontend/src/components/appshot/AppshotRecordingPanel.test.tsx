@@ -1,35 +1,51 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppshotRecordingPanel } from "./AppshotRecordingPanel";
-import type { AppshotSettings } from "@/lib/appshotApi";
+import { loadLocaleChunk } from "@/i18n";
+import type { AppshotLibraryItem, AppshotSettings } from "@/lib/appshotApi";
 
 const settings = { enabled: true, recording_hotkey: "ctrl+shift+9" } as AppshotSettings;
 const ready = { available: true, detail: "", permission_required: false };
 function response(body: unknown, status = 200) {
   return { ok: status < 400, status, json: async () => body } as Response;
 }
+function video(id: string): AppshotLibraryItem {
+  return {
+    id: `recording_${id}`, variant: "original", path: `/videos/${id}.mp4`, mime: "video/mp4",
+    width: 1920, height: 1080, label: "Screen recording", app_name: "", trigger: "recording",
+    taken_at: 100, edited_at: 0, has_edit: false, duration_s: 5,
+  };
+}
+const SCREENSHOT = { ...video("x"), id: "shot", mime: "image/png", path: "/shot.png" };
+beforeEach(async () => { await loadLocaleChunk("appshot_editor"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("AppShot recording controls", () => {
   it("starts selection, keeps a stop control after the master is disabled, and offers the saved video", async () => {
+    const onSaved = vi.fn();
     let phase = "idle";
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url === "/api/appshot/library") {
+        return response({ items: phase === "saved" ? [video("abc")] : [], max_entries: 500 });
+      }
       if (url.endsWith("/start")) phase = "recording";
       if (url.endsWith("/stop")) phase = "saved";
-      return response({ phase, id: "abc", message: "", capability: ready });
+      return response({ phase, id: "abc", message: "", capability: ready,
+        recent: phase === "saved" ? [{ id: "abc", created_at: 100 }] : [] });
     }));
-    const { rerender } = render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} />);
+    const { rerender } = render(<AppshotRecordingPanel settings={settings} saving={false} onSaved={onSaved} />);
     const button = await screen.findByTestId("appshots-recording-control");
     await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
     fireEvent.click(button);
     await screen.findByRole("button", { name: "Stop and save" });
-    rerender(<AppshotRecordingPanel settings={{ ...settings, enabled: false }} saving={false} onShortcut={async () => {}} />);
+    rerender(<AppshotRecordingPanel settings={{ ...settings, enabled: false }} saving={false} onSaved={onSaved} />);
     expect(button.hasAttribute("disabled")).toBe(false);
     fireEvent.click(button);
-    const link = await screen.findByRole("link", { name: "Download video" });
-    expect(link.getAttribute("href")).toBe("/api/appshot/recording/abc/video");
+    const tile = await screen.findByTestId("appshot-library-tile");
+    expect(tile.getAttribute("data-media")).toBe("video");
+    await waitFor(() => expect(onSaved).toHaveBeenCalledExactlyOnceWith("abc"));
     expect(calls.filter((call) => call.startsWith("POST"))).toEqual([
       "POST /api/appshot/recording/start", "POST /api/appshot/recording/stop",
     ]);
@@ -40,10 +56,11 @@ describe("AppShot recording controls", () => {
       available: false, detail: "Permission is required", permission_required: true,
     } }));
     vi.stubGlobal("fetch", fetcher);
-    render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} />);
+    render(<AppshotRecordingPanel settings={settings} saving={false} />);
     const allow = await screen.findByRole("button", { name: "Allow screen recording" });
     expect(screen.getByTestId("appshots-recording-control").hasAttribute("disabled")).toBe(true);
-    expect(fetcher.mock.calls).toHaveLength(1);
+    // Only reads so far (status and the video tiles); no permission request.
+    expect(fetcher.mock.calls.some((call) => String((call as unknown[])[0]).includes("/permissions/"))).toBe(false);
     fireEvent.click(allow);
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
       "/api/permissions/screen_recording/request?dry_run=false", {
@@ -57,7 +74,7 @@ describe("AppShot recording controls", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/start")
       ? response({ detail: "No screen" }, 409)
       : response({ phase: "idle", id: "", message: "", capability: ready })));
-    render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} />);
+    render(<AppshotRecordingPanel settings={settings} saving={false} />);
     const button = screen.getByTestId("appshots-recording-control");
     await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
     fireEvent.click(button);
@@ -65,27 +82,17 @@ describe("AppShot recording controls", () => {
     expect(screen.queryByRole("button", { name: "Stop and save" })).toBeNull();
   });
 
-  it("shows what to do while the recording shortcut is being captured", async () => {
-    const onShortcut = vi.fn(async () => {});
-    vi.stubGlobal("fetch", vi.fn(async () => response({ phase: "idle", id: "", message: "", capability: ready })));
-    render(<AppshotRecordingPanel settings={{ ...settings, recording_hotkey: "" }} saving={false} onShortcut={onShortcut} />);
-    fireEvent.click(await screen.findByTestId("appshots-recording-hotkey-change"));
-    expect(await screen.findByTestId("appshots-recording-hotkey-status")).toHaveProperty(
-      "textContent",
-      expect.stringMatching(/Hold the keys/),
-    );
-    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
-    fireEvent.keyDown(window, { code: "Digit9", key: "9", ctrlKey: true });
-    fireEvent.keyUp(window, { code: "Digit9", key: "9", ctrlKey: false });
-    await waitFor(() => expect(onShortcut).toHaveBeenCalledWith("ctrl+9"));
-  });
-
-  it("keeps older recordings downloadable after reopening the page", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => response({ phase: "idle", id: "", message: "",
-      capability: ready, recent: [{ id: "older", created_at: 100 }],
-    })));
-    render(<AppshotRecordingPanel settings={settings} saving={false} onShortcut={async () => {}} />);
-    const link = await screen.findByRole("link");
-    expect(link.getAttribute("href")).toBe("/api/appshot/recording/older/video");
+  it("shows kept recordings as playable tiles after reopening the page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "/api/appshot/library"
+      ? response({ items: [video("older"), SCREENSHOT], max_entries: 500 })
+      : response({ phase: "idle", id: "", message: "", capability: ready,
+        recent: [{ id: "older", created_at: 100 }] })));
+    render(<AppshotRecordingPanel settings={settings} saving={false} />);
+    const tiles = await screen.findAllByTestId("appshot-library-tile");
+    expect(tiles).toHaveLength(1);
+    fireEvent.click(tiles[0].querySelector("button")!);
+    const player = await screen.findByTestId("appshot-library-player");
+    expect(player.getAttribute("src")).toContain("/library/recording_older/image");
+    expect(screen.getByRole("link", { name: "Download video" }).getAttribute("download")).toMatch(/\.mp4$/);
   });
 });

@@ -37,7 +37,9 @@ async def test_server_joins_slow_registry_bootstraps_before_registry_stop():
     tasks = [server._cli_bootstrap_task, server._plugin_bootstrap_task]
     try:
         await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started)), 1)
-        await asyncio.wait_for(server.stop(), 2)
+        # A hang guard, not a speed budget: stop() also releases every other
+        # helper, which a loaded Windows runner can stretch past two seconds.
+        await asyncio.wait_for(server.stop(), 15)
         assert all(task.done() for task in tasks)
         assert server._cli_bootstrap_task is None
         assert server._plugin_bootstrap_task is None

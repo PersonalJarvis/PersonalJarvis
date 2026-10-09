@@ -55,6 +55,11 @@ export class StartupAudioQueue {
     // backlog does: waiting for exactly zero microphone samples stranded it
     // indefinitely in rooms with even very faint background noise.
     this.catchingUp = this.samples > this.rate * 0.1;
+    // Check the combined native/browser opening only now: browser-leading
+    // zeros can be a spoken pause if the native prefix already contains speech.
+    // Keep the original catch-up decision so a compacted 100 ms reserve does
+    // not become a permanent offset behind the live microphone.
+    this.compactLeadingSilence();
   }
 
   suspend(): void {
@@ -115,6 +120,22 @@ export class StartupAudioQueue {
       offset = 0;
       frameIndex++;
     }
+  }
+
+  private compactLeadingSilence(): void {
+    let leading = 0;
+    opening: for (let frameIndex = this.head; frameIndex < this.frames.length; frameIndex++) {
+      const frame = this.frames[frameIndex];
+      for (let i = frameIndex === this.head ? this.offset : 0; i < frame.length; i++) {
+        if (frame[i] !== 0) break opening;
+        leading++;
+      }
+    }
+    // Only exact digital silence before the first nonzero sample is removed.
+    // Quiet speech and every pause after it retain their original samples.
+    // The short reserve keeps an onset separate from the transport boundary.
+    const removable = leading - Math.round(this.rate * 0.1);
+    if (removable > 0) this.consume(removable);
   }
 
   private consume(count: number): void {

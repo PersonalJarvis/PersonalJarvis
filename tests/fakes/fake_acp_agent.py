@@ -99,6 +99,16 @@ def _read() -> dict[str, Any] | None:
 def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -> None:
     store.setdefault(session_id, []).append(text)
     _save_store(store)
+    if "EOF_PARTIAL" in text:
+        _text(session_id, "partial only")
+        raise SystemExit(0)
+    if "WAIT_CANCEL" in text:
+        _text(session_id, "waiting")
+        while frame := _read():
+            if frame.get("method") == "session/cancel":
+                _send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "cancelled"}})
+                return
+        return
     if endpoint := os.environ.get("FAKE_ACP_GATEWAY"):
         url = urlsplit(endpoint)
         assert url.scheme == "http" and url.hostname == "127.0.0.1"
@@ -232,7 +242,7 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
             "jsonrpc": "2.0",
             "id": rid,
             "result": {
-                "stopReason": "max_tokens" if "MAXTOK" in text else "end_turn",
+                "stopReason": "max_tokens" if ("TRUNCATE" in text or "MAXTOK" in text) else "end_turn",
                 "usage": {"inputTokens": 11, "outputTokens": 7, "totalTokens": 18},
             },
         }

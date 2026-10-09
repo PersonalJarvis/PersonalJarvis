@@ -60,6 +60,6 @@ describe("agent vector identities", () => {
     const first = identities.map(symbolAppearance);
     expect(identities.map(symbolAppearance)).toEqual(first);
     expect(new Set(first.map(a => a.shape)).size).toBe(7);
-    expect(new Set(first.map(a => a.color)).size).toBe(8);
+    expect(new Set(first.map(a => a.color)).size).toBe(11);
   });
 });

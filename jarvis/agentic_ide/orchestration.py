@@ -57,7 +57,10 @@ _TARGET_KEYS = ("project_id", "workspace_id", "terminal_id")
 # A send of the same prompt to the same pane counts as a retry only this soon;
 # a later "continue" or "/compact" is a new instruction and must be typed.
 _RETRY_WINDOW_S = 120
-_PANE_ACTIONS = frozenset({"observe", "respond", "keys", "interrupt", "close"})
+_PANE_ACTIONS = frozenset({"observe", "respond", "keys", "interrupt", "restart", "close"})
+# A pane whose agent process is gone (exited, or could not start). A send there
+# types nothing; restart brings the same pane back on its own conversation.
+_STOPPED = frozenset({"exited", "error"})
 _WORKSPACE_ACTIONS = frozenset({"open_workspace", "restore", "show"})
 # How many times one request may be re-attempted after receipts proving that
 # nothing was typed (the pane was busy, closed, or not a coding pane).
@@ -294,6 +297,9 @@ class WorkspaceOrchestrator:
                             **({"availability": "busy", "brief_writing": True}
                                if term.name in writing else {}),
                             "accepts_tasks": accepts_prompts(term.agent) and not term.archived,
+                            "restartable": accepts_prompts(term.agent)
+                            and not term.archived
+                            and term.status in _STOPPED,
                         }
                         for term in owner.terminals
                     ]
@@ -710,7 +716,8 @@ class WorkspaceOrchestrator:
         observe reads the screen and the newest recorded events; respond answers
         the question or permission prompt the agent is showing; keys presses
         keys (menus, Shift+Tab, Escape); interrupt stops the current turn
-        (Escape, the pane's Stop button); close stops and removes the pane.
+        (Escape, the pane's Stop button); restart starts a stopped or failed
+        pane's agent again on its own conversation; close stops and removes it.
         """
         action = str(args.get("action"))
         picked = await self._pane(args)
@@ -758,6 +765,8 @@ class WorkspaceOrchestrator:
                     ):
                         raise SessionError(f"{term.name} is not running.")
                 return {"status": "pressed", "target": target, "keys": keys, "agent": term.name}
+            if action == "restart":
+                return await self._restart(owner, term, target)
             if action == "close":
                 from .fleet_actions import terminals_closed_event
 
@@ -779,6 +788,42 @@ class WorkspaceOrchestrator:
         except SessionError as exc:  # the refusal is returned to the caller with its reason
             return {"status": "not_accepted", "target": target, "reason": str(exc)}
         raise ValueError("Unknown pane action.")
+
+    async def _restart(self, owner: Any, term: Any, target: dict[str, str]) -> dict[str, Any]:
+        """Bring a stopped pane back under the same IDs, and say what happened.
+
+        Idempotent by state: a running agent is left alone and the receipt
+        says so, so a retried or duplicated restart never starts a second
+        process or cuts a turn short. Nothing is typed; the task follows as an
+        ordinary send, and a send refused earlier as stopped is retried with
+        its own request_id.
+        """
+        before = term.status
+        term, started = await self.registry.restart_terminal(
+            target["terminal_id"], owner.id
+        )
+        receipt: dict[str, Any] = {
+            "target": target,
+            "agent": term.name,
+            "cli": term.agent,
+            "previous_status": before,
+            "process_status": term.status,
+            "input_written": False,
+        }
+        if not started:
+            return {
+                **receipt,
+                "status": "already_running",
+                "reason": "The agent is running; nothing was restarted. A failed last turn "
+                          "does not stop it: send the task to the same terminal_id.",
+            }
+        return {
+            **receipt,
+            "status": "restarted",
+            "conversation": "continued" if term.resumed else "fresh",
+            "next": "Send the task to the same terminal_id. A send refused earlier because "
+                    "the agent was stopped is retried with the same request_id and prompt.",
+        }
 
     async def workspace_action(self, args: dict[str, Any], *, trace_id: str = "") -> dict:
         """Open a new workspace, restore a closed one, or bring one on screen."""
@@ -1353,6 +1398,21 @@ class WorkspaceOrchestrator:
                 "status": "unavailable",
                 "target": target,
                 "reason": "This session does not accept coding tasks.",
+            }
+        if action == "send" and found[1].status in _STOPPED:
+            # Pre-write, so the same request_id is retried after a restart.
+            return {
+                "status": "not_accepted",
+                "target": target,
+                "reason": f"{found[1].name} is not running ({found[1].status}); nothing "
+                          "was sent.",
+                "completed": False,
+                "input_written": False,
+                "stopped": True,
+                "restartable": True,
+                "next": "To deliver it to this agent, call restart with this terminal_id (it "
+                        "continues the agent's own conversation and stops nothing), then "
+                        "resend this request with the same request_id and prompt.",
             }
         # The low-level gateway enforces idle/asking state and refuses exited
         # agents. It never falls through to a shell or a different pane.

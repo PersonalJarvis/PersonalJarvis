@@ -62,6 +62,72 @@ class AppshotSubscriptionGateway(SubscriptionGateway):
         return ToolResult(True, output)
 
 
+class PausingAgentGateway(SubscriptionGateway):
+    """An agent start remains in flight while another instruction arrives."""
+
+    def __init__(self, *, uncertain=False):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.requests = []
+        self.uncertain = uncertain
+
+    def catalog(self):
+        return tuple(
+            SupervisorToolDescriptor(name, name, {"type": "object"}, "monitor")
+            for name in ("start-agent", "message-agent")
+        )
+
+    async def execute(self, name, args, request):
+        self.calls.append((name, args, operation_model.get()))
+        self.requests.append(request)
+        if name == "start-agent":
+            self.started.set()
+            await self.release.wait()
+            if self.uncertain:
+                raise OSError("Receipt lost after starting the agent")
+        return ToolResult(True, {"agent_id": "agent-alpha", "verified": True})
+
+
+class ApprovalSubscriptionGateway(SubscriptionGateway):
+    def __init__(self):
+        super().__init__()
+        self.confirmed = []
+
+    def catalog(self):
+        return (SupervisorToolDescriptor(
+            "inspect-state", "Approved action fixture", {"type": "object"}, "ask",
+            is_action_tool=True,
+        ),)
+
+    async def execute(self, name, args, request):
+        from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+        self.calls.append((name, args, request))
+        return ToolResult(False, {}, VOICE_CONFIRM_SENTINEL)
+
+    async def execute_confirmed(self, trace, request):
+        self.confirmed.append((trace, request))
+        return ToolResult(True, {"verified": True})
+
+
+class SafeMessageGateway(SubscriptionGateway):
+    def catalog(self):
+        return (
+            SupervisorToolDescriptor(
+                "message_agent", "Message a teammate", {"type": "object"}, "safe",
+                is_action_tool=True,
+            ),
+            SupervisorToolDescriptor(
+                "workspace-orchestrate", "Inspect or change a workspace", {"type": "object"},
+                "monitor", is_action_tool=True,
+                describe_args=lambda args: {
+                    "level": "read" if args.get("action") == "inspect" else "modify",
+                },
+            ),
+        )
+
+
 class SubscriptionConnection:
     session_id = "rtc_fake"
     answer_sdp = "answer"
@@ -111,6 +177,29 @@ class ScriptedSubscriptionReasoning:
 
     async def aclose(self):
         self.closed = True
+
+
+class PausingSubscriptionReasoning(ScriptedSubscriptionReasoning):
+    """Pause selected rounds before completion, including cancellation races."""
+
+    def __init__(self, rounds, *, paused=(0,)):
+        super().__init__(rounds)
+        self.entered = [asyncio.Event() for _ in rounds]
+        self.release = {index: asyncio.Event() for index in paused}
+        self.cancelled = []
+
+    async def stream(self, **request):
+        index = len(self.requests)
+        self.requests.append(copy.deepcopy(request))
+        self.entered[index].set()
+        try:
+            if index in self.release:
+                await self.release[index].wait()
+            for event in self.rounds[index]:
+                yield event
+        except asyncio.CancelledError:
+            self.cancelled.append(index)
+            raise
 
 
 def subscription_provider():

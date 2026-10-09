@@ -11,7 +11,13 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-from jarvis.ui.jarvisbar.modes import DICTATION_MODES, MODES, NOTICE_MODES  # noqa: F401
+from jarvis.ui.jarvisbar.modes import (  # noqa: F401
+    ACTIVE_VOICE_MODES,
+    CONNECT_MODES,
+    DICTATION_MODES,
+    MODES,
+    NOTICE_MODES,
+)
 from ui.orb import controls
 
 COLOR_KEY_RGB = (255, 0, 255)
@@ -187,8 +193,13 @@ def visual_mode(
     something did not happen, and a stale level sample or an in-flight playback
     must never be able to repaint it as listening or speaking — that would
     replace the answer to the user's key press with a lie about the microphone.
+
+    ``connect`` passes through unchanged for the same reason: the opening words
+    are being buffered while the transport negotiates, so a live mic level is
+    real, but painting it as the equalizer would claim the provider is already
+    hearing them. The loading loop is the true state until it accepts the call.
     """
-    if coarse_mode in NOTICE_MODES:
+    if coarse_mode in NOTICE_MODES or coarse_mode in CONNECT_MODES:
         return coarse_mode
     if coarse_mode == "idle":
         return "idle"
@@ -201,6 +212,11 @@ def visual_mode(
     if coarse_mode == "think":
         return "think"
     return "speak"
+
+
+# The connect clock every bar surface keeps (``ui.orb.controls``).
+ConnectTimeline = controls.ConnectTimeline
+ConnectLook = controls.ConnectLook
 
 
 def apply_display_scale(scale: float, user_size: float | None = None) -> None:
@@ -252,23 +268,36 @@ class JarvisBarRenderer:
         drop_state: str = DROP_STATE_NONE,
         drop_elapsed: float = 0.0,
         surface_mode: str | None = None,
+        connect_look: controls.ConnectLook | None = None,
     ) -> Image.Image:
         actual = surface_mode or mode
         motion = (
-            "think"
+            "connect"
+            if mode in CONNECT_MODES
+            else "think"
             if mode in ("think", "dictate_transcribing")
             else "voice"
             if mode in ("listen", "speak", "dictate")
             else "rest"
         )
+        phase = controls.indicator_phase(motion, t)
+        spin = 0
+        if connect_look is not None and actual in ACTIVE_VOICE_MODES:
+            # The surface's ConnectTimeline: the strokes bending into the
+            # loading loop, or the one-shot back out of it once connected.
+            motion, phase, spin = connect_look.motion, connect_look.phase, connect_look.spin
+        elif motion == "connect":
+            # No timeline (a bare render): the loop, fully bent, spinning on t.
+            phase, spin = controls.PET_MORPH_STEPS, controls.spin_step(t)
         state = controls.PetStripState(
             jarvis_bar=True,
             mic_muted=muted,
             speaker_muted=speaker_muted,
-            active=actual in ("listen", "think", "speak"),
-            level=controls.quantize_level(ext_level),
+            active=actual in ACTIVE_VOICE_MODES,
+            level=controls.quantize_level(ext_level) if motion in ("voice", "connect") else 0,
             motion=motion,
-            phase=controls.indicator_phase(motion, t),
+            phase=phase,
+            spin=spin,
             hovered=hovered_action,
             call_ring=call_ring,
         )

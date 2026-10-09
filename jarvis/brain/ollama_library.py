@@ -224,9 +224,10 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 description = text
                 break
 
-        # Since 2026-10 a badge puts an icon before its label ("<svg>…</svg>Vision")
-        # and capitalises it; dropping the icons reads both layouts as text spans.
-        plain = re.sub(r"<svg\b.*?</svg>", "", block, flags=re.DOTALL)
+        # The current catalog puts an SVG before title-cased badge labels.
+        # Ignore icon markup while retaining the actual visible label, and
+        # keep accepting the older text-only lowercase badges.
+        plain = re.sub(r"<svg\b[^>]*>.*?</svg>", "", block, flags=re.DOTALL | re.IGNORECASE)
         spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", plain)]
         spans = [s for s in spans if s]
         # Every text node, not only whole spans: "Cloud" now sits beside a tooltip.
@@ -241,7 +242,10 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
             r'<span\b[^>]*title="[^"]*downloads"[^>]*>\s*<span\b[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
             plain,
         )
-        # The current search page prints no update time any more; "" then.
+        if pulls_match is None:
+            pulls_match = re.search(
+                r'''\btitle=["']([\d.,]+[KMB]?)\s+downloads["']''', block, re.IGNORECASE
+            )
         updated = next((s for s in spans if s.endswith(" ago") or s == "yesterday"), "")
 
         entries.append(

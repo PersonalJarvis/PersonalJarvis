@@ -22,10 +22,30 @@ class ComputerTool:
     is_action_tool = True
     schema = tool_schema()
 
-    def describe_args(self, args: dict[str, Any]) -> str:
-        steps = args.get("steps") if isinstance(args, dict) else None
-        actions = [str(step.get("action")) for step in steps or [] if isinstance(step, dict)]
-        return "Operate the screen: " + (", ".join(actions) or "screenshot")
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
+        """The impact contract (``{"level", ...}``) every caller reads as a dict.
+
+        Looking (screenshot, wait) only reads; any input step changes the
+        screen. A plain string broke the voice read check on every call, so a
+        repeated screenshot could be answered with an earlier, stale one.
+        """
+        # Read the call as ``direct.parse_steps`` does (one bare step allowed)
+        # and fail closed: only a well-formed call of pure looks is a read.
+        args = args if isinstance(args, dict) else {}
+        raw = args.get("steps")
+        if raw is None and "action" in args:
+            raw = [args]
+        steps = raw if isinstance(raw, list) else []
+        actions = [
+            str(step.get("action", "")).strip().lower() for step in steps if isinstance(step, dict)
+        ]
+        looks_only = bool(actions) and len(actions) == len(steps) and all(
+            action in {"screenshot", "wait"} for action in actions
+        )
+        return {
+            "level": "read" if looks_only else "modify",
+            "commands": "Operate the screen: " + (", ".join(actions) or "screenshot"),
+        }
 
     async def execute(self, args, ctx):
         from jarvis.core.protocols import ToolResult

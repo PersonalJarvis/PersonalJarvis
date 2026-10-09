@@ -100,6 +100,21 @@ def test_remote_commands_ask_and_the_brain_switch_is_never_offered() -> None:
     assert ("POST", "/api/brain/switch") not in by_route
 
 
+def test_coding_panes_are_reached_only_through_the_addressed_workspace_tool() -> None:
+    """The pane prompt and fan-out routes pick a pane by call-sign in the front
+    workspace, with no delivery receipt; voice removed the tools wrapping them
+    for that reason, and run-app-action must not hand them back."""
+    from jarvis.ui.web.agentic_ide_routes import router as ide_router
+
+    application = FastAPI()
+    application.include_router(ide_router)
+    by_route = {(e.method, e.path) for e in build_catalog(application.openapi()).values()}
+    assert ("POST", "/api/agentic-ide/terminals/{name}/prompt") not in by_route
+    assert ("POST", "/api/agentic-ide/fanout") not in by_route
+    # Other pane actions stay offered under the person's policy.
+    assert ("POST", "/api/agentic-ide/terminals/{name}/interrupt") in by_route
+
+
 def test_default_tiers_read_safe_change_monitor_delete_ask(app: FastAPI) -> None:
     catalog = build_catalog(app.openapi())
     tiers = {(e.method, e.path): default_tier(e) for e in catalog.values()}
@@ -143,6 +158,25 @@ async def test_a_blocked_action_never_runs(app: FastAPI) -> None:
     assert not result.success and "blocked" in (result.error or "")
     assert "rename" not in app.state.seen
     assert history.recent(1)[0]["outcome"] == "blocked"
+
+
+def test_a_read_is_described_as_a_read_and_a_change_as_a_change(app: FastAPI) -> None:
+    """Live voice keys replay and supersession on this: a GET read as a change
+    was answered from an earlier call's result instead of being read again."""
+    tool = RunAppActionTool(runtime=_Runtime(app))
+    read = {"action_id": _id(app, "/api/skills", "GET")}
+    change = {"action_id": _id(app, "/api/workspace/panes/{pane_id}/rename", "POST")}
+    delete = {"action_id": _id(app, "/api/skills/{name}", "DELETE")}
+    assert tool.describe_args(read)["level"] == "read"
+    for args in (change, delete, {"action_id": "nope"}):
+        assert tool.describe_args(args)["level"] == "modify"
+    # A read-only chat still refuses every app action, reads included.
+    from jarvis.core.tool_read_only import allows_read
+
+    assert allows_read(tool, read) is False
+    # The person's mode still decides whether a read runs at all.
+    set_mode(read["action_id"], "block")
+    assert tool.risk_tier_for_args(read) == "block"
 
 
 async def test_query_parameters_and_unknown_ids(app: FastAPI) -> None:

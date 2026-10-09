@@ -20,6 +20,7 @@ folder.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -519,6 +520,10 @@ class ProposeChangeTool:
         "you are still new (no title and no description), your first identity applies at "
         "once from the "
         "user's message, so propose it as soon as the user has told you what you are for. "
+        "If your name is still a temporary creation label, an identity payload containing "
+        "only name also saves automatically in your own direct user chat, even when your "
+        "role is already stored. Choose a short role-based name within the first one to "
+        "three meaningful replies; keep an already chosen name unless the user changes it. "
         "Say why in 'reason'. "
         "Use it when the user states a lasting preference, asks you to remember a way of "
         "working, to save a procedure, or to run something regularly. Never propose the "
@@ -567,7 +572,7 @@ class ProposeChangeTool:
         from jarvis.core.protocols import current_chat_turn
 
         from .proposals import ProposalRefused, propose, resolve
-        from .roster import is_fresh
+        from .roster import has_placeholder_name, is_fresh
         from .surface import agent_id_of
 
         rt = self._runtime
@@ -586,9 +591,21 @@ class ProposeChangeTool:
         # A fresh agent takes its first identity from its person's turn in its
         # own chat without a card; the outcome card offers undo.
         payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+        first_name = (
+            has_placeholder_name(caller)
+            and set(payload) == {"name"}
+            and turn is not None
+            and turn.session_id == caller.session_id
+            and (not self._session_id or self._session_id == caller.session_id)
+        )
+        keeps_name = (
+            "name" not in payload
+            or str(payload["name"]).strip() == caller.name
+            or has_placeholder_name(caller)
+        )
         fresh_apply = (
             kind == "identity"
-            and is_fresh(caller)
+            and ((is_fresh(caller) and keeps_name) or first_name)
             and own_user_turn
             # A long role text is a card, not an automatic change.
             and len(str(payload.get("description") or "")) <= FRESH_IDENTITY_MAX_CHARS
@@ -772,9 +789,17 @@ class ShellTool:
         from .remote import backend_for
 
         backend = self._backend or backend_for(caller, self._workspace)
-        result = await backend.run(command, cwd=cwd, timeout_s=timeout)
+        from .credentials import current_vault
+
+        vault = current_vault()
+        secrets = await asyncio.to_thread(vault.shell_env, caller.agent_id) if vault else {}
+        if secrets and getattr(backend, "accepts_env", False):
+            result = await backend.run(command, cwd=cwd, timeout_s=timeout, extra_env=secrets)
+        else:
+            result = await backend.run(command, cwd=cwd, timeout_s=timeout)
+        output = vault.redact(caller.agent_id, result.output) if vault else result.output
         body = {
-            "output": result.output,
+            "output": output,
             "exit_code": result.exit_code,
             "seconds": round(result.seconds, 2),
             "folder": str(cwd),
@@ -784,9 +809,14 @@ class ShellTool:
         if runs_on:
             # A remote command did not run in the local ``folder`` above; say where.
             body["runs_on"] = runs_on
+        if secrets and not getattr(backend, "accepts_env", False):
+            body["credentials"] = (
+                "Your stored credentials are only set for commands on this computer, "
+                "not on the computer this command ran on."
+            )
         if result.timed_out:
             return ToolResult(success=False, output=body, error="command timed out")
         if result.failed_to_start:
-            return ToolResult(success=False, output=body, error=result.output)
+            return ToolResult(success=False, output=body, error=output)
         error = None if result.ok else f"exit {result.exit_code}"
         return ToolResult(success=result.ok, output=body, error=error)

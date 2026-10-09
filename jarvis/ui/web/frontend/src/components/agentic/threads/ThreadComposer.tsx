@@ -4,12 +4,12 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { DictationButton } from "@/components/agentchat/DictationButton";
-import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
+import { runningTurn, type PendingApproval, type QuestionState, type Timeline, type ToolBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
 import { releaseHeldFiles, useChatAttachments, type HeldFiles } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { useT } from "@/i18n";
-import type { ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
+import type { AgentChatSession, ApprovalDecision, ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
 import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
 import { effortLadder, snapEffort } from "@/lib/effortLadder";
@@ -44,7 +44,6 @@ interface SentMessage {
   afterSeq: number;
 }
 let lastSent: SentMessage | null = null;
-
 /** How long after sending Escape still takes a message back once the agent started thinking. */
 export const RECALL_WINDOW_MS = 15_000;
 
@@ -107,33 +106,60 @@ const PLAN_PROSE = cn(
   "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
 );
 
-function ApprovalPanel({ timeline, onDecide }: { timeline: Timeline; onDecide: (id: string, decision: "allow" | "allow_always" | "deny") => void }) {
+/** The oldest approval the agent waits on, shown at the top of the composer. */
+function ApprovalPanel({ timeline }: { timeline: Timeline }) {
   const pending = timeline.pendingApprovals[0];
   if (!pending) return null;
+  // Keyed by the card: a new card starts with fresh buttons and no old error.
+  return <ApprovalCard key={pending.approvalId} pending={pending} count={timeline.pendingApprovals.length} />;
+}
+
+function ApprovalCard({ pending, count }: { pending: PendingApproval; count: number }) {
+  const [sending, setSending] = useState<ApprovalDecision | null>(null);
+  const [error, setError] = useState("");
   const input = pending.input && typeof pending.input === "object" ? pending.input as Record<string, unknown> : {};
   // Claude Code's finished plan asks here too, and the plan itself is what gets approved.
   const isPlan = pending.name === "ExitPlanMode";
   const plan = isPlan ? String(input.plan ?? "").trim() : "";
   const detail = isPlan ? "" : String(input.command ?? input.file_path ?? input.path ?? input.url ?? "");
-  return <div data-testid="thread-approval" className="border-b border-border px-4 py-3">
+  // One answer per card: a second click while the first is on its way would
+  // land on a card that is already closed.
+  const decide = async (decision: ApprovalDecision) => {
+    if (sending) return;
+    setSending(decision);
+    setError("");
+    try {
+      await useThreadChatStore.getState().decide(pending.approvalId, decision);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setSending(null);
+    }
+  };
+  const spinner = (decision: ApprovalDecision) => sending === decision && <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />;
+  return <div data-testid="thread-approval" aria-busy={sending !== null} className="border-b border-border px-4 py-3">
     <div className="flex items-start gap-2.5">
       {isPlan
         ? <ListChecks aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         : <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-warning" />}
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground-strong">{isPlan ? "Plan ready" : "Approval needed"}{timeline.pendingApprovals.length > 1 ? ` (${timeline.pendingApprovals.length})` : ""}</p>
+        <p className="flex items-baseline gap-2 text-sm font-medium text-foreground-strong">
+          <span className="min-w-0 flex-1">{isPlan ? "Plan ready" : "Approval needed"}</span>
+          {count > 1 && <span data-testid="thread-approval-count" className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">1 of {count}</span>}
+        </p>
         <p className="mt-0.5 text-sm text-muted-foreground">{isPlan ? "Build it, or keep planning and say what to change." : pending.summary || pending.name}</p>
         {plan && <div data-testid="thread-approval-plan" className={cn("mt-2 max-h-72 overflow-auto rounded-md bg-secondary px-3 py-2 scrollbar-jarvis", PLAN_PROSE)}><ChatMarkdown text={plan} /></div>}
         {detail && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-secondary px-2.5 py-1.5 font-mono text-xs text-foreground scrollbar-jarvis">{detail}</pre>}
+        {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
       </div>
     </div>
     <div className="mt-3 flex flex-wrap justify-end gap-2">
-      <button type="button" onClick={() => onDecide(pending.approvalId, "deny")}
-        className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{isPlan ? "Keep planning" : "Decline"}</button>
-      {!isPlan && <button type="button" onClick={() => onDecide(pending.approvalId, "allow_always")}
-        className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Always allow</button>}
-      <button type="button" data-testid="thread-approve" onClick={() => onDecide(pending.approvalId, "allow")}
-        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{isPlan ? "Build it" : "Approve"}</button>
+      <button type="button" disabled={sending !== null} onClick={() => void decide("deny")}
+        className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{spinner("deny")}{isPlan ? "Keep planning" : "Decline"}</button>
+      {!isPlan && <button type="button" disabled={sending !== null} onClick={() => void decide("allow_always")}
+        title="Approve, and stop asking for this in this thread"
+        className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-secondary disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{spinner("allow_always")}Always allow</button>}
+      <button type="button" data-testid="thread-approve" disabled={sending !== null} onClick={() => void decide("allow")}
+        className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{spinner("allow")}{isPlan ? "Build it" : "Approve"}</button>
     </div>
   </div>;
 }
@@ -252,6 +278,7 @@ function QuestionPanel({ timeline }: { timeline: Timeline }) {
 export function ThreadComposer({
   threadKey,
   prepareDraft,
+  onSessionCreated,
   placeholder = "Ask for changes, send follow-ups, or attach images",
   autoFocusNonce,
   strip,
@@ -260,6 +287,7 @@ export function ThreadComposer({
   /** Which thread the box is typing for — the session id, or `draft:<project>`. */
   threadKey: string;
   prepareDraft: () => Promise<string | null>;
+  onSessionCreated?: (session: AgentChatSession) => void;
   placeholder?: string;
   autoFocusNonce: number;
   /** The strip that hangs under the card — where the agent works and on which branch. */
@@ -391,9 +419,9 @@ export function ThreadComposer({
         setStarting(false);
       }
     }
-    await useThreadChatStore.getState().send(text, attachments);
+    await useThreadChatStore.getState().send(text, attachments, [], onSessionCreated);
     return !useThreadChatStore.getState().lastError;
-  }, [prepareDraft]);
+  }, [prepareDraft, onSessionCreated]);
 
   // A queued message goes out the moment the agent is free again.
   useEffect(() => {
@@ -454,7 +482,7 @@ export function ThreadComposer({
     lastSent = null;
     setPaused(true);
     if (activeSessionId) useRecalledMessages.getState().hide(activeSessionId, asked.id);
-    void useThreadChatStore.getState().cancel();
+    void useThreadChatStore.getState().cancel("thread-recall");
     const current = drafts.get(threadKey) ?? "";
     setValue(current.trim() ? `${text}\n${current}` : text);
     files.restore(held);
@@ -491,10 +519,6 @@ export function ThreadComposer({
     rememberSeat(useThreadChatStore.getState().draft);
   };
 
-  const decide = (approvalId: string, decision: "allow" | "allow_always" | "deny") => {
-    void useThreadChatStore.getState().decide(approvalId, decision);
-  };
-
   const canSend = (value.trim().length > 0 || files.attachments.length > 0 || dictation.dictating) && files.analyzing === 0 && !starting;
   const error = problem || lastError || "";
 
@@ -517,7 +541,7 @@ export function ThreadComposer({
         "relative z-10 overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_-12px_rgb(var(--scrim-rgb)/0.5)] transition-colors focus-within:border-border-strong",
         files.dragging && "border-accent ring-2 ring-accent/40",
       )}>
-      <ApprovalPanel timeline={timeline} onDecide={decide} />
+      <ApprovalPanel timeline={timeline} />
       <QuestionPanel timeline={timeline} />
       {!running && <PlanPanel timeline={timeline} provider={provider} />}
       {(files.attachments.length > 0 || files.analyzing > 0) && <div className="px-3 pt-3 sm:px-4">
@@ -549,7 +573,7 @@ export function ThreadComposer({
             startLabel={t("chats_view.dictation_start")} stopLabel={t("chats_view.dictation_stop")} shape="round" />
           {running && !canSend
             ? <button type="button" aria-label="Stop the agent" title="Stop" data-testid="thread-stop"
-              onClick={() => { setPaused(true); void useThreadChatStore.getState().cancel(); }}
+              onClick={() => { setPaused(true); void useThreadChatStore.getState().cancel("thread-stop-button"); }}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Square className="h-3 w-3 fill-current" />
             </button>

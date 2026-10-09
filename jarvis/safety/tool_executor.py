@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     ActionApprovalRequired,
+    ActionApproved,
     ActionDenied,
     ActionExecuted,
     ActionProposed,
@@ -337,12 +338,19 @@ class ToolExecutor:
                         tool.name, exc,
                     )
         needs_confirm = tier_confirm or plaus_confirm
+        # A bound chat owns its approval stance through ChatApprovalBridge.
+        # Calls from voice, tasks, missions and other app surfaces use the
+        # global default. This never overrides the block/read-only/cancel
+        # checks, and model-controlled tool arguments cannot set the policy.
+        bypass_default = self._evaluator.bypass_permissions and not (
+            config_snapshot or {}
+        ).get("approval_ref")
         # WHO can answer this gate — declared by the calling layer, never by
         # the model (see ``approval_surface``). It changes only how the
         # approval is obtained, never whether one is needed: ``needs_confirm``
         # above is the untouched tier decision.
         surface = resolve_approval_surface(config_snapshot)
-        voice_confirm = surface == CONVERSATIONAL
+        voice_confirm = surface == CONVERSATIONAL and not bypass_default
         # How long a card may stay open — declared by the calling layer like
         # the surface itself (a person reading a chat card must not lose the
         # tool to a clock built for a spoken "ja"), clamped so no surface can
@@ -403,6 +411,17 @@ class ToolExecutor:
                     ),
                 )
             )
+            # Scoped authorizers have the first decision, including explicit
+            # denials. Bypass supplies an immediate standing approval only
+            # when none has answered; it never overwrites their decision.
+            if bypass_default and approval_ticket.peek() is None:
+                await self._bus.publish(
+                    ActionApproved(
+                        trace_id=tid,
+                        tool_name=tool.name,
+                        approved_by="bypass",
+                    )
+                )
 
         if needs_confirm:
             # Two-turn confirmation on a conversational turn: do NOT block on the

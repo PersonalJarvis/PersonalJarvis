@@ -1,0 +1,563 @@
+/*
+ * The bot stage: the agent's own face and a word, the way a messenger shows
+ * someone typing. The face carries every scene through its expressive eyes
+ * (AgentSymbol `expressive`): `.ae-eye` groups move and scale, `.ae-open`,
+ * `.ae-happy` and `.ae-shut` swap the eye's shape. Eye units are the symbol's
+ * own viewBox units (a face is ~40 units wide), so a 2px translate is a
+ * glance, not a jump. Tool scenes add one tiny prop in a 20 x 20 box beside
+ * the face. Reduced motion keeps the face still and every prop at rest.
+ *
+ * A scene change never cuts: the face, the prop and the word each stack the
+ * outgoing scene over the incoming one (`.bs-scene`, `.is-out`) and fade it
+ * away, so the eyes ease into their next pose and the word slides over.
+ * Scene rules therefore hang on the layer's own `.bs-scene[data-scene]`,
+ * never on the stage: the outgoing face keeps playing its own scene.
+ */
+
+.bot-stage {
+  --bot: hsl(var(--muted-foreground));
+  --bs-swap: 0.42s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 0;
+  color: hsl(var(--muted-foreground));
+}
+
+.bs-set {
+  display: inline-grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  animation: bs-enter 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes bs-enter {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: none; }
+}
+/* The incoming face sits still underneath; the outgoing one fades off on top. */
+.bs-face {
+  grid-area: 1 / 1;
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+.bs-face.is-out {
+  z-index: 1;
+  animation: bs-fade-out var(--bs-swap) ease-in-out both;
+}
+@keyframes bs-fade-out { to { opacity: 0; } }
+.bs-body {
+  display: block;
+  width: 28px;
+  height: 28px;
+  transform-origin: 50% 90%;
+  animation: bs-breathe 2.8s ease-in-out infinite;
+}
+.bs-body > * { display: block; width: 28px !important; height: 28px !important; }
+.bs-body svg { width: 28px; height: 28px; }
+
+.bs-over {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+/* The prop's slot opens and closes, so the word glides aside instead of jumping. */
+.bs-props {
+  display: inline-grid;
+  grid-template-columns: 20px;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-left: -2px;
+  transition: width var(--bs-swap) cubic-bezier(0.2, 0.8, 0.2, 1), margin-left var(--bs-swap) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.bs-props[data-empty] { width: 0; margin-left: -8px; }
+.bs-props > .bs-scene { grid-area: 1 / 1; display: block; width: 20px; height: 20px; }
+.bs-prop { display: block; overflow: visible; }
+.bs-props > .bs-scene:not(.is-out) .bs-prop { animation: bs-enter 0.3s 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.bs-props > .is-out { animation: bs-prop-out var(--bs-swap) ease-in both; }
+@keyframes bs-prop-out { to { opacity: 0; transform: scale(0.85); } }
+.bs-prop *, .bs-over * { transform-box: view-box; }
+
+@keyframes bs-breathe {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-0.6px) scale(1.015, 0.985); }
+}
+
+/* Every scene blinks now and then, unless its eyes are busy being shut. */
+.bot-stage .agent-symbol-lids {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bs-blink 4.6s ease-in-out infinite;
+}
+@keyframes bs-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  94% { transform: scaleY(0.1); }
+  97% { transform: scaleY(1); }
+}
+.bot-stage :is(.ae-eye, .ae-open, .ae-happy, .ae-shut) { transition: opacity 0.2s; }
+
+/* ---- thinking: ponder — up to the left, a blink, up to the right ---------- */
+
+.bs-scene[data-scene="ponder"] .ae-eye { animation: bs-ponder 3.6s ease-in-out infinite; }
+.bs-scene[data-scene="ponder"] .bs-body { animation: bs-tilt 3.6s ease-in-out infinite; }
+@keyframes bs-ponder {
+  0%, 8%, 100% { transform: translate(0, 0); }
+  22%, 44% { transform: translate(-2px, -2px); }
+  60%, 86% { transform: translate(2px, -1.8px); }
+}
+@keyframes bs-tilt {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(-5deg); }
+  70% { transform: rotate(5deg); }
+}
+
+/* ---- thinking: glance — quick looks to either side ------------------------ */
+
+.bs-scene[data-scene="glance"] .ae-eye { animation: bs-glance 2.6s cubic-bezier(0.7, 0, 0.3, 1) infinite; }
+.bs-scene[data-scene="glance"] .bs-body { animation: bs-glance-body 2.6s cubic-bezier(0.7, 0, 0.3, 1) infinite; }
+@keyframes bs-glance {
+  0%, 12%, 100% { transform: translate(0, 0); }
+  18%, 40% { transform: translate(2.6px, 0.2px); }
+  48%, 70% { transform: translate(-2.6px, 0.2px); }
+  78%, 92% { transform: translate(0, -0.6px); }
+}
+@keyframes bs-glance-body {
+  0%, 12%, 78%, 100% { transform: rotate(0); }
+  18%, 40% { transform: rotate(3deg); }
+  48%, 70% { transform: rotate(-3deg); }
+}
+
+/* ---- thinking: squint — eyes narrow in concentration, then relax ---------- */
+
+.bs-scene[data-scene="squint"] .ae-open { animation: bs-squint 3.2s ease-in-out infinite; }
+.bs-scene[data-scene="squint"] .ae-eye { animation: bs-squint-eye 3.2s ease-in-out infinite; }
+.bs-scene[data-scene="squint"] .bs-body { animation: bs-squint-body 3.2s ease-in-out infinite; }
+@keyframes bs-squint {
+  0%, 14%, 86%, 100% { transform: scaleY(1); }
+  26%, 72% { transform: scaleY(0.32) scaleX(1.15); }
+}
+@keyframes bs-squint-eye {
+  0%, 14%, 86%, 100% { transform: translate(0, 0); }
+  26%, 72% { transform: translate(0.8px, 0.6px); }
+}
+@keyframes bs-squint-body {
+  0%, 14%, 86%, 100% { transform: rotate(0); }
+  26%, 72% { transform: rotate(-6deg) translateY(0.4px); }
+}
+
+/* ---- thinking: spark — eyes go up, then pop wide at an idea --------------- */
+
+.bs-scene[data-scene="spark"] .ae-eye { animation: bs-idea-eye 3s ease-in-out infinite; }
+.bs-scene[data-scene="spark"] .bs-body { animation: bs-hop 3s ease-in-out infinite; }
+@keyframes bs-idea-eye {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  30% { transform: translate(-0.6px, -1.8px) scale(0.9); }
+  42% { transform: translate(0, -1px) scale(1.5); }
+  52%, 78% { transform: translate(0, -0.8px) scale(1.3); }
+  90% { transform: translate(0, 0) scale(1); }
+}
+@keyframes bs-hop {
+  0%, 36%, 100% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(0) scale(1.08, 0.9); }
+  47% { transform: translateY(-4px) scale(0.95, 1.06); }
+  55% { transform: translateY(0) scale(1.05, 0.94); }
+  62% { transform: translateY(0) scale(1, 1); }
+}
+
+/* ---- thinking: wink — one eye shuts while the head tips ------------------- */
+
+.bs-scene[data-scene="wink"] .ae-r .ae-open { animation: bs-wink-open 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="wink"] .ae-r .ae-shut { animation: bs-wink-shut 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="wink"] .ae-l { animation: bs-wink-other 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="wink"] .bs-body { animation: bs-wink-body 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="wink"] .agent-symbol-lids { animation: none; }
+@keyframes bs-wink-open { 0%, 30%, 70%, 100% { opacity: 1; } 36%, 64% { opacity: 0; } }
+@keyframes bs-wink-shut { 0%, 30%, 70%, 100% { opacity: 0; } 36%, 64% { opacity: 1; } }
+@keyframes bs-wink-other {
+  0%, 26%, 74%, 100% { transform: translate(0, 0) scale(1); }
+  36%, 64% { transform: translate(0.4px, -0.8px) scale(1.15); }
+}
+@keyframes bs-wink-body {
+  0%, 26%, 74%, 100% { transform: rotate(0); }
+  36%, 64% { transform: rotate(8deg); }
+}
+
+/* ---- thinking: roll — eyes circle round, turning it over ------------------ */
+
+.bs-scene[data-scene="roll"] .ae-eye { animation: bs-roll 2.4s linear infinite; }
+.bs-scene[data-scene="roll"] .bs-body { animation: bs-roll-body 2.4s ease-in-out infinite; }
+@keyframes bs-roll {
+  0%, 100% { transform: translate(2.2px, 0); }
+  12.5% { transform: translate(1.55px, 1.55px); }
+  25% { transform: translate(0, 2.2px); }
+  37.5% { transform: translate(-1.55px, 1.55px); }
+  50% { transform: translate(-2.2px, 0); }
+  62.5% { transform: translate(-1.55px, -1.55px); }
+  75% { transform: translate(0, -2.2px); }
+  87.5% { transform: translate(1.55px, -1.55px); }
+}
+@keyframes bs-roll-body {
+  0%, 100% { transform: rotate(2deg); }
+  50% { transform: rotate(-2deg); }
+}
+
+/* ---- thinking: drowsy — heavy-lidded mulling, then a perk-up -------------- */
+
+.bs-scene[data-scene="drowsy"] .ae-open { animation: bs-drowsy 3.4s ease-in-out infinite; }
+.bs-scene[data-scene="drowsy"] .ae-eye { animation: bs-drowsy-eye 3.4s ease-in-out infinite; }
+.bs-scene[data-scene="drowsy"] .bs-body { animation: bs-drowsy-body 3.4s ease-in-out infinite; }
+.bs-scene[data-scene="drowsy"] .agent-symbol-lids { animation: none; }
+@keyframes bs-drowsy {
+  0%, 8%, 100% { transform: scaleY(1); }
+  30%, 66% { transform: scaleY(0.45); }
+  74% { transform: scaleY(1.3); }
+  84% { transform: scaleY(1); }
+}
+@keyframes bs-drowsy-eye {
+  0%, 8%, 100% { transform: translate(0, 0); }
+  30%, 66% { transform: translate(-0.6px, 1.2px); }
+  74% { transform: translate(0, -1px); }
+}
+@keyframes bs-drowsy-body {
+  0%, 8%, 100% { transform: rotate(0) translateY(0); }
+  30%, 66% { transform: rotate(-4deg) translateY(0.8px); }
+  74% { transform: rotate(1deg) translateY(-1.5px); }
+}
+
+/* ---- thinking: beam — a happy squint, it is going well -------------------- */
+
+.bs-scene[data-scene="beam"] .ae-open { animation: bs-beam-open 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="beam"] .ae-happy { animation: bs-beam-happy 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="beam"] .bs-body { animation: bs-beam-body 2.8s ease-in-out infinite; }
+.bs-scene[data-scene="beam"] .agent-symbol-lids { animation: none; }
+@keyframes bs-beam-open { 0%, 24%, 78%, 100% { opacity: 1; } 30%, 72% { opacity: 0; } }
+@keyframes bs-beam-happy { 0%, 24%, 78%, 100% { opacity: 0; } 30%, 72% { opacity: 1; } }
+@keyframes bs-beam-body {
+  0%, 26%, 76%, 100% { transform: translateY(0) rotate(0); }
+  36% { transform: translateY(-1.5px) rotate(-3deg); }
+  46% { transform: translateY(0) rotate(0); }
+  56% { transform: translateY(-1.5px) rotate(3deg); }
+  66% { transform: translateY(0) rotate(0); }
+}
+
+/* ---- thinking: skyread — eyes up, reading something only it can see ------- */
+
+.bs-scene[data-scene="skyread"] .ae-eye { animation: bs-skyread 3s ease-in-out infinite; }
+.bs-scene[data-scene="skyread"] .bs-body { animation: bs-tilt 3s ease-in-out infinite; }
+@keyframes bs-skyread {
+  0%, 100% { transform: translate(-2px, -1.9px); }
+  42% { transform: translate(2px, -1.9px); }
+  50% { transform: translate(-2px, -1.3px); }
+  92% { transform: translate(2px, -1.3px); }
+}
+
+/* ---- thinking: doubt — one eye wide, one narrowed, double-checking -------- */
+
+.bs-scene[data-scene="doubt"] .ae-l { animation: bs-doubt-l 3s ease-in-out infinite; }
+.bs-scene[data-scene="doubt"] .ae-r { animation: bs-doubt-r 3s ease-in-out infinite; }
+.bs-scene[data-scene="doubt"] .bs-body { animation: bs-doubt-body 3s ease-in-out infinite; }
+@keyframes bs-doubt-l {
+  0%, 18%, 84%, 100% { transform: translate(0, 0) scale(1); }
+  30%, 72% { transform: translate(1.2px, -0.6px) scale(1.25); }
+}
+@keyframes bs-doubt-r {
+  0%, 18%, 84%, 100% { transform: translate(0, 0) scale(1, 1); }
+  30%, 72% { transform: translate(1.2px, 0.4px) scale(1.05, 0.5); }
+}
+@keyframes bs-doubt-body {
+  0%, 18%, 84%, 100% { transform: rotate(0); }
+  30%, 72% { transform: rotate(-7deg); }
+}
+
+/* ---- typing — eyes become dashes looking down at the keys ----------------- */
+
+.bs-scene[data-scene="typing"] .ae-open { opacity: 0; }
+.bs-scene[data-scene="typing"] .ae-shut { opacity: 1; }
+.bs-scene[data-scene="typing"] .agent-symbol-lids { animation: none; }
+.bs-scene[data-scene="typing"] .ae-eye { animation: bs-typing-eye 1.4s ease-in-out infinite; }
+.bs-scene[data-scene="typing"] .bs-body { animation: bs-typing-body 0.7s ease-in-out infinite alternate; }
+@keyframes bs-typing-eye {
+  0%, 100% { transform: translate(1.2px, 1.6px) rotate(14deg); }
+  50% { transform: translate(1.8px, 1.4px) rotate(4deg); }
+}
+@keyframes bs-typing-body {
+  from { transform: translateY(0) rotate(1deg); }
+  to { transform: translateY(-1px) rotate(-1deg); }
+}
+
+/* ---- reading the person's message — line by line ------------------------- */
+
+.bs-scene[data-scene="reading"] .ae-eye { animation: bs-reading 2.4s ease-in-out infinite; }
+.bs-scene[data-scene="reading"] .ae-open { transform: scale(0.85); }
+@keyframes bs-reading {
+  0%, 100% { transform: translate(-1.8px, -1.2px); }
+  28% { transform: translate(2px, -1.2px); }
+  34% { transform: translate(-1.8px, 0); }
+  62% { transform: translate(2px, 0); }
+  68% { transform: translate(-1.8px, 1.2px); }
+  94% { transform: translate(1.6px, 1.2px); }
+}
+
+/* ---- props: the tiny tool beside the face -------------------------------- */
+
+.bs-line, .bs-ink, .bs-jot, .bs-track, .bs-prompt {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bs-paper { fill: hsl(var(--chat-bubble-in)); stroke: currentColor; stroke-opacity: 0.5; stroke-width: 1; }
+
+/* note: a quill writing a line of ink; the eyes follow it down */
+.bs-scene[data-scene="note"] .ae-eye { animation: bs-note-eye 2s ease-in-out infinite; }
+.bs-scene[data-scene="note"] .bs-body { transform: rotate(5deg); animation: none; }
+@keyframes bs-note-eye {
+  0%, 100% { transform: translate(1.2px, 1.8px); }
+  70% { transform: translate(2.4px, 1.8px); }
+}
+.bs-ink { stroke: var(--bot); stroke-dasharray: 18; stroke-dashoffset: 18; animation: bs-ink 2s linear infinite; }
+@keyframes bs-ink {
+  0% { stroke-dashoffset: 18; opacity: 1; }
+  70%, 88% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+.bs-quill { color: hsl(var(--foreground)); transform: translate(1px, 3px); animation: bs-quill 2s linear infinite; }
+.bs-quill .bs-line { stroke-width: 2.2; }
+@keyframes bs-quill {
+  0% { transform: translate(1px, 3px) rotate(0); }
+  18% { transform: translate(4px, 1.6px) rotate(-8deg); }
+  36% { transform: translate(7px, 3.2px) rotate(6deg); }
+  54% { transform: translate(10px, 1.6px) rotate(-8deg); }
+  70% { transform: translate(12.5px, 3px) rotate(0); }
+  88% { transform: translate(13px, -1px) rotate(10deg); }
+  100% { transform: translate(1px, 3px) rotate(0); }
+}
+
+/* jot: lines appear on a notepad, eyes down */
+.bs-scene[data-scene="jot"] .ae-eye { transform: translate(1.6px, 1.8px); }
+.bs-scene[data-scene="jot"] .bs-body { animation: bs-nod 1.2s ease-in-out infinite; }
+@keyframes bs-nod {
+  0%, 100% { transform: rotate(3deg); }
+  50% { transform: rotate(6deg) translateY(0.5px); }
+}
+.bs-jot { stroke-opacity: 0.85; stroke-dasharray: 8; stroke-dashoffset: 8; }
+.bs-j1 { animation: bs-jot1 2.4s linear infinite; }
+.bs-j2 { animation: bs-jot2 2.4s linear infinite; }
+.bs-j3 { animation: bs-jot3 2.4s linear infinite; stroke: var(--bot); stroke-opacity: 1; }
+@keyframes bs-jot1 { 0% { stroke-dashoffset: 8; opacity: 1; } 22%, 90% { stroke-dashoffset: 0; opacity: 1; } 100% { opacity: 0; } }
+@keyframes bs-jot2 { 0%, 28% { stroke-dashoffset: 8; opacity: 1; } 50%, 90% { stroke-dashoffset: 0; opacity: 1; } 100% { opacity: 0; } }
+@keyframes bs-jot3 { 0%, 56% { stroke-dashoffset: 8; opacity: 1; } 74%, 90% { stroke-dashoffset: 0; opacity: 1; } 100% { opacity: 0; } }
+
+/* scan: a magnifier circles; the eyes dart after it */
+.bs-scene[data-scene="scan"] .ae-eye { animation: bs-dart 1.6s ease-in-out infinite; }
+@keyframes bs-dart {
+  0%, 100% { transform: translate(1.2px, -0.8px); }
+  25% { transform: translate(2.6px, 0.6px); }
+  50% { transform: translate(1.2px, 1.6px); }
+  75% { transform: translate(-0.2px, 0.4px); }
+}
+.bs-lens circle { fill: color-mix(in srgb, var(--bot) 22%, transparent); stroke: currentColor; stroke-width: 1.6; }
+.bs-lens path { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.bs-lens { color: hsl(var(--foreground)); animation: bs-lens 1.6s ease-in-out infinite; }
+@keyframes bs-lens {
+  0%, 100% { transform: translate(1.5px, -1.5px); }
+  25% { transform: translate(2.5px, 1px); }
+  50% { transform: translate(0, 2px); }
+  75% { transform: translate(-1px, -0.5px); }
+}
+
+/* flip: a page turns; the eyes step down the page */
+.bs-scene[data-scene="flip"] .ae-eye { animation: bs-flip-eye 1.8s ease-in-out infinite; }
+@keyframes bs-flip-eye {
+  0%, 100% { transform: translate(1.6px, -1px); }
+  33% { transform: translate(1.6px, 0.4px); }
+  66% { transform: translate(1.6px, 1.6px); }
+}
+.bs-page rect { fill: hsl(var(--chat-bubble-in)); stroke: currentColor; stroke-opacity: 0.7; stroke-width: 1; }
+.bs-page path { fill: none; stroke: currentColor; stroke-opacity: 0.7; stroke-width: 1.1; stroke-linecap: round; }
+.bs-page { transform-origin: 5px 10px; animation: bs-page 1.8s cubic-bezier(0.45, 0, 0.3, 1) infinite; }
+@keyframes bs-page {
+  0%, 30% { transform: scaleX(1); opacity: 1; }
+  58% { transform: scaleX(0.05); opacity: 1; }
+  80% { transform: scaleX(-0.9); opacity: 0; }
+  81% { transform: scaleX(1); opacity: 0; }
+  100% { transform: scaleX(1); opacity: 1; }
+}
+
+/* recall: eyes up and away, thought puffs rising */
+.bs-scene[data-scene="recall"] .ae-eye { animation: bs-recall 3s ease-in-out infinite; }
+.bs-scene[data-scene="recall"] .bs-body { animation: bs-tilt 3s ease-in-out infinite; }
+@keyframes bs-recall {
+  0%, 100% { transform: translate(1.6px, -2px); }
+  45% { transform: translate(-1.8px, -2px); }
+  60% { transform: translate(-1.8px, -2px) scale(1.15); }
+}
+.bs-puff { fill: hsl(var(--chat-bubble-in)); stroke: currentColor; stroke-opacity: 0.6; stroke-width: 0.8; animation: bs-puff 1.8s ease-in-out infinite; }
+.bs-p2 { animation-delay: 0.3s; fill: color-mix(in srgb, var(--bot) 50%, hsl(var(--chat-bubble-in))); }
+@keyframes bs-puff { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+/* browser: a pointer clicks a button; the eyes follow it */
+.bs-scene[data-scene="browser"] .ae-eye { animation: bs-browser-eye 2.4s ease-in-out infinite; }
+@keyframes bs-browser-eye {
+  0%, 100% { transform: translate(1px, -0.4px); }
+  50%, 80% { transform: translate(2.4px, 1.2px); }
+}
+.bs-scene[data-scene="browser"] .bs-line { stroke-width: 1; stroke-opacity: 0.5; }
+.bs-button { fill: transparent; stroke: currentColor; stroke-opacity: 0.6; stroke-width: 1; animation: bs-button 2.4s ease-out infinite; }
+@keyframes bs-button { 0%, 54% { fill: transparent; } 58%, 86% { fill: var(--bot); stroke: var(--bot); } 100% { fill: transparent; } }
+.bs-pointer-shape { fill: hsl(var(--foreground)); stroke: hsl(var(--background)); stroke-width: 2.4; stroke-linejoin: round; }
+.bs-pointer { transform: translate(4px, 9px); animation: bs-pointer 2.4s cubic-bezier(0.5, 0, 0.3, 1) infinite; }
+@keyframes bs-pointer {
+  0%, 8% { transform: translate(4px, 9px) scale(1); }
+  46% { transform: translate(11px, 11px) scale(1); }
+  54% { transform: translate(11px, 11px) scale(0.75); }
+  60%, 88% { transform: translate(11px, 11px) scale(1); }
+  100% { transform: translate(4px, 9px) scale(1); }
+}
+
+/* setup: a gear turns; the eyes narrow on it */
+.bs-scene[data-scene="setup"] .ae-open { transform: scaleY(0.55); }
+.bs-scene[data-scene="setup"] .ae-eye { transform: translate(1.8px, 0.6px); }
+.bs-scene[data-scene="setup"] .bs-body { animation: bs-effort 0.7s ease-in-out infinite; }
+@keyframes bs-effort {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(3deg) translateY(-0.6px); }
+}
+.bs-gear path { fill: color-mix(in srgb, var(--bot) 70%, transparent); stroke: currentColor; stroke-width: 0.8; stroke-linejoin: round; }
+.bs-gear circle { fill: hsl(var(--background)); stroke: currentColor; stroke-width: 0.8; }
+.bs-gear { transform-origin: 10px 10px; animation: bs-spin 3s linear infinite; }
+@keyframes bs-spin { to { transform: rotate(360deg); } }
+
+/* tune: two knobs slide; the eyes follow the lower one */
+.bs-scene[data-scene="tune"] .ae-eye { animation: bs-tune-eye 2.6s ease-in-out infinite; }
+@keyframes bs-tune-eye {
+  0%, 100% { transform: translate(1px, 0.6px); }
+  50% { transform: translate(2.6px, 0.6px); }
+}
+.bs-track { stroke-opacity: 0.4; stroke-width: 1.6; }
+.bs-knob { fill: hsl(var(--background)); stroke: currentColor; stroke-width: 1.2; }
+.bs-knob2 { fill: var(--bot); stroke: var(--bot); }
+.bs-knob1 { transform: translateX(14px); animation: bs-knob1 2.6s ease-in-out infinite; }
+.bs-knob2 { transform: translateX(5px); animation: bs-knob2 2.6s ease-in-out infinite; }
+@keyframes bs-knob1 { 0%, 100% { transform: translateX(14px); } 50% { transform: translateX(6px); } }
+@keyframes bs-knob2 { 0%, 100% { transform: translateX(5px); } 50% { transform: translateX(15px); } }
+
+/* command: eyes as dashes on the prompt, a line typing in */
+.bs-scene[data-scene="command"] .ae-open { opacity: 0; }
+.bs-scene[data-scene="command"] .ae-shut { opacity: 1; }
+.bs-scene[data-scene="command"] .ae-eye { transform: translate(1.8px, 1px) rotate(6deg); }
+.bs-scene[data-scene="command"] .agent-symbol-lids { animation: none; }
+.bs-scene[data-scene="command"] .bs-body { animation: bs-typing-body 0.36s ease-in-out infinite alternate; }
+.bs-prompt { stroke: var(--bot); stroke-width: 1.6; }
+.bs-typed { fill: currentColor; fill-opacity: 0.7; transform-origin: 7.5px 0; transform: scaleX(0); animation: bs-typed 2s steps(8) infinite; }
+@keyframes bs-typed { 0% { transform: scaleX(0); opacity: 1; } 70%, 90% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+.bs-caret { fill: hsl(var(--foreground)); transform: translate(8px, 0); animation: bs-caret 2s steps(8) infinite, bs-caret-blink 0.7s steps(1) infinite; }
+@keyframes bs-caret { 0% { transform: translate(8px, 0); } 70%, 100% { transform: translate(17px, 0); } }
+@keyframes bs-caret-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0.2; } }
+
+/* juggle: two balls arc over the head; the eyes follow them */
+.bs-scene[data-scene="juggle"] .ae-eye { animation: bs-juggle-eye 1.2s ease-in-out infinite; }
+.bs-scene[data-scene="juggle"] .bs-body { animation: bs-juggle-body 1.2s ease-in-out infinite; }
+@keyframes bs-juggle-eye {
+  0%, 100% { transform: translate(-1.6px, -1.6px); }
+  50% { transform: translate(1.8px, -1.6px); }
+}
+@keyframes bs-juggle-body {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+.bs-ball { fill: var(--bot); stroke: hsl(var(--background)); stroke-width: 0.8; transform: translate(1px, 12px); animation: bs-ball 1.2s infinite; }
+.bs-b2 { animation-delay: -0.6s; fill: hsl(var(--foreground)); }
+@keyframes bs-ball {
+  0% { transform: translate(1px, 12px); animation-timing-function: cubic-bezier(0.2, 0.6, 0.4, 1); }
+  50% { transform: translate(14px, -7px); animation-timing-function: cubic-bezier(0.6, 0, 0.8, 0.4); }
+  100% { transform: translate(27px, 12px); }
+}
+
+/* build: a hammer taps; the eyes narrow on the nail */
+.bs-scene[data-scene="build"] .ae-open { transform: scaleY(0.6); }
+.bs-scene[data-scene="build"] .ae-eye { transform: translate(2px, 1.4px); }
+.bs-scene[data-scene="build"] .bs-body { animation: bs-strike 0.9s ease-in-out infinite; }
+@keyframes bs-strike {
+  0%, 40%, 100% { transform: rotate(-2deg); }
+  52% { transform: rotate(4deg) translateY(0.6px); }
+}
+.bs-hammer path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.bs-hammer rect { fill: currentColor; }
+.bs-hammer { color: hsl(var(--foreground)); transform-origin: 3px 8.5px; transform: rotate(-40deg); animation: bs-hammer 0.9s infinite; }
+@keyframes bs-hammer {
+  0% { transform: rotate(-40deg); animation-timing-function: ease-in-out; }
+  38% { transform: rotate(-48deg); animation-timing-function: cubic-bezier(0.6, 0, 1, 0.6); }
+  52% { transform: rotate(18deg); }
+  60% { transform: rotate(12deg); animation-timing-function: ease-out; }
+  100% { transform: rotate(-40deg); }
+}
+.bs-spark path { fill: none; stroke: var(--bot); stroke-width: 1.3; stroke-linecap: round; }
+.bs-spark { opacity: 0; animation: bs-spark 0.9s ease-out infinite; }
+@keyframes bs-spark { 0%, 50% { opacity: 0; } 56% { opacity: 1; } 76%, 100% { opacity: 0; } }
+
+/* ---- done — a smile, a hop and a tick ------------------------------------- */
+
+.bs-scene[data-scene="done"] .ae-open { opacity: 0; }
+.bs-scene[data-scene="done"] .ae-happy { opacity: 1; }
+.bs-scene[data-scene="done"] .agent-symbol-lids { animation: none; }
+.bs-scene[data-scene="done"] .bs-body { animation: bs-cheer 0.9s cubic-bezier(0.3, 0.7, 0.3, 1) both; }
+@keyframes bs-cheer {
+  0% { transform: translateY(0) scale(1, 1); }
+  18% { transform: translateY(0) scale(1.12, 0.86); }
+  42% { transform: translateY(-6px) scale(0.94, 1.08); }
+  66% { transform: translateY(0) scale(1.06, 0.92); }
+  82%, 100% { transform: translateY(0) scale(1, 1); }
+}
+.bs-check circle { fill: var(--bot); stroke: hsl(var(--background)); stroke-width: 1.2; }
+.bs-check path { fill: none; stroke: var(--bot-ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 8; stroke-dashoffset: 8; animation: bs-check-draw 0.4s ease-out 0.35s both; }
+.bs-check { transform-origin: 23.5px 23.5px; animation: bs-check-pop 0.5s cubic-bezier(0.3, 1.5, 0.5, 1) 0.15s both; }
+@keyframes bs-check-pop { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes bs-check-draw { to { stroke-dashoffset: 0; } }
+
+/* ---- the word ------------------------------------------------------------ */
+
+.bs-label {
+  display: inline-grid;
+  font-size: 13.5px;
+  line-height: 20px;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+  animation: bs-label-in 0.35s ease-out both, bs-label-pulse 2s ease-in-out 0.35s infinite;
+}
+/* The old word drifts up and out while the new one rises into its place. */
+.bs-word { grid-area: 1 / 1; }
+.bs-word.is-in { animation: bs-word-in 0.36s 0.12s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.bs-word.is-out { animation: bs-word-out 0.22s ease-in both; }
+@keyframes bs-word-in {
+  from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@keyframes bs-word-out {
+  to { opacity: 0; transform: translateY(-6px); filter: blur(2px); }
+}
+@keyframes bs-label-in {
+  from { opacity: 0; transform: translateX(-3px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes bs-label-pulse {
+  0%, 100% { color: hsl(var(--muted-foreground)); }
+  50% { color: hsl(var(--foreground)); }
+}
+.bot-stage[data-scene="done"] .bs-label { animation: bs-label-in 0.35s ease-out both; color: hsl(var(--foreground)); }
+
+/* ---- reduced motion: a still face, props at rest ------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-stage *, .bot-stage *::before, .bot-stage *::after { animation: none !important; }
+  .bs-ink, .bs-jot, .bs-check path { stroke-dashoffset: 0; }
+  .bs-typed { transform: scaleX(1); }
+  .bs-spark { opacity: 0; }
+  .bot-stage .is-out { visibility: hidden; }
+  .bs-props { transition: none; }
+}

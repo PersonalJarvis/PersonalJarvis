@@ -96,6 +96,26 @@ with a different `while_busy`); an accepted, queued or uncertain receipt is
 returned instead of a second delivery. Claude Code records a mid-turn message as
 a human `queued_command`; `context` shows it as a user message.
 
+### Failed turns and stopped agents
+
+A turn that ended in an error (Codex records `task_complete` with an `error`)
+shows the pane as `failed`, but its CLI is back at its prompt: a `send` delivers
+the next task as usual.
+
+An agent whose process is gone (`exited`, or `error` when it could not start)
+takes nothing. A `send` returns `not_accepted` with `stopped: true` and
+`restartable: true` and types nothing. `restart` (by call-sign or the resolved
+IDs) starts that same pane again: same `terminal_id`, account and launch picks,
+continuing its own conversation through the CLI's resume where one exists
+(`conversation: continued`), fresh otherwise. Its receipt reads `restarted`;
+nothing is typed. A pane whose agent is running is left alone and the receipt
+reads `already_running`, so a repeated or concurrent restart starts at most one
+process and never cuts a turn short. The refused send is then retried with the
+same `request_id` and prompt: its refusal proved nothing was typed, so the retry
+delivers once, and the accepted receipt answers every later retry. A restart is
+a logged `monitor` action like `interrupt` and `close`. Nothing restarts an agent
+on its own: a send never does it implicitly.
+
 ## Boundaries and verification
 
 This is a T3 shared contract change. No new OS adapter, credential or model

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local realtime audio preparation measurement</title>
+<style>
+  body { max-width: 900px; margin: 40px auto; padding: 16px; font: 16px system-ui; color-scheme: light dark; }
+  button { font: inherit; padding: 10px 14px; margin: 0 8px 12px 0; }
+  pre { white-space: pre-wrap; font-size: 13px; }
+</style>
+<h1>Local realtime audio preparation</h1>
+<p>Real AudioContext and production worklet. Synthetic input stays local and silent.
+No microphone, peer connection, credentials or provider session.</p>
+<button id="cold">Measure cold audio setup</button>
+<button id="prepare">Prepare suspended audio</button>
+<button id="warm" disabled>Measure prepared audio setup</button>
+<p id="status" role="status">Ready</p>
+<pre id="results">[]</pre>
+<script type="module" src="./bench-realtime-audio.ts"></script>
+</html>

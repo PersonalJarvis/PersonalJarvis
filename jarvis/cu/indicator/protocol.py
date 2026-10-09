@@ -54,6 +54,8 @@ CMD_UNBLANK = "unblank"
 CMD_QUIT = "quit"
 CMD_SNAP = "snap"
 CMD_SNAP_IMAGE = "snap_image"
+CMD_RECORDING = "recording"
+CMD_RECORDING_STATUS = "recording_status"
 #: Put a picture straight into the corner card (the editor closed).
 CMD_CARD = "card"
 #: A short status line on the card ("Copied", "Saved to Downloads").
@@ -70,6 +72,8 @@ ALL_COMMANDS = frozenset(
         CMD_QUIT,
         CMD_SNAP,
         CMD_SNAP_IMAGE,
+        CMD_RECORDING,
+        CMD_RECORDING_STATUS,
         CMD_CARD,
         CMD_CARD_STATUS,
         CMD_POINTER_PRESS,
@@ -85,7 +89,11 @@ CARD_ACTIONS = frozenset({"copy", "save", "copy_text"})
 #: How many cards the corner stack holds — as many appshots as the store keeps
 #: (``jarvis.appshot.store.MAX_RECENT``), so every card's buttons still work.
 MAX_CARDS = 5
-ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION})
+EVENT_RECORDING_OPEN = "recording_open"
+EVENT_RECORDING_SAVE = "recording_save"
+ALL_EVENTS = frozenset({
+    EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION, EVENT_RECORDING_OPEN, EVENT_RECORDING_SAVE,
+})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or
 #: no display). The controller logs it as an expected degradation.
@@ -156,6 +164,10 @@ __all__ = [
     "CMD_SHOW",
     "CMD_SNAP",
     "CMD_SNAP_IMAGE",
+    "CMD_RECORDING",
+    "CMD_RECORDING_STATUS",
+    "EVENT_RECORDING_OPEN",
+    "EVENT_RECORDING_SAVE",
     "EVENT_CARD",
     "EVENT_CARD_ACTION",
     "EVENT_SNAP_OPEN",

@@ -25,7 +25,7 @@ import { fill } from "@/i18n";
 import { cliVendor } from "@/lib/cliVendors";
 import { resolveToolBrand } from "@/lib/toolBrand";
 import { describeToolStep } from "@/lib/toolStepLabel";
-import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnStatus } from "./reduce";
+import { isCredentialTool, isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnStatus } from "./reduce";
 import { toolDiff } from "./toolDiff";
 import { traceToolIdentity, traceToolName } from "./traceActivity";
 
@@ -147,6 +147,7 @@ export function shortPath(path: string): string {
 /** Plumbing calls draw nothing: loading a tool's schema, polling a question card. */
 function isPlumbing(block: ToolBlock): boolean {
   if (isQuestionTool(block.name) && !block.question) return true;
+  if (isCredentialTool(block.name) && !block.credential && !block.isError) return true;
   if (block.name.replace(/^mcp__[^_]+__/, "") === "ToolSearch") {
     return firstString(inputRecord(block), ["query"]).startsWith("select:");
   }
@@ -155,7 +156,7 @@ function isPlumbing(block: ToolBlock): boolean {
 
 /** Asks the person for something: drawn by the caller as its card. */
 function needsPerson(block: ToolBlock): boolean {
-  return Boolean(block.question) || Boolean(block.approval && block.approval.decision === null);
+  return Boolean(block.question || block.credential) || Boolean(block.approval && block.approval.decision === null);
 }
 
 function stripCapMarker(text: string): string {

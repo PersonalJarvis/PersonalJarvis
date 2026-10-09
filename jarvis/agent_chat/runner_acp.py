@@ -195,7 +195,7 @@ async def plan_runtime_turn(
     except RuntimeUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
     try:
-        failure = gateway.watch_failure(route.api_key or "")
+        failure = gateway.watch_failure(route.api_key or "", effort=session.effort or "")
     except Exception:
         if launch.release is not None:
             launch.release()
@@ -203,6 +203,13 @@ async def plan_runtime_turn(
 
     def release() -> None:
         gateway.unwatch_failure(route.api_key or "", failure)
+        if launch.invalidate is not None and (
+            handle.cancel.is_set()
+            or (failure.done() and not failure.cancelled())
+            or not acp.saw_result
+            or acp.status != "done"
+        ):
+            launch.invalidate()
         if launch.release is not None:
             launch.release()
 

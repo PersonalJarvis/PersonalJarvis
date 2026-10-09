@@ -456,6 +456,9 @@ class JarvisBarOverlay:
         # surfaces leave the opt-in gate off and retain their immediate behavior.
         self._startup_gated = bool(startup_gated)
         self._mode = "idle"
+        # The clock of the strokes bending into the loading loop while a call
+        # connects, and of their one-shot back out once it is connected.
+        self._connect_timeline = renderer.ConnectTimeline()
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
         # (>= AUDIBLE_LEVEL). Drives the sweep↔bars choice in _schedule_frame.
@@ -554,9 +557,17 @@ class JarvisBarOverlay:
     # ------------------------------------------------------------------ #
     # Surface API consumed by OrbBusBridge                               #
     # ------------------------------------------------------------------ #
+    def _timeline(self) -> renderer.ConnectTimeline:
+        # ``__new__``-built test/hot-reload instances skip __init__.
+        timeline = getattr(self, "_connect_timeline", None)
+        if timeline is None:
+            timeline = self._connect_timeline = renderer.ConnectTimeline()
+        return timeline
+
     def show(self, mode: str = "listen") -> None:
         if mode not in renderer.MODES:
             return
+        self._timeline().note_mode(self._mode, mode, time.perf_counter())
         self._mode = mode
         if self._root is None:
             return
@@ -1397,6 +1408,9 @@ class JarvisBarOverlay:
             # long before a file arrives, so the very frames the tick lives in
             # are exactly the ones the fast path skips.
             drop_visual = self._current_drop_visual()
+            # The "connected" flourish is time-dependent like the drop
+            # feedback: it joins the tick key and vetoes the static skip.
+            connect_look = self._timeline().look(self._mode, now)
             # A stale level (the feed stopped without a zero) renders as
             # silence, never as frozen dancing bars. getattr default:
             # ``__new__``-built test/hot-reload instances skip __init__; a
@@ -1426,6 +1440,7 @@ class JarvisBarOverlay:
                 silent,
                 getattr(self, "_prompt_mode", False),
                 getattr(self, "_prompt_mode_paused", False),
+                connect_look,
             )
             if tick_key != self._static_tick_key:
                 self._static_tick_key = tick_key
@@ -1435,6 +1450,7 @@ class JarvisBarOverlay:
             is_settled_static = (
                 static_capable
                 and drop_visual == renderer.DROP_STATE_NONE
+                and connect_look is None
                 and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
 
@@ -1462,6 +1478,7 @@ class JarvisBarOverlay:
                     # skips __init__, and a missing stamp must read as "no drop
                     # in flight" rather than blow the frame away.
                     drop_elapsed=now - getattr(self, "_drop_visual_t0", 0.0),
+                    connect_look=connect_look,
                 )
                 if getattr(self, "_mac_transparent", False):
                     # macOS: no color key — carry real per-pixel alpha instead.

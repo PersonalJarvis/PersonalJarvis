@@ -3,7 +3,9 @@
     {"shape":"circle","color":"#8b5cf6"},
     {"shape":"cloud","color":"#112233","eyes":"lines","enabled":false,"sizeM":0.25,"followDistanceM":2},
     {"shape":"drop","color":"#FFAA00","eyes":"dots","enabled":true,"sizeM":0.8,"followDistanceM":0.5},
-    {"shape":"hexagon","color":"#7ab6ef","accessories":{"head":"crown","mouth":"cigar","outfit":"suit","held":"future_item_2"}}
+    {"shape":"hexagon","color":"#7ab6ef","accessories":{"head":"crown","mouth":"cigar","outfit":"suit","held":"future_item_2"}},
+    {"shape":"drop","color":"#79c7c4","pet":"cocoa"},
+    {"shape":"circle","color":"#8b5cf6","pet":"u0123456789abcdef"}
   ],
   "invalid": [
     {"shape":"unknown","color":"#123456"},
@@ -20,6 +22,10 @@
     {"shape":"circle","color":"#123456","accessories":{"head":"Crown"}},
     {"shape":"circle","color":"#123456","accessories":{"head":"../../etc"}},
     {"shape":"circle","color":"#123456","accessories":{"head":7}},
-    {"shape":"circle","color":"#123456","accessories":["crown"]}
+    {"shape":"circle","color":"#123456","accessories":["crown"]},
+    {"shape":"circle","color":"#123456","pet":"Cocoa"},
+    {"shape":"circle","color":"#123456","pet":"../pets/cocoa"},
+    {"shape":"circle","color":"#123456","pet":""},
+    {"shape":"circle","color":"#123456","pet":7}
   ]
 }

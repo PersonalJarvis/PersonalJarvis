@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -101,12 +102,23 @@ class LocalBackend:
     bash / sh — the same pick the chat's folder tools make)."""
 
     name: str = "local"
+    #: ``run`` takes ``extra_env``: the agent's stored credentials (credentials.py).
+    accepts_env: bool = True
 
-    async def run(self, command: str, *, cwd: Path, timeout_s: float) -> ShellResult:
+    async def run(
+        self,
+        command: str,
+        *,
+        cwd: Path,
+        timeout_s: float,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> ShellResult:
         from jarvis.agent_chat.tools import shell_argv
 
         timeout = max(1.0, min(float(timeout_s or DEFAULT_TIMEOUT_S), MAX_TIMEOUT_S))
         env = dict(os.environ)
+        if extra_env:
+            env.update(extra_env)
         env.setdefault("PYTHONIOENCODING", "utf-8")
         env["CI"] = env.get("CI", "1")
         env.setdefault("NO_COLOR", "1")

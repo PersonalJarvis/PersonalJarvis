@@ -84,9 +84,12 @@ class Grant:
     account_id: str = ""
     #: The runtime profile: direct chat and serialized scheduled runs differ.
     scope: str = ""
+    #: Persistent runtimes may infer only while their runner owns a live turn.
+    require_active_turn: bool = False
 
 
 _LOCK = threading.Lock()
+_UNBOUND: Final = object()
 _GRANTS: dict[str, Grant] = {}
 _TOKENS: OrderedDict[Grant, str] = OrderedDict()
 #: Grants kept at once. Each chat session mints its own; the least recently
@@ -96,6 +99,7 @@ _CLIENTS: dict[str, Any] = {}
 _MODEL_LIMITS: dict[Grant, dict[str, ModelLimits]] = {}
 _CATALOG: Any = None
 _FAILURES: dict[Grant, Future[str]] = {}
+_TURN_EFFORTS: dict[Grant, str] = {}
 _COOLDOWNS: OrderedDict[tuple[str, str, str], float] = OrderedDict()
 _DEFAULT_COOLDOWN_S: Final = 30.0
 
@@ -137,10 +141,13 @@ _EFFORTS: Final[frozenset[str]] = frozenset(
 )
 
 
-def grant_token(agent_id: str, provider: str, account_id: str = "", *, scope: str = "") -> str:
+def grant_token(
+    agent_id: str, provider: str, account_id: str = "", *, scope: str = "",
+    require_active_turn: bool = False,
+) -> str:
     """The token one agent's runtime presents (stable for the app's lifetime,
     so a runtime that keeps a process between turns is not restarted)."""
-    grant = Grant(agent_id, provider, account_id, scope)
+    grant = Grant(agent_id, provider, account_id, scope, require_active_turn)
     with _LOCK:
         token = _TOKENS.get(grant)
         if token is None:
@@ -263,7 +270,7 @@ async def refresh_model_limits(grant: Grant, model: str, config: Any) -> ModelLi
     return resolve_limits(config, grant.provider, model, metadata)
 
 
-def watch_failure(token: str) -> Future[str]:
+def watch_failure(token: str, *, effort: str = "") -> Future[str]:
     """Observe this session's current turn, across the HTTP and runner loops."""
     with _LOCK:
         grant = _GRANTS[token]
@@ -271,6 +278,7 @@ def watch_failure(token: str) -> Future[str]:
             raise RuntimeError("A runtime turn already owns this gateway session.")
         signal: Future[str] = Future()
         _FAILURES[grant] = signal
+        _TURN_EFFORTS[grant] = effort if effort in _EFFORTS else ""
         return signal
 
 
@@ -279,11 +287,36 @@ def unwatch_failure(token: str, signal: Future[str]) -> None:
         grant = _GRANTS.get(token)
         if _FAILURES.get(grant) is signal:
             del _FAILURES[grant]
+            _TURN_EFFORTS.pop(grant, None)
 
 
 def _watch_for(grant: Grant) -> Future[str] | None:
     with _LOCK:
         return _FAILURES.get(grant)
+
+
+def _require_turn(grant: Grant, signal: Future[str] | None) -> None:
+    if not grant.require_active_turn:
+        return
+    with _LOCK:
+        active = signal is not None and _FAILURES.get(grant) is signal and not signal.done()
+    if not active:
+        raise GatewayError(
+            "This runtime has no active turn. Start a new turn in Jarvis.",
+            status=409, code="turn_inactive",
+        )
+
+
+def _turn_effort(grant: Grant) -> str:
+    with _LOCK:
+        return _TURN_EFFORTS.get(grant, "")
+
+
+def capture_turn(grant: Grant) -> Future[str] | None:
+    """Bind inference to its ingress turn, before body/setup awaits can yield."""
+    signal = _watch_for(grant)
+    _require_turn(grant, signal)
+    return signal
 
 
 def _retry_after(exc: Exception) -> float | None:
@@ -355,9 +388,7 @@ def _report_failure(
         failure = _limited(grant.provider, seconds)
     from jarvis.agent_runtimes.provider_errors import is_terminal
 
-    # Only a failure no runtime can recover from ends the turn here. A
-    # timeout, an overloaded provider or a context overflow goes back to the
-    # runtime, whose own retry and conversation compression handle it.
+    # Recoverable failures stay with the runtime for retry or compression.
     if signal is not None and is_terminal(failure.code):
         # A request captures its turn's signal before awaiting the provider.
         # Late failures therefore cannot stop a later turn on the same session.
@@ -482,7 +513,9 @@ def _failed_event(message: str, code: str) -> dict[str, Any]:
     }
 
 
-async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[bytes]:
+async def stream_response(
+    grant: Grant, args: dict[str, Any], *, lease: Any = _UNBOUND,
+) -> AsyncIterator[bytes]:
     """The Responses event stream as server-sent events.
 
     Once streaming has begun a failure can only travel as an event, so it
@@ -493,17 +526,25 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
     model = str(args.get("model") or "")
-    signal = _watch_for(grant)
+    signal = capture_turn(grant) if lease is _UNBOUND else lease
+    if effort := _turn_effort(grant):
+        args = {**args, "reasoning_effort": effort}
     started = False
+    completed = False
     try:
+        _require_turn(grant, signal)
         check_cooldown(grant.provider, model, grant.account_id)
         client = _client(grant.account_id)
         args = await _snapped_effort(client, args)
         async with contextlib.aclosing(client.stream(**args)) as upstream:
             async for event in upstream:
                 started = True
+                completed = completed or event.get("type") == "response.completed"
                 yield _sse(event)
+        if not completed:
+            raise GatewayError("ChatGPT ended before completion.", status=502, code="incomplete")
     except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
+        log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
         failure = _report_failure(grant, model, _subscription_failure(grant, exc), signal)
         if not started:
             raise failure from exc
@@ -519,9 +560,14 @@ async def _snapped_effort(client: Any, args: dict[str, Any]) -> dict[str, Any]:
     return {**args, "reasoning_effort": await snap(str(args.get("model") or ""), effort)}
 
 
-async def open_response_stream(grant: Grant, args: dict[str, Any]) -> AsyncIterator[bytes]:
+
+
+async def open_response_stream(
+    grant: Grant, args: dict[str, Any], *, lease: Any = _UNBOUND,
+) -> AsyncIterator[bytes]:
     """Check upstream acceptance before committing an HTTP 200 SSE response."""
-    events = stream_response(grant, args)
+    lease = capture_turn(grant) if lease is _UNBOUND else lease
+    events = stream_response(grant, args, lease=lease)
     try:
         first = await anext(events)
     except StopAsyncIteration as exc:
@@ -541,14 +587,19 @@ async def open_response_stream(grant: Grant, args: dict[str, Any]) -> AsyncItera
     return accepted()
 
 
-async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any]:
+async def complete_response(
+    grant: Grant, args: dict[str, Any], *, lease: Any = _UNBOUND,
+) -> dict[str, Any]:
     """The finished Responses object, for a runtime that did not ask to stream."""
     from jarvis.live.subscription_auth import SubscriptionAuthError
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
     model = str(args.get("model") or "")
-    signal = _watch_for(grant)
+    signal = capture_turn(grant) if lease is _UNBOUND else lease
+    if effort := _turn_effort(grant):
+        args = {**args, "reasoning_effort": effort}
     try:
+        _require_turn(grant, signal)
         check_cooldown(grant.provider, model, grant.account_id)
         items: list[dict[str, Any]] = []
         client = _client(grant.account_id)
@@ -764,6 +815,7 @@ def chat_request(body: Any) -> tuple[str, Any]:
         raise GatewayError("The request has no messages.")
     system: list[str] = []
     messages: list[BrainMessage] = []
+    tool_names: dict[str, str] = {}
     for message in raw_messages:
         if not isinstance(message, dict):
             raise GatewayError("Every message must be a JSON object.")
@@ -789,6 +841,7 @@ def chat_request(body: Any) -> tuple[str, Any]:
                     "name": str(function.get("name") or ""),
                     "input": _arguments(function.get("arguments")),
                 }
+                tool_names[call_id] = block["name"]
                 if signature := _signature(call_id):
                     block["thought_signature"] = signature
                 blocks.append(block)
@@ -802,7 +855,11 @@ def chat_request(body: Any) -> tuple[str, Any]:
                     "tool",
                     _text(content) if not isinstance(content, str) else content,
                     tool_call_id=str(message.get("tool_call_id") or ""),
-                    name=message.get("name") if isinstance(message.get("name"), str) else None,
+                    name=(
+                        message["name"]
+                        if isinstance(message.get("name"), str) and message["name"]
+                        else tool_names.get(str(message.get("tool_call_id") or ""))
+                    ),
                 )
             )
     tools: list[dict[str, Any]] = []
@@ -996,7 +1053,9 @@ async def _close_brain(brain: Any) -> None:
         return
 
 
-async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
+async def _deltas(
+    grant: Grant, model: str, request: Any, lease: Any = _UNBOUND,
+) -> AsyncIterator[Any]:
     """The provider plugin's stream, with the Agents-tier key and cost caller.
 
     The plugin runs in a task of its own and hands its deltas over a queue:
@@ -1008,15 +1067,22 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     """
     from jarvis.agent_runtimes.model_map import login_route
     from jarvis.agent_runtimes.provider_errors import login_expired
+    from jarvis.agent_runtimes import anthropic_history
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
     from jarvis.costs.model import RUNTIME_CALLER
 
     queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
+    signal = capture_turn(grant) if lease is _UNBOUND else lease
+    if effort := _turn_effort(grant):
+        request = replace(request, reasoning_effort=effort)
+    visible_request = request
+    request = anthropic_history.restore(grant, model, request)
 
     async def pump() -> None:
         login: str | None = None
         try:
+            _require_turn(grant, signal)
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context(RUNTIME_CALLER):
@@ -1035,7 +1101,13 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     if callable(configure_context):
                         limits = await asyncio.to_thread(model_limits, grant, model)
                         configure_context(limits.context_window)
+                    _require_turn(grant, signal)
                     async for delta in brain.complete(request):
+                        if delta.tool_call:
+                            anthropic_history.remember(
+                                grant, model, visible_request, delta.tool_call,
+                                provider_request=request,
+                            )
                         await queue.put(delta)
                 finally:
                     _release_brain(slot)
@@ -1140,7 +1212,7 @@ def _tool_call(index: int, call: dict[str, Any]) -> dict[str, Any]:
 
 
 async def open_chat_stream(
-    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True, lease: Any = _UNBOUND,
 ) -> AsyncIterator[bytes]:
     """The answer as Chat Completions chunks.
 
@@ -1149,17 +1221,28 @@ async def open_chat_stream(
     on; a failure after streaming began arrives as an ``error`` chunk.
     ``temperature_given`` is whether the runtime chose a temperature.
     """
+    signal = capture_turn(grant) if lease is _UNBOUND else lease
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
-    stream = _deltas(grant, model, request)
+    stream = (_deltas(grant, model, request, signal) if grant.require_active_turn
+              else _deltas(grant, model, request))
     started = time.monotonic()
-    signal = _watch_for(grant)
     try:
+        _require_turn(grant, signal)
         check_cooldown(grant.provider, model, grant.account_id)
-        # The plugin task starts on the first delta and keeps this profile.
         with _with_profile(grant.provider, temperature_given):
             first = await anext(stream, None)
-    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
+        if first is None:
+            raise GatewayError(
+                "The provider ended without an answer.", status=502, code="incomplete",
+            )
+    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error, logged below
+        log.info(
+            "runtime gateway: %s on %s failed up front (%s)",
+            grant.agent_id,
+            grant.provider,
+            type(exc).__name__,
+        )
         raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     return _chat_chunks(grant, model, stream, first, started, signal)
 
@@ -1175,7 +1258,7 @@ async def _chat_chunks(
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     usage: dict[str, int] = {}
     calls = 0
-    finish = "stop"
+    finish: str | None = None
     delta = first
     try:
         yield _chunk(chat_id, model, {"role": "assistant", "content": ""})
@@ -1190,6 +1273,10 @@ async def _chat_chunks(
             if delta.finish_reason:
                 finish = _finish(delta.finish_reason)
             delta = await anext(stream, None)
+        if finish is None:
+            raise GatewayError(
+                "The provider stream ended before completion.", status=502, code="incomplete",
+            )
     except Exception as exc:  # noqa: BLE001 — the stream already began: an error chunk tells the runtime
         failure = _report_failure(grant, model, _failure(grant.provider, exc, model), signal)
         payload = {"error": {"message": str(failure), "type": failure.code, "code": failure.code}}
@@ -1222,18 +1309,20 @@ async def _chat_chunks(
 
 
 async def complete_chat(
-    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True, lease: Any = _UNBOUND,
 ) -> dict[str, Any]:
     """The finished ``chat.completion`` for a runtime that did not ask to stream."""
+    signal = capture_turn(grant) if lease is _UNBOUND else lease
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
-    stream = _deltas(grant, model, request)
+    stream = (_deltas(grant, model, request, signal) if grant.require_active_turn
+              else _deltas(grant, model, request))
     text: list[str] = []
     calls: list[dict[str, Any]] = []
     usage: dict[str, int] = {}
-    finish = "stop"
-    signal = _watch_for(grant)
+    finish: str | None = None
     try:
+        _require_turn(grant, signal)
         check_cooldown(grant.provider, model, grant.account_id)
         with _with_profile(grant.provider, temperature_given):
             # The plugin task starts on the first delta and keeps this profile.
@@ -1248,6 +1337,10 @@ async def complete_chat(
             if delta.finish_reason:
                 finish = _finish(delta.finish_reason)
             delta = await anext(stream, None)
+        if finish is None:
+            raise GatewayError(
+                "The provider stream ended before completion.", status=502, code="incomplete",
+            )
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
         raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
@@ -1321,6 +1414,9 @@ def reset() -> None:
         slot.retired = True
         if slot.users == 0:
             _close_later(slot.brain)
+    from jarvis.agent_runtimes import anthropic_history
+
+    anthropic_history.reset()
     with _LOCK:
         _GRANTS.clear()
         _TOKENS.clear()
@@ -1328,4 +1424,5 @@ def reset() -> None:
         _SIGNATURES.clear()
         _MODEL_LIMITS.clear()
         _FAILURES.clear()
+        _TURN_EFFORTS.clear()
         _COOLDOWNS.clear()

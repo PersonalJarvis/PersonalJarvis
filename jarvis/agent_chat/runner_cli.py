@@ -94,6 +94,7 @@ from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
+    CREDENTIAL_GUIDANCE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
 )
@@ -1376,6 +1377,9 @@ def _with_identity(
                 + AGENT_QUESTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
+                + CREDENTIAL_GUIDANCE
+                + jarvis_harness.society_credential_state(identity.text)
+                + "\n"
                 + CONVERSATIONAL_TURN_REMINDER
                 + "\n</jarvis_turn_context>\n\n"
                 + prompt
@@ -3781,7 +3785,7 @@ async def _drive_cli(
                     translate(obj, state)
                 continue
             if plan.acp is not None:
-                if _provider_error():
+                if _provider_error() or handle.cancel.is_set():
                     # Do not present a runtime's synthetic error prose as an
                     # assistant answer, or process tools after the failure.
                     continue
@@ -3991,6 +3995,9 @@ async def _drive_cli(
         run lives in its Gateway and keeps calling the model and running
         tools after its bridge dies. The caller kills afterwards either way.
         """
+        if plan.provider_failure is not None:
+            # Revoke inference before waiting for the runtime to acknowledge stop.
+            plan.provider_failure.cancel()
         if plan.acp is None or hosted or proc.returncode is not None:
             return
         frame = plan.acp.cancel_frame()
@@ -4128,6 +4135,7 @@ async def _drive_cli(
             # in the turn host and the next app start carries the turn on.
             proc.detach()
         else:
+            await _cancel_acp()
             _kill(proc)
         raise
     finally:
@@ -4190,7 +4198,7 @@ async def _drive_cli(
         elif plan.shape == "codex" and state.failed_tools:
             status = "error"
             error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
-        elif runner in {"claude-cli", "glm-cli"} and not state.saw_result:
+        elif (runner in {"claude-cli", "glm-cli"} or plan.acp is not None) and not state.saw_result:
             status = "error"
             error_text = f"{runner} exited without a terminal result; its output may be incomplete."
 

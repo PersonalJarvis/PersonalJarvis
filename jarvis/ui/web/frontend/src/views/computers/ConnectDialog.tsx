@@ -1,5 +1,5 @@
 /**
- * "Connect a computer" — one screen, and usually one field: the address.
+ * Connect a computer with explicit SSH host, username and port fields.
  *
  * The address box understands a bare IP, user@host, a whole ssh command, a
  * block with a private key, or the one line our setup instructions end with,
@@ -29,10 +29,12 @@ import {
   ChevronDown,
   Copy,
   FileKey,
+  Globe,
   KeyRound,
   Lock,
   MonitorSmartphone,
   Plug,
+  Plus,
   SquareTerminal,
   X,
 } from "lucide-react";
@@ -50,6 +52,7 @@ import { CopyField, Field, inputClass } from "./parts";
 import { ApiImportStep } from "./wizard/ApiImportStep";
 import { LocalVmStep } from "./wizard/LocalVmStep";
 import { errorText } from "./wizard/shared";
+import { ServerAddressForm } from "./ServerAddressForm";
 
 type Screen = { kind: "form" } | { kind: "check" } | { kind: "account"; provider: ProviderInfo } | { kind: "vm" };
 type Method = "auto" | "password" | "ssh_key" | "agent";
@@ -122,6 +125,9 @@ export function ConnectDialog({
   const catalog = useProviderCatalog();
   const identity = useIdentity();
   const [screen, setScreen] = useState<Screen>({ kind: "form" });
+  const [connectionType, setConnectionType] = useState<"server" | "ssh">("ssh");
+  const connecting = useRef(false);
+  const [additionalOptions, setAdditionalOptions] = useState(false);
   const assistantName = useEventStore((s) => s.assistantName) || "Jarvis";
   const [pasted, setPasted] = useState("");
   const [method, setMethod] = useState<Method>("auto");
@@ -175,10 +181,12 @@ export function ConnectDialog({
           ? "private_key"
           : "key";
   const effectiveUser = username.trim() || detected.user || "root";
-  const effectivePort = Number(port) || detected.port || 22;
+  const effectivePort = port.trim() ? Number(port) : detected.port ?? 22;
+  const validPort = Number.isInteger(effectivePort) && effectivePort >= 1 && effectivePort <= 65535;
   const keyText = pastedKey ?? privateKey;
   const ready =
     Boolean(detected.host) &&
+    validPort &&
     (login === "key" ||
       login === "auto" ||
       (login === "password" ? password.length > 0 : keyText.trim().length > 0));
@@ -215,7 +223,17 @@ export function ConnectDialog({
   }
 
   async function connect() {
-    if (!ready || !detected.host) return;
+    if (connectionType !== "ssh" || !ready || !detected.host || connecting.current) return;
+    connecting.current = true;
+    try {
+      await connectSsh();
+    } finally {
+      connecting.current = false;
+    }
+  }
+
+  async function connectSsh() {
+    if (!detected.host) return;
     const input: AddServerInput = {
       name: name.trim() || detected.host,
       host: detected.host,
@@ -320,7 +338,7 @@ export function ConnectDialog({
         aria-modal="true"
         aria-label={t("computers.cx_title")}
         data-testid="computers-connect-dialog"
-        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-float"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-float"
       >
         <header className="flex items-start gap-3 border-b border-border px-6 py-5">
           {screen.kind !== "form" && !(screen.kind === "check" && check?.computer) && (
@@ -336,7 +354,29 @@ export function ConnectDialog({
           <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
             {screen.kind === "form" && (
-              <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_subtitle")}</p>
+              <>
+                <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_connection_hint")}</p>
+                <fieldset className="mt-4 inline-flex max-w-full gap-1 rounded-xl border border-border bg-card p-1">
+                  <legend className="sr-only">{t("computers.cx_connection_type")}</legend>
+                  {(["server", "ssh"] as const).map((type) => (
+                    <label key={type} className="relative min-w-0 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="computer-connection-type"
+                        value={type}
+                        checked={connectionType === type}
+                        onChange={() => setConnectionType(type)}
+                        aria-controls={`cx-${type}-panel`}
+                        className="peer sr-only"
+                      />
+                      <span className="flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground peer-checked:bg-secondary peer-checked:text-foreground-strong peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-ring">
+                        {type === "server" ? <Globe className="h-4 w-4 shrink-0" aria-hidden /> : <SquareTerminal className="h-4 w-4 shrink-0" aria-hidden />}
+                        {t(`computers.cx_connection_${type}`)}
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              </>
             )}
             {screen.kind === "check" && check?.computer && (
               <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.cx_verified_body")}</p>
@@ -383,8 +423,12 @@ export function ConnectDialog({
             />
           )}
 
+          {screen.kind === "form" && <div id="cx-server-panel" hidden={connectionType !== "server"}><ServerAddressForm /></div>}
+
           {screen.kind === "form" && (
             <form
+              id="cx-ssh-panel"
+              hidden={connectionType !== "ssh"}
               className="space-y-5"
               onSubmit={(e) => {
                 e.preventDefault();
@@ -392,9 +436,9 @@ export function ConnectDialog({
               }}
             >
               <div>
-                <Field label={t("computers.cx_paste")} hint={t("computers.cx_paste_hint")}>
+                <Field label={t("computers.cx_ssh_host")}>
                   <textarea
-                    className={cn(inputClass, "h-auto min-h-[40px] resize-none py-2 font-mono text-sm")}
+                    className={cn(inputClass, "h-auto min-h-12 resize-none rounded-xl px-4 py-3")}
                     rows={pasted.includes("\n") ? 4 : 1}
                     value={pasted}
                     onChange={(e) => setPasted(e.target.value)}
@@ -404,14 +448,14 @@ export function ConnectDialog({
                         void connect();
                       }
                     }}
-                    placeholder="203.0.113.10"
+                    placeholder={t("computers.cx_ssh_placeholder")}
                     autoFocus
                     spellCheck={false}
                     autoComplete="off"
                     data-testid="cx-address"
                   />
                 </Field>
-                {detected.host && (
+                {detected.host && (detected.user || detected.port || pastedKey || detected.fromSetupPrompt) && (
                   <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" data-testid="cx-detected">
                     <span className="text-muted-foreground">{t("computers.cx_detected")}</span>
                     <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-foreground-secondary">
@@ -427,6 +471,44 @@ export function ConnectDialog({
                   </div>
                 )}
               </div>
+
+              <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
+                <Field label={t("computers.field_username")}>
+                  <input
+                    className={cn(inputClass, "h-12 rounded-xl px-4")}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder={detected.user || "root"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-testid="cx-username"
+                  />
+                </Field>
+                <Field label={t("computers.field_port")}>
+                  <input
+                    className={cn(inputClass, "h-12 rounded-xl px-4")}
+                    value={port}
+                    type="number"
+                    min={1}
+                    max={65535}
+                    step={1}
+                    inputMode="numeric"
+                    onChange={(e) => setPort(e.target.value)}
+                    placeholder={String(detected.port ?? 22)}
+                    aria-invalid={!validPort}
+                    aria-describedby={!validPort ? "cx-port-error" : undefined}
+                    data-testid="cx-port"
+                  />
+                </Field>
+              </div>
+              {!validPort && <p id="cx-port-error" role="alert" className="text-sm text-destructive">{t("computers.cx_invalid_port")}</p>}
+
+              {method === "auto" && !missing && (
+                <Button type="submit" variant="outline" className="h-12 w-full rounded-xl text-base" disabled={!ready} data-testid="cx-connect">
+                  <Plus />
+                  {t("computers.add")}
+                </Button>
+              )}
 
               {method === "auto" && (
                 <div className="space-y-3" data-testid="cx-auto">
@@ -453,12 +535,7 @@ export function ConnectDialog({
                         {t("computers.cx_key_only_agent")}
                       </button>
                     </div>
-                  ) : (
-                    <p className="flex items-start gap-2 text-sm text-muted-foreground">
-                      <KeyRound className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                      {t("computers.cx_auto_hint")}
-                    </p>
-                  )}
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => chooseMethod("password")}
@@ -697,7 +774,7 @@ export function ConnectDialog({
                   {t("computers.cx_more")}
                 </button>
                 {more && (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_80px]">
+                  <div className="mt-3">
                     <Field label={t("computers.field_name")}>
                       <input
                         className={inputClass}
@@ -706,41 +783,34 @@ export function ConnectDialog({
                         placeholder={detected.host || t("computers.field_name_placeholder")}
                       />
                     </Field>
-                    <Field label={t("computers.field_username")}>
-                      <input
-                        className={cn(inputClass, "font-mono")}
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        placeholder={detected.user || "root"}
-                        spellCheck={false}
-                      />
-                    </Field>
-                    <Field label={t("computers.field_port")}>
-                      <input
-                        className={cn(inputClass, "font-mono")}
-                        value={port}
-                        inputMode="numeric"
-                        onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder={String(detected.port ?? 22)}
-                      />
-                    </Field>
                   </div>
                 )}
               </div>
 
-              <div>
+              {(method !== "auto" || missing) && <div>
                 <Button type="submit" className="h-10 w-full" disabled={!ready} data-testid="cx-connect">
                   <Plug />
                   {missing === "key_only" && method === "auto" ? t("computers.cx_try_again") : t("computers.cx_connect")}
                 </Button>
                 <p className="mt-2 text-center text-xs text-muted-foreground">{t("computers.cx_connect_hint")}</p>
-              </div>
+              </div>}
             </form>
           )}
         </div>
 
-        {screen.kind === "form" && (
+        {screen.kind === "form" && connectionType === "ssh" && (
           <footer className="space-y-3 border-t border-border bg-secondary/30 px-6 py-4">
+            <button
+              type="button"
+              onClick={() => setAdditionalOptions((value) => !value)}
+              aria-expanded={additionalOptions}
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+              data-testid="cx-additional-options"
+            >
+              <ChevronDown className={cn("h-4 w-4 transition-transform", additionalOptions && "rotate-180")} aria-hidden />
+              {t("computers.cx_additional_options")}
+            </button>
+            {additionalOptions && <>
             {accounts.length > 0 && (
               <div>
                 <div className="text-sm font-medium text-foreground-secondary">{t("computers.cx_accounts_title")}</div>
@@ -770,6 +840,7 @@ export function ConnectDialog({
               <MonitorSmartphone className="h-3.5 w-3.5" aria-hidden />
               {t("computers.cx_vm_link")}
             </button>
+            </>}
           </footer>
         )}
       </div>

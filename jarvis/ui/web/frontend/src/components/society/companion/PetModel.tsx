@@ -6,10 +6,12 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGLTF } from "@react-three/drei";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import {
-  Box3, BoxGeometry, Color, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, Quaternion, Vector3, type Group,
+  Box3, BoxGeometry, Color, InstancedMesh, Matrix4, MeshStandardMaterial, Object3D, PMREMGenerator, Quaternion, Vector3,
+  type Group, type Material, type Mesh, type Texture, type WebGLRenderer,
 } from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { CompanionPet } from "./petCompanions";
 import { createRigState, rigPose, stepRig, type PartMotion, type PetMood } from "./petRig";
 import { voxelFrames, type VoxelFrames } from "./voxelPet";
@@ -30,6 +32,47 @@ export function petModelUrl(id: string): string | null {
   const suffix = `/pets/${id}.glb`;
   for (const [key, url] of Object.entries(PET_FILES)) if (key.endsWith(suffix)) return url;
   return null;
+}
+
+/** One soft studio reflection per renderer, built locally (no image is downloaded). */
+const STUDIO = new WeakMap<WebGLRenderer, Texture>();
+
+function studioReflection(gl: WebGLRenderer): Texture {
+  let texture = STUDIO.get(gl);
+  if (!texture) {
+    const pmrem = new PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    texture = pmrem.fromScene(room, 0.04).texture;
+    room.dispose();
+    pmrem.dispose();
+    STUDIO.set(gl, texture);
+  }
+  return texture;
+}
+
+/**
+ * The pet's own materials, so a reflection given here never leaks into the
+ * cached model another canvas shares. Where the scene has no environment
+ * (the Verse), the vinyl gets a soft studio reflection: without one a
+ * glossy toy reads as flat colour under the room's direct lights.
+ */
+function ownMaterials(model: Object3D, reflection: Texture | null): Material[] {
+  const owned: Material[] = [];
+  model.traverse((object) => {
+    const mesh = object as Mesh;
+    if (!mesh.isMesh) return;
+    const swap = (material: Material) => {
+      const own = material.clone();
+      if (reflection && own instanceof MeshStandardMaterial && !own.envMap) {
+        own.envMap = reflection;
+        own.envMapIntensity = 0.7;
+      }
+      owned.push(own);
+      return own;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(swap) : swap(mesh.material);
+  });
+  return owned;
 }
 
 interface RiggedPart {
@@ -53,8 +96,11 @@ export function PetModel({ pet, drive, reduced, paused }: {
   const url = petModelUrl(pet.id);
   if (!url) throw new Error(`No 3D model for pet ${pet.id}`);
   const { scene } = useGLTF(url);
+  const gl = useThree((state) => state.gl);
+  const lit = useThree((state) => !!state.scene.environment);
   const instance = useMemo(() => {
     const model = scene.clone(true);
+    const materials = ownMaterials(model, lit ? null : studioReflection(gl));
     const parts = new Map<string, RiggedPart>();
     model.traverse((object) => {
       if ((object as { isMesh?: boolean }).isMesh) object.castShadow = true;
@@ -79,8 +125,9 @@ export function PetModel({ pet, drive, reduced, paused }: {
         groundOffset.set(-groundOffset.x, 0, -groundOffset.z);
       }
     }
-    return { model, parts, groundOffset };
-  }, [scene, pet.id]);
+    return { model, parts, groundOffset, materials };
+  }, [scene, pet.id, gl, lit]);
+  useEffect(() => () => { instance.materials.forEach((material) => material.dispose()); }, [instance]);
   const rig = useRef(createRigState());
   const pose = useMemo(() => new Map<string, PartMotion>(), []);
   useEffect(() => { pose.clear(); }, [pet.id, pose]);

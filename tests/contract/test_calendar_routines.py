@@ -263,6 +263,11 @@ async def test_http_timezone_propagates_to_spawned_turn_without_leaking():
     captured = []
 
     class Service:
+        store = SimpleNamespace(get_session=lambda _sid: SimpleNamespace(surface="society"))
+
+        def is_running(self, _sid):
+            return False
+
         async def send(self, *args, **kwargs):
             async def turn():
                 await asyncio.sleep(0)

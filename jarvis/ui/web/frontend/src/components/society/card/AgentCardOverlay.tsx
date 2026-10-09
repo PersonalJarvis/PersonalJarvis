@@ -18,6 +18,7 @@ import { AgentChatPanel } from "../chat/AgentChatPanel";
 import { RosterRail } from "../roster/RosterRail";
 import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 import { OptionsRail } from "./OptionsRail";
+import { AgentChatLayout } from "./AgentChatLayout";
 
 export interface AgentCardOverlayProps {
   agent: SocietyAgent | null;
@@ -90,7 +91,7 @@ export function AgentCardOverlay({
             </button>
           </header>
           )}
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
+          <div className="agent-card-columns grid min-h-0 flex-1 grid-cols-[minmax(240px,300px)_minmax(0,1fr)]">
             <RosterRail
               agents={roster}
               groups={groups}
@@ -111,29 +112,28 @@ export function AgentCardOverlay({
                 meet exactly at the rounded corner, and on a fractional grid
                 seam that joint rasterizes as a small step. The gray caption
                 above already separates by ground, so one border is enough. */}
-            <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(280px,320px)] overflow-hidden rounded-tl-[12px] border-l border-border bg-background">
+            <AgentChatLayout options={<OptionsRail agent={agent} onRetired={onClose} sample={sample} />}>
             <section
-              className="flex min-h-0 flex-col"
+              className="flex min-h-0 min-w-0 flex-col"
               aria-label={t("society.card.chat")}
               data-testid="agent-card-chat"
             >
               <AgentChatPanel key={agent.agentId} agent={agent} roster={roster} />
             </section>
-            <OptionsRail agent={agent} onRetired={onClose} sample={sample} />
-            </div>
+            </AgentChatLayout>
           </div>
         </>
       ) : null}
     </>
   );
   if (embedded) {
-    return <div data-testid="agent-card" className="flex min-h-0 flex-1 flex-col overflow-hidden bg-card">{content}</div>;
+    return <div data-testid="agent-card" className="agent-card-workspace flex min-h-0 flex-1 flex-col overflow-hidden bg-card">{content}</div>;
   }
   return (
     <Dialog.Root open={agent !== null} onOpenChange={(next) => (next ? undefined : onClose())}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/60 backdrop-blur-sm" />
-        <Dialog.Content data-testid="agent-card" className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-card focus:outline-none">
+        <Dialog.Content data-testid="agent-card" className="agent-card-workspace fixed inset-0 z-50 flex flex-col overflow-hidden bg-card focus:outline-none">
           {content}
         </Dialog.Content>
       </Dialog.Portal>

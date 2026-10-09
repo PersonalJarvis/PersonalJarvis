@@ -5,6 +5,8 @@ import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/
 import { useT } from "@/i18n";
 import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { cn } from "@/lib/utils";
+import { modelAccessFamily, preferredModelAccess, useModelAccess, type ModelAccess } from "@/lib/modelAccess";
+import { ModelAccessSwitch } from "@/components/providers/ModelAccessSwitch";
 
 /**
  * The front page's brain pick: which provider and which model answer.
@@ -23,6 +25,8 @@ import { cn } from "@/lib/utils";
 
 export interface BrainSection {
   id: string;
+  family?: string;
+  access?: ModelAccess;
   label: string;
   icon: ReactNode;
   /** Shown greyed: the provider is offered but not connected. */
@@ -101,8 +105,24 @@ export function ComposerBrainPicker({
   const t = useT();
   const [favorites, toggleFavorite] = useFavoriteModels();
   const [section, setSection] = useState(currentSection);
+  const [access, rememberAccess] = useModelAccess();
   const [providerOrder, moveProvider] = useProviderOrder();
-  const ordered = useMemo(() => orderBy(sections, (s) => s.id, providerOrder), [sections, providerOrder]);
+  const families = useMemo(() => {
+    const byFamily = new Map<string, BrainSection[]>();
+    for (const entry of orderBy(sections, (s) => s.id, providerOrder)) {
+      const family = modelAccessFamily(entry.family || entry.id);
+      byFamily.set(family, [...(byFamily.get(family) ?? []), entry]);
+    }
+    return [...byFamily].map(([family, entries]) => {
+      const options = entries.map((entry) => ({ ...entry, kind: entry.access ?? "api" as const, disabled: entry.muted }));
+      const selected = preferredModelAccess(options, access[family])!;
+      // Prefer the API row's company name over a subscription product's name.
+      const brand = entries.find((entry) => entry.access === "api") ?? entries[0];
+      return { family, entries, options, selected, brand };
+    });
+  }, [sections, providerOrder, access]);
+  const activeFamily = families.find((entry) => entry.entries.some((s) => s.id === section)) ?? families[0];
+  const activeSection = activeFamily?.selected.id;
 
   // Every row carries its star; the favourites tab lists the starred rows in
   // the order they were starred.
@@ -148,10 +168,10 @@ export function ComposerBrainPicker({
         .filter((option): option is NonNullable<typeof option> => Boolean(option));
       return options.length ? [{ id: FAVORITES, options }] : [];
     }
-    const own = starred.find((group) => group.id === section) ?? starred[0];
+    const own = starred.find((group) => group.id === activeSection) ?? starred[0];
     // The rail already names the provider, so its group needs no heading.
     return own ? [{ ...own, label: undefined }] : [];
-  }, [section, starred, favorites]);
+  }, [section, activeSection, starred, favorites]);
 
   const onOpenChange = useCallback(
     (open: boolean) => {
@@ -177,20 +197,20 @@ export function ComposerBrainPicker({
         <Star className="h-4 w-4 fill-current" aria-hidden />
       </RailButton>
       <span className="mx-1 my-0.5 border-b border-border" aria-hidden />
-      {ordered.map((s, index) => (
+      {families.map(({ family, entries, brand: s }, index) => (
         <RailButton
-          key={s.id}
+          key={family}
           reorder={{
             id: s.id,
-            onMove: (dragged, target) => moveProvider(ordered.map((o) => o.id), dragged, target),
+            onMove: (dragged, target) => moveProvider(families.map((o) => o.brand.id), dragged, target),
             onStep: (step) => {
-              const target = ordered[index + step];
-              if (target) moveProvider(ordered.map((o) => o.id), s.id, target.id);
+              const target = families[index + step];
+              if (target) moveProvider(families.map((o) => o.brand.id), s.id, target.brand.id);
             },
           }}
-          active={section === s.id}
+          active={section !== FAVORITES && activeFamily?.family === family}
           label={s.label}
-          muted={s.muted}
+          muted={entries.every((entry) => entry.muted)}
           onSelect={() => setSection(s.id)}
           testId={`composer-model-rail-${s.id}`}
         >
@@ -206,9 +226,17 @@ export function ComposerBrainPicker({
         value={value}
         groups={starred}
         browseGroups={browseGroups}
+        browseHeader={section !== FAVORITES && activeFamily ? <ModelAccessSwitch
+          options={activeFamily.options} value={activeFamily.selected.kind}
+          onChange={(kind) => rememberAccess(activeFamily.family, kind)} /> : undefined}
         aside={rail}
         onOpenChange={onOpenChange}
-        onChange={onChange}
+        onChange={(next) => {
+          const chosen = sections.find((entry) => groups.some((group) => group.id === entry.id
+            && [...group.options, ...(group.more?.options ?? [])].some((option) => option.value === next)));
+          if (chosen?.access) rememberAccess(chosen.family || chosen.id, chosen.access);
+          onChange(next);
+        }}
         ariaLabel={ariaLabel}
         fallbackLabel={fallbackLabel}
         searchPlaceholder={searchPlaceholder}

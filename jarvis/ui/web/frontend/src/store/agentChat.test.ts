@@ -4,6 +4,7 @@ import type { AgentChatSession } from "@/lib/agentChatApi";
 import { providerKind } from "@/components/agentchat/AgentComposer";
 import { EMPTY_TIMELINE, type Timeline, type UserItem } from "@/components/agentchat/reduce";
 import { createAgentChatStore, draftKey } from "@/store/agentChat";
+import { captureComposerDraftTarget, readComposerDraft, writeComposerDraft } from "@/components/agentchat/composerDrafts";
 
 /**
  * The store knows its surface: the front page's store speaks for the typed
@@ -336,6 +337,123 @@ function timelineWith(text: string): Timeline {
   const item: UserItem = { type: "user", id: text, tsMs: 1, text, attachments: [] };
   return { ...EMPTY_TIMELINE, items: [item], lastSeq: 1 };
 }
+
+describe("followup admission", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shares session creation and preserves rapid message order until every request settles", async () => {
+    let open!: (response: Response) => void;
+    let finishFirst!: (response: Response) => void;
+    const messages: string[] = [];
+    let creations = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/agent-chat/sessions" && init?.method === "POST") {
+        creations += 1;
+        return new Promise<Response>((resolve) => { open = resolve; });
+      }
+      if (url.endsWith("/messages")) {
+        messages.push(JSON.parse(String(init?.body)).text);
+        if (messages.length === 1) return new Promise<Response>((resolve) => { finishFirst = resolve; });
+        return new Response(JSON.stringify({ queued: true, queue_id: "q2" }));
+      }
+      return new Response(JSON.stringify({ sessions: [] }));
+    }));
+    const store = createAgentChatStore("jarvis");
+    const first = store.getState().send("first");
+    const second = store.getState().send("second");
+    await vi.waitFor(() => expect(creations).toBe(1));
+    const target = captureComposerDraftTarget(store, null);
+    const unsent = { text: "still typing while the chat opens", choices: [] };
+    writeComposerDraft(store, null, unsent);
+    open(new Response(JSON.stringify(session("created", "jarvis"))));
+    await vi.waitFor(() => expect(messages).toEqual(["first"]));
+    expect(readComposerDraft(store, "created")).toEqual(unsent);
+    expect(readComposerDraft(store, null).text).toBe("");
+    expect(target.sessionId).toBe("created");
+    const third = store.getState().send("third");
+    expect(store.getState().busy).toBe(true);
+    finishFirst(new Response(JSON.stringify({ turn_id: "t1" })));
+    expect(await Promise.all([first, second, third])).toEqual(["sent", "sent", "sent"]);
+    expect(messages).toEqual(["first", "second", "third"]);
+    expect(creations).toBe(1);
+    expect(store.getState().busy).toBe(false);
+    expect(readComposerDraft(store, "created")).toEqual(unsent);
+  });
+
+  it("continues queued submissions after one HTTP failure without changing the selected chat", async () => {
+    let failFirst!: (response: Response) => void;
+    const messages: { url: string; text: string }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/messages")) {
+        messages.push({ url, text: JSON.parse(String(init?.body)).text });
+        if (messages.length === 1) return new Promise<Response>((resolve) => { failFirst = resolve; });
+        return new Response(JSON.stringify({ queued: true, queue_id: "q" }));
+      }
+      return new Response(JSON.stringify({ sessions: [] }));
+    }));
+    const store = createAgentChatStore("society");
+    store.setState({ activeSessionId: "society:a" });
+    const first = store.getState().send("first");
+    const second = store.getState().send("second");
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    store.setState({ activeSessionId: "society:b", busy: false, lastError: null });
+    failFirst(new Response(JSON.stringify({ detail: "temporarily unavailable" }), { status: 503 }));
+    expect(await first).toBe("failed");
+    expect(await second).toBe("stale");
+    expect(messages.map((row) => row.text)).toEqual(["first", "second"]);
+    expect(messages.every((row) => row.url.includes("society%3Aa"))).toBe(true);
+    expect(store.getState()).toMatchObject({ activeSessionId: "society:b", busy: false, lastError: null });
+  });
+
+  it("does not reopen a new chat after the person switched away during creation", async () => {
+    let open!: (response: Response) => void;
+    const messages: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/agent-chat/sessions" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => { open = resolve; });
+      }
+      if (url.endsWith("/messages")) messages.push(url);
+      return new Response(JSON.stringify({ sessions: [], turn_id: "t" }));
+    }));
+    const store = createAgentChatStore("jarvis");
+    const sending = store.getState().send("for the original chat");
+    await vi.waitFor(() => expect(open).toBeTypeOf("function"));
+    store.setState({ activeSessionId: "elsewhere", busy: false });
+    open(new Response(JSON.stringify(session("created", "jarvis"))));
+    expect(await sending).toBe("stale");
+    expect(messages).toEqual(["/api/agent-chat/sessions/created/messages"]);
+    expect(store.getState().activeSessionId).toBe("elsewhere");
+  });
+
+  it("marks a replaced blank draft so a rejected creation cannot restore into the new chat", async () => {
+    let rejectCreation!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      if (String(input) === "/api/agent-chat/sessions" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => { rejectCreation = resolve; });
+      }
+      return new Response(JSON.stringify({ sessions: [], providers: [] }));
+    }));
+    const store = createAgentChatStore("jarvis");
+    const original = captureComposerDraftTarget(store, null);
+    const sending = store.getState().send("original send");
+    await vi.waitFor(() => expect(rejectCreation).toBeTypeOf("function"));
+    store.getState().newChat();
+    writeComposerDraft(store, null, { text: "deliberate new draft", choices: [] });
+    rejectCreation(new Response(JSON.stringify({ detail: "unavailable" }), { status: 503 }));
+    expect(await sending).toBe("failed");
+    expect(original.superseded).toBe(true);
+    expect(captureComposerDraftTarget(store, null)).not.toBe(original);
+    expect(readComposerDraft(store, null).text).toBe("deliberate new draft");
+    expect(store.getState()).toMatchObject({ activeSessionId: null, lastError: null });
+  });
+});
 
 describe("agent-chat store session switch", () => {
   beforeEach(() => {

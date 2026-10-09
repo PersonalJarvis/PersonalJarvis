@@ -7,13 +7,15 @@
  * app's connection.
  */
 import { useEffect, useState } from "react";
-import { Loader2, MoonStar } from "lucide-react";
-import { Panel } from "@/components/extensions/primitives";
+import { Loader2 } from "lucide-react";
 import { useT } from "@/i18n";
-import { cn } from "@/lib/utils";
 import type { Computer } from "@/lib/computersApi";
+import { SettingsSelect } from "@/views/settings/SettingsLayout";
+import { Row } from "./surface";
 
 const ENDPOINT = "/api/agentic-ide/offload-on-quit";
+/** The select's value for "no computer"; a computer id never takes this shape. */
+const OFF = "__off__";
 
 export function KeepWorking({ computers }: { computers: Computer[] }) {
   const t = useT();
@@ -62,50 +64,35 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
   const isWindows = (computer: Computer) => computer.facts?.os_id === "windows";
   const hasWindows = computers.some(isWindows);
   const options = [
-    { id: null as string | null, label: t("computers.keep_off") },
+    { value: OFF, label: t("computers.keep_off") },
     ...computers
       .filter((computer) => computer.health.status !== "provisioning" && !isWindows(computer))
-      .map((computer) => ({ id: computer.id as string | null, label: computer.name })),
+      .map((computer) => ({ value: computer.id, label: computer.name })),
   ];
 
   return (
-    <Panel className="p-5">
-      <div className="flex items-start gap-3">
-        <MoonStar className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-base font-semibold text-foreground-strong">{t("computers.keep_title")}</span>
-            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
-          </div>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.keep_body")}</p>
-          <div role="radiogroup" aria-label={t("computers.keep_title")} className="mt-4 flex flex-wrap gap-1.5" data-testid="computers-keep-working">
-            {options.map((option) => {
-              const active = loaded && option.id === value;
-              return (
-                <button
-                  key={option.id ?? "off"}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  disabled={!loaded || saving}
-                  onClick={() => void choose(option.id)}
-                  className={cn(
-                    "h-8 rounded-md border px-3 text-sm font-medium transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
-                    active
-                      ? "border-accent bg-accent-soft text-foreground-strong"
-                      : "border-border text-muted-foreground hover:border-border-strong hover:text-foreground",
-                  )}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-          {hasWindows && <p className="mt-2 text-xs text-muted-foreground">{t("computers.keep_windows_note")}</p>}
-          {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
-        </div>
-      </div>
-    </Panel>
+    <Row
+      title={
+        <span className="inline-flex items-center gap-2">
+          {t("computers.keep_title")}
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
+        </span>
+      }
+      description={t("computers.keep_body")}
+      status={hasWindows ? t("computers.keep_windows_note") : undefined}
+      control={
+        <SettingsSelect
+          value={value ?? OFF}
+          options={options}
+          onValueChange={(next) => void choose(next === OFF ? null : next)}
+          ariaLabel={t("computers.keep_title")}
+          disabled={!loaded || saving}
+          testId="computers-keep-working"
+          className="h-8 min-w-[12rem] justify-between border border-border bg-secondary/40"
+        />
+      }
+    >
+      {error && <p role="alert" className="pb-1 text-sm text-destructive">{error}</p>}
+    </Row>
   );
 }
