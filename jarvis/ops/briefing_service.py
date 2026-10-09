@@ -28,7 +28,7 @@ from jarvis.ops.briefing import (
     normalize_language,
     phrases,
 )
-from jarvis.ops.calendar_day import CalendarDay, CalendarReader
+from jarvis.ops.calendar_day import CalendarDay
 
 Focus = Literal["briefing", "appointments", "changes"]
 DayName = Literal["today", "tomorrow"]
@@ -58,9 +58,8 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} things need you: {list}.",
         "focus_one": "Your focus today: {list}.",
         "nothing_open": "Nothing needs you right now.",
-        "as_of": (
-            "I cannot read your calendar right now; this is the briefing from {time}."
-        ),
+        "hidden": "I left out {n} unassigned entries for today's profile.",
+        "as_of": ("I cannot read your calendar right now; this is the briefing from {time}."),
     },
     "de": {  # i18n-allow: runtime spoken briefing (paired with en/es/zh)
         "today": "Heute",  # i18n-allow
@@ -84,6 +83,9 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} Sachen brauchen dich: {list}.",  # i18n-allow
         "focus_one": "Dein Fokus heute: {list}.",  # i18n-allow
         "nothing_open": "Gerade braucht dich nichts.",  # i18n-allow
+        "hidden": (
+            "{n} nicht zugeordnete Einträge habe ich für heute ausgelassen."  # i18n-allow
+        ),
         "as_of": (
             "Ich kann deinen Kalender gerade nicht lesen; "  # i18n-allow
             "das ist das Briefing von {time}."  # i18n-allow
@@ -109,6 +111,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "{n} cosas te necesitan: {list}.",  # i18n-allow
         "focus_one": "Tu enfoque de hoy: {list}.",  # i18n-allow
         "nothing_open": "Ahora nada te necesita.",  # i18n-allow
+        "hidden": "Omití {n} entradas sin asignar para el perfil de hoy.",  # i18n-allow
         "as_of": (
             "Ahora no puedo leer tu calendario; este es el resumen de las {time}."  # i18n-allow
         ),
@@ -133,6 +136,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "needs_you_many": "有{n}件事需要你处理：{list}。",  # i18n-allow
         "focus_one": "你今天的重点：{list}。",  # i18n-allow
         "nothing_open": "目前没有需要你处理的事。",  # i18n-allow
+        "hidden": "按今天的设置，我省略了{n}个未分类的条目。",  # i18n-allow
         "as_of": "我现在无法读取你的日历；这是{time}的简报。",  # i18n-allow
     },
 }
@@ -270,6 +274,9 @@ def spoken_briefing(briefing: Briefing, table: Mapping[str, str]) -> str:
     if not needs.count and not focus.count:
         sentences.append(table["nothing_open"])
     sentences += spoken_appointments(_calendar_from(briefing), which="today", table=table)
+    hidden = briefing.section("hidden_unassigned").count
+    if hidden:
+        sentences.append(table["hidden"].format(n=hidden))
     return " ".join(s.strip() for s in sentences if s.strip())
 
 
@@ -297,18 +304,6 @@ def _written_appointments(calendar: CalendarDay, day: date, language: str) -> st
     return "\n".join(lines).strip() + "\n"
 
 
-async def _read(calendar: CalendarReader | None, day: date, now: datetime) -> CalendarDay:
-    if calendar is None:
-        return CalendarDay("not_connected")
-    try:
-        return await calendar.read_day(day, now)
-    except Exception:  # noqa: BLE001 — reported as unavailable, like the briefing does
-        import logging
-
-        logging.getLogger(__name__).warning("ops briefing service: calendar read failed")
-        return CalendarDay("unavailable")
-
-
 def _only_changes(calendar: CalendarDay) -> CalendarDay:
     return CalendarDay(
         calendar.status,
@@ -320,13 +315,17 @@ def _only_changes(calendar: CalendarDay) -> CalendarDay:
 async def answer(
     *,
     composer: BriefingComposer,
-    calendar: CalendarReader | None,
     now: datetime,
     day: str = "today",
     focus: str = "briefing",
     language: str = "en",
 ) -> BriefingAnswer:
-    """The answer to one briefing question, spoken and written."""
+    """The answer to one briefing question, spoken and written.
+
+    Every day is read through the composer, so the day profile (which
+    categories that weekday shows) applies to "today", "tomorrow" and
+    "changes" alike — also for a spontaneous voice question.
+    """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     if day not in DAYS or focus not in FOCUSES:
@@ -349,8 +348,9 @@ async def answer(
 
     if focus == "changes":
         days = (today, today + timedelta(days=1))
-        reads = [await _read(calendar, d, now) for d in days]
-        changed = [_only_changes(r) for r in reads]
+        reads = [await composer.calendar_for(d, now) for d in days]
+        changed = [_only_changes(r) for r, _hidden in reads]
+        hidden_total = sum(h for _r, h in reads)
         sentences: list[str] = []
         texts: list[str] = []
         for d, c in zip(days, changed, strict=True):
@@ -362,12 +362,17 @@ async def answer(
             if c.events or c.cancelled:
                 texts.append(_written_appointments(c, d, language))
         spoken = " ".join(sentences) or table["no_changes"]
+        if hidden_total:
+            spoken = f"{spoken} {table['hidden'].format(n=hidden_total)}"
         text = "\n".join(texts) or table["no_changes"] + "\n"
         return BriefingAnswer(target, focus, language, spoken, text)
 
     # Appointments of one day (also "briefing" for tomorrow: the calendar).
-    cal = await _read(calendar, target, now)
-    spoken = " ".join(spoken_appointments(cal, which=day, table=table))
+    cal, hidden = await composer.calendar_for(target, now)
+    sentences = spoken_appointments(cal, which=day, table=table)
+    if hidden:
+        sentences.append(table["hidden"].format(n=hidden))
+    spoken = " ".join(sentences)
     return BriefingAnswer(
         target, focus, language, spoken, _written_appointments(cal, target, language)
     )

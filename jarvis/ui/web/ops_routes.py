@@ -42,6 +42,14 @@ from jarvis.ops.briefing import (
     normalize_language,
     phrase_briefing,
 )
+from jarvis.ops.categories import (
+    CategoryError,
+    CategoryRules,
+    CategoryStore,
+    DayProfile,
+    make_profile,
+    make_rules,
+)
 from jarvis.ops.delivery import (
     LiveDisabled,
     LiveNotReady,
@@ -127,6 +135,10 @@ def morning_store_for_state(state: Any) -> MorningStore | None:
 
 def snapshot_store_for_state(state: Any) -> BriefingSnapshotStore | None:
     return _cached_store(state, "ops_snapshot_store", BriefingSnapshotStore)
+
+
+def category_store_for_state(state: Any) -> CategoryStore | None:
+    return _cached_store(state, "ops_category_store", CategoryStore)
 
 
 def _telegram_config(state: Any) -> Any:
@@ -285,11 +297,18 @@ def briefing_composer_for_state(state: Any) -> BriefingComposer:
         value = getattr(profile, "preferred_address", None)
         return str(value) if value else None
 
+    async def _categories() -> tuple[CategoryRules, DayProfile]:
+        store = category_store_for_state(state)
+        if store is None:
+            return CategoryRules(), DayProfile()
+        return await store.load()
+
     return BriefingComposer(
         snapshot=_snapshot,
         marks=_marks,
         calendar=calendar_reader_for_state(state),
         address=_address,
+        categories=_categories,
     )
 
 
@@ -616,7 +635,6 @@ async def answer_briefing_question(
     channel = resolve_channel(request)
     result = await answer(
         composer=briefing_composer_for_state(state),
-        calendar=calendar_reader_for_state(state),
         now=datetime.now().astimezone(),
         day=body.day,
         focus=body.focus,
@@ -700,3 +718,53 @@ async def send_briefing_to_telegram(
         [note], explicit=True
     )
     return report.outcomes[0].to_dict()
+
+
+
+# ------------------------------------------------------------------ categories
+
+
+@router.get("/categories")
+async def get_categories(request: Request) -> dict[str, Any]:
+    """The person's own rules for work / private / business, and which
+    categories each weekday shows (0 = Monday). Stored only locally."""
+    store = category_store_for_state(request.app.state)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Category store not available")
+    rules, profile = await store.load()
+    return {"rules": rules.to_dict(), "weekdays": profile.to_dict()}
+
+
+class KeywordRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    keyword: str = Field(min_length=1, max_length=200)
+    category: str
+
+
+class CategoriesBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    calendars: dict[str, str] = Field(default_factory=dict)
+    keywords: list[KeywordRule] = Field(default_factory=list)
+    items: dict[str, str] = Field(default_factory=dict)
+    weekdays: dict[str, list[str]] = Field(default_factory=dict)
+
+
+@router.put("/categories")
+async def set_categories(request: Request, body: CategoriesBody) -> dict[str, Any]:
+    """Replace the classification rules and the weekday profile."""
+    store = category_store_for_state(request.app.state)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Category store not available")
+    try:
+        rules = make_rules(
+            calendars=body.calendars,
+            keywords=[(k.keyword, k.category) for k in body.keywords],
+            items=body.items,
+        )
+        profile = make_profile({int(d): c for d, c in body.weekdays.items()})
+    except (CategoryError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    await store.save(rules, profile)
+    return {"rules": rules.to_dict(), "weekdays": profile.to_dict()}

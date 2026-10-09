@@ -22,11 +22,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from jarvis.ops.calendar_day import CalendarDay, CalendarReader, ToolCalendarReader
+from jarvis.ops.categories import (
+    UNASSIGNED,
+    CategoryRules,
+    DayProfile,
+    classify_event,
+    classify_item,
+    keep,
+)
 from jarvis.ops.ledger import WorkSnapshot
 from jarvis.ops.priority import PriorityMark
 from jarvis.ops.ranking import Agenda, RankedItem, build_agenda
@@ -46,6 +54,7 @@ SECTION_KEYS: Final[tuple[str, ...]] = (
     "calendar_new",
     "calendar_moved",
     "calendar_cancelled",
+    "hidden_unassigned",
 )
 #: Items listed per section; the count always shows the full number.
 SECTION_MAX_ITEMS: Final = 8
@@ -61,6 +70,9 @@ class BriefingSection:
     count: int
     items: tuple[dict[str, Any], ...] = ()
     status: str = "ok"
+    #: Heading of an extension section (``ext:<name>``); the built-in ones
+    #: take theirs from the phrase tables.
+    title: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -68,7 +80,21 @@ class BriefingSection:
             "count": self.count,
             "items": list(self.items),
             "status": self.status,
+            "title": self.title,
         }
+
+
+class BriefingExtension(Protocol):
+    """A later module's part of the briefing (e.g. trading, video statistics).
+
+    It carries a category, so the day profile decides whether it appears.
+    Nothing is registered until such a module works and is approved.
+    """
+
+    name: str
+    category: str
+
+    async def section(self, day: date, now: datetime, language: str) -> BriefingSection | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,8 +142,80 @@ def _day_window_ms(day: date, tz: Any) -> tuple[int, int]:
     return int(start.timestamp() * 1000), int((start + _DAY).timestamp() * 1000)
 
 
+def _configured(rules: CategoryRules) -> bool:
+    return bool(rules.calendars or rules.keywords or rules.items)
+
+
+def _filter_items(
+    items: Sequence[Any], day: date, rules: CategoryRules, profile: DayProfile
+) -> tuple[list[Any], dict[tuple[str, str], str], int]:
+    kept: list[Any] = []
+    categories: dict[tuple[str, str], str] = {}
+    hidden = 0
+    for item in items:
+        category, _why = classify_item(item.source, item.id, item.title, rules)
+        if keep(category, day, profile):
+            kept.append(item)
+            categories[(item.source, item.id)] = category
+        elif category == UNASSIGNED:
+            hidden += 1
+    return kept, categories, hidden
+
+
+def filter_calendar(
+    calendar: CalendarDay, day: date, rules: CategoryRules, profile: DayProfile
+) -> tuple[CalendarDay, int]:
+    """Keep the appointments the day's profile shows; count left-out unassigned ones."""
+    configured = _configured(rules)
+    hidden = 0
+
+    def _pass(entries: Sequence[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+        nonlocal hidden
+        out = []
+        for entry in entries:
+            category, why = classify_event(entry, rules)
+            if not keep(category, day, profile):
+                hidden += category == UNASSIGNED
+                continue
+            out.append(
+                {
+                    **entry,
+                    "category": category,
+                    "category_why": why,
+                    "unassigned": configured and category == UNASSIGNED,
+                }
+            )
+        return tuple(out)
+
+    filtered = CalendarDay(calendar.status, _pass(calendar.events), _pass(calendar.cancelled))
+    return filtered, hidden
+
+
+def _annotate(
+    sections: tuple[BriefingSection, ...],
+    categories: Mapping[tuple[str, str], str],
+    configured: bool,
+) -> tuple[BriefingSection, ...]:
+    out = []
+    for section in sections:
+        if section.key.startswith("calendar") or section.key == "hidden_unassigned":
+            out.append(section)
+            continue
+        items = tuple(
+            {
+                **entry,
+                "category": categories.get((entry["source"], entry["id"]), UNASSIGNED),
+                "unassigned": configured
+                and categories.get((entry["source"], entry["id"])) == UNASSIGNED,
+            }
+            for entry in section.items
+        )
+        out.append(replace(section, items=items))
+    return tuple(out)
+
+
 def build_sections(
-    agenda: Agenda, calendar: CalendarDay, *, now: datetime
+    agenda: Agenda, calendar: CalendarDay, *, now: datetime, hidden: int = 0
 ) -> tuple[BriefingSection, ...]:
     """The briefing's facts, grouped. Pure: same inputs, same sections."""
     day = agenda.today
@@ -190,6 +288,7 @@ def build_sections(
         new_section,
         moved_section,
         cancelled_section,
+        BriefingSection("hidden_unassigned", hidden),
     )
 
 
@@ -218,6 +317,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "short_notice": "short-notice change",
         "tentative": "tentative",
         "calendar_new": "New appointments",
+        "unassigned": "unassigned",
+        "hidden_unassigned": (
+            "{n} unassigned entries are left out today; please assign them a category."
+        ),
         "more": "… and {n} more",
         "nothing": "Nothing needs you right now, nothing is running and nothing is due today.",
         "cal_empty": "No upcoming appointments today.",
@@ -254,6 +357,11 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "short_notice": "kurzfristig geändert",  # i18n-allow
         "tentative": "vorläufig",  # i18n-allow
         "calendar_new": "Neue Termine",  # i18n-allow
+        "unassigned": "nicht zugeordnet",  # i18n-allow
+        "hidden_unassigned": (
+            "{n} nicht zugeordnete Einträge sind heute ausgeblendet; "  # i18n-allow
+            "bitte ordne sie zu."  # i18n-allow
+        ),
         "more": "… und {n} weitere",  # i18n-allow
         "nothing": (
             "Gerade braucht dich nichts, nichts läuft und heute ist nichts fällig."  # i18n-allow
@@ -294,6 +402,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "short_notice": "cambio de último momento",  # i18n-allow
         "tentative": "provisional",  # i18n-allow
         "calendar_new": "Citas nuevas",  # i18n-allow
+        "unassigned": "sin asignar",  # i18n-allow
+        "hidden_unassigned": (
+            "Hoy se omiten {n} entradas sin asignar; asígnales una categoría."  # i18n-allow
+        ),
         "more": "… y {n} más",  # i18n-allow
         "nothing": (
             "Ahora nada te necesita, nada está en curso y nada vence hoy."  # i18n-allow
@@ -334,6 +446,8 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "short_notice": "临时变更",  # i18n-allow
         "tentative": "待定",  # i18n-allow
         "calendar_new": "新增的日程",  # i18n-allow
+        "unassigned": "未分类",  # i18n-allow
+        "hidden_unassigned": "今天隐藏了{n}个未分类的条目，请为它们分类。",  # i18n-allow
         "more": "… 还有 {n} 项",  # i18n-allow
         "nothing": "目前没有需要你处理的事，没有进行中的任务，今天也没有到期事项。",  # i18n-allow
         "cal_empty": "今天没有即将到来的日程。",  # i18n-allow
@@ -376,6 +490,8 @@ def item_line(entry: Mapping[str, Any], table: Mapping[str, str]) -> str:
     if entry.get("priority") in ("urgent", "high"):
         marks.append("!" * (2 if entry.get("priority") == "urgent" else 1))
     prefix = f"[{' '.join(marks)}] " if marks else ""
+    if entry.get("unassigned"):
+        detail = f"{detail}; {table['unassigned']}"
     return f"- {prefix}{entry.get('title')} ({source}, {detail})"
 
 
@@ -393,6 +509,8 @@ def event_line(event: Mapping[str, Any], table: Mapping[str, str], *, day: date)
         notes.append(table["moved_from"].format(old=old))
     if event.get("short_notice"):
         notes.append(table["short_notice"])
+    if event.get("unassigned"):
+        notes.append(table["unassigned"])
     flag = "(!) " if event.get("short_notice") else ""
     tail = f" ({'; '.join(notes)})" if notes else ""
     return f"- {flag}{when} {event.get('title')}{where}{tail}"
@@ -413,6 +531,15 @@ def render_text(
     if all(s.count == 0 for s in sections if s.key in work_keys):
         lines += ["", table["nothing"]]
     for section in sections:
+        if section.key == "hidden_unassigned":
+            if section.count:
+                lines += ["", table["hidden_unassigned"].format(n=section.count)]
+            continue
+        if section.key.startswith("ext:"):
+            if section.count or section.items:
+                lines += ["", f"{section.title} ({section.count}):"]
+                lines += [f"- {entry.get('text')}" for entry in section.items]
+            continue
         if section.key in ("calendar_new", "calendar_moved", "calendar_cancelled"):
             if section.count:
                 lines += ["", f"{table[section.key]} ({section.count}):"]
@@ -460,11 +587,15 @@ class BriefingComposer:
         marks: Callable[[], Awaitable[Sequence[PriorityMark]]],
         calendar: CalendarReader | None = None,
         address: Callable[[], str | None] | None = None,
+        categories: Callable[[], Awaitable[tuple[CategoryRules, DayProfile]]] | None = None,
+        extensions: Sequence[BriefingExtension] = (),
     ) -> None:
         self._snapshot = snapshot
         self._marks = marks
         self._calendar = calendar
         self._address = address
+        self._categories = categories
+        self._extensions = tuple(extensions)
 
     async def compose(
         self, *, now: datetime, language: str = "en", include_calendar: bool = True
@@ -473,13 +604,22 @@ class BriefingComposer:
             raise ValueError("now must be timezone-aware (the person's local time)")
         language = normalize_language(language)
         day = now.date()
-        snapshot, marks, calendar = await asyncio.gather(
+        snapshot, marks, calendar, (rules, profile) = await asyncio.gather(
             self._snapshot(),
             self._marks(),
             self._read_calendar(day, now, include_calendar),
+            self._read_categories(),
         )
-        agenda = build_agenda(snapshot.items, marks, today=day, now_ms=int(now.timestamp() * 1000))
-        sections = build_sections(agenda, calendar, now=now)
+        configured = _configured(rules)
+        items, item_categories, hidden_items = _filter_items(snapshot.items, day, rules, profile)
+        calendar, hidden_events = filter_calendar(calendar, day, rules, profile)
+        agenda = build_agenda(items, marks, today=day, now_ms=int(now.timestamp() * 1000))
+        sections = _annotate(
+            build_sections(agenda, calendar, now=now, hidden=hidden_items + hidden_events),
+            item_categories,
+            configured,
+        )
+        sections += await self._extension_sections(day, now, language, profile)
         address = self._read_address()
         return Briefing(
             day=day,
@@ -488,6 +628,38 @@ class BriefingComposer:
             text=render_text(sections, day=day, language=language, address=address),
             sources=tuple(s.to_dict() for s in snapshot.sources),
         )
+
+    async def calendar_for(self, day: date, now: datetime) -> tuple[CalendarDay, int]:
+        """*day*'s appointments, filtered by that day's profile, and how many
+        unassigned ones were left out."""
+        calendar = await self._read_calendar(day, now, True)
+        rules, profile = await self._read_categories()
+        return filter_calendar(calendar, day, rules, profile)
+
+    async def _read_categories(self) -> tuple[CategoryRules, DayProfile]:
+        if self._categories is None:
+            return CategoryRules(), DayProfile()
+        try:
+            return await self._categories()
+        except Exception:  # noqa: BLE001 — unreadable rules: the briefing shows everything
+            log.warning("ops briefing: category rules unreadable", exc_info=True)
+            return CategoryRules(), DayProfile()
+
+    async def _extension_sections(
+        self, day: date, now: datetime, language: str, profile: DayProfile
+    ) -> tuple[BriefingSection, ...]:
+        out: list[BriefingSection] = []
+        for extension in self._extensions:
+            if not keep(extension.category, day, profile):
+                continue
+            try:
+                section = await extension.section(day, now, language)
+            except Exception:  # noqa: BLE001 — one module must not sink the briefing
+                log.warning("ops briefing: extension %s failed", extension.name, exc_info=True)
+                continue
+            if section is not None:
+                out.append(replace(section, key=f"ext:{extension.name}"))
+        return tuple(out)
 
     async def _read_calendar(self, day: date, now: datetime, include: bool) -> CalendarDay:
         if not include:

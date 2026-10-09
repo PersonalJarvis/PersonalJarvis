@@ -124,7 +124,7 @@ def _composer(calendar: Any) -> BriefingComposer:
 async def _answer(focus: str, day: str = "today", language: str = "en", calendar: Any = None):
     cal = calendar or FakeCalendar()
     return await briefing_service.answer(
-        composer=_composer(cal), calendar=cal, now=NOW, day=day, focus=focus, language=language
+        composer=_composer(cal), now=NOW, day=day, focus=focus, language=language
     )
 
 
@@ -159,8 +159,7 @@ async def test_changes_list_moved_new_and_cancelled_only() -> None:
 
 async def test_no_changes_and_a_dead_calendar_are_said_plainly() -> None:
     quiet = await briefing_service.answer(
-        composer=_composer(FakeCalendar()),
-        calendar=FakeCalendar("empty"),
+        composer=_composer(FakeCalendar("empty")),
         now=NOW,
         focus="changes",
     )
@@ -520,7 +519,7 @@ def test_the_morning_module_cannot_speak() -> None:
 async def test_new_moved_and_cancelled_are_separate_groups_in_order() -> None:
     result = await _answer("briefing")
     keys = [s.key for s in result.sections]
-    assert keys[-4:] == ["calendar", "calendar_new", "calendar_moved", "calendar_cancelled"]
+    assert keys[-5:-1] == ["calendar", "calendar_new", "calendar_moved", "calendar_cancelled"]
     by = {s.key: [e["id"] for e in s.items] for s in result.sections}
     assert (by["calendar"], by["calendar_new"], by["calendar_moved"], by["calendar_cancelled"]) == (
         ["lunch"],

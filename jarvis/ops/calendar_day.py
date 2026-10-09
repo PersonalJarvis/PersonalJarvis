@@ -138,6 +138,8 @@ def classify_day(
             "all_day": all_day,
             "time": _clock(anchor, tz, all_day),
             "location": _clean(event.get("location"), 120),
+            "calendar_id": _clean(event.get("calendar_id"), 200),
+            "calendar": _clean(event.get("calendar"), 200),
             "state": state,
             "moved_from": moved_from,
             "changed_at": event.get("updated") if changed else None,

@@ -89,7 +89,11 @@ async def test_only_the_priority_marks_are_writable() -> None:
             assert methods == {"POST"}
         elif path == "/api/ops/notify/live":
             assert methods == {"PUT"}  # the owner's live switch
-        elif path in ("/api/ops/notify/settings", "/api/ops/morning/settings"):
+        elif path in (
+            "/api/ops/notify/settings",
+            "/api/ops/morning/settings",
+            "/api/ops/categories",
+        ):
             assert methods <= {"GET", "HEAD", "PUT"}  # the person's own switches
         elif methods - {"GET", "HEAD"}:
             assert path.startswith("/api/ops/priorities/"), path
