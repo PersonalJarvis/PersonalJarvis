@@ -6,6 +6,9 @@ statistics) or ``unassigned``. Trading and video are their own categories so
 a day profile can show them without the rest of the own projects. Classification is
 deterministic and explainable — no model call:
 
+0. in strict mode (``only_listed``) an appointment from a calendar that is
+   not listed is ``excluded`` — never shown, never counted, and the reader
+   does not even fetch it (e.g. colleagues' calendars in a shared account);
 1. an explicit assignment of that very item (source + id) wins;
 2. then the calendar the appointment lives in (calendar id or name);
 3. then keywords in the title (case-insensitive);
@@ -38,6 +41,7 @@ log = logging.getLogger(__name__)
 
 CATEGORIES: Final[tuple[str, ...]] = ("work", "private", "business", "trading", "video")
 UNASSIGNED: Final = "unassigned"
+EXCLUDED: Final = "excluded"
 ALL: Final = frozenset(CATEGORIES)
 KEYWORD_MAX: Final = 200
 RULES_MAX: Final = 500
@@ -55,12 +59,15 @@ class CategoryRules:
     keywords: tuple[tuple[str, str], ...] = ()
     #: "source:id" -> category, for single items
     items: Mapping[str, str] = field(default_factory=dict)
+    #: strict mode: only the listed calendars count; every other one is excluded
+    only_listed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "calendars": dict(self.calendars),
             "keywords": [{"keyword": k, "category": c} for k, c in self.keywords],
             "items": dict(self.items),
+            "only_listed": self.only_listed,
         }
 
 
@@ -106,6 +113,8 @@ def validate_rules(rules: CategoryRules) -> CategoryRules:
         if ":" not in item or len(item) > KEYWORD_MAX:
             raise CategoryError("item keys look like 'source:id'")
         _check(category)
+    if rules.only_listed and not rules.calendars:
+        raise CategoryError("only_listed needs at least one listed calendar")
     return rules
 
 
@@ -114,14 +123,24 @@ def make_rules(
     calendars: Mapping[str, str] | None = None,
     keywords: Iterable[tuple[str, str]] = (),
     items: Mapping[str, str] | None = None,
+    only_listed: bool = False,
 ) -> CategoryRules:
     return validate_rules(
         CategoryRules(
             calendars={_key(k): v for k, v in (calendars or {}).items()},
             keywords=tuple((_key(k), v) for k, v in keywords),
             items=dict(items or {}),
+            only_listed=bool(only_listed),
         )
     )
+
+
+def listed_calendar_ids(rules: CategoryRules) -> tuple[str, ...]:
+    """In strict mode, the calendar ids (``…@…``) to read — and only those.
+    Empty means "read every calendar" (no strict mode, or only names listed)."""
+    if not rules.only_listed:
+        return ()
+    return tuple(sorted(k for k in rules.calendars if "@" in k))
 
 
 def make_profile(days: Mapping[int, Iterable[str]]) -> DayProfile:
@@ -143,6 +162,10 @@ def _by_keyword(title: str, rules: CategoryRules) -> str | None:
 
 def classify_event(event: Mapping[str, Any], rules: CategoryRules) -> tuple[str, str]:
     """``(category, why)`` for one calendar entry."""
+    if rules.only_listed and not any(
+        _key(str(event.get(f) or "")) in rules.calendars for f in ("calendar_id", "calendar")
+    ):
+        return EXCLUDED, "not_listed"
     explicit = rules.items.get(f"calendar:{event.get('id')}")
     if explicit:
         return explicit, "item"
@@ -169,6 +192,8 @@ def classify_item(source: str, item_id: str, title: str, rules: CategoryRules) -
 
 def keep(category: str, day: date, profile: DayProfile) -> bool:
     """Whether an item of *category* is shown on *day*."""
+    if category == EXCLUDED:
+        return False
     if category == UNASSIGNED:
         return profile.full(day)  # might be an excluded category: never leak it
     return category in profile.allowed(day)
@@ -231,6 +256,7 @@ class CategoryStore:
             calendars=raw_rules.get("calendars") or {},
             keywords=[(k["keyword"], k["category"]) for k in raw_rules.get("keywords") or []],
             items=raw_rules.get("items") or {},
+            only_listed=bool(raw_rules.get("only_listed")),
         )
         profile = make_profile({int(d): c for d, c in raw_profile.items()})
         return rules, profile
@@ -258,6 +284,7 @@ class CategoryStore:
 __all__ = [
     "ALL",
     "CATEGORIES",
+    "EXCLUDED",
     "UNASSIGNED",
     "CategoryError",
     "CategoryRules",
@@ -266,6 +293,7 @@ __all__ = [
     "classify_event",
     "classify_item",
     "keep",
+    "listed_calendar_ids",
     "make_profile",
     "make_rules",
     "validate_rules",

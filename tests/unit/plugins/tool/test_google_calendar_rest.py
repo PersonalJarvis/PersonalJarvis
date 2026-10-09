@@ -29,9 +29,7 @@ async def test_list_events_passes_window_and_token():
         captured["bearer"] = token
         return _ok({"events": [{"id": "e1", "summary": "Standup"}]})
 
-    tool = GoogleCalendarRestTool(
-        access_token_provider=lambda: "at_123", node_runner=runner
-    )
+    tool = GoogleCalendarRestTool(access_token_provider=lambda: "at_123", node_runner=runner)
     out = await tool.list_events(time_min="2026-06-28T00:00:00", time_max="2026-06-28T23:59:59")
     assert out["data"]["events"][0]["id"] == "e1"
     assert captured["action"] == "list_events"
@@ -48,11 +46,11 @@ async def test_create_event_builds_payload():
         captured["args"] = args
         return _ok({"id": "new1", "summary": "Lunch"})
 
-    tool = GoogleCalendarRestTool(
-        access_token_provider=lambda: "at_123", node_runner=runner
-    )
+    tool = GoogleCalendarRestTool(access_token_provider=lambda: "at_123", node_runner=runner)
     out = await tool.create_event(
-        summary="Lunch", start="2026-06-28T12:00:00", end="2026-06-28T13:00:00",
+        summary="Lunch",
+        start="2026-06-28T12:00:00",
+        end="2026-06-28T13:00:00",
         time_zone="Europe/Berlin",
     )
     assert out["data"]["id"] == "new1"
@@ -70,9 +68,7 @@ async def test_delete_event_passes_id():
         captured["args"] = args
         return _ok({"deleted": "e9"})
 
-    tool = GoogleCalendarRestTool(
-        access_token_provider=lambda: "at_123", node_runner=runner
-    )
+    tool = GoogleCalendarRestTool(access_token_provider=lambda: "at_123", node_runner=runner)
     out = await tool.delete_event(event_id="e9")
     assert out["data"]["deleted"] == "e9"
     assert captured["action"] == "delete_event"
@@ -90,12 +86,13 @@ async def test_delete_passes_calendar_id_for_secondary_calendar():
         captured["args"] = args
         return _ok({"deleted": "e9", "calendar_id": "school@group.calendar.google.com"})
 
-    tool = GoogleCalendarRestTool(
-        access_token_provider=lambda: "at_123", node_runner=runner
-    )
+    tool = GoogleCalendarRestTool(access_token_provider=lambda: "at_123", node_runner=runner)
     out = await tool.execute(
-        {"action": "delete_event", "event_id": "e9",
-         "calendar_id": "school@group.calendar.google.com"},
+        {
+            "action": "delete_event",
+            "event_id": "e9",
+            "calendar_id": "school@group.calendar.google.com",
+        },
         ctx=None,
     )
     assert out.success is True
@@ -153,9 +150,7 @@ async def test_default_refresh_receives_failed_access_token(monkeypatch) -> None
         seen.append(observed_access_token)
         return True
 
-    monkeypatch.setattr(
-        "jarvis.plugins.tool.google_calendar_rest._default_refresher", refresher
-    )
+    monkeypatch.setattr("jarvis.plugins.tool.google_calendar_rest._default_refresher", refresher)
     tool = GoogleCalendarRestTool(
         access_token_provider=lambda: "failed-access",
         node_runner=runner,
@@ -292,7 +287,26 @@ process.on("exit", () => process.stderr.write(JSON.stringify(globalThis.__urls))
 """
 
 
-def _run_bot(tmp_path, payload):  # noqa: ANN001, ANN202
+_SHARED_ACCOUNT_STUB = r"""
+globalThis.__urls = [];
+globalThis.fetch = async (url) => {
+  globalThis.__urls.push(String(url));
+  const u = String(url);
+  const body = u.includes("/calendarList")
+    ? { items: [{ id: "alex@acme.example", summary: "Alex" },
+                { id: "robin@acme.example", summary: "Robin" },
+                { id: "sam@acme.example", summary: "Sam" }] }
+    : { items: [{ id: "e-" + u.split("/calendars/")[1].split("/")[0], summary: "x",
+                  start: { dateTime: "2026-10-07T10:00:00+02:00" },
+                  end: { dateTime: "2026-10-07T11:00:00+02:00" } }] };
+  return { ok: true, status: 200, text: async () => JSON.stringify(body),
+           json: async () => body };
+};
+process.on("exit", () => process.stderr.write(JSON.stringify(globalThis.__urls)));
+"""
+
+
+def _run_bot(tmp_path, payload, stub_source=None):  # noqa: ANN001, ANN202
     import json
     import shutil
     import subprocess
@@ -304,7 +318,7 @@ def _run_bot(tmp_path, payload):  # noqa: ANN001, ANN202
 
         pytest.skip("node is not installed")
     stub = tmp_path / "fetch_stub.mjs"
-    stub.write_text(_FETCH_STUB, encoding="utf-8")
+    stub.write_text(stub_source or _FETCH_STUB, encoding="utf-8")
     bot = Path(__file__).resolve().parents[4] / "jarvis/plugins/tool/calendar_bot.mjs"
     proc = subprocess.run(  # noqa: S603 - fixed argv, test-only
         [node, "--import", stub.as_uri(), str(bot)],
@@ -331,3 +345,32 @@ def test_bot_reports_change_facts_and_asks_for_deleted_only_on_request(tmp_path)
 
     _out, urls = _run_bot(tmp_path, base)
     assert not any("showDeleted" in u for u in urls)
+
+
+def test_bot_reads_only_the_requested_calendars(tmp_path):  # noqa: ANN001, ANN201
+    base = {"access_token": "at_fake", "action": "list_events"}
+    out, urls = _run_bot(
+        tmp_path, {**base, "calendar_ids": ["ALEX@acme.example"]}, _SHARED_ACCOUNT_STUB
+    )
+    assert out["ok"] is True
+    assert [e["calendar"] for e in out["data"]["events"]] == ["Alex"]
+    event_urls = [u for u in urls if "/events" in u]
+    assert len(event_urls) == 1 and "alex%40acme.example" in event_urls[0]
+    assert not any("robin" in u or "sam%40" in u for u in event_urls)
+
+    out, urls = _run_bot(tmp_path, base, _SHARED_ACCOUNT_STUB)  # default: every calendar
+    assert len([u for u in urls if "/events" in u]) == 3
+
+
+@pytest.mark.asyncio
+async def test_tool_passes_calendar_ids_through_only_when_given():
+    seen: list[dict] = []
+
+    async def runner(action, args, token):  # noqa: ANN001, ANN202
+        seen.append(dict(args))
+        return {"ok": True, "data": {"events": []}}
+
+    tool = GoogleCalendarRestTool(access_token_provider=lambda: "x", node_runner=runner)
+    await tool.execute({"action": "list_events", "calendar_ids": ["a@b.example"]}, None)
+    await tool.execute({"action": "list_events"}, None)
+    assert seen[0]["calendar_ids"] == ["a@b.example"] and "calendar_ids" not in seen[1]

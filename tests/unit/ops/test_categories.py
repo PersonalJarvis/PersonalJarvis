@@ -1,5 +1,5 @@
-"""Work, private, own projects, trading, video — weekdays show all, weekends only
-private, trading and video (never work, never other own projects).
+"""Work, private, own projects, trading, video — weekdays show all, weekends
+everything except work.
 
 The employer here is a made-up "Acme Publishing"; the real names are the
 person's local settings, never code. Dates around the 2026-10-25 DST change
@@ -46,7 +46,7 @@ RULES = make_rules(
     items={"task:t-follow": "work"},
 )
 WORK_FREE_WEEKEND = make_profile(
-    {5: ["private", "trading", "video"], 6: ["private", "trading", "video"]}
+    {5: ["private", "business", "trading", "video"], 6: ["private", "business", "trading", "video"]}
 )
 
 
@@ -127,7 +127,7 @@ def test_unassigned_is_never_private() -> None:
     assert keep("private", SAT, WORK_FREE_WEEKEND) is True
     assert keep("trading", SAT, WORK_FREE_WEEKEND) is True
     assert keep("work", SUN, WORK_FREE_WEEKEND) is False
-    assert keep("business", SUN, WORK_FREE_WEEKEND) is False  # other own projects wait
+    assert keep("business", SUN, WORK_FREE_WEEKEND) is True  # own projects also on weekends
 
 
 def test_rules_are_validated() -> None:
@@ -188,10 +188,10 @@ async def test_a_weekday_shows_work_private_business_and_marks_unassigned() -> N
 
 
 @pytest.mark.parametrize("day", [SAT, SUN])
-async def test_a_weekend_shows_only_private_trading_and_video(day: date) -> None:
+async def test_a_weekend_shows_everything_but_work(day: date) -> None:
     briefing = await _composer().compose(now=_at(day, 7), language="en")
     titles = _titles(briefing)
-    assert titles == {"Dinner with parents"}  # the channel work is "business": it waits
+    assert titles == {"Dinner with parents", "Edit channel video", "Upload channel video"}
     assert briefing.section("hidden_unassigned").count == 2  # Call Paul, Water the plants
     assert "Acme" not in briefing.text and "Team standup" not in briefing.text
     assert "Follow up on proofs" not in briefing.text  # a work follow-up is left out
@@ -309,6 +309,7 @@ async def test_extensions_follow_the_day_profile_and_never_break_the_briefing() 
     assert [s.key for s in saturday.sections if s.key.startswith("ext:")] == [
         "ext:trading",
         "ext:youtube",
+        "ext:projects",
     ]
     assert [s.key for s in monday.sections if s.key.startswith("ext:")] == [
         "ext:trading",

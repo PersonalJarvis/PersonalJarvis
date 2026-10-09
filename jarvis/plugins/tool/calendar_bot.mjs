@@ -175,6 +175,15 @@ async function listEvents(token, args) {
     }
     targets = [{ id: "primary", name: "primary" }];
   }
+  // Opt-in: read ONLY these calendars. Others (e.g. colleagues' calendars a
+  // shared account subscribes to) are never fetched.
+  const only = Array.isArray(args.calendar_ids)
+    ? args.calendar_ids.map((id) => String(id).toLowerCase()).filter(Boolean)
+    : [];
+  if (only.length) {
+    const known = new Map(cal.calendars.map((c) => [String(c.id).toLowerCase(), c]));
+    targets = only.map((id) => known.get(id) || { id, name: id });
+  }
 
   const perCal = await Promise.all(
     targets.map((t) => listEventsForCalendar(token, t.id, t.name, params))

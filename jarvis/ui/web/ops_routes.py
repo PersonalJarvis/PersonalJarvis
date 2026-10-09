@@ -47,6 +47,7 @@ from jarvis.ops.categories import (
     CategoryRules,
     CategoryStore,
     DayProfile,
+    listed_calendar_ids,
     make_profile,
     make_rules,
 )
@@ -318,9 +319,17 @@ def calendar_reader_for_state(state: Any) -> ToolCalendarReader:
     def _brain() -> Any:
         return getattr(state, "brain", None)
 
+    async def _calendar_ids() -> tuple[str, ...]:
+        store = category_store_for_state(state)
+        if store is None:
+            return ()
+        rules, _profile = await store.load()
+        return listed_calendar_ids(rules)
+
     return ToolCalendarReader(
         tools=lambda: getattr(_brain(), "_tools", None),
         executor=lambda: getattr(_brain(), "_tool_executor_ref", None),
+        calendar_ids=_calendar_ids,
     )
 
 
@@ -749,6 +758,8 @@ class CategoriesBody(BaseModel):
     keywords: list[KeywordRule] = Field(default_factory=list)
     items: dict[str, str] = Field(default_factory=dict)
     weekdays: dict[str, list[str]] = Field(default_factory=dict)
+    #: strict mode: only the listed calendars are read and shown
+    only_listed: bool = False
 
 
 @router.put("/categories")
@@ -762,6 +773,7 @@ async def set_categories(request: Request, body: CategoriesBody) -> dict[str, An
             calendars=body.calendars,
             keywords=[(k.keyword, k.category) for k in body.keywords],
             items=body.items,
+            only_listed=body.only_listed,
         )
         profile = make_profile({int(d): c for d, c in body.weekdays.items()})
     except (CategoryError, ValueError) as exc:

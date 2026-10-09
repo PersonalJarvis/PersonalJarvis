@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Final, Protocol
@@ -167,9 +167,12 @@ class ToolCalendarReader:
         self,
         tools: Callable[[], Mapping[str, Any] | None],
         executor: Callable[[], Any],
+        calendar_ids: Callable[[], Awaitable[Sequence[str]]] | None = None,
     ) -> None:
         self._tools = tools
         self._executor = executor
+        # Strict mode: only these calendars are read (``categories.listed_calendar_ids``).
+        self._calendar_ids = calendar_ids
 
     async def read_day(self, day: date, now: datetime) -> CalendarDay:
         tool = (self._tools() or {}).get(CALENDAR_TOOL)
@@ -184,6 +187,16 @@ class ToolCalendarReader:
             "max_results": MAX_EVENTS,
             "show_deleted": True,
         }
+        if self._calendar_ids is not None:
+            try:
+                only = list(await self._calendar_ids())
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — unknown scope: read nothing rather than everything
+                log.warning("ops calendar: calendar scope unreadable", exc_info=True)
+                return CalendarDay("unavailable")
+            if only:
+                args["calendar_ids"] = only
         try:
             result = await asyncio.wait_for(
                 executor.execute(

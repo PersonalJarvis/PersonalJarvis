@@ -14,6 +14,7 @@ Router-tier tool. Full autonomy by design (user mandate): every action runs
 without a confirmation prompt — reads are ``safe``, writes (create/update/
 delete) are ``monitor`` (executed + audited, never ``ask``).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,9 +34,7 @@ _NODE_TIMEOUT_S = 25.0
 
 # User-facing error strings (English per AGENTS.md; the brain rephrases to the
 # user's language). Distinct so the brain can tell the failure modes apart.
-_NOT_CONNECTED = (
-    "Google Calendar is not connected — connect it in the Plugins view."
-)
+_NOT_CONNECTED = "Google Calendar is not connected — connect it in the Plugins view."
 _NEEDS_RECONNECT = (
     "Google Calendar authorization expired and could not be renewed — "
     "please reconnect Google Calendar in the Plugins view."
@@ -50,9 +49,7 @@ _NODE_MISSING = (
 NodeRunner = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
 
 
-async def _default_node_runner(
-    action: str, args: dict[str, Any], token: str
-) -> dict[str, Any]:
+async def _default_node_runner(action: str, args: dict[str, Any], token: str) -> dict[str, Any]:
     """Spawn the Node calendar bot for one action and return its JSON result.
 
     The full payload (token + action + args) is piped over stdin so the token
@@ -178,6 +175,11 @@ class GoogleCalendarRestTool:
                 "description": "list_events: also return cancelled events (status 'cancelled')",
             },
             "max_results": {"type": "integer", "default": 25},
+            "calendar_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "list_events: read only these calendars (default: all)",
+            },
             "summary": {"type": "string", "description": "event title (create/update)"},
             "start": {"type": "string", "description": "RFC3339 datetime or YYYY-MM-DD"},
             "end": {"type": "string", "description": "RFC3339 datetime or YYYY-MM-DD"},
@@ -238,17 +240,18 @@ class GoogleCalendarRestTool:
         query: str = "",
         max_results: int = 25,
         show_deleted: bool = False,
+        calendar_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        return await self._call(
-            "list_events",
-            {
-                "time_min": time_min,
-                "time_max": time_max,
-                "query": query,
-                "max_results": max_results,
-                "show_deleted": bool(show_deleted),
-            },
-        )
+        payload: dict[str, Any] = {
+            "time_min": time_min,
+            "time_max": time_max,
+            "query": query,
+            "max_results": max_results,
+            "show_deleted": bool(show_deleted),
+        }
+        if calendar_ids:
+            payload["calendar_ids"] = [str(c) for c in calendar_ids if str(c).strip()]
+        return await self._call("list_events", payload)
 
     async def create_event(
         self,
@@ -300,12 +303,8 @@ class GoogleCalendarRestTool:
             },
         )
 
-    async def delete_event(
-        self, *, event_id: str, calendar_id: str = ""
-    ) -> dict[str, Any]:
-        return await self._call(
-            "delete_event", {"event_id": event_id, "calendar_id": calendar_id}
-        )
+    async def delete_event(self, *, event_id: str, calendar_id: str = "") -> dict[str, Any]:
+        return await self._call("delete_event", {"event_id": event_id, "calendar_id": calendar_id})
 
     # -- Tool protocol ------------------------------------------------------
 
@@ -330,6 +329,7 @@ class GoogleCalendarRestTool:
                     query=args.get("query", ""),
                     max_results=int(args.get("max_results", 25)),
                     show_deleted=bool(args.get("show_deleted", False)),
+                    calendar_ids=list(args.get("calendar_ids") or []) or None,
                 )
             elif action == "create_event":
                 if not args.get("summary"):
@@ -365,9 +365,7 @@ class GoogleCalendarRestTool:
                 eid = args.get("event_id")
                 if not eid:
                     return ToolResult(success=False, output=None, error="event_id missing")
-                out = await self.delete_event(
-                    event_id=eid, calendar_id=args.get("calendar_id", "")
-                )
+                out = await self.delete_event(event_id=eid, calendar_id=args.get("calendar_id", ""))
             else:
                 return ToolResult(success=False, output=None, error=f"unknown action {action!r}")
         except Exception as exc:  # noqa: BLE001
