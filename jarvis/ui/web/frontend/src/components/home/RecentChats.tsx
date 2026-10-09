@@ -2,15 +2,15 @@ import { useState } from "react";
 import { Archive, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
 import { ChatKindMark } from "@/components/home/ChatKindMark";
-import { chatRowLabel, useChatRows, type ChatRow } from "@/components/home/chatRows";
+import { chatRowLabel, formatChatDay, groupChatRowsByDay, useChatRows, type ChatRow } from "@/components/home/chatRows";
 import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 
 
-/** Flat sidebar history: pinned conversations first, then the latest chats. */
+/** Sidebar history: pinned conversations first, then the chats under one heading per day. */
 const PINNED_KEY = "jarvis.sidebar.pinned-chats.v1";
 function readPins(): string[] {
   try {
@@ -24,6 +24,7 @@ function readPins(): string[] {
 const rowKey = (row: ChatRow) => `${row.kind}:${row.id}`;
 export function RecentChats() {
   const t = useT();
+  const lang = useUiLanguage();
   const { rows, isActive, open: openRow, remove } = useChatRows({ poll: true });
   const loadSessions = useAgentChatStore((s) => s.loadSessions);
   const [pins, setPins] = useState(readPins);
@@ -43,7 +44,7 @@ export function RecentChats() {
   // Every chat is listed in one column: the
   // sidebar scrolls instead of hiding the history behind "Show all"
   // (maintainer, 2026-10-01). The archive dialog stays for searching it.
-  const shown = recentRows;
+  const days = groupChatRowsByDay(recentRows);
 
   return (
     <>
@@ -54,24 +55,33 @@ export function RecentChats() {
             active={isActive(row)} pinned onPin={() => togglePin(row)} onOpen={() => openRow(row)}
             onDelete={row.kind === "agent" ? () => remove(row) : undefined} />)}</ul>
         </section>}
-        <h2 className="px-3 pb-1.5 text-sm text-muted-foreground">{t("sidebar.recent")}</h2>
-        {shown.length === 0 ? (
-          <p className="py-1 px-3 text-sm text-foreground-faint">
-            {t("sidebar.no_chats")}
-          </p>
+        {recentRows.length === 0 ? (
+          <>
+            <h2 className="px-3 pb-1.5 text-sm text-muted-foreground">{t("sidebar.recent")}</h2>
+            <p className="py-1 px-3 text-sm text-foreground-faint">
+              {t("sidebar.no_chats")}
+            </p>
+          </>
         ) : (
-          <ul className="space-y-0.5">
-            {shown.map((row) => (
-              <ChatRowItem
-                key={`${row.kind}-${row.id}`}
-                row={row}
-                active={isActive(row)}
-                onPin={() => togglePin(row)}
-                onOpen={() => openRow(row)}
-                onDelete={row.kind === "agent" ? () => remove(row) : undefined}
-              />
-            ))}
-          </ul>
+          days.map((day) => (
+            <section key={day.dayMs} data-testid="chat-day" className="mb-6 last:mb-1">
+              <h2 className="px-3 pb-1.5 text-sm text-muted-foreground">
+                {day.relative ? t(`all_chats.group_${day.relative}`) : formatChatDay(day.dayMs, lang)}
+              </h2>
+              <ul className="space-y-0.5">
+                {day.rows.map((row) => (
+                  <ChatRowItem
+                    key={`${row.kind}-${row.id}`}
+                    row={row}
+                    active={isActive(row)}
+                    onPin={() => togglePin(row)}
+                    onOpen={() => openRow(row)}
+                    onDelete={row.kind === "agent" ? () => remove(row) : undefined}
+                  />
+                ))}
+              </ul>
+            </section>
+          ))
         )}
         {rows.length > 0 && (
           <button
