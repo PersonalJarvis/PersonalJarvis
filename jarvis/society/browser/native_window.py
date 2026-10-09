@@ -83,6 +83,7 @@ class NativeWindow:
     def __init__(self, pid: int) -> None:
         self.failed = False
         self._closed = False
+        self._parked = False
         if os.name != "nt":
             self.failed = True
             return
@@ -104,6 +105,7 @@ class NativeWindow:
         self._capture_factory = WindowsCapture
         self._captures: dict[int, tuple[Any, Any]] = {}
         self._capture_keys: dict[int, object] = {}
+        self._restarted_popups: set[int] = set()
         self._images: dict[int, tuple[Any, float]] = {}
         self._popups: list[int] = []
         self._regions: list[dict[str, Any]] = []
@@ -176,6 +178,7 @@ class NativeWindow:
         if not self.hwnd:
             raise RuntimeError("The owned Chrome window is unavailable")
         self.input_hwnd = self.hwnd
+        self.park()
         self._event_task = self._loop.create_task(self._consume_window_events())
         self._hook_thread = threading.Thread(
             target=self._watch_windows, name="jarvis-chrome-window-events", daemon=True
@@ -295,19 +298,41 @@ class NativeWindow:
             return True
 
         self.user32.EnumWindows(visit, 0)
+        if self._parked:
+            for hwnd in popups:
+                self._hide_from_desktop(hwnd)
         # EnumWindows enumerates front to back; painting uses the reverse order.
         popups.reverse()
         with self.lock:
             self._popups = popups
             self._revision += 1
+            self._restarted_popups.intersection_update(popups)
         for hwnd in list(self._captures):
-            if hwnd != self.hwnd and hwnd not in popups:
+            if hwnd == self.hwnd:
+                continue
+            if hwnd not in popups:
                 self._stop_capture(hwnd)
+            elif hwnd not in self._capture_keys:
+                if not self._stop_capture(hwnd):
+                    self.failed = True
+                    raise RuntimeError("The stopped Chrome popup capture could not be released")
+                if hwnd in self._restarted_popups:
+                    self.failed = True
+                    raise RuntimeError("The Chrome popup capture repeatedly stopped")
+                self._restarted_popups.add(hwnd)
+                log.warning("Restarting a stopped Chrome popup capture")
         for hwnd in popups:
             if hwnd not in self._captures:
                 try:
                     self._start_capture(hwnd)
-                except Exception:
+                except Exception as exc:
+                    if (
+                        hwnd in self._restarted_popups
+                        and self._owned(hwnd)
+                        and self.user32.IsWindowVisible(hwnd)
+                    ):
+                        self.failed = True
+                        raise RuntimeError("The Chrome popup capture could not restart") from exc
                     # Native menus can close between the show event and WGC
                     # startup; the main browser stream remains usable.
                     log.debug("Chrome popup capture could not start", exc_info=True)
@@ -348,12 +373,20 @@ class NativeWindow:
 
         @capture.event
         def on_closed() -> None:
-            if self._capture_keys.get(hwnd) is not token:
-                return
-            if hwnd == self.hwnd and not self._closed:
-                self.failed = True
-                self.ready.set()
-            elif not self._closed:
+            with self.lock:
+                if self._closed or self._capture_keys.get(hwnd) is not token:
+                    return
+                if hwnd == self.hwnd:
+                    self.failed = True
+                    self.ready.set()
+                    return
+                # Invalidate pixels and late callbacks immediately. The owning
+                # loop reaps the native worker before a bounded replacement;
+                # stopping/joining it inside this callback would deadlock.
+                self._capture_keys.pop(hwnd, None)
+                self._images.pop(hwnd, None)
+                self._revision += 1
+            if not self._closed:
                 self._queue_window_event(hwnd)
 
         try:
@@ -364,10 +397,11 @@ class NativeWindow:
                 self._images.pop(hwnd, None)
             raise
 
-    def _stop_capture(self, hwnd: int) -> None:
+    def _stop_capture(self, hwnd: int) -> bool:
         with self.lock:
             self._capture_keys.pop(hwnd, None)
         capture = self._captures.pop(hwnd, None)
+        stopped = threading.Event()
         if capture:
             def stop() -> None:
                 try:
@@ -375,6 +409,7 @@ class NativeWindow:
                     # so the deadline must enclose both operations.
                     capture[1].stop()
                     capture[1].wait()
+                    stopped.set()
                 except Exception:
                     log.warning("Chrome capture cleanup failed", exc_info=True)
 
@@ -387,6 +422,7 @@ class NativeWindow:
                 log.warning("Chrome capture did not exit before its deadline")
         with self.lock:
             self._images.pop(hwnd, None)
+        return capture is None or stopped.is_set()
 
     def _bounds(self, hwnd: int) -> tuple[int, int, int, int]:
         c, w = self.ctypes, self.wintypes
@@ -886,8 +922,45 @@ class NativeWindow:
         for hwnd in list(self._captures):
             self._stop_capture(hwnd)
 
+    def _hide_from_desktop(self, hwnd: int) -> None:
+        """Keep an owned window captureable without drawing on the desktop.
+
+        Moving offscreen makes Chrome clamp its native menus onto a monitor.
+        Hiding/minimizing stops window capture. Desktop alpha leaves the native
+        surface and its coordinates intact; WGC captures the original pixels.
+        The owning browser process retains this style until it exits.
+        """
+        if not self._owned(hwnd):
+            raise RuntimeError("Chrome window ownership changed before hiding")
+        c, w, u = self.ctypes, self.wintypes, self.user32
+        u.GetWindowLongW.argtypes = [w.HWND, c.c_int]
+        u.GetWindowLongW.restype = c.c_long
+        u.SetWindowLongW.argtypes = [w.HWND, c.c_int, c.c_long]
+        u.SetWindowLongW.restype = c.c_long
+        u.SetLayeredWindowAttributes.argtypes = [w.HWND, w.DWORD, w.BYTE, w.DWORD]
+        u.SetLayeredWindowAttributes.restype = w.BOOL
+        u.GetLayeredWindowAttributes.argtypes = [
+            w.HWND, c.POINTER(w.DWORD), c.POINTER(w.BYTE), c.POINTER(w.DWORD),
+        ]
+        u.GetLayeredWindowAttributes.restype = w.BOOL
+        style = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE is a 32-bit style, not a pointer.
+        # WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, without APPWINDOW.
+        hidden_style = (style | 0x08080080) & ~0x00040000
+        if style != hidden_style:
+            u.SetWindowLongW(hwnd, -20, hidden_style)
+            if u.GetWindowLongW(hwnd, -20) != hidden_style:
+                raise RuntimeError("The Chrome window could not be removed from the desktop")
+        alpha, flags = w.BYTE(), w.DWORD()
+        if (
+            u.GetLayeredWindowAttributes(hwnd, None, c.byref(alpha), c.byref(flags))
+            and flags.value & 0x2 and alpha.value == 0
+        ):
+            return
+        if not u.SetLayeredWindowAttributes(hwnd, 0, 0, 0x2):  # LWA_ALPHA, fully transparent.
+            raise RuntimeError("The Chrome window could not be made transparent")
+
     def park(self) -> None:
-        """Keep Chrome behind Jarvis while preserving native popup placement."""
+        """Hide Chrome on the desktop while preserving the embedded window stream."""
         if os.name != "nt":
             return
         u, w = self.user32, self.wintypes
@@ -903,6 +976,8 @@ class NativeWindow:
         u.SetWindowPos.restype = w.BOOL
         with self.dpi():
             self._check_owner()
+            self._hide_from_desktop(self.hwnd)
+            self._parked = True
             # Moving far offscreen breaks Chrome's monitor-clamped profile and
             # login bubbles. HWND_BOTTOM does not activate or move the browser.
             flags = 0x213

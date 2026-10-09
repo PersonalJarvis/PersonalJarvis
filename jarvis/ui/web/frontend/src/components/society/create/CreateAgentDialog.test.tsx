@@ -5,6 +5,7 @@ import type { AgentRuntimesResponse } from "@/lib/agentRuntimesApi";
 import type { ProviderOption } from "@/store/agentChat";
 import { CreateAgentDialogHost } from "./CreateAgentDialog";
 import { isCreateCancelled, useCreateAgentDialog } from "./createAgentStore";
+import { MODEL_ACCESS_KEY } from "@/lib/modelAccess";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("../companion/CompanionEditor", () => ({
@@ -67,6 +68,7 @@ function mount() {
 }
 
 beforeEach(() => {
+  localStorage.removeItem(MODEL_ACCESS_KEY);
   runtimes.value = READY;
   menu.options = [OPENAI, OLLAMA];
   menu.live = { ollama: [{ id: "qwen3:8b", label: "qwen3:8b" }] };
@@ -79,6 +81,17 @@ afterEach(() => {
 });
 
 describe("CreateAgentDialog", () => {
+  test("uses the access preference saved by the other model pickers", async () => {
+    localStorage.setItem(MODEL_ACCESS_KEY, JSON.stringify({ claude: "api" }));
+    runtimes.value = { ...READY, access: { "claude-api": ["api", "subscription"] } };
+    menu.options = [CLAUDE];
+    mount();
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
+    const api = await screen.findByRole("radio", { name: "society.create.kind_api" });
+    await waitFor(() => expect(api.getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(screen.getByRole("radio", { name: "society.create.kind_subscription" }));
+    expect(JSON.parse(localStorage.getItem(MODEL_ACCESS_KEY)!)).toEqual({ claude: "subscription" });
+  });
   test("creates a named Hermes agent with a provider and a companion", async () => {
     const agent = { agentId: "agent-1", name: "Scout" };
     createAgent.mockResolvedValue(agent);

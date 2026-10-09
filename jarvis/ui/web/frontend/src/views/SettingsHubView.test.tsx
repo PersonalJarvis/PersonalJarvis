@@ -9,6 +9,8 @@ import type { SectionHealth } from "@/hooks/useProviders";
 const { mockState } = vi.hoisted(() => ({
   mockState: {
     activeSection: "settings" as string,
+    solo: false,
+    detachedViews: [],
     setActiveSection: vi.fn(),
   },
 }));

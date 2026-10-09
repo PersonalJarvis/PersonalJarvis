@@ -381,7 +381,11 @@ async def create_routine(task_store: Any, scheduler: Any | None, spec: TaskSpec)
 
 
 async def count_routines(task_store: Any, agent_id: str) -> int:
-    return len(await list_routines(task_store, agent_id))
+    # Completed follow-ups and cancellation receipts do not consume live slots.
+    terminal = {"completed", "cancelled", "failed", "interrupted"}
+    return sum(
+        row.get("state") not in terminal for row in await list_routines(task_store, agent_id)
+    )
 
 
 MAX_ROUTINES_PER_AGENT: Final[int] = _MAX_ROUTINES
@@ -447,11 +451,16 @@ async def manage_routine(
         await scheduler.pause(tid)
     elif operation == "resume":
         await scheduler.resume(tid)
+    elif operation == "cancel":
+        await scheduler.cancel_task(tid)
     elif operation == "delete":
         if row.get("state") == "running":
             raise ValueError("Pause or cancel the running routine before deleting it")
         await scheduler.cancel_task(tid)
-        await task_store.delete(tid)
+        # Keep autonomous cancellation receipts so duplicate delivery cannot
+        # recreate a job the person stopped. Ordinary deletion is unchanged.
+        if "autonomous" not in _tags_of(row):
+            await task_store.delete(tid)
     else:
         raise ValueError("Unknown routine operation")
     return f"Routine {tid}: {operation} applied"

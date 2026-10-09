@@ -43,7 +43,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Final
 
 log = logging.getLogger(__name__)
@@ -89,6 +89,11 @@ class Seat:
     #: ``[memory.learning]`` provider override, which uses the provider's
     #: ordinary credential chain.
     agent_key: bool = True
+    #: Preserve the selected login instead of resolving the active account
+    #: again when a queued memory review finally starts.
+    account_id: str = ""
+    cli_binary: str = ""
+    spawn_env: tuple[tuple[str, str], ...] | None = field(default=None, repr=False)
 
     @property
     def keyed(self) -> bool:
@@ -110,10 +115,57 @@ def agent_seat(config: Any, agent: Any) -> Seat:
         raise SeatUnavailable(str(exc) or "no provider can run this agent's chat") from None
     if not provider:
         raise SeatUnavailable("this agent's chat names no provider")
-    account = agent.account_id if provider == agent.provider else ""
+    account = getattr(agent, "account_id", "") if provider == agent.provider else ""
+    if str(getattr(agent, "runtime", "") or "jarvis") != "jarvis":
+        return _runtime_seat(provider, model or "", account)
     return Seat(
         provider, model or "", resolve_runner(provider, surface="society", account_id=account)
     )
+
+
+def _runtime_seat(provider: str, model: str, account: str) -> Seat:
+    """The seat of a Hermes / OpenClaw agent: the auth its gateway route uses.
+
+    Jarvis' model gateway answers such an agent on the provider's API key, or
+    through the native Claude CLI when pinned to it or no key is saved.
+    ``resolve_runner`` alone would prefer
+    Claude Code for an unpinned agent, so its reviews would run on the plan
+    while its chat bills the key. The login is reachable for a review only
+    through Claude Code; without it the seat is unavailable, never a key.
+    """
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_runtimes.model_map import (
+        RouteUnavailable,
+        claude_subscription_status,
+        uses_native_claude,
+    )
+
+    on_login = uses_native_claude(provider, account)
+    pinned = SUBSCRIPTION_ACCOUNT if on_login else API_KEY_ACCOUNT
+    runner = resolve_runner(provider, surface="society", account_id=pinned)
+    if on_login and runner in _KEYED_RUNNERS:
+        raise SeatUnavailable(
+            "this agent's chat runs on the Claude login, which only Claude Code can "
+            "use for a review, and Claude Code is not installed"
+        )
+    if on_login:
+        from jarvis.agent_runtimes.base import child_env
+        from jarvis.claude_auth import _cli_credential_env
+
+        try:
+            status = claude_subscription_status(account)
+        except RouteUnavailable as exc:
+            raise SeatUnavailable(str(exc)) from None
+        if status is None:
+            raise SeatUnavailable("this agent's selected Claude subscription is not signed in")
+        selected = {"CLAUDE_CONFIG_DIR": status.config_dir} if status.config_dir else {}
+        env = _cli_credential_env(child_env(selected)) or {}
+        return Seat(
+            provider, model, runner, account_id=account, cli_binary=status.binary_path,
+            spawn_env=tuple(sorted(env.items())),
+        )
+    return Seat(provider, model, runner)
 
 
 def jarvis_seat(config: Any) -> Seat:
@@ -178,7 +230,10 @@ def _build(config: Any, seat: Seat, caller: str) -> SeatBrain:
     if seat.keyed and not model:
         model = _chat_default_model(config, seat.provider)
     try:
-        inner = resolve_browser_brain(config, seat.provider, model, runner=seat.runner)
+        native: dict[str, Any] = {}
+        if seat.spawn_env is not None:
+            native = {"spawn_env": dict(seat.spawn_env), "cli_binary": seat.cli_binary}
+        inner = resolve_browser_brain(config, seat.provider, model, runner=seat.runner, **native)
     except LookupError:  # no brain plugin: a CLI adapter, or SeatUnavailable
         inner = _cli_adapter(seat, model)
     except Exception as exc:  # noqa: BLE001 - reported by type; the text may be a provider's

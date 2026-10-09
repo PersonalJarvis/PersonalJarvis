@@ -31,8 +31,10 @@ import os
 import sys
 import time
 import uuid
+from http.client import HTTPConnection
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 
 def _store_path() -> Path | None:
@@ -86,6 +88,51 @@ def _read() -> dict[str, Any] | None:
 def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -> None:
     store.setdefault(session_id, []).append(text)
     _save_store(store)
+    if "EOF_PARTIAL" in text:
+        _text(session_id, "partial only")
+        raise SystemExit(0)
+    if "WAIT_CANCEL" in text:
+        _text(session_id, "waiting")
+        while frame := _read():
+            if frame.get("method") == "session/cancel":
+                _send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "cancelled"}})
+                return
+        return
+    if endpoint := os.environ.get("FAKE_ACP_GATEWAY"):
+        url = urlsplit(endpoint)
+        assert url.scheme == "http" and url.hostname == "127.0.0.1"
+        connection = HTTPConnection(url.hostname, url.port, timeout=5)
+        try:
+            connection.request(
+                "POST",
+                url.path + "/chat/completions",
+                body=json.dumps(
+                    {
+                        "model": "fake-model",
+                        "messages": [{"role": "user", "content": text}],
+                    }
+                ),
+                headers={
+                    "Authorization": "Bearer " + os.environ["FAKE_ACP_TOKEN"],
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            if response.status < 400:
+                result = json.load(response)
+                _text(session_id, result["choices"][0]["message"]["content"])
+            else:
+                # Reproduce runtimes that retry for minutes or render an
+                # upstream failure as a normal, completed assistant response.
+                if os.environ.get("FAKE_ACP_RETRY_WAIT"):
+                    time.sleep(600)
+                _text(
+                    session_id, "custom rate-limited every one of 3 attempts; hermes fallback add"
+                )
+        finally:
+            connection.close()
+        _send({"jsonrpc": "2.0", "id": rid, "result": {"stopReason": "end_turn"}})
+        return
     if "FAIL" in text:
         _send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "model down"}})
         return
@@ -141,7 +188,7 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
             "jsonrpc": "2.0",
             "id": rid,
             "result": {
-                "stopReason": "end_turn",
+                "stopReason": "max_tokens" if "TRUNCATE" in text else "end_turn",
                 "usage": {"inputTokens": 11, "outputTokens": 7, "totalTokens": 18},
             },
         }

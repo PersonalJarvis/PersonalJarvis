@@ -8,6 +8,7 @@ There is no CLI turn, autonomous harness, hosted tool, or API-key fallback here.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
@@ -20,6 +21,15 @@ from jarvis.live.subscription_auth import SubscriptionCredentials
 _BASE_URL = "https://chatgpt.com/backend-api/codex"
 _MAX_EVENT_CHARS = 2 * 1024 * 1024
 _MAX_CATALOG_BYTES = 4 * 1024 * 1024
+_MAX_ERROR_BYTES = 64 * 1024
+_REQUEST_FAILURES = {
+    "invalid_function_parameters": "ChatGPT rejected a tool schema in this request.",
+    "invalid_tool_schema": "ChatGPT rejected a tool schema in this request.",
+    "context_length_exceeded": "This request exceeds the selected ChatGPT model's context limit.",
+    "model_not_found": "The selected model is unavailable on this ChatGPT subscription.",
+    "invalid_request_error": "ChatGPT rejected this request.",
+}
+log = logging.getLogger(__name__)
 _SAFE_CODE = re.compile(r"^[a-zA-Z0-9_.-]{1,96}$")
 _SAFE_EFFORT = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 _KNOWN_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
@@ -31,14 +41,25 @@ _LIGHTEST_FIRST = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 class SubscriptionReasoningError(RuntimeError):
     def __init__(
-        self, message: str, *, code: str = "subscription_unavailable", status: int = 0
+        self,
+        message: str,
+        *,
+        code: str = "subscription_unavailable",
+        status: int = 0,
+        retry_after: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status = status
+        self.retry_after = retry_after
 
 
-def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError:
+def _failure(
+    status: int = 0,
+    payload: Any = None,
+    *,
+    retry_after: str | None = None,
+) -> SubscriptionReasoningError:
     error = payload.get("error", {}) if isinstance(payload, dict) else {}
     if not isinstance(error, dict):
         error = {}
@@ -50,6 +71,7 @@ def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError
         "rate_limit_exceeded",
         "subscription_sharing_usage_limit_exceeded",
     }:
+        status = 429
         message = (
             "The selected ChatGPT subscription reached a usage limit. "
             "Try again after its allowance resets."
@@ -59,12 +81,52 @@ def _failure(status: int = 0, payload: Any = None) -> SubscriptionReasoningError
             "ChatGPT subscription access was rejected. "
             "Check the selected account and sign in again if needed."
         )
+    elif status in (400, 404, 413, 422):
+        if code not in _REQUEST_FAILURES:
+            code = "invalid_request_error"
+        message = (
+            f"{_REQUEST_FAILURES[code]} (HTTP {status}). "
+            "Check the model, conversation and tool settings before trying again."
+        )
     else:
         message = (
             "ChatGPT subscription reasoning failed. "
             "Try again later; no API billing fallback was used."
         )
-    return SubscriptionReasoningError(message, code=code, status=status)
+    return SubscriptionReasoningError(message, code=code, status=status, retry_after=retry_after)
+
+
+async def _http_failure(response: Any) -> SubscriptionReasoningError:
+    """Read bounded error metadata, never expose provider text or request content."""
+    import httpx
+
+    raw = bytearray()
+    try:
+        async for chunk in response.aiter_bytes():
+            if len(raw) + len(chunk) > _MAX_ERROR_BYTES:
+                raw.clear()
+                break
+            raw.extend(chunk)
+    except httpx.HTTPError:
+        # Headers already established rejection; a broken error body must not
+        # turn a permanent 400 into a retryable network failure.
+        raw.clear()
+    payload: Any = None
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            pass  # HTML, malformed JSON and oversized bodies use the HTTP status alone.
+    failure = _failure(response.status_code, payload)
+    # Preserve throttling instructions for gateway backoff without copying any
+    # other headers. Existing consumers may read this optional exception field.
+    failure.retry_after = response.headers.get("retry-after")
+    log.info(
+        "ChatGPT subscription request rejected: status=%s category=%s",
+        failure.status,
+        failure.code if failure.code in _REQUEST_FAILURES else "subscription_unavailable",
+    )
+    return failure
 
 
 class SubscriptionReasoning:
@@ -110,7 +172,7 @@ class SubscriptionReasoning:
             if response.status_code == 401 and attempt == 0:
                 continue
             if response.status_code != 200:
-                raise _failure(response.status_code)
+                raise await _http_failure(response)
             if len(response.content) > _MAX_CATALOG_BYTES:
                 raise SubscriptionReasoningError("The ChatGPT model catalog is too large.")
             try:
@@ -132,6 +194,13 @@ class SubscriptionReasoning:
                     "id": slug,
                     "label": str(row.get("display_name") or slug),
                 }
+                for source, target in (
+                    ("context_window", "context_length"),
+                    ("max_output_tokens", "max_output_tokens"),
+                ):
+                    value = row.get(source)
+                    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                        model[target] = value
                 levels = row.get("supported_reasoning_levels")
                 if isinstance(levels, list):
                     efforts: list[str] = []
@@ -221,7 +290,7 @@ class SubscriptionReasoning:
                     if response.status_code == 401 and attempt == 0:
                         continue
                     if response.status_code != 200:
-                        raise _failure(response.status_code)
+                        raise await _http_failure(response)
                     async for event in self._events(response):
                         yield event
                     return

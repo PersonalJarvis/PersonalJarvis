@@ -630,6 +630,7 @@ def put_model_options(
             provider.models.pop(stored_key, None)
         if opts is not None:
             provider.models[tag] = opts
+    _refresh_option_consumers(request)
     _forget_overview()
     return _options_response(tag, opts)
 
@@ -652,8 +653,20 @@ def delete_model_options(
     provider = _ollama_provider_cfg(cfg)
     if stored_key is not None and provider is not None:
         provider.models.pop(stored_key, None)
+    _refresh_option_consumers(request)
     _forget_overview()
     return _options_response(name, None)
+
+
+def _refresh_option_consumers(request: Request) -> None:
+    """The next turn must budget with the saved context before assembling tools."""
+    from jarvis.agent_runtimes.gateway import invalidate_provider_metadata
+
+    brain = getattr(request.app.state, "brain", None)
+    reactivate = getattr(brain, "reactivate_provider", None)
+    if callable(reactivate):
+        reactivate("ollama")
+    invalidate_provider_metadata("ollama")
 
 
 @router.get("/models/{name:path}/suggested-options", response_model=SuggestedOptionsResponse)

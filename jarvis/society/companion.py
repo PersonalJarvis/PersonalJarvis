@@ -24,7 +24,10 @@ COMPANION_SHAPES: Final[tuple[str, ...]] = (
     "circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop",
 )
 COMPANION_COLORS: Final[tuple[str, ...]] = (
-    "#8b5cf6", "#c5dfd4", "#f2a65a", "#7ab6ef", "#ed91aa", "#b7cb78", "#bba7ed", "#79c7c4",
+    "#ffffff", "#875b36", "#dd2233", "#ff6801", "#ff9700", "#029858",
+    "#00a591", "#1174da", "#804ee1", "#df2a87", "#777777",
+    "#e8c89a", "#ff7a6b", "#ffd23f", "#9ccc3a", "#3cc4e8", "#b59cf0",
+    "#222222", "#8c1c3a", "#6b7a1f", "#0f5c63", "#1f3a8a", "#f49ac1",
 )
 
 

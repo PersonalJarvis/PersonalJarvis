@@ -26,7 +26,9 @@ Kinds (``payload`` keys in brackets):
 ``tool_call``          [turn_id, call_id, name, input]
 ``tool_result``        [turn_id, call_id, output, is_error, duration_ms]
 ``approval_required``  [turn_id, approval_id, call_id, name, input, summary]
-``approval_resolved``  [turn_id, approval_id, decision]   decision: allow | deny
+``approval_resolved``  [turn_id, approval_id, decision]   decision: allow |
+                        allow_always | deny | cancel | expired (nothing waits
+                        on the card any more: a restart, or the call asked again)
 ``question_required``  [turn_id, question_id, asker, questions, deferred?] — a question
                         card; ``deferred`` = an end-of-turn card (turn_prompts)
                         whose answers go to the agent as the next message

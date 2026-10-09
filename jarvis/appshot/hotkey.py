@@ -161,6 +161,7 @@ class AppshotShortcut:
         self._trigger_task: asyncio.Task[None] | None = None
         self._trigger: Any | None = None
         self._combo_scopes: set[str] = set()
+        self._warm_task: asyncio.Task[None] | None = None
         self._busy = False
         self._recording_busy = False
         # One press that arrives while a toggle is still running. Dropping it
@@ -246,6 +247,16 @@ class AppshotShortcut:
                 self._trigger_task = asyncio.get_running_loop().create_task(
                     self._run_combos(combos), name="appshot-hotkey"
                 )
+            if owns and bool(getattr(getattr(config, "screen_context", None), "enabled", False)):
+                self._warm_task = asyncio.create_task(
+                    self._warm_surfaces(bool(getattr(config.appshot, "effect", True))),
+                    name="appshot-surfaces-warm",
+                )
+            from jarvis.appshot.recording import warm_recording_service
+
+            await warm_recording_service(
+                owns and bool(getattr(getattr(config, "screen_context", None), "enabled", False))
+            )
         except Exception as exc:  # noqa: BLE001 - a bad shortcut must not break boot
             log.warning("appshot: shortcut could not be armed", exc_info=True)
             await self.stop()  # never leave half of a failed arming running
@@ -265,6 +276,9 @@ class AppshotShortcut:
         return self.status
 
     async def stop(self) -> None:
+        from jarvis.appshot.recording import warm_recording_service
+
+        await warm_recording_service(False)
         watchers, self._watchers = self._watchers, []
         for watcher in watchers:
             await asyncio.to_thread(watcher.stop)
@@ -279,6 +293,36 @@ class AppshotShortcut:
             scope: ShortcutStatus(status.hotkey, False, "The shortcut is stopped.")
             for scope, status in self._statuses.items()
         }
+        warm, self._warm_task = self._warm_task, None
+        if warm is not None:
+            warm.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await warm
+        from jarvis.appshot.picker_host import close_picker_host
+        from jarvis.cu.indicator.controller import get_indicator_controller
+
+        await close_picker_host()
+        controller = get_indicator_controller()
+        if controller is not None:
+            await controller.warm_for_appshots(False)
+
+    async def _warm_surfaces(self, effect: bool) -> None:
+        from jarvis.appshot.picker_host import get_picker_host
+        from jarvis.cu.indicator.controller import wire_cu_indicator
+
+        try:
+            await get_picker_host().prewarm()
+        except Exception:
+            log.warning("appshot: picker preparation failed; next press will retry", exc_info=True)
+        if effect:
+            try:
+                controller = wire_cu_indicator(self._bus)
+                if controller is not None:
+                    await controller.warm_for_appshots(True)
+            except Exception:
+                log.warning(
+                    "appshot: shutter preparation failed; next capture will retry", exc_info=True
+                )
 
     async def _arm_gesture(self, scope: str, hotkey: str) -> ShortcutStatus:
         from jarvis.appshot.gesture import (  # noqa: PLC0415
@@ -465,10 +509,7 @@ class AppshotShortcut:
         from jarvis.core.events import ConfigReloaded  # noqa: PLC0415
 
         async def _on_reload(event: ConfigReloaded) -> None:
-            if any(
-                key.startswith("appshot.") or key == "screen_context.enabled"
-                for key in event.changed_keys
-            ):
+            if any(key.startswith(("appshot.", "screen_context.")) for key in event.changed_keys):
                 await self.reload()
 
         self._bus.subscribe(ConfigReloaded, _on_reload)
@@ -489,6 +530,26 @@ async def start_appshot_shortcut(bus: Any) -> AppshotShortcut:
         _shortcut = AppshotShortcut(bus)
         await _shortcut.start()
     return _shortcut
+
+
+async def stop_appshot_shortcut() -> None:
+    """Release the native helpers before the backend event loop closes."""
+    global _shortcut
+    shortcut, _shortcut = _shortcut, None
+    if shortcut is not None:
+        await shortcut.stop()
+    else:
+        from jarvis.appshot.picker_host import close_picker_host
+
+        await close_picker_host()
+    from jarvis.cu.indicator.controller import get_indicator_controller
+
+    controller = get_indicator_controller()
+    if controller is not None:
+        await controller.close()
+    from jarvis.appshot.recording import close_recording_service
+
+    await close_recording_service()
 
 
 __all__ = [

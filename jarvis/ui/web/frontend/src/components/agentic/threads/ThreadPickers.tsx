@@ -5,7 +5,7 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
-import type { CuratedModel } from "@/lib/agentChatApi";
+import { isApiRunner, type CuratedModel } from "@/lib/agentChatApi";
 import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { effortLadder } from "@/lib/effortLadder";
 import { rankModels } from "@/lib/modelRanking";
@@ -103,6 +103,8 @@ export function AgentModelPicker({
   // The rail on the panel's left: one mark per coding agent, plus favourites.
   const sections = useMemo<BrainSection[]>(() => providers.map((provider) => ({
     id: provider.id,
+    family: provider.family,
+    access: provider.keyless ? "local" : isApiRunner(provider.runner) ? "api" : "subscription",
     label: agentName(provider),
     icon: <AgentMark agent={provider.agent ?? ""} label={provider.label} logoUrl={provider.logoUrl} variant="plain" size="sm" />,
     muted: !provider.connected || (lockedProvider !== null && provider.id !== lockedProvider),

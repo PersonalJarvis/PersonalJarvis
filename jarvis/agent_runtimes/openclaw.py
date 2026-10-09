@@ -40,6 +40,7 @@ from jarvis.agent_runtimes.base import (
     TurnSlots,
     agent_home,
     child_env,
+    finish_profile_write,
     format_version,
     home_key,
     is_windows,
@@ -172,9 +173,15 @@ class _Gateway:
     log_handle: Any
     last_used: float = field(default_factory=time.monotonic)
     in_use: int = 0
+    poisoned: bool = False
 
     def alive(self) -> bool:
         return self.proc.returncode is None
+
+
+_THINKING_LEVELS: Final[frozenset[str]] = frozenset(
+    {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 
 
 class OpenClawRuntime:
@@ -273,8 +280,9 @@ class OpenClawRuntime:
                     "id": route.model,
                     "name": route.model,
                     "input": ["text"],
-                    "contextWindow": 128_000,
-                    "maxTokens": 8_192,
+                    "contextWindow": route.context_window,
+                    **({"maxTokens": route.max_output_tokens}
+                       if route.max_output_tokens is not None else {}),
                 }
             ],
         }
@@ -306,10 +314,45 @@ class OpenClawRuntime:
                 }
             },
             "session": {"reset": {"mode": "none"}},
+            # Heartbeat is only one background caller. The memory plugin can
+            # create dreaming jobs at startup even with heartbeat disabled.
+            # Jarvis owns memory and scheduling; neither may call this key.
+            "cron": {"enabled": False},
+            # Detached workshop reviews spend the model key after a turn,
+            # independently of cron and heartbeat. Jarvis owns that work.
+            "skills": {"workshop": {"autonomous": {"mode": "off"}}},
+            "plugins": {
+                "slots": {"memory": "none"},
+                "entries": {"memory-core": {"enabled": False}},
+            },
             # Jarvis' tools offered directly, never behind OpenClaw's tool search
             # (on by default for local models; smaller models miss deferred tools).
             "tools": {"deny": denied, "exec": {"mode": exec_mode}, "toolSearch": False},
         }
+        if route.transport == "claude_cli":
+            if "browser" not in config["tools"]["deny"]:
+                config["tools"]["deny"].append("browser")
+            config["plugins"].setdefault("deny", ["browser"])
+            # OpenClaw's bundled Claude backend owns the native session and
+            # exposes Gateway tools through its MCP bridge. The CLI owns its
+            # subscription login; no bearer or API endpoint belongs here.
+            model_ref = f"anthropic/{route.model}"
+            config.pop("models")
+            defaults = config["agents"]["defaults"]
+            defaults["model"] = {"primary": model_ref}
+            defaults["models"] = {model_ref: {"agentRuntime": {"id": "claude-cli"}}}
+            # The native backend consults this host policy for file tools as
+            # well as shell commands; its approval channel is not ACP. Apply
+            # the chat's stance here and keep capability denials in the tool
+            # policy, which the backend evaluates before any approval.
+            config["tools"]["exec"]["mode"] = "full" if turn.auto_approve else "ask"
+            if "shell" in turn.denied_native:
+                denied.extend(["exec", "process"])
+            if turn.read_only:
+                denied.extend(["write", "edit", "apply_patch", "exec", "process"])
+            thinking = "off" if turn.effort == "none" else turn.effort
+            if thinking in _THINKING_LEVELS:
+                config["agents"]["defaults"]["thinkingDefault"] = thinking
         if turn.mcp_url and turn.control_key:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
 
@@ -365,6 +408,14 @@ class OpenClawRuntime:
                 **({_CONTROL_KEY_ENV: turn.control_key} if turn.control_key else {}),
             }
         )
+        if turn.route.transport == "claude_cli" and turn.route.claude_binary:
+            # The bundled backend resolves `claude` from its own PATH. Keep
+            # Jarvis' selected executable first without changing the user's
+            # environment or overriding the backend's process supervision.
+            binary_dir = str(Path(turn.route.claude_binary).parent)
+            gateway_env["PATH"] = os.pathsep.join(
+                part for part in (binary_dir, gateway_env.get("PATH", "")) if part
+            )
         gateway = await self._ensure_gateway(turn, key, home, token, launcher, gateway_env)
 
         def release() -> None:
@@ -386,6 +437,13 @@ class OpenClawRuntime:
             # A fresh conversation (first turn, rollover): the Jarvis identity
             # and recent transcript lead the prompt, so the old one must go.
             argv.append("--reset-session")
+        approval_source = None
+        if turn.route.transport == "claude_cli" and not turn.auto_approve:
+            from jarvis.agent_runtimes.openclaw_approvals import OpenClawApprovals
+
+            approval_source = OpenClawApprovals(
+                gateway.port, token, session_key(turn.agent_id, turn.session_id)
+            )
         return RuntimeLaunch(
             argv=argv,
             env=child_env({**_EMBED_ENV, **_state_env(home)}),
@@ -393,6 +451,8 @@ class OpenClawRuntime:
             acp_resume=None,
             vendor_session=session_key(turn.agent_id, turn.session_id),
             release=release,
+            invalidate=lambda: setattr(gateway, "poisoned", True),
+            approval_source=approval_source,
         )
 
     async def _ensure_gateway(
@@ -419,11 +479,11 @@ class OpenClawRuntime:
             current = self._gateways.get(key)
             port = current.port if current is not None and current.alive() else _free_port()
             config = self.config_for(turn, port=port, token=token)
-            changed = await asyncio.to_thread(
+            changed = await finish_profile_write(
                 write_json_if_changed, home / "openclaw.json", config
             )
             if current is not None and (
-                not current.alive() or current.env_hash != env_hash or changed
+                not current.alive() or current.poisoned or current.env_hash != env_hash or changed
             ):
                 await self._stop_gateway(current)
                 current = None

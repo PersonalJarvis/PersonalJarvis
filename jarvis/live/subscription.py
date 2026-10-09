@@ -69,6 +69,12 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             SubscriptionReasoningBrain(self._reasoning, config.live.backend_model),
         )
         self._delegation_lock = asyncio.Lock()
+        # Only inference may be preempted. The delegation owner retains the
+        # lock through an executing tool and its durable receipt.
+        self._reasoning_task: asyncio.Task | None = None
+        self._queued_requests: dict[str, tuple[int, str]] = {}
+        self._steering_receipts: dict[str, tuple[int, dict]] = {}
+        self._unfinished_groups: list[list[dict]] = []
         self._seen_delegations: set[str] = set()
         self._local_delegations: set[str] = set()
         self._backend_groups: list[list[dict]] = []
@@ -128,6 +134,17 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            self._queued_requests.clear()
+            self._steering_receipts.clear()
+            self._unfinished_groups.clear()
+            self._remember([{
+                "role": "assistant", "content": [{
+                    "type": "output_text",
+                    "text": "[Application state: the user cancelled unfinished voice requests. "
+                    "Do not resume them without a new request. Already started agents keep "
+                    "their tasks; inspect receipts before repeating any action.]",
+                }],
+            }])
             return
         if message.get("type") != "text_input" or self._connection is None:
             await super().handle_control(message)
@@ -197,6 +214,13 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                     self._tools.user_text,
                 )
             )
+            if not event.get("application_event"):
+                # Admit before yielding. Intermediate requests remain context
+                # even when a later correction takes ownership of the reply.
+                self._queued_requests[identifier] = (revision, prompt)
+                if self._reasoning_task is not None:
+                    self._reasoning_task.cancel()
+            following_up = not event.get("application_event") and self._delegation_lock.locked()
             task = asyncio.create_task(
                 self._run_client_delegation(
                     identifier,
@@ -211,6 +235,20 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 self._subscription_report_task = task
             task.add_done_callback(self._job_finished)
             await self._note_thinking()
+            if following_up:
+                try:
+                    await self._connection.send({
+                        "type": "session.thinking.append",
+                        "delegation_id": (
+                            None if identifier in self._local_delegations else identifier
+                        ),
+                        "content": "The application accepted the follow-up. Reasoning will use "
+                        "it now, or after the current tool returns its receipt. Already started "
+                        "agents continue working. This is acceptance, not task completion.",
+                    })
+                except Exception:
+                    # Admission already succeeded; a failed status must not erase it.
+                    log.warning("Live follow-up status could not be delivered", exc_info=True)
             return
         if kind == "error" and event.get("fatal"):
             await self._failure(
@@ -416,6 +454,13 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             self._tools.language = self._language
             fragments = await asyncio.to_thread(self._ledger.transcript, self.session_id)
             items = seed_messages(self._initial_seed, [])
+            # History eviction is allowed only for completed conversation. Keep
+            # every input and receipt of an unfinished steering chain available.
+            retained = {id(group) for group in self._backend_groups}
+            items.extend(
+                item for group in self._unfinished_groups if id(group) not in retained
+                for item in group
+            )
             items.extend(item for group in self._backend_groups for item in group)
             context = {
                 "role": "user",
@@ -431,8 +476,22 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             latest = prompt.strip() or getattr(self._tools, "request_text", self._tools.user_text)
             if not latest:
                 return
-            request_item = {"role": "user", "content": [{"type": "input_text", "text": latest}]}
-            history_prefix = [request_item]
+            # Transcript persistence above yields. Do not let an overtaken job
+            # consume the queue or start another inference with old authority.
+            if self._closing or revision != self._tools.revision:
+                return
+            requests = [latest]
+            if not application_event and identifier in self._queued_requests:
+                requests = [text for _, text in self._queued_requests.values()]
+                self._queued_requests.clear()
+            request_items = [
+                {"role": "user", "content": [{"type": "input_text", "text": text}]}
+                for text in requests
+            ]
+            if not application_event:
+                # Save accepted input before inference: cancelling an unfinished
+                # round must not erase the original task or intervening requests.
+                self._remember(request_items, unfinished=True)
             if not application_event:
                 if self._pending_images:
                     self._image_context = self._pending_images
@@ -448,7 +507,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                     ]})
             # Put the actual request after retained image context. A previous
             # appshot's framing must not override a request for a fresh capture.
-            items.append(request_item)
+            items.extend(request_items)
             backend = self._config.live.backend_config(
                 language=self._language,
                 tools=self._tools.declarations(defer_catalog=True),
@@ -457,6 +516,13 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             # Search runs through Jarvis's tools; never imply a hosted API tool
             # is authorized by this different Codex subscription credential.
             tools = [tool for tool in backend["tools"] if tool.get("type") == "function"]
+            backend["instructions"] += (
+                " Follow-up user requests can steer unfinished work. Preserve earlier "
+                "requests unless the user changes or cancels them; the latest correction "
+                "wins. Use tool receipts and exact returned agent/session IDs to continue "
+                "work already started. Never repeat a completed send or spawn merely "
+                "because reasoning was interrupted. Ask if the target remains ambiguous."
+            )
             if application_event:
                 tools = []
                 backend["instructions"] += (
@@ -472,24 +538,24 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                     rounds = 0
                     while rounds < round_limit:
                         rounds += 1
-                        if self._closing or self._tools.cancel_token.is_cancelled():
+                        if (self._closing or self._tools.cancel_token.is_cancelled()
+                                or revision != self._tools.revision):
                             return
                         if len(json.dumps(items, ensure_ascii=False).encode("utf-8")) > 16_000_000:
                             await self._failure("context_capacity")
                             return
-                        output, text, response_id, usage = await self._reasoning_round(
-                            identifier,
-                            items,
-                            backend,
-                            tools,
+                        result = await self._steerable_reasoning_round(
+                            identifier, items, backend, tools, revision,
                         )
+                        if result is None or revision != self._tools.revision:
+                            return
+                        output, text, response_id, usage = result
                         calls = [item for item in output if item.get("type") == "function_call"]
                         if calls and application_event:
                             await self._failure("subscription_unavailable")
                             return
                         items.extend(output)
-                        history_group = [*history_prefix, *output]
-                        history_prefix = []
+                        history_group = list(output)
                         if not calls:
                             if not application_event:
                                 self._remember(history_group)
@@ -531,6 +597,9 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                                         "content": text,
                                     }
                                 )
+                                if not application_event and revision == self._tools.revision:
+                                    self._steering_receipts.clear()
+                                    self._unfinished_groups.clear()
                                 log.info("Subscription result submitted to the live voice session.")
                             return
                         if round_limit == _MAX_ROUNDS and any(_is_computer_call(c) for c in calls):
@@ -561,12 +630,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                                     "error": "Invalid tool arguments.",
                                 }
                             else:
-                                result = await self._tools.execute(
-                                    str(call["call_id"]),
-                                    str(call.get("name") or ""),
-                                    args,
-                                    revision,
-                                )
+                                result = await self._execute_steerable_call(call, args, revision)
                             images = take_images(result)
                             result_item = {
                                 "type": "function_call_output",
@@ -604,7 +668,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                             if self._tools.end_requested:
                                 await self.end(reason="tool_hangup")
                                 return
-                        self._remember(history_group)
+                        self._remember(history_group, unfinished=True)
                         if revision != self._tools.revision:
                             return
                     await self._failure("context_capacity")
@@ -619,7 +683,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 if not self._closing:
                     await self._failure(str(getattr(exc, "code", "subscription_unavailable")))
             finally:
-                self._thinking = False
+                current = asyncio.current_task()
+                self._thinking = any(task is not current and not task.done() for task in self._jobs)
                 if not self._closing:
                     await self._publish_phase()
                 log.info(
@@ -627,8 +692,64 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                     (time.monotonic() - started) * 1000,
                 )
 
-    def _remember(self, group: list[dict]) -> None:
+    async def _steerable_reasoning_round(
+        self, identifier: str, items: list[dict], backend: dict, tools: list[dict], revision: int,
+    ) -> tuple[list[dict], str, str, dict] | None:
+        """A new request cancels inference, never the parent or an executing tool."""
+        task = asyncio.create_task(
+            self._reasoning_round(identifier, items, backend, tools),
+            name="live-subscription-reasoning",
+        )
+        self._reasoning_task = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            owner = asyncio.current_task()
+            if owner is not None and owner.cancelling():
+                raise
+            if self._tools is not None and revision != self._tools.revision:
+                log.info("Subscription inference yielded to a follow-up request.")
+                return None
+            raise
+        finally:
+            if self._reasoning_task is task:
+                self._reasoning_task = None
+
+    async def _execute_steerable_call(self, call: dict, args: dict, revision: int) -> dict:
+        """Retain receipts across replanning, with all effects still serialized."""
+        assert self._tools is not None
+        if revision != self._tools.revision:
+            return {
+                "success": False, "executed": False, "status": "superseded",
+                "error": "Follow-up input arrived before this tool started. Re-evaluate it.",
+            }
+        name = str(call.get("name") or "")
+        key = self._tools.steering_replay_key(name, args)
+        previous = self._steering_receipts.get(key) if key is not None else None
+        if previous is not None and previous[0] < revision:
+            return await self._tools.execute(
+                str(call["call_id"]), name, args, revision,
+                replay_result=copy.deepcopy(previous[1]),
+            )
+        approved_effect = self._tools.approval_effect_key(name, args)
+        result = await self._tools.execute(str(call["call_id"]), name, args, revision)
+        if result.get("success") and approved_effect is not None:
+            key = approved_effect
+        if (key is not None and result.get("executed") is not False
+                and not result.get("retryable")
+                and result.get("status") not in {
+                    "superseded", "cancelled", "voice_closed_before_execution",
+                }
+                and not result.get("confirmation_required")):
+            # Include uncertain failures: a send can succeed before its transport
+            # fails. Replanning is not permission to replay it with a new call ID.
+            self._steering_receipts[key] = (revision, copy.deepcopy(result))
+        return result
+
+    def _remember(self, group: list[dict], *, unfinished: bool = False) -> None:
         """Evict complete response/tool groups, never leave orphan tool results."""
+        if unfinished:
+            self._unfinished_groups.append(group)
         self._backend_groups.append(group)
         while self._backend_groups and (
             len(self._backend_groups) > 16

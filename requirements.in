@@ -172,6 +172,7 @@ fastapi>=0.115
 uvicorn>=0.32
 websockets>=13
 filelock>=3.16
+jsonschema>=4.23
 packaging>=24.0
 
 # Skill-System + MCP (Phase 1c). PyYAML is the frontmatter parser.

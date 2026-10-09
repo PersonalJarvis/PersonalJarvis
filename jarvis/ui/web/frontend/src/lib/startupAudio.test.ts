@@ -18,6 +18,81 @@ it("discards muted audio and resumes retention without releasing it early", () =
 });
 
 describe("startup RTP audio", () => {
+  it.each([16000, 24000, 44100, 48000])("bounds a four-second silent opening to 100 ms and catches up within 300 ms at %s Hz", rate => {
+    const queue = new StartupAudioQueue(rate);
+    const block = 128;
+    const silence = new Float32Array(block), output = new Float32Array(block);
+    for (let n = 0; n < rate * 4; n += block) queue.process(silence, output);
+    expect(queue.pendingMs).toBeGreaterThanOrEqual(4000);
+    queue.start();
+    expect(queue.pendingMs).toBeCloseTo(100, 3);
+    queue.start(); // Repeated readiness must not alter the retained opening.
+    expect(queue.pendingMs).toBeCloseTo(100, 3);
+    for (let n = 0; n < rate * 0.3; n += block) queue.process(silence, output);
+    expect(queue.pendingMs).toBeLessThan(10);
+    const fresh = Float32Array.from({ length: block }, (_, i) => Math.sin(i / 7) * 0.0005);
+    queue.process(fresh, output);
+    expect(output).toEqual(fresh);
+  });
+
+  it("compacts across the native/browser boundary without removing the quiet onset or spoken pauses", () => {
+    const rate = 16000, queue = new StartupAudioQueue(rate);
+    const quiet = Float32Array.from([1e-30, -1e-30, 0.0005, -0.0005]);
+    const pause = new Float32Array(rate);
+    queue.prepend(new Float32Array(rate));
+    queue.process(new Float32Array(rate), new Float32Array(128));
+    queue.process(quiet, new Float32Array(128));
+    queue.process(pause, new Float32Array(128));
+    queue.process(quiet, new Float32Array(128));
+    queue.start();
+    const expected = new Float32Array(rate / 10 + quiet.length * 2 + pause.length);
+    expected.set(quiet, rate / 10);
+    expected.set(quiet, rate / 10 + quiet.length + pause.length);
+    expect(queue.pendingMs).toBeCloseTo(expected.length / rate * 1000, 3);
+    // Drain in one block to inspect compaction independently of the existing
+    // pitch-preserving replay. Every remaining sample must be bit-exact.
+    const output = new Float32Array(expected.length);
+    queue.process(new Float32Array(), output);
+    expect(output).toEqual(expected);
+  });
+
+  it("retains browser-leading silence when the native prefix already contains speech", () => {
+    const rate = 16000, queue = new StartupAudioQueue(rate);
+    const quiet = Float32Array.from([1e-30, -1e-30]);
+    queue.prepend(quiet);
+    queue.process(new Float32Array(rate * 4), new Float32Array(128));
+    queue.start();
+    const expected = new Float32Array(quiet.length + rate * 4);
+    expected.set(quiet);
+    expect(queue.pendingMs).toBeCloseTo(expected.length / rate * 1000, 3);
+    const output = new Float32Array(expected.length);
+    queue.process(new Float32Array(), output);
+    expect(output).toEqual(expected);
+  });
+
+  it("leaves a short quiet opening unchanged and forgets compaction state after mute or cancellation", () => {
+    const rate = 16000, queue = new StartupAudioQueue(rate);
+    const shortOpening = new Float32Array(rate / 20).fill(0.0005);
+    queue.process(shortOpening, new Float32Array(128));
+    queue.start();
+    expect(queue.pendingMs).toBe(50);
+    const output = new Float32Array(shortOpening.length);
+    queue.process(new Float32Array(), output);
+    expect(output).toEqual(shortOpening);
+    queue.suspend();
+    queue.process(new Float32Array(rate).fill(0.7), output);
+    queue.resume();
+    queue.process(new Float32Array(rate * 4), output);
+    queue.start();
+    expect(queue.pendingMs).toBe(100);
+    queue.suspend();
+    queue.resume();
+    queue.process(shortOpening, output);
+    queue.start();
+    queue.process(new Float32Array(), output);
+    expect(output).toEqual(shortOpening);
+  });
+
   it.each([16000, 24000, 44100, 48000])("pays down a two-second backlog despite constant room noise at %s Hz", rate => {
     const queue = new StartupAudioQueue(rate);
     const block = 128;

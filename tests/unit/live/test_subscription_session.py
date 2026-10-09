@@ -11,7 +11,10 @@ from jarvis.live.config import LiveConfig
 from jarvis.live.state import LiveLedger
 from jarvis.live.tools import LiveTools
 from tests.fakes.fake_subscription_session import (
+    ApprovalSubscriptionGateway,
     AppshotSubscriptionGateway,
+    PausingAgentGateway,
+    PausingSubscriptionReasoning,
     ScriptedSubscriptionReasoning,
     SubscriptionConnection,
     SubscriptionEvents,
@@ -83,6 +86,299 @@ async def wait_for_jobs(session):
     if session._jobs:
         await asyncio.gather(*tuple(session._jobs))
     await asyncio.sleep(0)
+
+
+async def delegate_input(session, identifier, prompt):
+    timestamp = max(session._last_end.values()) + 1
+    await session._event({
+        "type": "session.input_transcript.done", "segment_id": identifier,
+        "transcript": prompt, "snapshot": True, "is_final": True,
+        "start_ms": timestamp, "end_ms": timestamp,
+    })
+    await session._event({
+        "type": "session.delegation.created",
+        "delegation": {"id": identifier},
+        "prompt": prompt,
+    })
+
+
+async def test_followup_preempts_only_reasoning_and_retains_every_request(make_session):
+    session, _, gateway, _, _, _ = make_session([])
+    reasoning = PausingSubscriptionReasoning([
+        completed_response("old", [spoken_result("Obsolete answer")]),
+        completed_response("new", [spoken_result("Both requests accepted")]),
+    ])
+    session._reasoning = reasoning
+    original = "Start one Codex session for project Alpha."
+    followup = "Also send the agent the test requirements."
+    try:
+        await delegate_input(session, "first", original)
+        await reasoning.entered[0].wait()
+        await delegate_input(session, "followup", followup)
+        await session._event({
+            "type": "session.delegation.created", "delegation": {"id": "followup"},
+            "prompt": followup,
+        })
+        await asyncio.wait_for(reasoning.entered[1].wait(), 1)
+        await wait_for_jobs(session)
+        request = json.dumps(reasoning.requests[1]["input"])
+        assert original in request and followup in request
+        assert reasoning.cancelled == [0]
+        assert not gateway.calls
+        replies = [m for m in session._connection.sent if m["type"] == "session.commentary.append"]
+        assert [m["content"] for m in replies] == ["Both requests accepted"]
+        assert replies[0]["delegation_id"] == "followup"
+        assert not session._tools.cancel_token.is_cancelled()
+    finally:
+        await session.handle_control({"type": "cancel_work"})
+
+
+def agent_call(identifier, name, args):
+    return {
+        "id": identifier, "type": "function_call", "call_id": identifier,
+        "name": "call_tool",
+        "arguments": json.dumps({"name": name, "arguments_json": json.dumps(args)}),
+    }
+
+
+@pytest.mark.parametrize("uncertain", [False, True])
+async def test_followup_waits_for_tool_receipt_without_cancelling_or_repeating_agent(
+    make_session, uncertain,
+):
+    gateway = PausingAgentGateway(uncertain=uncertain)
+    start = {"project": "Alpha", "count": 1}
+    session, reasoning, _, _, _, _ = make_session([
+        completed_response("start", [
+            agent_call("start-1", "start-agent", start),
+            agent_call("obsolete-send", "message-agent", {"message": "Old instructions"}),
+        ]),
+        completed_response("followup", [
+            agent_call("start-replanned", "start-agent", start),
+            *([] if uncertain else [agent_call("send-1", "message-agent", {
+                "agent_id": "agent-alpha", "message": "Run the regression tests.",
+            })]),
+        ]),
+        completed_response("done", [spoken_result(
+            "The startup is unconfirmed." if uncertain else "The message was accepted."
+        )]),
+    ], gateway)
+    try:
+        await session.handle_control({"type": "text_input", "text": "Start one agent for Alpha."})
+        await asyncio.wait_for(gateway.started.wait(), 1)
+        token = gateway.requests[0].cancel_token
+        await session.handle_control({
+            "type": "text_input", "text": "Tell that agent to run the regression tests.",
+        })
+        assert not token.is_cancelled()
+        assert len(reasoning.requests) == 1
+        assert any(m["type"] == "session.thinking.append" for m in session._connection.sent)
+        gateway.release.set()
+        await wait_for_jobs(session)
+        assert [c[0] for c in gateway.calls] == (
+            ["start-agent"] if uncertain else ["start-agent", "message-agent"]
+        )
+        if not uncertain:
+            assert gateway.calls[-1][1]["agent_id"] == "agent-alpha"
+        assert not token.is_cancelled()
+        inputs = reasoning.requests[1]["input"]
+        receipts = {
+            i["call_id"]: json.loads(i["output"])
+            for i in inputs if i.get("type") == "function_call_output"
+        }
+        assert receipts["obsolete-send"]["executed"] is False
+        if not uncertain:
+            assert receipts["start-1"]["output"]["agent_id"] == "agent-alpha"
+        assert "Start one agent for Alpha." in json.dumps(inputs)
+        assert "Tell that agent" in json.dumps(inputs)
+        reused = [i for i in reasoning.requests[2]["input"]
+                  if i.get("call_id") == "start-replanned" and i["type"] == "function_call_output"]
+        assert json.loads(reused[0]["output"])["reused_receipt"]
+        assert session._ledger.operation(session.session_id, "start-1") is not None
+        assert session._ledger.operation(session.session_id, "start-replanned")["reused_receipt"]
+    finally:
+        gateway.release.set()
+        await session.handle_control({"type": "cancel_work"})
+
+
+async def test_rapid_followups_keep_requests_and_final_one_session_correction(make_session):
+    session, _, _, _, _, _ = make_session([])
+    session._reasoning = reasoning = PausingSubscriptionReasoning([
+        completed_response("obsolete", [spoken_result("Two sessions started")]),
+        completed_response("current", [spoken_result("One session requested")]),
+    ])
+    try:
+        await delegate_input(session, "initial", "Start two Codex sessions.")
+        await reasoning.entered[0].wait()
+        await delegate_input(session, "message", "Send the test plan to the agent.")
+        await delegate_input(session, "correction", "Actually start only one Codex session.")
+        await wait_for_jobs(session)
+        user_texts = [
+            part["text"] for item in reasoning.requests[-1]["input"]
+            if item.get("role") == "user"
+            for part in item["content"] if part.get("type") == "input_text"
+        ]
+        assert "Start two Codex sessions." in user_texts
+        assert "Send the test plan to the agent." in user_texts
+        assert user_texts[-1] == "Actually start only one Codex session."
+        assert session._connection.sent[-1]["delegation_id"] == "correction"
+        assert len(reasoning.requests) == 2
+    finally:
+        await session.handle_control({"type": "cancel_work"})
+
+
+async def test_partial_tool_proposal_is_discarded_when_followup_interrupts_reasoning(make_session):
+    session, _, gateway, _, _, _ = make_session([])
+    proposal_seen = asyncio.Event()
+
+    class ProposedButUnfinished(PausingSubscriptionReasoning):
+        async def stream(self, **request):
+            if not self.requests:
+                self.requests.append(request)
+                yield {"type": "response.output_item.done", "item": agent_call(
+                    "uncommitted", "start-agent", {"count": 2},
+                )}
+                proposal_seen.set()
+                await asyncio.Event().wait()
+            else:
+                async for event in super().stream(**request):
+                    yield event
+
+    session._reasoning = reasoning = ProposedButUnfinished([
+        [], completed_response("current", [spoken_result("Correction accepted")]),
+    ])
+    try:
+        await delegate_input(session, "old", "Start two sessions.")
+        await asyncio.wait_for(proposal_seen.wait(), 1)
+        await delegate_input(session, "new", "Start only one session.")
+        await asyncio.wait_for(wait_for_jobs(session), 1)
+        assert not gateway.calls
+        assert "uncommitted" not in json.dumps(reasoning.requests[-1]["input"])
+    finally:
+        await session.handle_control({"type": "cancel_work"})
+
+
+@pytest.mark.parametrize("hangup_pending", [False, True])
+async def test_followup_yes_keeps_action_approval_and_hangup_consent_separate(
+    make_session, hangup_pending,
+):
+    gateway = ApprovalSubscriptionGateway()
+    session, _, _, _, _, _ = make_session([], gateway)
+    runtime = session._tools
+    pending = await runtime.execute("pending", "inspect-state", {}, 0)
+    approval_id = pending["approval_id"]
+    if hangup_pending:
+        async def ask(_question):
+            pass
+
+        runtime.ask_hangup = ask
+        runtime.user_text = "Hang up"
+        await runtime.execute("hangup-question", "end_call", {}, 0)
+    session._reasoning = reasoning = PausingSubscriptionReasoning([
+        completed_response("waiting", [spoken_result("Please confirm")]),
+        completed_response("approval", [{
+            "id": "approval", "type": "function_call", "call_id": "confirm-followup",
+            "name": "confirm_action", "arguments": json.dumps({"approval_id": approval_id}),
+        }]),
+        completed_response("reply", [spoken_result("Confirmation processed")]),
+    ])
+    try:
+        # Start the pending response without inventing another user utterance.
+        job = asyncio.create_task(session._run_client_delegation("waiting", "Await confirmation"))
+        session._jobs.add(job)
+        job.add_done_callback(session._job_finished)
+        await reasoning.entered[0].wait()
+        await delegate_input(session, "answer", "Yes")
+        await asyncio.wait_for(wait_for_jobs(session), 1)
+        assert len(gateway.confirmed) == (0 if hangup_pending else 1)
+        assert not runtime.end_requested
+        if hangup_pending:
+            assert approval_id in runtime._pending
+            outputs = [i for i in reasoning.requests[-1]["input"]
+                       if i.get("type") == "function_call_output"]
+            assert "hang-up question" in json.loads(outputs[-1]["output"])["error"]
+    finally:
+        await session.handle_control({"type": "cancel_work"})
+
+
+async def test_explicit_cancel_does_not_resume_old_request_on_next_input(make_session):
+    session, _, _, _, _, _ = make_session([])
+    session._reasoning = reasoning = PausingSubscriptionReasoning([
+        completed_response("old", [spoken_result("Old response")]),
+        completed_response("new", [spoken_result("New response")]),
+    ])
+    await delegate_input(session, "old", "Send the old message.")
+    await reasoning.entered[0].wait()
+    await session.handle_control({"type": "cancel_work"})
+    await delegate_input(session, "new", "Tell me the time instead.")
+    await asyncio.wait_for(wait_for_jobs(session), 1)
+    assert "user cancelled unfinished voice requests" in json.dumps(reasoning.requests[-1]["input"])
+    assert not session._queued_requests and not session._unfinished_groups
+
+
+async def test_followup_retains_original_request_and_receipts_beyond_history_window(make_session):
+    session, _, _, _, _, _ = make_session([])
+    rounds = [completed_response(f"read-{i}", [agent_call(
+        f"read-call-{i}", "inspect-state", {},
+    )]) for i in range(18)]
+    rounds.extend([
+        completed_response("interrupted", [spoken_result("Old answer")]),
+        completed_response("current", [spoken_result("New answer")]),
+    ])
+    session._reasoning = reasoning = PausingSubscriptionReasoning(rounds, paused=(18,))
+    try:
+        await delegate_input(session, "original", "Inspect Alpha before messaging its agent.")
+        await asyncio.wait_for(reasoning.entered[18].wait(), 2)
+        await delegate_input(session, "new", "Also include the test requirements.")
+        await asyncio.wait_for(wait_for_jobs(session), 2)
+        items = reasoning.requests[-1]["input"]
+        assert "Inspect Alpha before messaging its agent." in json.dumps(items)
+        assert any(i.get("call_id") == "read-call-0" and i["type"] == "function_call_output"
+                   for i in items)
+        assert not session._unfinished_groups
+    finally:
+        await session.handle_control({"type": "cancel_work"})
+
+
+async def test_new_request_after_completed_reply_can_intentionally_repeat_action(make_session):
+    gateway = PausingAgentGateway()
+    gateway.release.set()
+    session, _, _, _, _, _ = make_session([
+        completed_response("first", [agent_call("start-1", "start-agent", {"count": 1})]),
+        completed_response("first-done", [spoken_result("Started one agent")]),
+        completed_response("again", [agent_call("start-2", "start-agent", {"count": 1})]),
+        completed_response("again-done", [spoken_result("Started another agent")]),
+    ], gateway)
+    await delegate_input(session, "first", "Start one agent.")
+    await wait_for_jobs(session)
+    await delegate_input(session, "again", "Start another agent with the same task.")
+    await wait_for_jobs(session)
+    assert len(gateway.calls) == 2
+
+
+async def test_followup_after_approval_reuses_effect_not_the_confirmation(make_session):
+    gateway = ApprovalSubscriptionGateway()
+    session, _, _, _, _, _ = make_session([], gateway)
+    pending = await session._tools.execute("pending", "inspect-state", {}, 0)
+    session._reasoning = reasoning = PausingSubscriptionReasoning([
+        completed_response("confirm", [{
+            "id": "confirm", "type": "function_call", "call_id": "confirm",
+            "name": "confirm_action",
+            "arguments": json.dumps({"approval_id": pending["approval_id"]}),
+        }]),
+        completed_response("interrupted", [spoken_result("Action completed")]),
+        completed_response("replan", [agent_call("repeat", "inspect-state", {})]),
+        completed_response("result", [spoken_result("The previous action already completed")]),
+    ], paused=(1,))
+    try:
+        await delegate_input(session, "approve", "Yes")
+        await asyncio.wait_for(reasoning.entered[1].wait(), 1)
+        await delegate_input(session, "followup", "Also tell me what happened.")
+        await asyncio.wait_for(wait_for_jobs(session), 1)
+        assert len(gateway.confirmed) == 1 and len(gateway.calls) == 1
+        assert session._ledger.operation(session.session_id, "repeat")["reused_receipt"]
+        assert not session._tools._pending
+    finally:
+        await session.handle_control({"type": "cancel_work"})
 
 
 @pytest.mark.asyncio
@@ -932,7 +1228,7 @@ async def test_terminal_subscription_reconnect_error_stops_shared_retry_loop(
     code,
 ):
     import jarvis.live.recovery as recovery
-    import jarvis.live.subscription as base
+    import jarvis.live.session as base
     from jarvis.plugins.realtime.openai_subscription_live import SubscriptionLiveError
 
     attempts, permits = [], []
@@ -945,7 +1241,7 @@ async def test_terminal_subscription_reconnect_error_stops_shared_retry_loop(
         raise SubscriptionLiveError(code)
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
     session, _, _, _, _, _ = make_session([])
     session._provider.reattach_session = reattach
     assert not await session._wait_for_connection()
@@ -959,7 +1255,7 @@ async def test_subscription_transient_control_outage_reuses_call_and_shared_budg
     monkeypatch,
 ):
     import jarvis.live.recovery as recovery
-    import jarvis.live.subscription as base
+    import jarvis.live.session as base
 
     attempts, permits = [], []
     restored = SubscriptionConnection()
@@ -974,7 +1270,7 @@ async def test_subscription_transient_control_outage_reuses_call_and_shared_budg
         return restored
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
     session, _, _, messages, _, _ = make_session([])
     old = session._connection
     session._provider.reattach_session = reattach
@@ -991,7 +1287,7 @@ async def test_terminal_subscription_recovery_on_pump_task_still_closes_resource
     monkeypatch,
 ):
     import jarvis.live.recovery as recovery
-    import jarvis.live.subscription as base
+    import jarvis.live.session as base
     from jarvis.plugins.realtime.openai_subscription_live import SubscriptionLiveError
 
     async def permit():
@@ -1001,7 +1297,7 @@ async def test_terminal_subscription_recovery_on_pump_task_still_closes_resource
         raise SubscriptionLiveError("authentication_required")
 
     monkeypatch.setattr(recovery, "connection_permit", permit)
-    monkeypatch.setattr(__import__("jarvis.live.session", fromlist=["random"]).random, "uniform", lambda *args: 0)
+    monkeypatch.setattr(base.random, "uniform", lambda *args: 0)
     session, reasoning, _, _, _, _ = make_session([])
     session._provider.reattach_session = reattach
     session._pump_task = asyncio.create_task(session._wait_for_connection())

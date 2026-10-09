@@ -18,6 +18,7 @@
  */
 import type { CuratedModel } from "@/lib/agentChatApi";
 import { rankModels } from "@/lib/modelRanking";
+import { modelAccessFamily } from "@/lib/modelAccess";
 import { apiModels } from "../chat/modelChoices";
 import type { BrainKind, BrainSeat } from "./brainPicker";
 
@@ -51,9 +52,6 @@ export interface ProviderChoice {
 
 const KIND_ORDER: Record<BrainKind, number> = { subscription: 0, api: 1, local: 2 };
 
-/** Catalog families that are one brand to a person (Gemini's CLI is Antigravity). */
-const SAME_BRAND: Record<string, string> = { antigravity: "gemini" };
-
 /** A brand's own name and logo where its rows name a product instead. */
 const BRANDS: Record<string, { label: string; logo: string }> = {
   claude: { label: "Anthropic Claude", logo: "claude-api" },
@@ -64,7 +62,7 @@ const BRANDS: Record<string, { label: string; logo: string }> = {
 
 function brandOf(seat: BrainSeat): string {
   const family = seat.provider.family || seat.provider.id;
-  return SAME_BRAND[family] ?? family;
+  return modelAccessFamily(family);
 }
 
 function optionsFor(seat: BrainSeat, ways: readonly string[] | undefined, external: boolean): AccessOption[] {
@@ -81,12 +79,10 @@ function optionsFor(seat: BrainSeat, ways: readonly string[] | undefined, extern
   const options: AccessOption[] = [];
   // On Jarvis' own loop the subscription is the vendor CLI, which must be installed.
   if (ways.includes("subscription") && (external || seat.provider.cli_installed !== false)) {
-    options.push(external
-      ? { kind: "subscription", seat: { ...viaKey, kind: "subscription", extraUsage: true }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: true }
-      : { kind: "subscription", seat: { ...seat, kind: "subscription" }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: false });
+    options.push({ kind: "subscription", seat: { ...seat, kind: "subscription", extraUsage: false }, accountId: SUBSCRIPTION_ACCOUNT, extraUsage: false });
   }
   if (ways.includes("api")) options.push({ kind: "api", seat: viaKey, accountId: API_KEY_ACCOUNT, extraUsage: false });
-  return options.length ? options : [single];
+  return options;
 }
 
 /**
@@ -122,6 +118,7 @@ export function providerChoices(
   }
   const best = (choice: ProviderChoice) => Math.min(...choice.options.map((option) => KIND_ORDER[option.kind]));
   return [...byBrand.values()]
+    .filter((choice) => choice.options.length > 0)
     .map((choice) => ({ ...choice, options: [...choice.options].sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) }))
     .sort((a, b) => best(a) - best(b) || a.label.localeCompare(b.label));
 }
@@ -130,6 +127,9 @@ export function providerChoices(
 export function accessModels(option: AccessOption | null): CuratedModel[] {
   if (!option) return [];
   const models = option.seat.provider.curated_models;
+  // Local tags contain parameter sizes, context sizes and user hashes, which
+  // are not comparable release versions. Preserve the server's catalog order.
+  if (option.kind === "local") return models;
   const ranked = rankModels(models);
   return [...ranked.current, ...ranked.older];
 }

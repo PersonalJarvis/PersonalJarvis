@@ -12,20 +12,18 @@ driver in ``jarvis.agent_runtimes``). The turn itself is driven over ACP by
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 from pathlib import Path
 from typing import Any
 
-from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver
+from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver, gateway
 from jarvis.agent_runtimes.acp import AcpTurn
 from jarvis.agent_runtimes.base import RuntimeTurn, RuntimeUnavailable
-from jarvis.agent_runtimes.model_map import RouteUnavailable, route_for
+from jarvis.agent_runtimes.model_map import RouteUnavailable, prepare_route
 
 log = logging.getLogger(__name__)
 
-#: Society capability ids whose explicit denial switches the runtime's own
-#: matching tools off as well.
+#: Native tools must honor the same capability selection as the MCP surface.
 _NATIVE_GROUPS: dict[str, str] = {"core:shell": "shell", "core:browser": "web"}
 
 
@@ -60,13 +58,19 @@ def _config() -> Any:
 
 
 def _denied_native(agent: Any, plan_mode: bool) -> frozenset[str]:
-    denied = {group for cap, group in _NATIVE_GROUPS.items() if cap in (agent.denies or [])}
+    grants = set(agent.grants or [])
+    denies = set(agent.denies or [])
+    denied = {
+        group
+        for cap, group in _NATIVE_GROUPS.items()
+        if cap in denies or (str(agent.grant_mode) == "allowlist" and cap not in grants)
+    }
     if plan_mode:
         denied.add("shell")
     return frozenset(denied)
 
 
-async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
+async def _ready(handle: Any, runtime_name: str, runtime: Any, *, route: Any = None) -> None:
     """Install or update the runtime first when it cannot run this turn.
 
     Nobody sets Hermes or OpenClaw up by hand: the first turn on a fresh
@@ -81,7 +85,13 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
     current = manager.job(runtime_name)
     setting_up = current is not None and current.state == "running"
     status = await asyncio.to_thread(runtime.detect)
-    if status.ready and not setting_up:
+    route_check = getattr(runtime, "route_needs_update", None)
+
+    def needs_route_update() -> bool:
+        return bool(route is not None and callable(route_check) and route_check(route, status))
+
+    runtime_setup = setting_up or not status.ready
+    if not runtime_setup and not needs_route_update():
         return
     await handle.emit(
         make_event(
@@ -95,10 +105,18 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
             },
         )
     )
-    status = await manager.wait_ready(runtime_name)
-    if not status.ready:
+    if runtime_setup:
+        status = await manager.wait_ready(runtime_name)
+    if status.ready and needs_route_update():
+        # An API-capable install may predate this native provider. Update it
+        # through the same pinned, exclusive setup job, before a turn owns a slot.
+        await manager.start(runtime_name, "update")
+        status = await manager.wait_ready(runtime_name)
+    if not status.ready or needs_route_update():
         current = manager.job(runtime_name)
         reason = (current.message if current is not None else "") or status.problem
+        if not reason and needs_route_update():
+            reason = "The installed version does not support this model connection."
         raise CliUnavailable(f"{runtime.label} could not be set up. {reason}".strip())
 
 
@@ -128,20 +146,18 @@ async def plan_runtime_turn(
     if agent is None:
         raise CliUnavailable(f"{runtime_name.title()} runs society agents only.")
     try:
-        route = await asyncio.to_thread(
-            functools.partial(
-                route_for,
-                _config(),
-                session.provider,
-                session.model,
-                agent_id=agent.agent_id,
-                account_id=getattr(session, "account_id", "") or "",
-            )
+        route = await prepare_route(
+            _config(), session.provider, session.model,
+            agent_id=agent.agent_id,
+            account_id=getattr(session, "account_id", "") or "",
+            session_id=session.session_id,
         )
     except RouteUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
     plan_mode = session.permission_mode in ("plan", "read-only")
     tools = not getattr(handle, "tools_disabled", False)
+    from jarvis.agent_chat.effort import normalize_effort
+
     turn = RuntimeTurn(
         agent_id=agent.agent_id,
         agent_name=agent.name,
@@ -150,16 +166,56 @@ async def plan_runtime_turn(
         route=route,
         resume=resume,
         auto_approve=session.permission_mode == "bypass",
+        read_only=plan_mode,
+        effort=normalize_effort(session.provider, getattr(session, "effort", "") or ""),
         mcp_url=jarvis_harness.endpoint() if tools else None,
         control_key=jarvis_harness.control_key() if tools else None,
         denied_native=_denied_native(agent, plan_mode),
     )
     runtime = driver(runtime_name)
-    await _ready(handle, runtime_name, runtime)
+    minimum_context = getattr(runtime, "minimum_context_window", 0)
+    if minimum_context and route.context_window < minimum_context:
+        raise CliUnavailable(
+            f"{runtime.label} requires at least {minimum_context:,} context tokens; "
+            f"the selected model is configured for {route.context_window:,}. "
+            "Choose a compatible model and context, or use Jarvis Agent or OpenClaw. "
+            "The saved context limit was not changed."
+        )
+    await _ready(handle, runtime_name, runtime, route=route)
+    provider_prepare = getattr(runtime, "needs_provider_prepare", None)
+    if callable(provider_prepare) and await asyncio.to_thread(provider_prepare, turn):
+        from jarvis.agent_chat.events import make_event
+
+        await handle.emit(make_event("notice", {
+            "kind": "runtime_setup", "runtime": runtime_name, "turn_id": handle.turn_id,
+            "text": f"Preparing the selected subscription for {runtime.label}. "
+            "The first setup may take a few minutes; your message is sent when it is ready.",
+        }))
     try:
         launch = await runtime.launch(turn)
     except RuntimeUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
+    try:
+        failure = (gateway.watch_failure(route.api_key, effort=session.effort or "")
+                   if route.api_key else None)
+    except Exception:
+        if launch.release is not None:
+            launch.release()
+        raise
+
+    def release() -> None:
+        if route.api_key and failure is not None:
+            gateway.unwatch_failure(route.api_key, failure)
+        if launch.invalidate is not None and (
+            handle.cancel.is_set()
+            or (failure is not None and failure.done() and not failure.cancelled())
+            or not acp.saw_result
+            or acp.status != "done"
+        ):
+            launch.invalidate()
+        if launch.release is not None:
+            launch.release()
+
     text = _PLAN_PREAMBLE + prompt if plan_mode else prompt
     acp = AcpTurn(
         turn_id=handle.turn_id,
@@ -171,6 +227,8 @@ async def plan_runtime_turn(
         auto_deny=plan_mode,
         client_version=__version__,
         report_session=launch.vendor_session,
+        model_id=launch.acp_model,
+        approval_source=launch.approval_source,
     )
     return CliPlan(
         argv=launch.argv,
@@ -180,5 +238,6 @@ async def plan_runtime_turn(
         vendor_session=None,
         keep_stdin=True,
         acp=acp,
-        after_turn=launch.release,
+        after_turn=release,
+        provider_failure=failure,
     )

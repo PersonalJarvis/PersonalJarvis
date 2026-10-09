@@ -37,6 +37,11 @@ Nobody installs Hermes or OpenClaw by hand (`jarvis/agent_runtimes/manager.py`):
 
 None of this calls a model, so setup and updates never spend a key.
 
+The current implementation still updates to upstream latest. A canary-gated
+manifest and automatic rollback are outstanding (#425); the canary now tests
+both model-gateway protocols with scripted providers. See
+[acceptance evidence](agent-runtimes-eval.md) for the remaining #428 work.
+
 ## Models: Jarvis' model gateway
 
 An agent on Hermes or OpenClaw never talks to a model vendor. Its runtime is
@@ -79,6 +84,20 @@ call with its own provider plugins (`gateway.py`,
   retrying.
 - **Costs.** Every call goes through the plugin, so it lands in the cost
   ledger (caller `agent-runtime`).
+- **Model budgets.** The route refreshes catalog metadata with a bounded wait
+  before writing the runtime config. Hermes receives `model.context_length`;
+  OpenClaw receives `contextWindow` and `maxTokens`. Gateway model discovery
+  includes the selected local model and its limits. Both Chat Completions
+  modes use the declared output maximum when a request omits its limit and
+  preserve smaller explicit request limits. There is no extra 128k output cap
+  or fixed percentage reserved by Jarvis. Ollama uses the full native context
+  unless the user selected a smaller `num_ctx`; its provider prepares an
+  isolated model profile with that actual allocation before inference. An
+  explicit positive `num_predict` remains effective. Unknown output capacity
+  is omitted from runtime metadata rather than invented as an 8k limit; a
+  request with neither metadata nor an explicit budget uses the brain's normal
+  request default. Unknown context still uses plugin metadata (32k otherwise)
+  until the catalog can establish the real capacity.
 - **ChatGPT subscription.** Handing the login to the runtime would make a
   second program refresh it, and OAuth refresh tokens are single-use:
   whichever refreshed first would break the other, including the person's
@@ -217,6 +236,8 @@ replayed during `session/load` is swallowed because the chat already shows it.
 - **Heartbeat:** OpenClaw runs a background model turn every 30 minutes by
   default. Jarvis sets `heartbeat.every: "0m"` for every agent: nothing the
   person did not start may bill a key.
+  Its native cron scheduler and memory-core plugin/slot are also disabled:
+  disabling heartbeat alone still allowed a managed dreaming job at startup.
 - **Node:** OpenClaw 2026.9 requires Node `>=24.16 <25 || >=26.1`. The runtime
   manager reports an unsuitable Node instead of failing a turn.
 

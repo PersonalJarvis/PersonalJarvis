@@ -33,6 +33,7 @@ from filelock import FileLock, Timeout
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
 from jarvis.core.process_utils import drop_inherited_electron_node_mode, ensure_standard_streams
+from jarvis.ui.section_windows import SECTION_WINDOW_TITLES, WINDOW_GROUPS, section_window
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -98,9 +99,8 @@ TEXT_SELECTABLE: dict[str, Any] = {"text_select": True}
 # names, NOT the wake-word brand — the product/window title is a compatibility
 # contract (see ``jarvis/core/branding.py``), only agent names are dynamic.
 DETACHABLE_VIEWS: dict[str, str] = {
-    "agentic-ide": "Agents",
-    "agentic-ide-classic": "Agents",
-    "chat-workspace": "Agents",
+    **SECTION_WINDOW_TITLES,
+    **{tab: SECTION_WINDOW_TITLES[owner] for owner, tabs in WINDOW_GROUPS.items() for tab in tabs},
     "chats": "Voice",
     # The Voice hub family (one VoiceHubView with internal tabs). Each id keeps
     # its own label so two detached voice windows can never share a title —
@@ -505,6 +505,44 @@ def _read_meta() -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     return data
+
+
+def _mark_instance_quitting() -> None:
+    """Publish a quit before its window and HTTP endpoint disappear."""
+    meta = _read_meta()
+    if not meta or meta.get("pid") != os.getpid() or "quitting_at" in meta:
+        return
+    meta["quitting_at"] = time.time()
+    path = META_FILE_PATH
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.quitting.tmp")
+    try:
+        tmp.write_text(json.dumps(meta), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logging.getLogger(__name__).warning("Could not mark the instance as quitting: %s", exc)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            logging.getLogger(__name__).debug("Could not remove quit marker tempfile: %s", exc)
+
+
+def _quitting_grace_remaining(meta: Any, pid: int) -> float:
+    """The owned quit's remaining exit budget; stale or invalid markers get none.
+
+    Share the desktop's force-exit bound, plus five seconds for OS handle
+    release. A missing window during this interval is expected. The timestamp
+    is written once, so repeated launches cannot extend the deadline.
+    """
+    if not isinstance(meta, dict) or meta.get("pid") != pid:
+        return 0.0
+    try:
+        age = time.time() - float(meta["quitting_at"])
+    except (KeyError, TypeError, ValueError, OverflowError):  # Invalid quit metadata grants no wait.
+        return 0.0
+    grace = _SHUTDOWN_FORCE_EXIT_MIN_S + 5.0
+    # The chained comparison also rejects NaN and either infinity.
+    return grace - age if 0.0 <= age < grace else 0.0
 
 
 def _fallback_admin_port() -> int:
@@ -1604,6 +1642,11 @@ def acquire_single_instance_lock(
                     f"Jarvis is already running (port={int(probe_port)} answering, pid unknown)."
                 )
     if pid is not None and _pid_alive(pid):
+        # Closing removes the window and port before the process releases its
+        # lock. Let the launcher await that deliberate handover, not evict a
+        # process still flushing its state because its health endpoint closed.
+        if _quitting_grace_remaining(meta, pid) > 0:
+            raise SingleInstanceError(f"Jarvis is already running (pid={pid}).")
         # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
         # healthy instance, the own pid, or a holder with no recorded port is
         # respected; only a live-but-non-serving lock-zombie is evicted.
@@ -1915,6 +1958,7 @@ class DesktopApp:
         # pywebview event hooks, the tray bridge) — never from the asyncio
         # loop, and never from the GUI MainThread.
         self._detached_windows: dict[str, Any] = {}
+        self._detached_open_lock = threading.Lock()
         self._shutdown_done = False
         self._tray: Any = None
         self._user_requested_quit = False
@@ -5285,7 +5329,12 @@ class DesktopApp:
             # being destroyed and then exit as if it had succeeded (2026-09-30).
             return {"ok": False, "focused": False, "reason": "quitting"}
         if self._window is None:
-            if getattr(getattr(self, "_background", None), "keeper", None) is not None:
+            # A detached view also keeps the GUI loop alive after main closes.
+            # A second launch must reopen main just like the tray's Open action,
+            # instead of reporting this healthy process as a windowless hang.
+            if getattr(self, "_detached_windows", None) or getattr(
+                getattr(self, "_background", None), "keeper", None
+            ) is not None:
                 self._ensure_main_window()
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
@@ -5345,15 +5394,13 @@ class DesktopApp:
     def window_command(self, action: str, view: str | None) -> dict[str, Any]:
         """Minimize, maximize or close one live window. Worker-thread safe.
 
-        A detached view targets that window. Anything else targets the main
+        A detached view targets only that window. An omitted view targets the main
         window. Maximize toggles, using the real zoomed state on Windows when
         the frame hook can read it.
         """
         from jarvis.ui.window_command import run_window_command
 
-        window = self._detached_windows.get(view) if view else None
-        if window is None:
-            window = self._window
+        window = self._detached_windows.get(section_window(view)) if view else self._window
         maximized: bool | None = None
         if sys.platform == "win32" and window is not None:
             try:
@@ -5371,14 +5418,12 @@ class DesktopApp:
     def set_window_zoom(self, factor: float, view: str | None) -> dict[str, Any]:
         """Zoom one live window's page. Worker-thread safe.
 
-        A detached view targets that window. Anything else targets the main
+        A detached view targets only that window. An omitted view targets the main
         window. See ``jarvis.ui.window_zoom`` for the per-engine details.
         """
         from jarvis.ui.window_zoom import set_window_zoom
 
-        window = self._detached_windows.get(view) if view else None
-        if window is None:
-            window = self._window
+        window = self._detached_windows.get(section_window(view)) if view else self._window
         return set_window_zoom(window, factor)
 
     def _arm_window_frame(self, window: Any) -> None:
@@ -5453,8 +5498,19 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
+        # Serialize check/create/register: two tabs must not open duplicate owners.
+        lock = getattr(self, "_detached_open_lock", None)
+        if lock is None:  # Lightweight test/legacy hosts that bypass __init__.
+            lock = self._detached_open_lock = threading.Lock()
+        with lock:
+            return self._open_detached_window(view, query)
+
+    def _open_detached_window(self, view: str, query: str) -> dict[str, Any]:
+        requested = view
+        view = section_window(view)
         suffix = f"&{query}" if query else ""
-        fallback = f"/?view={view}&solo=1{suffix}"
+        identity = f"&window={view}" if requested != view else ""
+        fallback = f"/?view={requested}&solo=1{identity}{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
@@ -5614,6 +5670,7 @@ class DesktopApp:
         window's ``closed`` hook, so this path and the user's own X on the
         window behave identically.
         """
+        view = section_window(view)
         window = self._detached_windows.get(view)
         if window is None:
             return {"ok": False, "reason": "not_detached"}
@@ -6832,6 +6889,7 @@ class DesktopApp:
         if getattr(self, "_quit_requested_at", None) is not None:
             return
         self._quit_requested_at = time.monotonic()
+        _mark_instance_quitting()
         backstop = getattr(self, "_webview_running", False)
         logger.info(
             "Main window closed — quitting{}.",
@@ -7044,10 +7102,11 @@ class DesktopApp:
             finish()
 
     def shutdown(self) -> int:
-        """Idempotent. Stops the server + backend loop, cleans the meta file."""
+        """Idempotent. Stops the server and schedules the backend loop's drain."""
         if self._shutdown_done:
             return 0
         self._shutdown_done = True
+        _mark_instance_quitting()
         self._window_visible = False
         self._destroy_background_keeper()
 
@@ -7300,15 +7359,11 @@ class DesktopApp:
                     "Tray command bridge did not stop within two seconds",
                 )
 
-        try:
-            META_FILE_PATH.unlink(missing_ok=True)
-        except Exception as exc:  # noqa: BLE001
-            # A sidecar left behind makes the NEXT start believe an instance is
-            # already running, so it refuses to launch or tries to focus a dead
-            # window. Silence here costs the user the next start.
-            from loguru import logger as _logger
-
-            _logger.warning("Could not remove the instance sidecar: {}", exc)
+        # Keep the quit marker until the OS releases our lock. Cleanup may
+        # continue after this bounded GUI wait, and deleting the sidecar here
+        # makes a reopening launcher lose the only evidence of that handover.
+        # A dead PID never blocks acquisition; the next holder replaces the
+        # sidecar through _write_meta once its backend is ready.
 
         return 0
 

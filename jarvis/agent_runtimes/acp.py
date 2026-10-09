@@ -12,7 +12,8 @@ response:
 
 1. ``initialize`` (protocol version + client capabilities),
 2. ``session/load`` of the stored conversation, or ``session/new``,
-3. ``session/prompt`` with the turn's text,
+3. optional ``session/set_model`` to apply the selected route after restore,
+4. ``session/prompt`` with the turn's text,
 
 and translates every ``session/update`` notification into agent-chat events
 (``assistant_text``, ``reasoning``, ``tool_call``, ``tool_result``,
@@ -28,6 +29,7 @@ objects, cancellation, remote placement, rollover) in one place.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -46,6 +48,7 @@ PROTOCOL_VERSION: Final[int] = 1
 _INITIALIZE_ID: Final[int] = 1
 _SESSION_ID: Final[int] = 2
 _PROMPT_ID: Final[int] = 3
+_MODEL_ID: Final[int] = 4
 
 #: Error text the CLI runner's resume-lost detection recognises
 #: (``runner_cli._RESUME_LOST_MARKERS``) so a vanished conversation is
@@ -72,6 +75,16 @@ class AcpIO(Protocol):
     async def ask(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
         """Answer ``allow`` / ``allow_always`` / ``deny`` / ``cancel``."""
         ...
+
+
+class ApprovalSource(Protocol):
+    """A runtime's additional approval transport, owned by this ACP turn."""
+
+    async def start(self, turn: AcpTurn, io: AcpIO) -> None: ...
+
+    def note_tool(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> None: ...
+
+    async def close(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -150,6 +163,9 @@ class AcpTurn:
     #: What the chat stores as its vendor session instead of the ACP session
     #: id (OpenClaw addresses the conversation by a fixed session key).
     report_session: str | None = None
+    #: An optional provider-qualified model selected before any prompt.
+    model_id: str = ""
+    approval_source: ApprovalSource | None = field(default=None, repr=False)
 
     # --- fields the CLI runner reads after the turn ---
     vendor_session: str | None = None
@@ -177,6 +193,7 @@ class AcpTurn:
     _tool_names: dict[str, str] = field(default_factory=dict, init=False)
     _tool_started: dict[str, float] = field(default_factory=dict, init=False)
     _finished_tools: set[str] = field(default_factory=set, init=False)
+    _terminal: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
 
     # ------------------------------------------------------------------ frames
 
@@ -203,8 +220,55 @@ class AcpTurn:
             }
         )
 
+    def cancel_frame(self) -> dict[str, Any] | None:
+        """The ``session/cancel`` notification for the running prompt (``None`` when
+        no prompt is in flight). The agent answers the prompt with
+        ``stopReason: cancelled`` once its turn has wound down."""
+        if not self._acp_session or self.saw_result:
+            return None
+        return {
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": {"sessionId": self._acp_session},
+        }
+
+    @property
+    def handshaken(self) -> bool:
+        """Whether the session is open (``session/new`` / ``session/load`` answered)."""
+        return bool(self._acp_session)
+
+    def tool_running(self) -> bool:
+        """Whether a tool call started and has not reported its end yet."""
+        return any(call not in self._finished_tools for call in self._tool_started)
+
     def _session_params(self) -> dict[str, Any]:
         return {"cwd": self.cwd, "mcpServers": [s.to_acp() for s in self.mcp_servers]}
+
+    async def _send_prompt(self, io: AcpIO) -> None:
+        if self.approval_source is not None:
+            try:
+                await self.approval_source.start(self, io)
+            except Exception as exc:  # a missing approval route must never start the model
+                log.warning("runtime approval connection failed (%s)", type(exc).__name__)
+                self._fail("The runtime's approval connection could not start. Please retry.")
+                return
+        await io.write(_request(_PROMPT_ID, "session/prompt", {
+            "sessionId": self._acp_session,
+            "prompt": [{"type": "text", "text": self.prompt_text}],
+        }))
+
+    async def approval_failed(self, io: AcpIO) -> None:
+        """Stop a turn whose additional permission channel was lost."""
+        frame = self.cancel_frame()
+        try:
+            if frame is not None:
+                await io.write(frame)
+        finally:
+            self._fail("The runtime's approval connection was lost; the turn was stopped.")
+
+    async def wait_terminal(self) -> None:
+        """Wake process ownership even when a terminal error came off stdout."""
+        await self._terminal.wait()
 
     # ---------------------------------------------------------------- dispatch
 
@@ -269,16 +333,21 @@ class AcpTurn:
                 self._fail("ACP session/new returned no session id")
                 return
             self.vendor_session = self.report_session or self._acp_session
-            await io.write(
-                _request(
-                    _PROMPT_ID,
-                    "session/prompt",
-                    {
-                        "sessionId": self._acp_session,
-                        "prompt": [{"type": "text", "text": self.prompt_text}],
-                    },
-                )
-            )
+            if self.model_id:
+                self._replaying = True
+                await io.write(_request(_MODEL_ID, "session/set_model", {
+                    "sessionId": self._acp_session, "modelId": self.model_id,
+                }))
+            else:
+                await self._send_prompt(io)
+            return
+        if rid == _MODEL_ID:
+            self._replaying = False
+            if error is not None or not isinstance(result, dict):
+                detail = _error_text(error) if error else "no model selection confirmation"
+                self._fail(f"ACP could not select the agent's model: {detail}")
+                return
+            await self._send_prompt(io)
             return
         if rid == _PROMPT_ID:
             await self._flush_thought(io)
@@ -292,9 +361,18 @@ class AcpTurn:
             self._take_usage(res.get("usage"))
             if self.stop_reason == "refusal" and not self.emitted_text:
                 self._fail("The model refused this request.")
-            elif self.stop_reason in {"max_tokens", "max_turn_requests"} and not self.emitted_text:
+            elif self.stop_reason in {"max_tokens", "max_turn_requests"}:
                 self._fail(f"The agent stopped early ({self.stop_reason}).")
+            self._terminal.set()
             return
+
+    async def cancel(self, io: AcpIO) -> None:
+        """Abort the upstream session before its stdio bridge is terminated."""
+        if self._acp_session and not self.saw_result:
+            await io.write({
+                "jsonrpc": "2.0", "method": "session/cancel",
+                "params": {"sessionId": self._acp_session},
+            })
 
     async def _on_agent_request(self, obj: dict[str, Any], method: str, io: AcpIO) -> None:
         rid = obj.get("id")
@@ -428,6 +506,10 @@ class AcpTurn:
                 },
             )
         )
+        if self.approval_source is not None:
+            self.approval_source.note_tool(
+                call_id, name, args, str(update.get("title") or name)[:200]
+            )
 
     async def _tool_finish_if_done(self, update: dict[str, Any], io: AcpIO) -> None:
         call_id = str(update.get("toolCallId") or "")
@@ -515,6 +597,7 @@ class AcpTurn:
         self.status = "error"
         self.error = message
         self.saw_result = True
+        self._terminal.set()
 
 
 def _tool_name(update: dict[str, Any]) -> str:
@@ -542,6 +625,21 @@ def _tool_name(update: dict[str, Any]) -> str:
 def _error_text(error: dict[str, Any]) -> str:
     message = str(error.get("message") or "error")
     data = error.get("data")
+    if isinstance(data, dict):
+        # Hermes' ACP SDK nests this local configuration failure under
+        # details. Translate only the known numeric contract; never expose
+        # arbitrary upstream details (which may contain provider bodies).
+        detail = str(data.get("details") or "")
+        bounds = re.search(
+            r"context window of ([\d,]+) tokens, which is below the minimum "
+            r"([\d,]+) required by Hermes Agent\.", detail,
+        )
+        if bounds:
+            actual, minimum = bounds.groups()
+            return (
+                f"Hermes requires at least {minimum} context tokens; this model has {actual}. "
+                "Increase the model context in Settings or choose a model with a larger window."
+            )
     if isinstance(data, str) and data:
         return f"{message}: {data}"
     if isinstance(data, dict) and data.get("message"):

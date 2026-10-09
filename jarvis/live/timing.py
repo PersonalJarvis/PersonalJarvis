@@ -9,8 +9,13 @@ import time
 log = logging.getLogger(__name__)
 
 BROWSER_PHASES = frozenset({
-    "capture_ready", "first_capture_frame", "offer_ready", "socket_open",
+    "microphone_ready", "worklet_ready", "capture_ready", "first_capture_frame",
+    "offer_ready", "socket_open", "control_ready",
     "answer_received", "media_connected", "input_released", "first_output_audio",
+    "context_prepared", "context_created", "worklet_loaded", "context_running",
+    "input_started", "input_caught_up", "first_output_packet",
+    "local_requests_dispatched", "rtc_destination_begin", "rtc_destination_ready",
+    "peer_created", "offer_requested",
 })
 
 

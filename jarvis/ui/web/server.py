@@ -502,6 +502,7 @@ class WebServer:
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
+        from .custom_api_routes import router as custom_api_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
@@ -652,6 +653,7 @@ class WebServer:
         app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
+        app.include_router(custom_api_router)
         app.include_router(marketplace_publish_router)
         app.state.friend_registry = None
         app.state.channel_manager = None
@@ -756,6 +758,9 @@ class WebServer:
         app.state.agent_chat = None
         app.state.agent_chat_factory = self._build_agent_chat_service
         app.include_router(agent_chat_router)
+        from .agent_server_routes import router as agent_server_router
+
+        app.include_router(agent_server_router)
         # Agent society (jarvis/society) — the roster, the typed board, the
         # scheduler and the mission bridge. Built on the first /api/society
         # call from the factory (store = data/society.db); nothing opens on
@@ -2549,7 +2554,7 @@ class WebServer:
                 if registry is None or self._refresh_scheduler_stopping:
                     return
                 task = asyncio.create_task(
-                    registry.refresh_plugin(plugin_id),
+                    registry.refresh_credentials(plugin_id),
                     name=f"plugin-refresh:{plugin_id}",
                 )
                 self._refresh_registry_tasks.add(task)
@@ -4007,6 +4012,18 @@ class WebServer:
 
     async def stop(self) -> None:
         from jarvis.core import runtime_refs
+
+        appshot_task = getattr(self, "_appshot_shortcut_task", None)
+        if appshot_task is not None:
+            appshot_task.cancel()
+            await asyncio.gather(appshot_task, return_exceptions=True)
+            self._appshot_shortcut_task = None
+        try:
+            from jarvis.appshot.hotkey import stop_appshot_shortcut
+
+            await stop_appshot_shortcut()
+        except Exception:
+            logger.opt(exception=True).warning("Appshot helpers failed to stop")
 
         if runtime_refs.get_web_app() is self.app:
             runtime_refs.set_web_app(None)

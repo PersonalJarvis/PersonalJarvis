@@ -173,12 +173,12 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
         return {"name": name, "goal": goal, "steps": steps, "outcome": outcome}
     if kind == "routine":
         operation = str(payload.get("operation") or "create")
-        if operation not in {"create", "update", "pause", "resume", "delete"}:
+        if operation not in {"create", "update", "pause", "resume", "cancel", "delete"}:
             raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "unknown routine operation")
         task_id = str(payload.get("task_id") or "").strip()
         if operation != "create" and not task_id:
             raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "task_id is required")
-        if operation in {"pause", "resume", "delete"}:
+        if operation in {"pause", "resume", "cancel", "delete"}:
             return {"operation": operation, "task_id": task_id}
         title = _text(payload.get("title"), limit=120)
         prompt = _text(payload.get("prompt"), limit=_MAX_TEXT)
@@ -286,7 +286,7 @@ def summarize(kind: str, payload: dict[str, Any]) -> str:
         operation = str(payload.get("operation") or "create")
         line = (
             f"{operation.capitalize()} routine {payload['task_id']}"
-            if operation in {"pause", "resume", "delete"}
+            if operation in {"pause", "resume", "cancel", "delete"}
             else f"Schedule '{payload.get('title', '')}' ({schedule.get('kind', 'every')})"
         )
     elif kind == "approval_rule":
@@ -464,18 +464,20 @@ async def _apply_identity(rt: Any, agent: AgentRecord, payload: dict[str, Any]) 
         key: list(agent.approval_rules.get(key, []))
         for key in ("require_approval", "always_allow")
     }
-    derived_focus, derived_rules = rt.derive(
-        fields.get("title", agent.title), fields.get("description", agent.description)
-    )
-    focus = list(agent.focus)
-    for cap_id in derived_focus:
-        if cap_id not in focus:
-            focus.append(cap_id)
-    if focus != list(agent.focus):
-        fields["focus"] = focus
-    has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
-    if not has_rules and derived_rules.get("require_approval"):
-        fields["approval_rules"] = derived_rules
+    if "title" in fields or "description" in fields:
+        # Naming an existing role must not rewrite its focus or approval rules.
+        derived_focus, derived_rules = rt.derive(
+            fields.get("title", agent.title), fields.get("description", agent.description)
+        )
+        focus = list(agent.focus)
+        for cap_id in derived_focus:
+            if cap_id not in focus:
+                focus.append(cap_id)
+        if focus != list(agent.focus):
+            fields["focus"] = focus
+        has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
+        if not has_rules and derived_rules.get("require_approval"):
+            fields["approval_rules"] = derived_rules
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:  # reported on the outcome card as "failed"; nothing changed
@@ -571,7 +573,10 @@ async def apply(
         except (ValueError, KeyError) as exc:  # Return the invalid routine detail to the proposer.
             return {"applied": False, "detail": f"invalid routine: {exc}", "kind": kind}
         task_id = await create_routine(task_store, scheduler, spec)
-        return {"applied": True, "detail": f"routine scheduled ({task_id})", "kind": kind}
+        return {
+            "applied": True, "detail": f"routine scheduled ({task_id})",
+            "kind": kind, "task_id": task_id,
+        }
     if kind == "skill":
         rt.background(_apply_skill_later(rt, agent, item, payload))
         return {"applied": True, "detail": "authoring the skill", "kind": kind}

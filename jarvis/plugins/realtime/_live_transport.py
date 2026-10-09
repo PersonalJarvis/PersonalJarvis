@@ -24,6 +24,51 @@ _TLS_MAX_AGE_S = 300.0
 _cleanup_tasks: set[asyncio.Task] = set()
 
 
+def startup_http_trace(mark: Callable[[str], Any]) -> Callable[..., Any]:
+    """Record transport milestones without retaining HTTP trace payloads.
+
+    The trace metadata contains headers and request bodies. Read only the
+    fixed event name so authentication, SDP and user context never reach logs.
+    """
+    phases = {
+        "connection.connect_tcp.complete": "http_tcp_connected",
+        "connection.start_tls.complete": "http_tls_connected",
+        "http11.send_request_body.complete": "http_request_sent",
+        "http2.send_request_body.complete": "http_request_sent",
+        "http11.receive_response_headers.complete": "http_response_headers",
+        "http2.receive_response_headers.complete": "http_response_headers",
+    }
+
+    async def trace(event: str, _info: dict) -> None:
+        phase = phases.get(event)
+        if phase is not None:
+            mark(phase)
+
+    return trace
+
+
+def startup_websocket_options(mark: Callable[[str], Any]) -> dict[str, Any]:
+    """Time the supported connection lifecycle without reading wire content.
+
+    For WSS, connection_made runs after TCP/proxy and TLS setup. Separating it
+    from the opening handshake exposes whether the wait is local transport or
+    the provider's HTTP upgrade. Optional WebSocket imports remain call-owned.
+    """
+    from websockets.asyncio.client import ClientConnection
+
+    class StartupConnection(ClientConnection):
+        def connection_made(self, transport: Any) -> None:
+            super().connection_made(transport)
+            mark("control_transport_connected")
+
+        async def handshake(self, *args: Any, **kwargs: Any) -> None:
+            mark("control_handshake_started")
+            await super().handshake(*args, **kwargs)
+            mark("control_handshake_complete")
+
+    return {"create_connection": StartupConnection}
+
+
 def _trust_key() -> tuple:
     # Replacing an explicitly configured bundle must invalidate the context.
     # OS trust-store edits are picked up within the bounded refresh interval.
@@ -58,6 +103,26 @@ def _websocket_context() -> Any:
 
 async def websocket_options() -> dict[str, Any]:
     return {"ssl": await asyncio.to_thread(_websocket_context)}
+
+
+@asynccontextmanager
+async def preparing_websocket_options() -> AsyncIterator[asyncio.Task]:
+    """Overlap local trust-store loading with allocation, with no remote I/O.
+
+    A cold or expired trust store must not sit between the SDP answer and
+    control attachment. The worker owns only immutable local TLS state, so
+    cancellation can abandon its result without leaving a connection open.
+    """
+    task = asyncio.create_task(websocket_options(), name="live-tls-prepare")
+    try:
+        yield task
+    finally:
+        if not task.done():
+            task.cancel()
+        # A failure reached the caller through its await, or the caller failed
+        # authentication/cancelled first. In the latter case preserve that
+        # primary failure; preparation has no remote resources to clean up.
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def warm_transport() -> None:

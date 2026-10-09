@@ -39,7 +39,10 @@ export function modelSeats(options: ProviderOption[], providers: SocietyProvider
   // Installed CLIs without an account reader (such as OpenCode) own their login.
   const known = new Set(usable.filter((option) => option.connected).map((option) => option.id));
   return brainSeats(usable, providers, mergedLive, known).map((seat) => {
-    const models = [...new Map(seat.provider.curated_models.map((model) => [model.id, model])).values()];
+    // Agents need tools. Unknown metadata remains selectable; a provider's
+    // explicit refusal must not become the default for a newly created agent.
+    const models = [...new Map(seat.provider.curated_models.filter((model) => model.tools !== false)
+      .map((model) => [model.id, model])).values()];
     // The IDE can launch a CLI without a model override. Preserve that same
     // choice when the vendor keeps its catalog private or its discovery fails.
     // API/local seats still need their own model ids; an empty id is not one.
@@ -73,8 +76,9 @@ export function runtimeSeats(
       ...seat,
       kind: onLogin.has(seat.provider.id) ? "subscription" as const : "api" as const,
       accounts: [],
-      extraUsage: onLogin.has(seat.provider.id),
-      provider: { ...seat.provider, curated_models: apiModels(seat.provider.curated_models) },
+      extraUsage: false,
+      provider: { ...seat.provider, curated_models: onLogin.has(seat.provider.id)
+        ? seat.provider.curated_models : apiModels(seat.provider.curated_models) },
     } : seat);
 }
 

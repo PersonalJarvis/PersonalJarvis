@@ -16,6 +16,7 @@ option degrades to Hermes' default instead of breaking the turn.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from collections.abc import Callable
@@ -33,6 +34,7 @@ from jarvis.agent_runtimes.base import (
     TurnSlots,
     agent_home,
     child_env,
+    finish_profile_write,
     first_existing,
     format_version,
     home_key,
@@ -52,6 +54,7 @@ LABEL: Final[str] = "Hermes"
 #: Oldest release verified to persist ACP sessions and accept per-session MCP
 #: servers (spike 2026-10-06). Older installs are offered an update.
 MINIMUM_VERSION: Final[tuple[int, int, int]] = (0, 20, 6)
+MINIMUM_CONTEXT_WINDOW: Final[int] = 64_000
 
 _INSTALL_URL_PS1: Final[str] = "https://hermes-agent.nousresearch.com/install.ps1"
 _INSTALL_URL_SH: Final[str] = "https://hermes-agent.nousresearch.com/install.sh"
@@ -76,9 +79,15 @@ def _install_hint() -> str:
     return f"curl -fsSL {_INSTALL_URL_SH} | bash"
 
 
+_HERMES_EFFORTS: Final[frozenset[str]] = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
+
 class HermesRuntime:
     name = NAME
     label = LABEL
+    minimum_context_window = MINIMUM_CONTEXT_WINDOW
 
     def __init__(self) -> None:
         self._detect = DetectCache()
@@ -159,7 +168,25 @@ class HermesRuntime:
 
     # -------------------------------------------------------------- launch
 
+    def route_needs_update(self, route: Any, status: RuntimeStatus) -> bool:
+        """The subscription plugin needs a newer Hermes than API routes do."""
+        from jarvis.agent_runtimes.claude_hermes import MINIMUM_VERSION
+
+        return route.transport == "claude_cli" and (
+            parse_version(status.version) or (0, 0, 0)
+        ) < MINIMUM_VERSION
+
+    def needs_provider_prepare(self, turn: RuntimeTurn) -> bool:
+        """Whether this turn will install its subscription provider, without inference."""
+        from jarvis.agent_runtimes.claude_hermes import installed
+
+        if turn.route.transport != "claude_cli":
+            return False
+        return not installed(agent_home(NAME, home_key(turn.agent_id, turn.session_id)))
+
     def config_for(self, turn: RuntimeTurn) -> dict[str, Any]:
+        from jarvis.agent_runtimes.claude_hermes import PROVIDER_NAME
+
         route = turn.route
         provider: dict[str, Any] = {
             "api": route.base_url,
@@ -172,6 +199,7 @@ class HermesRuntime:
             # Session restore rebuilds the agent from the stored endpoint and
             # reads the key next to a matching ``model.base_url``.
             "base_url": route.base_url,
+            "context_length": route.context_window,
         }
         if route.api_key:
             provider["key_env"] = KEY_ENV_VAR
@@ -182,6 +210,10 @@ class HermesRuntime:
             "model": model,
             "providers": {RUNTIME_PROVIDER_NAME: provider},
             "terminal": {"cwd": str(turn.workspace)},
+            # Jarvis ends failed turns and retains the user's request. Do not
+            # stack Hermes retries, recovery cycles or paid fallback routes.
+            "agent": {"api_max_retries": 1, "auto_recovery_cycles": 0},
+            "fallback_model": None,
             # Jarvis owns memory and skills on every runtime.
             "memory": {
                 "memory_enabled": False,
@@ -190,10 +222,10 @@ class HermesRuntime:
             },
             "skills": {"creation_nudge_interval": 0, "project_discovery": False},
             "curator": {"enabled": False},
-            # Jarvis' tools are what make this a Jarvis agent: offered directly,
-            # never deferred behind Hermes' tool search, where smaller models
-            # fail to find them (seen live with a 9B model, 2026-10-06).
-            "tools": {"tool_search": False},
+            # Connected accounts can expose hundreds of tools. Keep their
+            # schemas out of every greeting; Hermes discovers and dispatches
+            # them through the same MCP server, including its approval gates.
+            "tools": {"tool_search": {"enabled": "on", "listing_max_tokens": 2000}},
             "auxiliary": {
                 "background_review": {"enabled": False},
                 "title_generation": {"enabled": False},
@@ -204,15 +236,38 @@ class HermesRuntime:
             # guardian, which spends model calls of its own.
             "approvals": {"mode": "manual"},
         }
+        if route.transport == "claude_cli":
+            # The official provider preserves Hermes' loop and tools while
+            # Claude Code owns subscription authentication and model calls.
+            config["model"] = {
+                "provider": PROVIDER_NAME,
+                "default": route.model,
+                "context_length": route.context_window,
+            }
+            config["providers"] = {PROVIDER_NAME: {"request_timeout_seconds": 180}}
+            config["plugins"] = {"enabled": [PROVIDER_NAME]}
         disabled = sorted(_disabled_toolsets(turn.denied_native))
         if disabled:
-            config["agent"] = {"disabled_toolsets": disabled}
+            config["agent"]["disabled_toolsets"] = disabled
+        if route.transport == "claude_cli" and turn.effort in _HERMES_EFFORTS:
+            config["agent"]["reasoning_effort"] = turn.effort
         return config
 
     async def launch(self, turn: RuntimeTurn) -> RuntimeLaunch:
+        if turn.route.context_window < self.minimum_context_window:
+            raise RuntimeUnavailable(
+                f"Hermes requires at least {self.minimum_context_window:,} context tokens; "
+                f"this model is configured for {turn.route.context_window:,}. "
+                "Choose a model and context that meet this requirement, or use Jarvis Agent "
+                "or OpenClaw. The saved context limit was not changed."
+            )
         status = await asyncio.to_thread(self.detect)
         if not status.ready:
             raise RuntimeUnavailable(status.problem or "Hermes is not ready.")
+        if turn.route.transport == "claude_cli":
+            from jarvis.agent_runtimes.claude_hermes import require_version
+
+            require_version(status.version)
         binary = _binary()
         if binary is None:
             raise RuntimeUnavailable("Hermes is not installed.")
@@ -226,10 +281,17 @@ class HermesRuntime:
     async def _launch(
         self, binary: str, turn: RuntimeTurn, release: Callable[[], None]
     ) -> RuntimeLaunch:
+        from jarvis.agent_runtimes.claude_hermes import installed
+
         home = await asyncio.to_thread(
             agent_home, NAME, home_key(turn.agent_id, turn.session_id)
         )
-        await asyncio.to_thread(self._write_profile, home, turn)
+        # Once a profile has used the native provider, both directions of a
+        # provider switch must replace the route stored in its ACP session.
+        # Unrelated API-only profiles keep their older Hermes handshake.
+        select_model = turn.route.transport == "claude_cli" or await asyncio.to_thread(
+            installed, home
+        )
         env = child_env(
             {
                 "HERMES_HOME": str(home),
@@ -239,6 +301,14 @@ class HermesRuntime:
                 **_restore_key_aliases(turn.route.base_url, turn.route.api_key),
             }
         )
+        if turn.route.transport == "claude_cli":
+            from jarvis.agent_runtimes.claude_hermes import ensure_provider, provider_env
+
+            env.update(provider_env(turn.route))
+            # The turn slot serializes writes to this profile. Installation
+            # finishes before the final config replaces any installer choices.
+            await ensure_provider(binary, home, env)
+        await finish_profile_write(self._write_profile, home, turn)
         servers: list[McpServer] = []
         if turn.mcp_url and turn.control_key:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
@@ -261,11 +331,42 @@ class HermesRuntime:
             mcp_servers=servers,
             acp_resume=turn.resume,
             release=release,
+            acp_model=(
+                f"{self.config_for(turn)['model']['provider']}:{turn.route.model}"
+            ) if select_model else "",
         )
 
     def _write_profile(self, home: Path, turn: RuntimeTurn) -> None:
-        write_json_if_changed(home / "config.yaml", self.config_for(turn))
-        write_if_changed(home / "SOUL.md", persona_text(turn.agent_name))
+        from jarvis.agent_runtimes.claude_hermes import PROVIDER_NAME, installed
+        from jarvis.agent_runtimes.tool_snapshot import refresh_tool_search_cache
+
+        refresh_tool_search_cache(home, turn.resume)
+        config = self.config_for(turn)
+        if installed(home):
+            # Keep the admitted dependency graph stable when the person changes
+            # this profile from a subscription to an API seat and back.
+            config.setdefault("plugins", {})["enabled"] = [PROVIDER_NAME]
+        write_json_if_changed(home / "config.yaml", config)
+        workspace_context = ""
+        if turn.route.transport == "claude_cli":
+            workspace_context = (
+                "The authoritative workspace for this session's Hermes file and terminal tools is "
+                f"{json.dumps(str(turn.workspace), ensure_ascii=False)}. "
+                "Resolve relative file paths against that workspace. The model transport may "
+                "report a temporary working directory; that directory is not the tool workspace "
+                "and does not contain the user's project files.\n"
+            )
+        write_if_changed(
+            home / "SOUL.md",
+            persona_text(turn.agent_name)
+            + workspace_context
+            + "Jarvis MCP tools are available through tool_search, tool_describe and "
+            "tool_call. For a task that needs Jarvis or a connected account, use "
+            "tool_search with the service and action, read the returned schema, "
+            "then invoke its exact tool name through tool_call. Search before "
+            "concluding a capability is missing. For a greeting or ordinary "
+            "conversation, reply directly without searching for tools.\n",
+        )
 
 
 def _restore_key_aliases(base_url: str, api_key: str | None) -> dict[str, str]:

@@ -26,6 +26,7 @@ import re
 import shutil
 import sqlite3
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -71,6 +72,18 @@ from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
+
+
+def _stop_caller() -> str:
+    """The code that asked a turn to stop, as ``module:function`` hops.
+
+    A stopped turn otherwise only says "cancelled"; this names the path that
+    ended it (HTTP stop, goal pause, society runtime, browser cancel).
+    """
+    frames = traceback.extract_stack(limit=6)[:-2]
+    return " <- ".join(
+        f"{Path(frame.filename).stem}:{frame.name}" for frame in reversed(frames)
+    )
 
 #: What a turn cut off by a restart says (``_seal_orphaned_turns``).
 _ORPHANED_TURN_ERROR: Final = (
@@ -412,11 +425,18 @@ class AgentChatService:
         self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
+        # Cards a restart left unanswered on a thread turn the turn host kept
+        # running, by (session, turn, call): the CLI asks again and that card
+        # answers it (_hold_unanswered_approvals).
+        self._unanswered: dict[tuple[str, str, str], str] = {}
         # Questions an agent is waiting on (questions.py), by question id.
         self._questions: dict[str, _OpenQuestion] = {}
         self._question_tasks: set[asyncio.Task[None]] = set()
         # Credential cards (credential_requests.py): the value never enters a chat event.
-        self._credentials = CredentialRequests(self._emit, self._running_turn_id)
+        self._credentials = CredentialRequests(
+            self._emit, self._running_turn_id,
+            history=self.store.credential_events, restore_save=self._restore_credential_save,
+        )
         # "Always allow" on the Jarvis surface: the tools a person waved through
         # for the rest of the session, per session. Claude Code's "don't ask
         # again for this tool" rather than a mode flip — the unified ladder has
@@ -617,10 +637,19 @@ class AgentChatService:
             stance=session.permission_mode if kit.uses_stance else "",
             control_service=self,
         )
+        superseded = self._hold_unanswered_approvals(session_id, turn_id, handle.history)
 
         async def _carry_on() -> None:
             finished = False
             try:
+                for approval_id in superseded:
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "approval_resolved",
+                            {"turn_id": turn_id, "approval_id": approval_id, "decision": "expired"},
+                        ),
+                    )
                 vendor = await resume_hosted_cli_turn(handle, proc)
                 finished = True
                 if vendor and vendor != session.vendor_session:
@@ -667,6 +696,8 @@ class AgentChatService:
                     self._approval_session.pop(aid, None)
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
+                for key in [k for k in self._unanswered if k[:2] == (session_id, turn_id)]:
+                    self._unanswered.pop(key, None)
                 self._cancel_questions(session_id)
                 if finished and kit.turn_prompts:
                     try:
@@ -676,6 +707,45 @@ class AgentChatService:
 
         run.task = asyncio.create_task(_carry_on(), name=f"agent-chat-{turn_id[:8]}")
         run.ready.set()
+
+    def _hold_unanswered_approvals(
+        self, session_id: str, turn_id: str, history: list[dict[str, Any]]
+    ) -> list[str]:
+        """Keep a restart's open approval cards for the CLI to ask again.
+
+        The previous process waited on the card's answer when it quit; the CLI
+        in the turn host still waits on its permission prompt, and the host
+        replays that line because it was never acknowledged, so the resumed
+        runner asks again. That question must reuse the card already on screen:
+        a fresh id left the old card on top of the composer, and its buttons
+        answered "no such pending approval" for ever (2026-10-06). The newest
+        open card per tool call is held for :meth:`_ask`; the ids returned are
+        older duplicates (or cards without a call id) that only get closed.
+        """
+        open_by_call: dict[str, list[str]] = {}
+        resolved: set[str] = set()
+        for event in history:
+            payload = event.get("payload") or {}
+            if str(payload.get("turn_id") or "") != turn_id:
+                continue
+            approval_id = str(payload.get("approval_id") or "")
+            if not approval_id:
+                continue
+            if event.get("kind") == "approval_resolved":
+                resolved.add(approval_id)
+            elif event.get("kind") == "approval_required":
+                call_id = str(payload.get("call_id") or "")
+                open_by_call.setdefault(call_id, []).append(approval_id)
+        superseded: list[str] = []
+        for call_id, ids in open_by_call.items():
+            still_open = [aid for aid in dict.fromkeys(ids) if aid not in resolved]
+            if not still_open:
+                continue
+            if call_id:
+                self._unanswered[(session_id, turn_id, call_id)] = still_open[-1]
+                still_open = still_open[:-1]
+            superseded.extend(still_open)
+        return superseded
 
     def _retire_cli_seats(self) -> None:
         """Move chats off a CLI seat their surface no longer offers.
@@ -1522,6 +1592,12 @@ class AgentChatService:
                     # The CLI keeps working in the turn host; the next app
                     # start carries this turn on, so it stays open.
                     raise
+                log.info(
+                    "agent chat %s: turn %s task was cancelled (stop flag %s)",
+                    session_id,
+                    turn_id,
+                    "set" if run.cancel.is_set() else "NOT set",
+                )
                 await self._emit(
                     session_id,
                     make_event(
@@ -1809,6 +1885,12 @@ class AgentChatService:
         if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
+        log.info(
+            "agent chat %s: turn %s told to stop by %s",
+            session_id,
+            run.turn_id,
+            _stop_caller(),
+        )
         if run.task is None and run.setup_task is not None:
             run.setup_task.cancel()
         for aid in self.pending_approvals(session_id):
@@ -1896,7 +1978,10 @@ class AgentChatService:
         args: dict[str, Any],
         summary: str,
     ) -> str:
-        approval_id = uuid.uuid4().hex
+        # The same tool call asked again after a restart answers on the card
+        # the person already sees (_hold_unanswered_approvals).
+        held = self._unanswered.pop((session_id, turn_id, call_id), "") if call_id else ""
+        approval_id = held if held and held not in self._approvals else uuid.uuid4().hex
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
         self._approvals[approval_id] = fut
@@ -1962,6 +2047,39 @@ class AgentChatService:
         if fut is None or fut.done():
             return False
         fut.set_result(decision)
+        return True
+
+    async def close_stale_approval(self, session_id: str, approval_id: str) -> bool:
+        """Close a card the transcript still shows open but nothing waits on.
+
+        Its asker is gone — an app restart took the waiting call with it, or
+        the CLI asked again under another card. Answering it can change
+        nothing, so the card is closed for good instead of offering buttons
+        that fail on every click and come back on every reload. Returns
+        whether such a card was found.
+        """
+        if approval_id in self._approvals:
+            return False
+        turn_id = ""
+        for event in await asyncio.to_thread(self.store.list_events, session_id):
+            payload = event.get("payload") or {}
+            if str(payload.get("approval_id") or "") != approval_id:
+                continue
+            if event.get("kind") == "approval_resolved":
+                return False
+            if event.get("kind") == "approval_required":
+                turn_id = str(payload.get("turn_id") or "")
+        if not turn_id:
+            return False
+        for key in [k for k, v in self._unanswered.items() if v == approval_id]:
+            self._unanswered.pop(key, None)
+        await self._emit(
+            session_id,
+            make_event(
+                "approval_resolved",
+                {"turn_id": turn_id, "approval_id": approval_id, "decision": "expired"},
+            ),
+        )
         return True
 
     # ------------------------------------------------------------ questions
@@ -2184,7 +2302,7 @@ class AgentChatService:
         # Tolerates a service built without __init__ (test doubles), like _controls.
         credentials: CredentialRequests | None = getattr(self, "_credentials", None)
         if credentials is not None:
-            credentials.cancel_session(session_id)
+            credentials.finish_turn(session_id)
         questions: dict[str, _OpenQuestion] = getattr(self, "_questions", {})
         for qid, open_q in list(questions.items()):
             if open_q.session_id != session_id:
@@ -2195,6 +2313,26 @@ class AgentChatService:
             questions.pop(qid, None)
 
     # ------------------------------------------------------------ credentials
+
+    @staticmethod
+    def _restore_credential_save(session_id: str, spec: CredentialSpec) -> Callable | None:
+        """Rebuild only a Society field's save callback, never a stored secret."""
+        from jarvis.society.credentials import save_requested_credential, validate_env_name
+        from jarvis.society.surface import agent_id_of
+
+        agent_id = agent_id_of(session_id)
+        if agent_id is None:
+            return None
+        try:
+            validate_env_name(spec.env)
+        except ValueError:
+            log.warning("agent chat: ignored invalid stored credential field metadata")
+            return None
+
+        async def save(value: str) -> None:
+            await save_requested_credential(agent_id, spec.env, value, label=spec.label)
+
+        return save
 
     def _running_turn_id(self, session_id: str) -> str | None:
         run = self._running.get(session_id)
@@ -2224,18 +2362,28 @@ class AgentChatService:
     async def wait_credential_request(
         self, session_id: str, request_id: str, timeout_s: float | None = None
     ) -> str | None:
-        """``saved`` | ``declined`` | ``timeout`` | ``cancelled``, or ``None`` while open."""
+        """``saved`` or ``declined``, or ``None`` while the field remains open."""
         return await self._credentials.wait(session_id, request_id, timeout_s)
 
     def credential_request_spec(self, session_id: str, request_id: str) -> CredentialSpec:
         return self._credentials.spec(session_id, request_id)
 
+    async def restore_credential_requests(self, session_id: str) -> None:
+        await self._credentials.restore(session_id)
+
     async def submit_credential(self, session_id: str, request_id: str, value: str) -> bool:
         """The person's pasted value; ``ValueError`` when the vault refuses it."""
+        if self.store.get_session(session_id) is None:
+            return False
         return await self._credentials.submit(session_id, request_id, value)
 
     async def decline_credential(self, session_id: str, request_id: str) -> bool:
+        if self.store.get_session(session_id) is None:
+            return False
         return await self._credentials.decline(session_id, request_id)
+
+    async def discard_credential_requests(self, session_id: str) -> None:
+        await self._credentials.discard_session(session_id)
 
     def pending_credential_requests(self, session_id: str) -> list[str]:
         credentials: CredentialRequests | None = getattr(self, "_credentials", None)

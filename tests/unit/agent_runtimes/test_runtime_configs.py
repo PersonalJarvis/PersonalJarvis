@@ -35,10 +35,12 @@ _GATEWAY = "http://127.0.0.1:47821/api/runtime-gateway/v1"
 def gateway_up(monkeypatch):
     """Jarvis' gateway is listening, and this machine's Agents-tier keys stay out."""
     import jarvis.core.config as config
-    from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes import gateway, provider_errors
 
     monkeypatch.setattr(gateway, "base_url", lambda: _GATEWAY)
     monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    monkeypatch.setattr(provider_errors, "_claude_usage", lambda token: None)
+    monkeypatch.setattr(provider_errors, "_REPORTS", {})
     gateway.reset()
     yield gateway
     gateway.reset()
@@ -103,9 +105,55 @@ def test_hermes_self_learning_extras_stay_off(tmp_path):
     assert config["skills"]["creation_nudge_interval"] == 0
 
 
-def test_hermes_offers_jarvis_tools_directly(tmp_path):
-    """Never deferred behind Hermes' tool search (a 9B model missed them live)."""
-    assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
+def test_hermes_has_one_attempt_and_no_automatic_recovery_or_fallback(tmp_path):
+    config = HermesRuntime().config_for(_turn(tmp_path, denied_native=frozenset({"shell"})))
+    assert config["agent"]["api_max_retries"] == 1
+    assert config["agent"]["auto_recovery_cycles"] == 0
+    assert config["fallback_model"] is None
+    assert "terminal" in config["agent"]["disabled_toolsets"]
+
+
+def test_hermes_discovers_connected_tools_with_explicit_persona_guidance(tmp_path):
+    """Large catalogs stay lazy, and the persona explains how to reach them."""
+    runtime = HermesRuntime()
+    turn = _turn(tmp_path)
+    runtime._write_profile(tmp_path, turn)
+    config = json.loads((tmp_path / "config.yaml").read_text(encoding="utf-8"))
+    search = config["tools"]["tool_search"]
+    assert search["enabled"] == "on"
+    assert search["listing_max_tokens"] <= 2000
+    persona = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert "tool_search" in persona and "tool_describe" in persona and "tool_call" in persona
+    assert "reply directly without searching" in persona
+    assert "Search before concluding a capability is missing" in persona
+
+
+def test_hermes_profiles_share_installation_but_keep_agent_state_separate(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    first = base.agent_home("hermes", "first")
+    second = base.agent_home("hermes", "second")
+    routine = base.agent_home("hermes", base.home_key("first", "society:first:routine:1"))
+    assert first.parent == second.parent == routine.parent == tmp_path / "hermes" / "profiles"
+    assert len({first, second, routine}) == 3
+    (first / "state.db").write_bytes(b"private conversation")
+    assert not (second / "state.db").exists()
+    assert not (routine / "state.db").exists()
+    assert base.agent_home("hermes", "first") == first
+    assert base.agent_home("hermes", "profiles") == first.parent / "profiles"
+
+
+def test_existing_runtime_homes_keep_their_native_sessions(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    legacy = tmp_path / "hermes" / "existing"
+    legacy.mkdir(parents=True)
+    (legacy / "state.db").write_bytes(b"existing session")
+    assert base.agent_home("hermes", "existing") == legacy
+    assert (legacy / "state.db").read_bytes() == b"existing session"
+    assert base.agent_home("openclaw", "first") == tmp_path / "openclaw" / "first"
 
 
 def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):
@@ -162,6 +210,9 @@ def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     assert "automations" in config["tools"]["deny"]
     assert config["tools"]["toolSearch"] is False
     assert config["gateway"]["bind"] == "loopback"
+    assert config["cron"]["enabled"] is False
+    assert config["plugins"]["slots"]["memory"] == "none"
+    assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
 
 
 def test_openclaw_exec_mode_follows_grants_not_the_stance(tmp_path):
@@ -253,7 +304,9 @@ def test_every_provider_runs_through_jarvis_gateway(gateway_up, monkeypatch):
     # The runtime gets Jarvis' address and a token for this agent, never the key.
     assert route.base_url == _GATEWAY and route.transport == "chat_completions"
     assert route.api_key != _SECRET
-    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "openai")
+    assert gateway.verify(route.api_key or "") == gateway.Grant(
+        "agent-1", "openai", require_active_turn=True,
+    )
     assert route.env() == {KEY_ENV_VAR: route.api_key}
 
 
@@ -265,7 +318,28 @@ def test_the_chatgpt_subscription_speaks_responses(gateway_up, monkeypatch):
     monkeypatch.setattr(gateway, "subscription_ready", lambda account_id="": True)
     route = route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1", account_id="acct")
     assert route.transport == "responses" and route.base_url == _GATEWAY
-    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "openai-codex", "acct")
+    assert gateway.verify(route.api_key or "") == gateway.Grant(
+        "agent-1", "openai-codex", "acct", require_active_turn=True,
+    )
+
+
+def test_chat_and_routine_routes_have_stable_separate_failure_scopes(gateway_up):
+    with override_provider_secrets({"openai": _SECRET}):
+        routes = [route_for(_cfg(), "openai", "m", agent_id="a", session_id=sid)
+                  for sid in ("society:a", "society:a:routine:r1", "society:a:routine:r2")]
+    assert routes[0].api_key != routes[1].api_key
+    assert routes[1].api_key == routes[2].api_key
+
+
+def test_a_rate_limited_route_refuses_before_starting_a_runtime(gateway_up):
+    gateway = gateway_up
+    grant = gateway.Grant("a", "openai")
+    gateway._report_failure(
+        grant, "m", gateway.GatewayError("limited", status=429, retry_after=60), None,
+    )
+    with override_provider_secrets({"openai": _SECRET}):
+        with pytest.raises(RouteUnavailable, match="HTTP 429"):
+            route_for(_cfg(), "openai", "m", agent_id="a", session_id="society:a")
 
 
 def test_a_missing_key_is_reported_in_plain_words(gateway_up):
@@ -298,7 +372,9 @@ def test_claude_without_a_key_runs_on_the_claude_code_login(gateway_up, monkeypa
     # The runtime only ever holds Jarvis' gateway token, never the login.
     assert route.transport == "chat_completions" and route.base_url == _GATEWAY
     assert route.api_key != live
-    assert gateway_up.verify(route.api_key or "") == gateway_up.Grant("agent-1", "claude-api", "")
+    assert gateway_up.verify(route.api_key or "") == gateway_up.Grant(
+        "agent-1", "claude-api", "", require_active_turn=True,
+    )
     # Every other provider keeps needing its own key.
     assert model_map.login_token_for("openai") is None
 
@@ -319,7 +395,9 @@ def test_an_agent_can_pin_claude_to_the_key_or_the_login(gateway_up, monkeypatch
             _cfg(), "claude-api", "claude-sonnet-5", agent_id="a", account_id=SUBSCRIPTION_ACCOUNT
         )
         grant = gateway_up.verify(route.api_key or "")
-        assert grant == gateway_up.Grant("a", "claude-api", SUBSCRIPTION_ACCOUNT)
+        assert grant == gateway_up.Grant(
+            "a", "claude-api", SUBSCRIPTION_ACCOUNT, require_active_turn=True,
+        )
     with override_provider_secrets({"claude-api": None}):
         assert model_map.access_choices() == {"claude-api": ["subscription"]}
         assert model_map.login_token_for("claude-api", API_KEY_ACCOUNT) is None

@@ -308,19 +308,19 @@ JARVIS_LADDER: Final[str] = "jarvis"
 
 # runner (or JARVIS_LADDER) -> (ladder, default)
 _LADDERS: Final[dict[str, tuple[tuple[PermissionMode, ...], str]]] = {
-    "claude-cli": (_CLAUDE, "acceptEdits"),
-    "codex-cli": (_CODEX, "auto"),
-    "agy-cli": (_AGY, "accept-edits"),
-    "grok-cli": (_GROK, "acceptEdits"),
-    "opencode-cli": (_OPENCODE, "default"),
+    "claude-cli": (_CLAUDE, "bypassPermissions"),
+    "codex-cli": (_CODEX, "full-access"),
+    "agy-cli": (_AGY, "skip-permissions"),
+    "grok-cli": (_GROK, "bypassPermissions"),
+    "opencode-cli": (_OPENCODE, "auto"),
     "kimi-cli": (_KIMI, "auto"),
     # GLM Coding Plan drives the Claude Code binary, so it takes Claude
     # Code's own words.
-    "glm-cli": (_CLAUDE, "acceptEdits"),
+    "glm-cli": (_CLAUDE, "bypassPermissions"),
     "dsh-cli": (_DSH, "auto"),
     "cursor-cli": (_CURSOR, "auto"),
-    "api": (_API, "ask"),
-    JARVIS_LADDER: (_JARVIS, "ask"),
+    "api": (_API, "auto"),
+    JARVIS_LADDER: (_JARVIS, "bypass"),
     "society": (_SOCIETY, "bypass"),
 }
 

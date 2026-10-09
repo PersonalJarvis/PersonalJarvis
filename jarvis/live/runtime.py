@@ -3,13 +3,48 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 _active: dict[str, Any] = {}
 _owners: dict[str, asyncio.AbstractEventLoop] = {}
 _opening: set[str] = set()
 _watchers: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
 _detached: set[asyncio.Task] = set()
+_request_lock = threading.Lock()
+
+
+@dataclass
+class _BrowserStart:
+    loop: asyncio.AbstractEventLoop
+    changed: asyncio.Event
+    session_id: str
+    owner_key: str
+    failed: bool = False
+    registered: bool = False
+
+
+_pending_browser_starts: dict[str, _BrowserStart] = {}
+_browser_call_requests: dict[str, str] = {}
+
+
+def browser_startup_failed(request_id: str) -> bool:
+    """Fail only the still-pending native request named by its browser owner."""
+    with _request_lock:
+        pending = _pending_browser_starts.get(request_id)
+        if (pending is None or _active or pending.loop.is_closed()
+                or _browser_call_requests.get(pending.owner_key) != request_id):
+            return False
+        _pending_browser_starts.pop(request_id, None)
+        pending.failed = True
+        try:
+            pending.loop.call_soon_threadsafe(pending.changed.set)
+        except RuntimeError:
+            # The owning event loop shut down after the closed check.
+            return False
+        return True
 
 
 def retain_work(jobs: tuple[asyncio.Task, ...], ledger: Any) -> None:
@@ -39,16 +74,25 @@ def claim(session_id: str) -> None:
 
 
 def register(session: Any) -> None:
-    _opening.discard(session.session_id)
-    _active[session.session_id] = session
-    _owners[session.session_id] = asyncio.get_running_loop()
+    with _request_lock:
+        _opening.discard(session.session_id)
+        _active[session.session_id] = session
+        _owners[session.session_id] = asyncio.get_running_loop()
+        for request_id, pending in tuple(_pending_browser_starts.items()):
+            if not pending.session_id or pending.session_id == session.session_id:
+                # Registration and an early disconnect can both happen before
+                # the native waiter resumes. Remember the transition instead
+                # of waiting for a session which has already come and gone.
+                pending.registered = True
+                _pending_browser_starts.pop(request_id, None)
     _notify()
 
 
 def unregister(session_id: str) -> None:
-    _opening.discard(session_id)
-    _active.pop(session_id, None)
-    _owners.pop(session_id, None)
+    with _request_lock:
+        _opening.discard(session_id)
+        _active.pop(session_id, None)
+        _owners.pop(session_id, None)
     _notify()
 
 
@@ -99,6 +143,25 @@ async def run_browser_call(
     changed = asyncio.Event()
     watcher = (asyncio.get_running_loop(), changed)
     _watchers.add(watcher)
+    request_id = str(uuid4())
+    owner_key = session_id or request_id
+    pending = _BrowserStart(watcher[0], changed, session_id, owner_key)
+    with _request_lock:
+        previous_id = _browser_call_requests.get(owner_key)
+        previous = _pending_browser_starts.pop(previous_id, None)
+        _browser_call_requests[owner_key] = request_id
+        _pending_browser_starts[request_id] = pending
+        if previous is not None:
+            previous.failed = True
+    _notify()
+
+    def owns_request() -> bool:
+        with _request_lock:
+            return _browser_call_requests.get(owner_key) == request_id
+
+    def own_sessions() -> tuple[Any, ...]:
+        return tuple(session for session in active()
+                     if not session_id or session.session_id == session_id)
 
     async def wait_change() -> None:
         tasks = [asyncio.create_task(changed.wait()), asyncio.create_task(hangup.wait())]
@@ -115,21 +178,37 @@ async def run_browser_call(
             return "hotkey"
         if input_buffer is not None and session_id:
             startup.offer(session_id, input_buffer)
-        await bus.publish(BrowserVoiceRequested(action="start"))
+        await bus.publish(BrowserVoiceRequested(action="start", request_id=request_id))
         # UI permission and device setup can take time. No idle billed connection.
         async with asyncio.timeout(timeout_s):
-            while not active() and not hangup.is_set():
+            while (not pending.registered and not own_sessions()
+                   and not hangup.is_set() and owns_request()):
+                if pending.failed or (session_id and active()):
+                    return "error"
                 await wait_change()
-        while active() and not hangup.is_set():
+        if pending.failed:
+            return "error"
+        while own_sessions() and not hangup.is_set() and owns_request():
             await wait_change()
     except TimeoutError:
         # The caller receives an explicit error outcome for this bounded wait.
         return "error"
     finally:
-        startup.discard(session_id)
+        with _request_lock:
+            _pending_browser_starts.pop(request_id, None)
+            still_owned = _browser_call_requests.get(owner_key) == request_id
+            if still_owned:
+                sessions_to_close = own_sessions()
+                startup.discard(session_id)
+                _browser_call_requests.pop(owner_key, None)
         _watchers.discard(watcher)
-        # Retract pending browser starts on timeout/cancellation too. Otherwise
-        # focusing a hidden window later starts a call whose owner already left.
-        await bus.publish(BrowserVoiceRequested(action="stop"))
-        await close_all()
+        if still_owned:
+            # Correlated retraction cannot stop a newer browser request. Only
+            # close this native session; unrelated browser calls remain owned.
+            await bus.publish(BrowserVoiceRequested(action="stop", request_id=request_id))
+            await asyncio.gather(*(
+                on_session_loop(session, session.end, reason="hotkey")
+                for session in sessions_to_close
+                if _active.get(session.session_id) is session
+            ))
     return "hotkey" if hangup.is_set() else "client_stop"

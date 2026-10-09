@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
 
-from jarvis.agent_runtimes.acp import McpServer
+from jarvis.agent_runtimes.acp import ApprovalSource, McpServer
 from jarvis.agent_runtimes.model_map import ModelRoute
 
 log = logging.getLogger(__name__)
@@ -93,6 +93,28 @@ _VERSION_RE: Final[re.Pattern[str]] = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _DETECT_TTL_S: Final[float] = 300.0
 
 
+async def finish_profile_write(write: Callable[..., Any], *args: Any) -> Any:
+    """Keep the caller's turn slot until its non-cancellable file writer exits."""
+    task = asyncio.create_task(asyncio.to_thread(write, *args))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # Cancelling to_thread does not stop the thread. Releasing the slot
+        # now would let an old profile overwrite the next turn's settings.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue  # A repeated Stop still must not release a live writer.
+            except Exception:
+                break  # Report the writer failure below, then preserve cancellation.
+        try:
+            task.result()
+        except Exception:
+            log.exception("Cancelled runtime profile write failed")
+        raise
+
+
 class RuntimeUnavailable(Exception):
     """The runtime cannot run this turn; the message is shown in the chat."""
 
@@ -150,6 +172,8 @@ class RuntimeTurn:
     control_key: str | None = None
     #: Native capability groups this agent may not use (``"shell"``, ``"web"``).
     denied_native: frozenset[str] = frozenset()
+    read_only: bool = False
+    effort: str = ""
 
 
 @dataclass(slots=True)
@@ -169,6 +193,10 @@ class RuntimeLaunch:
     #: Called exactly once when the turn's process is gone: frees the turn
     #: slot (and lets an idle Gateway be reaped).
     release: Callable[[], None] | None = None
+    #: Prevent reusing a persistent gateway after an unconfirmed termination.
+    invalidate: Callable[[], None] | None = None
+    acp_model: str = ""
+    approval_source: ApprovalSource | None = field(default=None, repr=False)
 
 
 class AgentRuntimeDriver(Protocol):
@@ -256,7 +284,16 @@ def runtimes_root() -> Path:
 def agent_home(runtime: str, agent_id: str) -> Path:
     """The runtime's own state folder for one agent (created on demand)."""
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id) or "agent"
-    home = runtimes_root() / runtime / safe
+    root = runtimes_root() / runtime
+    home = root / safe
+    legacy_profile = any((home / name).is_file() for name in ("config.yaml", "state.db", "SOUL.md"))
+    if runtime == "hermes" and not legacy_profile:
+        # Hermes treats an arbitrary HERMES_HOME as a separate installation:
+        # every new bot otherwise rebuilds Python dependencies before ACP can
+        # answer. Native profile layout shares only the installation while
+        # keeping config, credentials and conversations in separate homes.
+        # Existing homes retain their state and native session identifiers.
+        home = root / "profiles" / safe
     home.mkdir(parents=True, exist_ok=True)
     return home
 

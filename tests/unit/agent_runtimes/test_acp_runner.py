@@ -5,8 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import sys
+import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -50,6 +54,7 @@ def _turn(
     report_session: str | None = None,
     argv: list[str] | None = None,
     released: list[int] | None = None,
+    cancel_on_delta: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]], list[tuple[str, str]], list[str | None]]:
     resumes: list[str | None] = []
 
@@ -82,6 +87,8 @@ def _turn(
 
     async def emit(event: dict[str, Any]) -> None:
         events.append(event)
+        if cancel_on_delta and event["kind"] == "text_delta":
+            handle.cancel.set()
 
     async def ask(call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
         asked.append((call_id, name))
@@ -109,6 +116,28 @@ def _texts(events: list[dict[str, Any]]) -> list[str]:
 def test_the_runtime_runners_count_as_cli_seats():
     assert rc.supports_cli_runner("hermes-cli")
     assert rc.supports_cli_runner("openclaw-cli")
+
+
+def test_acp_eof_without_prompt_result_is_incomplete(monkeypatch, tmp_path):
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "EOF_PARTIAL")
+    assert _finished(events)["status"] == "error"
+    assert "terminal result" in _finished(events)["error"]
+
+
+def test_acp_token_exhaustion_keeps_partial_text_but_reports_error(monkeypatch, tmp_path):
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "TRUNCATE")
+    assert _texts(events) == ["echo: TRUNCATE"]
+    assert _finished(events)["status"] == "error"
+    assert "max_tokens" in _finished(events)["error"]
+
+
+def test_stop_sends_upstream_acp_cancel_before_terminating_bridge(monkeypatch, tmp_path):
+    log = tmp_path / "frames.jsonl"
+    monkeypatch.setenv("FAKE_ACP_LOG", str(log))
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "WAIT_CANCEL", cancel_on_delta=True)
+    frames = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert any(frame.get("method") == "session/cancel" for frame in frames)
+    assert _finished(events)["status"] == "cancelled"
 
 
 def test_a_fresh_turn_streams_text_reasoning_and_usage(monkeypatch, tmp_path):
@@ -211,3 +240,153 @@ def test_the_turn_slot_is_released_once_after_a_normal_turn(monkeypatch, tmp_pat
     released: list[int] = []
     _turn(monkeypatch, tmp_path, "hello", released=released)
     assert released == [1]
+
+
+@pytest.fixture
+def model_gateway(monkeypatch):
+    """A real loopback gateway with a fake provider, never a vendor connection."""
+    import uvicorn
+    from fastapi import FastAPI
+
+    from jarvis.agent_runtimes import gateway
+    from jarvis.core.protocols import BrainDelta
+    from jarvis.ui.web.runtime_gateway_routes import router
+    from jarvis.ui.web.surface_security import SurfaceSecurity
+
+    state = {"limited": True, "calls": []}
+
+    class Limit(Exception):
+        status_code = 429
+        headers = {"Retry-After": "60"}
+
+    async def deltas(grant, model, request):
+        state["calls"].append((grant, request))
+        if state["limited"]:
+            raise Limit("private provider body")
+        yield BrainDelta(content="I review contributor pull requests for security issues.")
+        yield BrainDelta(finish_reason="stop")
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    gateway.reset()
+    app = FastAPI()
+    app.include_router(router)
+    secured = SurfaceSecurity(app, control_key_validator=lambda _token: False)
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    server = uvicorn.Server(uvicorn.Config(secured, log_level="critical", lifespan="off"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.started
+        yield f"http://127.0.0.1:{sock.getsockname()[1]}{gateway.BASE_PATH}", state
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+        gateway.reset()
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("wait", [False, True], ids=["false-success", "long-retry"])
+def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_question(
+    monkeypatch,
+    tmp_path,
+    model_gateway,
+    wait,
+):
+    from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.base import RuntimeLaunch, RuntimeStatus
+    from jarvis.agent_runtimes.model_map import ModelRoute
+
+    endpoint, state = model_gateway
+    released = []
+    invalidated = []
+
+    class Driver:
+        label = "Fake runtime"
+
+        def detect(self):
+            return RuntimeStatus("hermes", self.label, installed=True, ready=True)
+
+        async def launch(self, turn):
+            env = dict(os.environ)
+            env.update(
+                FAKE_ACP_GATEWAY=endpoint,
+                FAKE_ACP_TOKEN=turn.route.api_key,
+                FAKE_ACP_STORE=str(tmp_path / "gateway-store.json"),
+            )
+            if wait:
+                env["FAKE_ACP_RETRY_WAIT"] = "1"
+            return RuntimeLaunch(
+                argv=[sys.executable, str(_AGENT)],
+                env=env,
+                cwd=tmp_path,
+                acp_resume=turn.resume,
+                release=lambda: released.append(1),
+                invalidate=lambda: invalidated.append(1),
+            )
+
+    async def agent(_agent_id):
+        return SimpleNamespace(
+            agent_id="hermit", name="Hermit", denies=[], grants=[], grant_mode="all",
+        )
+
+    async def route(_cfg, provider, model, *, agent_id, account_id, session_id):
+        return ModelRoute(
+            provider,
+            model,
+            endpoint,
+            "chat_completions",
+            gateway.grant_token(agent_id, provider, account_id, scope=session_id),
+        )
+
+    monkeypatch.setattr(runner_acp, "driver", lambda _name: Driver())
+    monkeypatch.setattr(runner_acp, "_agent", agent)
+    monkeypatch.setattr(runner_acp, "_config", lambda: None)
+    monkeypatch.setattr(runner_acp, "prepare_route", route)
+
+    async def run(vendor=None):
+        events = []
+
+        async def emit(event):
+            events.append(event)
+
+        async def ask(*args):
+            pytest.fail("The test asks no tool permission")
+
+        handle = TurnHandle(
+            session=_session(tmp_path, vendor=vendor, mode="ask"),
+            turn_id="test-rate-limit",
+            emit=emit,
+            request_approval=ask,
+            cancel=asyncio.Event(),
+        )
+        result = await asyncio.wait_for(
+            rc.run_cli_turn(handle, "Was ist deine Aufgabe", "hermes-cli"),
+            timeout=10,
+        )
+        return result, events
+
+    vendor, events = asyncio.run(run())
+    assert _finished(events)["status"] == "error"
+    assert "HTTP 429" in _finished(events)["error"]
+    assert "/continue" in _finished(events)["error"]
+    assert _texts(events) == []
+    assert len(state["calls"]) == 1 and released == [1]
+    assert invalidated == [1]
+    assert not gateway._FAILURES
+    history = json.loads((tmp_path / "gateway-store.json").read_text(encoding="utf-8"))
+    assert any("Was ist deine Aufgabe" in prompt for turns in history.values() for prompt in turns)
+
+    # Simulate the provider's cooldown expiring, then resume the saved session.
+    gateway._COOLDOWNS.clear()
+    state["limited"] = False
+    _, recovered = asyncio.run(run(vendor))
+    assert _finished(recovered)["status"] == "done"
+    assert _texts(recovered) == ["I review contributor pull requests for security issues."]
+    assert len(state["calls"]) == 2 and released == [1, 1]
+    assert invalidated == [1]  # Healthy recovery keeps its persistent gateway.
+    assert not gateway._FAILURES

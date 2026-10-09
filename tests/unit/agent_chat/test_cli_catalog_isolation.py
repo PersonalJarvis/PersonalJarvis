@@ -71,7 +71,7 @@ async def test_catalog_route_uses_session_seat_and_keeps_empty_results(monkeypat
         default_cwd=lambda surface: str(tmp_path),
     )
     monkeypatch.setattr(agent_accounts, "resolve", lambda account: SimpleNamespace(id=account))
-    monkeypatch.setattr(routes, "_service", lambda request: service)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(agent_chat=service)))
     monkeypatch.setattr(routes, "_cli_installed", lambda runner: True)
     seen = []
 
@@ -81,7 +81,7 @@ async def test_catalog_route_uses_session_seat_and_keeps_empty_results(monkeypat
 
     monkeypatch.setattr(routes, "_live_cli_models", live)
     before = rc.ACCOUNT_OVERRIDE.get()
-    result = await routes.get_catalog(None, session_id="chat", account_id="wrong-seat")
+    result = await routes.get_catalog(request, session_id="chat", account_id="wrong-seat")
     assert seen == [("seat-two", tmp_path)]
     assert rc.ACCOUNT_OVERRIDE.get() == before
     codex = next(row for row in result["providers"] if row["id"] == "openai-codex")

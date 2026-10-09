@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentChatCatalog, AgentChatEvent, AgentChatSession } from "@/lib/agentChatApi";
+import { AgentChatApiError, type AgentChatCatalog, type AgentChatEvent, type AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
@@ -147,5 +147,53 @@ describe("a coding agent's questions and plans in a thread", () => {
     expect(screen.queryByText("Always allow")).toBeNull();
     await act(async () => { fireEvent.click(screen.getByTestId("thread-approve")); });
     expect(api.resolveAgentChatApproval).toHaveBeenCalledWith("s1", "a1", "allow");
+  });
+});
+
+describe("a thread's approval card", () => {
+  function ask(approvalId: string, callId: string, command: string): [string, Record<string, unknown>] {
+    return ["approval_required", { turn_id: "t1", approval_id: approvalId, call_id: callId, name: "Bash", input: { command }, summary: command }];
+  }
+
+  it("closes as soon as the backend took the answer, and stays closed for one click", async () => {
+    await openThread();
+    feed([ask("a1", "c1", "ls")]);
+    let finish: () => void = () => undefined;
+    api.resolveAgentChatApproval.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    fireEvent.click(screen.getByTestId("thread-approve"));
+    // On its way: every button holds still, so a second click cannot answer twice.
+    for (const button of screen.getByTestId("thread-approval").querySelectorAll("button")) {
+      expect((button as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.click(screen.getByTestId("thread-approve"));
+    await act(async () => { finish(); });
+    expect(api.resolveAgentChatApproval).toHaveBeenCalledTimes(1);
+    // Gone before the socket's approval_resolved arrived.
+    expect(screen.queryByTestId("thread-approval")).toBeNull();
+  });
+
+  it("drops a card the backend says expired and shows the live one behind it", async () => {
+    await openThread();
+    // 2026-10-06: the card from before a restart sat on top of the live one.
+    feed([ask("old", "c1", "ls"), ask("live", "c2", "git log")]);
+    expect(screen.getByTestId("thread-approval-count").textContent).toBe("1 of 2");
+    api.resolveAgentChatApproval.mockRejectedValueOnce(new AgentChatApiError("expired", 410));
+    await act(async () => { fireEvent.click(screen.getByTestId("thread-approve")); });
+    const card = screen.getByTestId("thread-approval");
+    expect(card.textContent).toContain("git log");
+    expect(card.querySelector("[role=alert]")).toBeNull();
+    expect(screen.queryByTestId("thread-approval-count")).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByTestId("thread-approve")); });
+    expect(api.resolveAgentChatApproval).toHaveBeenLastCalledWith("s1", "live", "allow");
+  });
+
+  it("keeps the card and says why when the answer did not go through", async () => {
+    await openThread();
+    feed([ask("a1", "c1", "ls")]);
+    api.resolveAgentChatApproval.mockRejectedValueOnce(new AgentChatApiError("server error", 500));
+    await act(async () => { fireEvent.click(screen.getByTestId("thread-approve")); });
+    const card = screen.getByTestId("thread-approval");
+    expect(card.querySelector("[role=alert]")?.textContent).toBe("server error");
+    expect((screen.getByTestId("thread-approve") as HTMLButtonElement).disabled).toBe(false);
   });
 });

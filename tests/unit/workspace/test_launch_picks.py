@@ -73,7 +73,9 @@ def test_codex_effort_is_a_config_override_not_a_flag() -> None:
     literal string, so quotes here would end up inside the setting.
     """
     argv = launch_picks.launch_argv("codex", effort="xhigh")
-    assert argv == ("-c", "model_reasoning_effort=xhigh")
+    assert argv == (
+        "-c", "model_reasoning_effort=xhigh", "--dangerously-bypass-approvals-and-sandbox"
+    )
 
 
 def test_codex_permission_words_are_sandbox_flags() -> None:
@@ -88,7 +90,9 @@ def test_codex_permission_words_are_sandbox_flags() -> None:
 
 def test_a_model_the_cli_does_not_offer_is_dropped() -> None:
     """A stale pick costs the CLI's own default, never a pane that will not start."""
-    assert launch_picks.launch_argv("codex", model="claude-opus-5") == ()
+    assert launch_picks.launch_argv("codex", model="claude-opus-5") == (
+        "--dangerously-bypass-approvals-and-sandbox",
+    )
     assert launch_picks.normalize_model("codex", "claude-opus-5") == ""
 
 
@@ -96,7 +100,7 @@ def test_a_flag_cannot_be_smuggled_in_as_a_model() -> None:
     """These strings come from a browser; an argv reads a stray flag as an order."""
     for hostile in ("--dangerously-skip-permissions", "-c evil=1", "a b", "$(whoami)", "x;y"):
         assert launch_picks.normalize_model("opencode", hostile) == "", hostile
-        assert launch_picks.launch_argv("opencode", model=hostile) == (), hostile
+        assert launch_picks.launch_argv("opencode", model=hostile) == ("--auto",), hostile
 
 
 def test_a_cli_with_no_published_list_takes_the_users_own_id() -> None:
@@ -104,13 +108,15 @@ def test_a_cli_with_no_published_list_takes_the_users_own_id() -> None:
     assert launch_picks.launch_argv("opencode", model="anthropic/claude-opus-5") == (
         "--model",
         "anthropic/claude-opus-5",
+        "--auto",
     )
 
 
-def test_an_unknown_permission_mode_is_dropped_never_folded() -> None:
-    """Landing near a stance is worse than landing on the CLI's ask-first default."""
-    assert launch_picks.normalize_permission("claude", "full-access") == ""
-    assert launch_picks.launch_argv("claude", permission_mode="full-access") == ()
+def test_an_unknown_permission_mode_is_rejected_never_widened() -> None:
+    with pytest.raises(ValueError, match="Unsupported permission mode"):
+        launch_picks.normalize_permission("claude", "full-access")
+    with pytest.raises(ValueError, match="Unsupported permission mode"):
+        launch_picks.launch_argv("claude", permission_mode="full-access")
 
 
 def test_an_effort_off_the_ladder_snaps_down_never_up() -> None:
@@ -170,8 +176,7 @@ def test_offered_answers_in_the_composers_own_shape() -> None:
         "default_permission_mode",
     }
     assert offered["default_effort"] in offered["effort_levels"]
-    # A pane opens in the CLI's own stance until somebody picks another.
-    assert offered["default_permission_mode"] == ""
+    assert offered["default_permission_mode"] == "bypassPermissions"
 
 
 def test_a_live_list_replaces_the_curated_one() -> None:

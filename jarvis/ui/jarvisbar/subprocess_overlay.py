@@ -829,11 +829,8 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._send({"op": "set_visible", "visible": self._user_visible})
 
     def toggle_visible(self) -> None:
-        # The host knows whether the pet is on screen; this proxy only guesses.
-        # The guess matters for one thing: a respawn replaying a hidden pet.
-        # It is an optimistic mirror: the host sends no confirmation, so
-        # ``pet_user_hidden`` (and the REST ``visible`` built on it) can drift
-        # if the host drops the command; the next set_visible re-syncs it.
+        # Mirror optimistically; the host confirms the result and also reports
+        # right-click dismissal so settings and crash recovery stay in sync.
         self._user_visible = not self._user_visible
         self._send({"op": "toggle_visible"})
 
@@ -854,6 +851,9 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
         self._send({"op": "set_notifications_enabled", "enabled": self._notifications_enabled})
 
     def _dispatch_event(self, msg: dict[str, Any]) -> None:
+        if msg.get("event") == "visibility_changed":
+            self._user_visible = bool(msg.get("visible", True))
+            return
         if msg.get("event") == "notify_toggle":
             self._notifications_enabled = bool(msg.get("enabled", True))
             return

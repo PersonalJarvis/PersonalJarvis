@@ -14,6 +14,9 @@ export interface CuratedModel {
   efforts?: string[];
   /** A short note for the picker's hint ("retires 2026-08-31"). */
   note?: string;
+  /** Catalog capabilities; absent/null means unknown, not unsupported. */
+  tools?: boolean | null;
+  vision?: boolean | null;
 }
 
 export interface PermissionModeOption {
@@ -231,6 +234,7 @@ export class AgentChatApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code: string = "",
   ) {
     super(message);
     this.name = "AgentChatApiError";
@@ -240,13 +244,19 @@ export class AgentChatApiError extends Error {
 async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
     let detail = what;
+    let code = "";
     try {
       const body = (await res.json()) as { detail?: unknown };
       if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail === "object") {
+        const structured = body.detail as { code?: unknown; message?: unknown };
+        if (typeof structured.code === "string") code = structured.code;
+        if (typeof structured.message === "string") detail = structured.message;
+      }
     } catch {
       /* no JSON body — keep the generic label */
     }
-    throw new AgentChatApiError(detail, res.status);
+    throw new AgentChatApiError(detail, res.status, code);
   }
   return (await res.json()) as T;
 }
@@ -344,11 +354,14 @@ export interface LiveModel {
   id: string;
   label?: string;
   name?: string;
+  tools?: boolean | null;
+  vision?: boolean | null;
 }
 
 /** The provider's live model list (brain catalog route); [] when the route has none. */
-export async function fetchProviderModels(providerId: string): Promise<LiveModel[]> {
+export async function fetchProviderModels(providerId: string, { strict = false }: { strict?: boolean } = {}): Promise<LiveModel[]> {
   const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`);
+  if (!res.ok && strict) throw new Error(`Model catalog request failed: HTTP ${res.status}`);
   if (!res.ok) return [];
   const data = (await res.json()) as { models?: unknown } | unknown[];
   const raw = Array.isArray(data) ? data : Array.isArray(data.models) ? data.models : [];
@@ -544,10 +557,12 @@ export function attachmentFileUrl(cwd: string, reference: string): string {
   return `/api/agent-chat/attachments/file?${query.toString()}`;
 }
 
-export async function cancelAgentChatTurn(sessionId: string): Promise<void> {
+/** `via` names what asked for the stop, so the backend log can say who ended a turn. */
+export async function cancelAgentChatTurn(sessionId: string, via = ""): Promise<void> {
   await json(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/cancel`, {
       method: "POST",
+      ...(via ? { headers: { "X-Jarvis-Stop-Via": via } } : {}),
     }),
     "cancel-failed",
   );
@@ -613,24 +628,41 @@ function credentialUrl(sessionId: string, requestId: string): string {
   return `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/credentials/${encodeURIComponent(requestId)}`;
 }
 
+export interface CredentialResult {
+  ok: boolean;
+  request_id: string;
+  status: "saved" | "declined";
+}
+
+/** Bound a submission, never the time the person has to enter a credential. */
+async function credentialRequest(url: string, init: RequestInit): Promise<CredentialResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    return await json<CredentialResult>(await fetch(url, { ...init, signal: controller.signal }), "credential-failed");
+  } catch (error) {
+    if (controller.signal.aborted) throw new AgentChatApiError("credential-timeout", 408, "validation_timeout");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Save the secret an agent asked for. The value goes to the agent's vault and
  * nowhere else; the response never echoes it.
  */
-export async function submitAgentChatCredential(sessionId: string, requestId: string, value: string): Promise<void> {
-  await json(
-    await fetch(credentialUrl(sessionId, requestId), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value }),
-    }),
-    "credential-failed",
-  );
+export async function submitAgentChatCredential(sessionId: string, requestId: string, value: string): Promise<CredentialResult> {
+  return credentialRequest(credentialUrl(sessionId, requestId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
 }
 
 /** Close an agent's credential field without providing the secret. */
-export async function declineAgentChatCredential(sessionId: string, requestId: string): Promise<void> {
-  await json(await fetch(`${credentialUrl(sessionId, requestId)}/decline`, { method: "POST" }), "credential-failed");
+export async function declineAgentChatCredential(sessionId: string, requestId: string): Promise<CredentialResult> {
+  return credentialRequest(`${credentialUrl(sessionId, requestId)}/decline`, { method: "POST" });
 }
 
 /** A coding agent's plan card: `build` switches to building and sends the go-ahead. */

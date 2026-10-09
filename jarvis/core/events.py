@@ -2074,6 +2074,7 @@ class BrowserVoiceRequested(Event):
     """A desktop trigger hands a voice call to the browser media owner."""
 
     action: Literal["start", "stop"] = "start"
+    request_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

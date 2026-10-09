@@ -83,6 +83,7 @@ class FakeDriver:
 @pytest.fixture
 def fakes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "runtimes_root", lambda: tmp_path)
     drivers = {"hermes": FakeDriver("hermes"), "openclaw": FakeDriver("openclaw", exit_code=3)}
     monkeypatch.setattr(runtimes, "_DRIVERS", drivers)
     monkeypatch.setattr(manager, "_JOBS", {})
@@ -94,6 +95,7 @@ def fakes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def unset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Runtimes that are not set up yet: Hermes missing, OpenClaw outdated."""
     monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path)
+    monkeypatch.setattr(manager, "runtimes_root", lambda: tmp_path)
     drivers = {
         "hermes": FakeDriver("hermes", ready=False, installed=False, marker=tmp_path / "h.ok"),
         "openclaw": FakeDriver(

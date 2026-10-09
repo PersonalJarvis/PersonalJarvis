@@ -72,7 +72,7 @@ def test_override_chain_is_exactly_the_pick() -> None:
     assert mgr._router_lead_key is None
 
 
-def test_override_on_a_tool_incapable_pick_keeps_the_router_lead() -> None:
+def test_override_on_a_tool_incapable_pick_never_bills_another_provider() -> None:
     mgr = _manager()
     scoped, unscoped = _seed(mgr, scoped_text="x")
     unscoped.supports_tools = False  # the capability probe reads the unscoped instance
@@ -89,9 +89,9 @@ def test_override_on_a_tool_incapable_pick_keeps_the_router_lead() -> None:
         chain = mgr._build_fallback_chain("deep")
     finally:
         _TURN_OVERRIDE.reset(token)
-    assert chain == [("gemini", "gemini-flash"), (PICK, PICK_MODEL)]
-    assert mgr._router_lead_key == ("gemini", "gemini-flash")
-    assert seen["exclude"] == PICK, "the lead is picked around the PICK, not the active brain"
+    assert chain == [(PICK, PICK_MODEL)]
+    assert mgr._router_lead_key is None
+    assert seen == {}, "an explicit pick does not authorize helper providers"
 
 
 def test_without_an_override_the_chain_is_the_classic_one() -> None:
@@ -210,10 +210,8 @@ async def test_a_voice_turn_feeds_the_brain_tabs_health() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_fall_through_to_the_pick_never_announces_a_brain_switch() -> None:
-    """Review 2026-08-25: the router lead falls through to the pick at chain index 1,
-    and that used to publish BrainProviderSwitched — the sidebar then showed
-    "Brain -> <chat model>" although the live brain had not moved."""
+async def test_a_tool_incapable_pick_never_calls_or_announces_a_helper() -> None:
+    """The selected seat answers without billing or announcing another provider."""
     from jarvis.core.events import BrainProviderSwitched
 
     mgr = _manager()
@@ -240,8 +238,8 @@ async def test_a_fall_through_to_the_pick_never_announces_a_brain_switch() -> No
     )
 
     assert "PICK_ANSWER" in reply and "LEAD_TALKED" not in reply
-    assert lead.calls and scoped.calls, "the lead ran first, the pick answered"
-    assert switches == [], "a pick answering after its lead is the plan, not a switch"
+    assert not lead.calls and scoped.calls, "only the selected seat may answer"
+    assert switches == [], "an explicit model pick leaves the active voice brain alone"
     assert mgr._active_name == TALKER
 
 

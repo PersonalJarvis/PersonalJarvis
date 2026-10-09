@@ -163,13 +163,14 @@ def default_effort(agent: str) -> str:
 
 
 def default_permission(agent: str) -> str:
-    """The stance a fresh pane opens in when nobody picks one.
+    """Use the shared autonomous default when the CLI can express it."""
+    picks = picks_for(agent)
+    if picks is not None and (key := _ladder_key(picks)):
+        from jarvis.agent_chat.permissions import default_permission as chat_default
 
-    The CLI's OWN default — an empty string — rather than a mode this app
-    chose for it: a pane is a live TUI the person is sitting in front of, so
-    the binary's own out-of-the-box behaviour is the honest starting point and
-    every other stance is something they asked for.
-    """
+        mode = chat_default(key)
+        if picks.permission_argv(mode) is not None:
+            return mode
     return ""
 
 
@@ -187,18 +188,20 @@ def normalize_effort(agent: str, level: str | None) -> str:
 
 
 def normalize_permission(agent: str, mode: str | None) -> str:
-    """Keep ``mode`` when this CLI knows the word, else drop it.
+    """Use the autonomous default for an omitted mode; validate explicit picks.
 
-    No folding onto a neighbouring stance here, unlike the chat runner's
-    ladder: a pane's permission stance is the one thing where landing NEAR
-    what was asked for is worse than landing on the CLI's own default, which
-    at least asks before it acts.
+    Reject unknown explicit choices so a later normalization cannot mistake
+    a discarded choice for an omitted one and widen it to Bypass.
     """
     picks = picks_for(agent)
     wanted = (mode or "").strip()
-    if picks is None or not wanted:
+    if picks is None:
         return ""
-    return wanted if picks.permission_argv(wanted) is not None else ""
+    if not wanted:
+        return default_permission(agent)
+    if picks.permission_argv(wanted) is None:
+        raise ValueError(f"Unsupported permission mode {wanted!r} for {agent}")
+    return wanted
 
 
 def normalize_model(agent: str, model: str | None) -> str:

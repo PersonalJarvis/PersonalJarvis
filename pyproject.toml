@@ -224,6 +224,7 @@ dependencies = [
     "uvicorn>=0.32",
     "websockets>=13",
     "filelock>=3.16",
+    "jsonschema>=4.23",
     "packaging>=24.0",
     # Skill-System + MCP (Phase 1c). The loaders already parse frontmatter via
     # PyYAML, so the redundant python-frontmatter wrapper is not required.
@@ -362,9 +363,11 @@ desktop = [
     # so the dep is unsatisfiable there for every CPython. The indicator's
     # probe already degrades to a logged no-op where PySide6 is absent.
     "pyside6-essentials>=6.7; sys_platform != 'linux' or platform_machine != 'aarch64'",
-    # Wayland screen recording uses Qt's user-approved ScreenCast portal.
-    "pyside6-addons>=6.7; sys_platform == 'linux' and platform_machine != 'aarch64'",
+    # Streaming desktop capture; Wayland uses the user-approved ScreenCast portal.
+    "pyside6-addons>=6.7; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "av>=14; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    # Opt-in screen-recording output loopback; never imported during base boot.
+    "SoundCard>=0.4.6; sys_platform == 'win32' or sys_platform == 'linux'",
     # Drag-drop ONTO the floating overlay (bar/mascot): the cross-platform tkdnd
     # Tcl extension, with bundled binaries for Windows / macOS / Linux. Registered
     # onto the live Tk root in place (jarvis/overlay/drop_target.py). All-platform

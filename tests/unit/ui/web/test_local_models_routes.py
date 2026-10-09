@@ -397,6 +397,26 @@ def test_options_without_a_bakeable_knob_have_no_alias(server, fake, option_writ
     assert body["options"] == {"temperature": 0.2}
 
 
+def test_option_save_and_reset_refresh_the_next_agent_budget(server, option_writes, monkeypatch):
+    from types import SimpleNamespace
+
+    from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+
+    refreshed = []
+    server.app.state.brain = SimpleNamespace(reactivate_provider=refreshed.append)
+    grant = gateway.Grant("agent", "ollama")
+    monkeypatch.setattr(gateway, "_MODEL_LIMITS", {grant: {"model": ModelLimits(128_000)}})
+    with TestClient(server.app) as client:
+        saved = client.put(f"{BASE}/models/qwen3.5:4b/options", json={"num_ctx": 4096})
+        assert saved.status_code == 200 and refreshed == ["ollama"]
+        assert grant not in gateway._MODEL_LIMITS
+        gateway._MODEL_LIMITS[grant] = {"model": ModelLimits(4096)}
+        reset = client.delete(f"{BASE}/models/qwen3.5:4b/options")
+        assert reset.status_code == 200 and refreshed == ["ollama", "ollama"]
+        assert grant not in gateway._MODEL_LIMITS
+
+
 def test_suggested_options_are_judged_against_this_machine(server, fake, monkeypatch) -> None:
     monkeypatch.setattr(ollama_pull, "accelerator_gb", lambda: (16.0, "nvidia-smi"))
     monkeypatch.setattr(ollama_pull, "total_memory_gb", lambda: 32.0)

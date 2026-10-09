@@ -10,7 +10,8 @@
  * A press that turned the camera never ends in a click, and the wheel zooms
  * by how far it turned (see officeCamera.ts).
  */
-import { useEffect, useRef } from "react";
+import { useContext, useEffect, useRef } from "react";
+import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { MOUSE, Vector3, type PerspectiveCamera } from "three";
@@ -42,6 +43,9 @@ export function screenFillDistance(fovDeg: number, aspect: number, width = SCREE
 }
 
 export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; overview: number }) {
+  const active = useContext(CanvasActivity);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const controls = useRef<OrbitControlsImpl>(null);
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
@@ -74,7 +78,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     else viewport?.removeAttribute("data-first-person");
   };
   useEffect(() => () => {
-    cameraView.firstPerson = false;
+    if (activeRef.current) cameraView.firstPerson = false;
     gl.domElement.closest(".office-viewport")?.removeAttribute("data-first-person");
   }, [gl]);
 
@@ -99,7 +103,41 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   // Remember the view when leaving: the pose before a dive, never the inside of a monitor,
   // and the view before sitting down, never the character's eyes.
   const preDive = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
+  useEffect(() => {
+    const store = useOfficeStore.getState();
+    lastZoom.current = store.zoom?.seq ?? 0;
+    lastFocus.current = store.focus?.seq ?? 0;
+    if (active) return;
+    clearTimeout(backOff.current);
+    dive.current = null;
+    flight.current = null;
+    const c = controls.current;
+    const beforeSeat = seated.current.before;
+    const saved = beforeSeat
+      ? { position: beforeSeat.position.toArray() as [number, number, number], target: beforeSeat.target.toArray() as [number, number, number] }
+      : preDive.current;
+    if (saved) {
+      camera.position.set(...saved.position);
+      c?.target.set(...saved.target);
+    }
+    if (beforeSeat) {
+      (camera as PerspectiveCamera).fov = beforeSeat.fov;
+      (camera as PerspectiveCamera).updateProjectionMatrix();
+    }
+    seated.current = { blend: 0, before: null };
+    preDive.current = null;
+    if (c) {
+      c.enabled = false;
+      c.update();
+      officeSession.camera = { position: camera.position.toArray() as [number, number, number], target: c.target.toArray() as [number, number, number] };
+    }
+    officeSession.follow = store.follow;
+    shownFirstPerson.current = false;
+    gl.domElement.closest(".office-viewport")?.removeAttribute("data-first-person");
+  }, [active, camera, gl]);
   useEffect(() => () => {
+    // An inactive retained rig already saved its pose; another visible office may own the session now.
+    if (!activeRef.current) return;
     const c = controls.current;
     const beforeSeat = seated.current.before;
     officeSession.camera = beforeSeat
@@ -114,6 +152,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
 
   // Start where the last visit left off, or close to the character.
   useEffect(() => {
+    if (!active) return;
     if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__office = { camera, controls: controls.current, gl, scene };
     const saved = officeSession.camera;
     if (saved) {
@@ -130,11 +169,11 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     controls.current?.target.copy(target);
     controls.current?.update();
     useOfficeStore.getState().setFollow(true);
-  }, [camera, gl, scene, layout.spawn]);
+  }, [camera, gl, scene, layout.spawn, active]);
 
   // "Overview": frame the whole floor and stop following.
   useEffect(() => {
-    if (overview === 0) return;
+    if (!active || overview === 0) return;
     // Seated in first person the glide would keep the camera in the chair: stand up first.
     if (seated.current.blend > 0 || (layout.command && useLeadSeat.getState().seated === layout.command.id)) leaveFirstPerson();
     const home = cameraHome(layout.bounds, size.width / Math.max(1, size.height));
@@ -156,6 +195,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   // floating label skipped it and kept the last Shift press's "pan", so a
   // plain drag slid the view while the follow dragged it back.
   useEffect(() => {
+    if (!active) return;
     const el = connected ?? gl.domElement;
     const down = (event: PointerEvent) => {
       const c = controls.current;
@@ -165,7 +205,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
     };
     el.addEventListener("pointerdown", down, true);
     return () => el.removeEventListener("pointerdown", down, true);
-  }, [connected, gl]);
+  }, [connected, gl, active]);
 
   // A drag turns the camera and nothing else. R3F still delivers a click when
   // the press ends on the object it started on, so a small turn over the
@@ -174,6 +214,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   // swallowed here, in the capture phase, before R3F or a label sees it.
   // The wheel zooms by how far it turned, not a fixed step per event.
   useEffect(() => {
+    if (!active) return;
     const el = connected ?? gl.domElement;
     let origin: { x: number; y: number } | null = null;
     let dragged = false;
@@ -208,10 +249,11 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
       el.removeEventListener("click", click, true);
       el.removeEventListener("wheel", wheel, true);
     };
-  }, [connected, gl]);
+  }, [connected, gl, active]);
 
   // The near plane follows the zoom, or coplanar layers (oak over slab) fight in bands when zoomed out.
   useFrame(() => {
+    if (!active) return;
     const c = controls.current;
     const lens = camera as PerspectiveCamera;
     if (!c || !lens.isPerspectiveCamera) return;
@@ -222,6 +264,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   });
 
   useFrame((_, rawDt) => {
+    if (!active) return;
     const c = controls.current;
     if (!c) return;
     // Publish the view for the minimap: where the camera stands and which way it looks.
@@ -334,7 +377,7 @@ export function OfficeCameraRig({ layout, overview }: { layout: OfficeLayout; ov
   });
 
   return (
-    <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.12} screenSpacePanning={false}
+    <OrbitControls ref={controls} makeDefault enabled={active} enableDamping dampingFactor={0.12} screenSpacePanning={false}
       minPolarAngle={CAMERA_LIMITS.minPolar} maxPolarAngle={CAMERA_LIMITS.maxPolar}
       minDistance={CAMERA_LIMITS.minDistance} maxDistance={CAMERA_LIMITS.maxDistance} />
   );

@@ -2,7 +2,7 @@
 
 The server is a fake behind ``httpx.MockTransport`` (a real httpx feature, no
 ``unittest.mock``): it records every call so the tests can pin how many
-round-trips a turn costs, which is the whole point of the idempotency memo.
+round-trips a turn costs and whether other callers' profiles survive.
 """
 
 from __future__ import annotations
@@ -110,26 +110,41 @@ async def test_ensure_profile_creates_once_and_is_idempotent() -> None:
     assert create == [
         {"model": alias, "from": "qwen3.5:9b", "parameters": {"num_ctx": 16384}, "stream": False}
     ]
-    # Second call: the process memo answers, no HTTP at all.
+    # Recheck existence without recreating the profile.
     before = len(server.calls)
     assert await ensure_profile(ROOT, "qwen3.5:9b", opts, transport=server.transport) == alias
-    assert len(server.calls) == before
+    assert server.calls[before:] == [("GET", "/api/tags", None)]
     # A fresh process finds the alias on the server and skips the create.
     profiles.reset_process_memo()
     assert await ensure_profile(ROOT, "qwen3.5:9b", opts, transport=server.transport) == alias
     assert server.paths("POST").count("/api/create") == 1
 
 
-async def test_ensure_profile_deletes_the_stale_alias_when_the_hash_changes() -> None:
+async def test_ensure_profile_preserves_other_callers_option_sets() -> None:
     old = profile_name("qwen3.5:9b", OllamaModelOptions(num_ctx=8192))
     other = profile_name("gemma4:12b", OllamaModelOptions(num_ctx=8192))
     server = FakeOllamaServer(["qwen3.5:9b", f"{old}:latest", f"{other}:latest"])
     new_opts = OllamaModelOptions(num_ctx=16384)
     alias = await ensure_profile(ROOT, "qwen3.5:9b", new_opts, transport=server.transport)
     deleted = [b["model"] for m, p, b in server.calls if p == "/api/delete"]
-    assert deleted == [old]  # the other base's alias is left alone
+    assert deleted == []
+    assert f"{old}:latest" in server.models
     assert f"{alias}:latest" in server.models
     assert f"{other}:latest" in server.models
+
+
+async def test_two_agents_can_alternate_context_profiles_and_recover_removal() -> None:
+    server = FakeOllamaServer(["qwen3.5:9b"])
+    small = OllamaModelOptions(num_ctx=4096)
+    large = OllamaModelOptions(num_ctx=8192)
+    first = await ensure_profile(ROOT, "qwen3.5:9b", small, transport=server.transport)
+    second = await ensure_profile(ROOT, "qwen3.5:9b", large, transport=server.transport)
+    assert await ensure_profile(ROOT, "qwen3.5:9b", small, transport=server.transport) == first
+    assert {f"{first}:latest", f"{second}:latest"}.issubset(server.models)
+    server.models.remove(f"{first}:latest")
+    assert await ensure_profile(ROOT, "qwen3.5:9b", small, transport=server.transport) == first
+    assert f"{first}:latest" in server.models
+    assert "/api/delete" not in server.paths()
 
 
 async def test_ensure_profile_without_bakeable_knobs_returns_the_base() -> None:

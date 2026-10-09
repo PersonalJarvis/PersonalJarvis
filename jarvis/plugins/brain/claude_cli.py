@@ -42,7 +42,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -177,6 +177,20 @@ def _probe_supported_flags() -> frozenset[str]:
         return flags
 
 
+def _probe_selected_flags(binary: str, env: Mapping[str, str]) -> frozenset[str]:
+    """Probe a pinned executable under the same account environment as its turn."""
+    try:
+        result = subprocess.run(
+            [binary, "--help"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=_HELP_PROBE_TIMEOUT_S,
+            creationflags=NO_WINDOW_CREATIONFLAGS, env=dict(env),
+        )
+        return frozenset(_FLAG_RE.findall(result.stdout or ""))
+    except (OSError, subprocess.SubprocessError):
+        log.debug("claude-cli: selected --help probe failed", exc_info=True)
+        return frozenset()
+
+
 def reset_flag_probe_cache() -> None:
     """Forget the probed flag set (tests; a CLI upgrade mid-process)."""
     global _supported_flags
@@ -238,12 +252,19 @@ class ClaudeCliBrain:
         model: str | None = None,
         structured_prompts: bool = False,
         cli_timeout_s: float | None = None,
+        spawn_env: Mapping[str, str] | None = None,
+        cli_binary: str = "",
     ) -> None:
+        if spawn_env is not None and not cli_binary:
+            raise ValueError("A selected Claude environment requires its selected executable")
         # No model default: an unset model means "the CLI's own default for this
         # account's plan". Hardcoding an id here would break every user whose
         # plan does not carry it (AP-21).
         self._model = (model or "").strip() or None
         self._structured_prompts = bool(structured_prompts)
+        self._spawn_env = tuple(sorted(spawn_env.items())) if spawn_env is not None else None
+        self._cli_binary = cli_binary
+        self._selected_flags: frozenset[str] | None = None
         try:
             budget = float(cli_timeout_s) if cli_timeout_s is not None else 0.0
         except (TypeError, ValueError):
@@ -287,7 +308,7 @@ class ClaudeCliBrain:
         are added, so an older CLI never sees an option it would die on. ``None``
         reads as "unknown" and keeps the invocation at its lowest common shape.
         """
-        binary = _resolve_claude_binary() or "claude"
+        binary = self._cli_binary or _resolve_claude_binary() or "claude"
         argv: list[str] = [binary, "-p", "--output-format", "text"]
         if self._model:
             argv += ["--model", self._model]
@@ -355,7 +376,8 @@ class ClaudeCliBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         """Run one CLI turn on the subscription and yield its answer."""
-        if _resolve_claude_binary() is None:
+        binary = self._cli_binary or _resolve_claude_binary()
+        if binary is None:
             raise RuntimeError(
                 "Claude CLI not found — install it from https://claude.ai/download "
                 "and run 'claude' once to sign in."
@@ -363,11 +385,19 @@ class ClaudeCliBrain:
 
         # One help spawn per process lifetime: the first turn pays ~2-3 s for
         # the probe, every later turn reads the cached set.
-        cli_flags = (
-            _supported_flags
-            if _supported_flags is not None
-            else await asyncio.to_thread(_probe_supported_flags)
-        )
+        spawn_env = dict(self._spawn_env) if self._spawn_env is not None else None
+        if spawn_env is not None:
+            if self._selected_flags is None:
+                self._selected_flags = await asyncio.to_thread(
+                    _probe_selected_flags, binary, spawn_env
+                )
+            cli_flags = self._selected_flags
+        else:
+            cli_flags = (
+                _supported_flags
+                if _supported_flags is not None
+                else await asyncio.to_thread(_probe_supported_flags)
+            )
         argv, prompt = self.build_invocation(req, cli_flags=cli_flags)
         # A throwaway working directory: this brain answers questions and has no
         # business seeing, or being trusted in, the user's repository.
@@ -390,6 +420,7 @@ class ClaudeCliBrain:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=creationflags,
+                env=spawn_env,
             )
         except (FileNotFoundError, OSError) as exc:
             shutil.rmtree(workdir, ignore_errors=True)

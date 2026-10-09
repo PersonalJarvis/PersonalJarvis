@@ -259,22 +259,24 @@ def _optional_text(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
-def _cli_credential_env() -> dict[str, str] | None:
+def _cli_credential_env(source: Mapping[str, str] | None = None) -> dict[str, str] | None:
     """Supply the POSIX account name native credential lookups require.
 
     GUI launchers normally set ``USER``, but sanitized app environments may not.
     Claude's macOS Keychain lookup treats a missing value as logged out. Returning
     ``None`` preserves normal inheritance when no repair is needed.
     """
-    if os.name != "posix" or os.environ.get("USER"):
-        return None
+    env = dict(source) if source is not None else None
+    current = env if env is not None else os.environ
+    if os.name != "posix" or current.get("USER"):
+        return env
     try:
         user = getpass.getuser().strip()
     except (OSError, KeyError):
-        return None
+        return env
     if not user:
-        return None
-    env = dict(os.environ)
+        return env
+    env = dict(current)
     env["USER"] = user
     return env
 
@@ -519,7 +521,9 @@ class ClaudeAuthService:
         """Shell-free invocation prefix (test seam for Windows npm shims)."""
         return claude_cli_argv_prefix(binary)
 
-    def _probe_cli_auth(self, binary: str) -> ClaudeCliAuthSnapshot | None:
+    def _probe_cli_auth(
+        self, binary: str, *, env: Mapping[str, str] | None = None,
+    ) -> ClaudeCliAuthSnapshot | None:
         """Ask the installed CLI for its native auth state, with a short TTL.
 
         A parsed JSON body is authoritative even when the command exits nonzero
@@ -528,12 +532,14 @@ class ClaudeAuthService:
         releases continue through the on-disk compatibility parser.
         """
         prefix = self._cli_argv_prefix(binary)
+        probe_env = _cli_credential_env(env)
+        account_env = probe_env if probe_env is not None else os.environ
         cache_key = (
             "\0".join(prefix),
-            os.environ.get("CLAUDE_CONFIG_DIR", ""),
-            os.environ.get("HOME", ""),
-            os.environ.get("USERPROFILE", ""),
-            os.environ.get("USER", ""),
+            account_env.get("CLAUDE_CONFIG_DIR", ""),
+            account_env.get("HOME", ""),
+            account_env.get("USERPROFILE", ""),
+            account_env.get("USER", ""),
         )
         now = time.monotonic()
         cached = _AUTH_STATUS_CACHE.get(cache_key)
@@ -542,7 +548,7 @@ class ClaudeAuthService:
         try:
             proc = subprocess.run(
                 [*prefix, "auth", "status", "--json"],
-                env=_cli_credential_env(),
+                env=probe_env,
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",

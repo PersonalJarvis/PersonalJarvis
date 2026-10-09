@@ -1,6 +1,6 @@
 """Map a society agent's Jarvis provider + model onto an external runtime.
 
-Every agent on Hermes or OpenClaw reaches its model through Jarvis' own model
+API-backed agents on Hermes or OpenClaw reach their model through Jarvis' own model
 gateway (``gateway.py``): the runtime is configured with one provider —
 Jarvis, on the app's loopback server — and a per-agent token in its process
 environment (:data:`KEY_ENV_VAR`). Jarvis answers with its own provider
@@ -10,20 +10,22 @@ Completions; the ChatGPT subscription (``openai-codex``) speaks Responses.
 
 This module decides which providers an agent can use right now (a saved key,
 a local server with an address, a signed-in subscription) and builds the
-route. Claude runs on an Anthropic API key or, when none is saved, on the
-person's Claude Code login: Anthropic bills a subscription used outside
-Claude Code as extra usage (pay as you go), so the picker says so.
+route. Claude subscriptions use each runtime's native Claude CLI adapter.
+The official CLI owns login and renewal; Jarvis never forwards its bearer
+to the HTTP gateway or substitutes an API key for a selected subscription.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
 log = logging.getLogger(__name__)
 
-Transport = Literal["chat_completions", "anthropic_messages", "responses"]
+Transport = Literal["chat_completions", "anthropic_messages", "responses", "claude_cli"]
 
 #: The environment variable both runtimes read the model key from.
 KEY_ENV_VAR: Final[str] = "JARVIS_RUNTIME_API_KEY"
@@ -77,9 +79,24 @@ class ModelRoute:
     transport: Transport
     #: ``None`` for a keyless local server.
     api_key: str | None
+    context_window: int = 32_768
+    max_output_tokens: int | None = None
+    claude_binary: str = ""
+    claude_config_dir: str = ""
 
     def env(self) -> dict[str, str]:
-        """The child environment that carries the key (empty when keyless)."""
+        """Only the selected transport's credential or native account location."""
+        if self.transport == "claude_cli":
+            from jarvis.agent_runtimes.base import child_env
+            from jarvis.claude_auth import _cli_credential_env
+
+            selected = (
+                {"CLAUDE_CONFIG_DIR": self.claude_config_dir} if self.claude_config_dir else {}
+            )
+            native = _cli_credential_env(child_env(selected)) or {}
+            if native.get("USER") and not os.environ.get("USER"):
+                selected["USER"] = native["USER"]
+            return selected
         return {KEY_ENV_VAR: self.api_key} if self.api_key else {}
 
 
@@ -93,14 +110,36 @@ def subscription_providers() -> frozenset[str]:
     return frozenset(name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription)
 
 
-def claude_login_token() -> str | None:
-    """The live Claude Code login's bearer, or ``None``. Read-only: only the
-    Claude CLI redeems the refresh token, so an expired login stays unused
-    until Claude Code runs again (a second refresher would break its login)."""
-    from jarvis.claude_credentials import freshest_claude_oauth
+@dataclass(frozen=True, slots=True)
+class _NativeClaude:
+    binary_path: str
+    config_dir: str = ""
 
-    snapshot = freshest_claude_oauth()
-    return snapshot.access_token if snapshot.status == "valid" else None
+
+def claude_subscription_status(account_id: str = "") -> _NativeClaude | None:
+    """Ask the selected account's native CLI without reading its bearer."""
+    from jarvis import agent_accounts
+    from jarvis.agent_chat.catalog import ACCESS_ACCOUNTS
+    from jarvis.agent_runtimes.base import child_env
+    from jarvis.claude_auth import ClaudeAuthService
+
+    requested = account_id if account_id not in ACCESS_ACCOUNTS else ""
+    account = (agent_accounts.resolve(requested) if requested
+               else agent_accounts.active_account("claude"))
+    if account is None or account.platform != "claude":
+        raise RouteUnavailable("The selected Claude subscription account no longer exists.")
+    inherited = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    env = child_env({"CLAUDE_CONFIG_DIR": inherited} if inherited else {})
+    env = agent_accounts.spawn_env("claude", account.id, base=env)
+    service = ClaudeAuthService()
+    binary = service._resolve_binary()
+    if binary is None:
+        return None
+    status = service._probe_cli_auth(binary, env=env)
+    method = (status.auth_method or "").lower() if status is not None else ""
+    if status is not None and status.logged_in and method in {"claude.ai", "oauth", "claudeai"}:
+        return _NativeClaude(binary, env.get("CLAUDE_CONFIG_DIR", ""))
+    return None
 
 
 def _api_key(provider: str, credential: str | None) -> str | None:
@@ -124,25 +163,37 @@ def _saved_key(provider: str, endpoint: _Endpoint) -> str | None:
     return _api_key(provider, resolved.credential)
 
 
-def login_token_for(provider: str, account_id: str = "") -> str | None:
-    """The Claude login ``provider`` answers on, or ``None`` when it runs on
-    an API key (or cannot use a login at all). ``account_id`` may pin the
-    agent to its key or to the login (``catalog.ACCESS_ACCOUNTS``); without a
-    pin the API key wins. Blocking (keyring)."""
-    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+def uses_native_claude(provider: str, account_id: str = "") -> bool:
+    """Select the native seat independently of login availability.
+
+    A disconnected subscription stays a subscription, never a paid fallback.
+    Existing unpinned agents keep using their saved API key when one exists.
+    """
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT
 
     endpoint = _ENDPOINTS.get(provider)
     if endpoint is None or not endpoint.claude_login or account_id == API_KEY_ACCOUNT:
-        return None
-    if account_id != SUBSCRIPTION_ACCOUNT and _saved_key(provider, endpoint) is not None:
-        return None
-    return claude_login_token()
+        return False
+    if not account_id and _saved_key(provider, endpoint) is not None:
+        return False
+    return True
 
 
 def login_providers() -> list[str]:
-    """Usable providers that answer on a Claude login, not an API key: the
-    picker labels them as billed extra usage. Blocking (keyring)."""
-    return [name for name in _ENDPOINTS if login_token_for(name)]
+    """Default routes that use the native subscription CLI. Blocking."""
+    return [
+        name for name in _ENDPOINTS
+        if uses_native_claude(name) and claude_subscription_status()
+    ]
+
+
+def access_blocked() -> dict[str, dict[str, str]]:
+    """Native plan availability is independent of HTTP Extra Usage settings.
+
+    Keep the API field for compatible clients; native quota failures surface
+    from actual user-started turns, never from background inference probes.
+    """
+    return {}
 
 
 def access_choices() -> dict[str, list[str]]:
@@ -156,7 +207,7 @@ def access_choices() -> dict[str, list[str]]:
         found: list[str] = []
         if _saved_key(name, endpoint) is not None:
             found.append("api")
-        if claude_login_token() is not None:
+        if claude_subscription_status() is not None:
             found.append("subscription")
         if found:
             choices[name] = found
@@ -217,6 +268,13 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
             "Pick a model that runs on an API key, a local server or the ChatGPT "
             "subscription."
         )
+    if uses_native_claude(provider, account_id):
+        if claude_subscription_status(account_id) is None:
+            raise RouteUnavailable(
+                "This agent needs a connected Claude Code subscription. Connect Claude "
+                "in Settings → API keys. No API key was used."
+            )
+        return model.strip() or _default_model(config, provider) or "sonnet"
     if endpoint.subscription:
         from jarvis.agent_runtimes import gateway
 
@@ -249,23 +307,11 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
     # The Agents-tier key wins over the shared one, exactly as the gateway uses it.
     key = _api_key(provider, resolved.credential)
     if endpoint.claude_login:
-        from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
-
-        if account_id == API_KEY_ACCOUNT and key is None:
+        if key is None:
             raise RouteUnavailable(
                 "This agent runs on an Anthropic API key, and none is saved. Connect "
                 "one in Settings → API keys, or switch the agent to the subscription."
             )
-        if account_id == SUBSCRIPTION_ACCOUNT and not claude_login_token():
-            raise RouteUnavailable(
-                "This agent runs on the Claude Code login, and it is not live. Open "
-                "Claude Code once to renew it, or switch the agent to an API key."
-            )
-    if key is None and endpoint.claude_login and not claude_login_token():
-        raise RouteUnavailable(
-            "Claude needs an Anthropic API key or a live Claude Code login. Connect "
-            "one in Settings → API keys, or open Claude Code once to renew its login."
-        )
     if key is None and not endpoint.keyless and not endpoint.claude_login:
         raise RouteUnavailable(
             f"No API key is saved for {provider}. Connect it in Settings → API keys."
@@ -276,37 +322,81 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
     return chosen
 
 
-def _check_login_billing(provider: str, model: str, account_id: str) -> None:
-    """Fail before the runtime starts when Anthropic will refuse the Claude
-    login: it bills third-party apps only as Extra Usage (off or spent here).
-    Blocking (keyring, one cached usage GET)."""
-    login = login_token_for(provider, account_id)
-    if not login:
-        return
-    from jarvis.agent_runtimes.provider_errors import login_blocked
-
-    refusal = login_blocked(login, model)
-    if refusal is not None:
-        raise RouteUnavailable(refusal.message)
 
 
 def route_for(
-    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = ""
+    config: Any,
+    provider: str,
+    model: str,
+    *,
+    agent_id: str = "",
+    account_id: str = "",
+    session_id: str = "",
 ) -> ModelRoute:
     """The agent's route through Jarvis' gateway. Blocking (keyring): call it
     in a thread. The token speaks for ``agent_id`` on ``provider`` (and, for
     the subscription, on that Codex ``account_id``)."""
     chosen = _checked_model(config, provider, model, account_id=account_id)
-    _check_login_billing(provider, chosen, account_id)
     from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.base import home_key
+    from jarvis.agent_runtimes.model_limits import resolve_limits
+    from jarvis.brain.model_catalog import ModelCatalog
 
+    limits = resolve_limits(config, provider, chosen, ModelCatalog().cached_model(provider, chosen))
+    if uses_native_claude(provider, account_id):
+        status = claude_subscription_status(account_id)
+        if status is None:
+            raise RouteUnavailable(
+                "The Claude Code subscription disconnected. Reconnect it in Settings."
+            )
+        return ModelRoute(
+            provider=provider, model=chosen, base_url="", transport="claude_cli", api_key=None,
+            context_window=limits.context_window, max_output_tokens=limits.max_output_tokens,
+            claude_binary=status.binary_path,
+            claude_config_dir=status.config_dir,
+        )
+    try:
+        gateway.check_cooldown(provider, chosen, account_id)
+    except gateway.GatewayError as exc:
+        raise RouteUnavailable(str(exc)) from exc
     base_url = gateway.base_url()
     if not base_url:
         raise RouteUnavailable("Jarvis' model gateway is not up yet. Try again in a moment.")
+    token = gateway.grant_token(
+        agent_id, provider, account_id,
+        scope=home_key(agent_id, session_id) if session_id else "",
+        require_active_turn=True,
+    )
+    gateway.register_model(token, chosen, limits)
     return ModelRoute(
         provider=provider,
         model=chosen,
         base_url=base_url,
         transport="responses" if _ENDPOINTS[provider].subscription else "chat_completions",
-        api_key=gateway.grant_token(agent_id, provider, account_id),
+        api_key=token,
+        context_window=limits.context_window,
+        max_output_tokens=limits.max_output_tokens,
+    )
+
+
+async def prepare_route(
+    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = "",
+    session_id: str = "",
+) -> ModelRoute:
+    """Refresh catalog metadata before writing either runtime's configuration."""
+    from jarvis.agent_runtimes import gateway
+
+    route = await asyncio.to_thread(
+        route_for, config, provider, model, agent_id=agent_id, account_id=account_id,
+        session_id=session_id,
+    )
+    if route.transport == "claude_cli":
+        return route
+    assert route.api_key is not None
+    grant = gateway.verify(route.api_key)
+    assert grant is not None
+    limits = await gateway.refresh_model_limits(grant, route.model, config)
+    gateway.register_model(route.api_key, route.model, limits)
+    return replace(
+        route, context_window=limits.context_window, max_output_tokens=limits.max_output_tokens
     )

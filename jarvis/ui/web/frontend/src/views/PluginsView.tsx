@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   type QueryClient,
   useMutation,
@@ -59,6 +59,8 @@ import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { bundledPluginLogo as bundledLogo } from "@/lib/pluginLogos";
+
+const CustomApisView = lazy(() => import("@/views/CustomApisView").then((module) => ({ default: module.CustomApisView })));
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror the JSON shape served by /api/marketplace/plugins.
@@ -591,7 +593,7 @@ const WINDOW_CATEGORY_ORDER = [
 export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   const qc = useQueryClient();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const [view, setView] = useState<"list" | "community">("list");
+  const [view, setView] = useState<"list" | "community" | "custom-apis">("list");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listFilter, setListFilter] = useState<ListFilter>(inDialog ? "recommended" : "all");
   // Which half of the "Add a plugin" dialog is open: a server URL or a folder.
@@ -1138,7 +1140,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
     <div className="flex h-full min-h-0 flex-col bg-transparent">
       {inDialog && view === "list" && !selectedId ? content : (
         <ScrollArea className="flex-1">
-          <div className={cn("mx-auto w-full max-w-4xl px-8 py-6", inDialog && "pt-12")}>{content}</div>
+          <div className={cn("mx-auto w-full max-w-4xl px-8 py-6", inDialog && (view === "custom-apis" ? "px-6 pt-5" : "pt-12"))}>{content}</div>
         </ScrollArea>
       )}
       {dialogs}
@@ -1146,6 +1148,12 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
   );
 
   // ---- Community marketplace (the "Browse" page) --------------------------
+  if (view === "custom-apis") {
+    return shell(<Suspense fallback={<p>{translate("custom_apis.loading")}</p>}>
+      <CustomApisView onBack={() => setView("list")} />
+    </Suspense>);
+  }
+
   if (view === "community") {
     return shell(
       <>
@@ -1199,6 +1207,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
         loading={isLoading} error={error instanceof Error ? error.message : null}
         refreshing={isFetching} onRefresh={() => void refetch()}
         onBrowse={() => setView("community")} onAdd={setAddMode}
+        onCustomApis={() => setView("custom-apis")}
         onOpen={setSelectedId} onConnect={handleConnect} onDisconnect={handleDisconnect}
         onReset={() => { resetFilters(); setListFilter("all"); }}
         attention={attentionPlugins.length} subtitle={subtitle}
@@ -1230,6 +1239,7 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
             <SoftButton onClick={() => setView("community")} className="ml-1">
               {translate("plugins_view.browse")}
             </SoftButton>
+            <SoftButton onClick={() => setView("custom-apis")}>{translate("custom_apis.title")}</SoftButton>
             <ActionMenu
               label={translate("plugins_view.add")}
               actions={[
@@ -1369,13 +1379,14 @@ export function PluginsView({ inDialog = false }: { inDialog?: boolean } = {}) {
 function PluginWindowCatalog({
   plugins, installed, total, listFilter, onListFilter, query, onQuery,
   category, categories, onCategory, loading, error, refreshing, onRefresh,
-  onBrowse, onAdd, onOpen, onConnect, onDisconnect, onReset, attention, subtitle,
+  onBrowse, onAdd, onCustomApis, onOpen, onConnect, onDisconnect, onReset, attention, subtitle,
 }: {
   plugins: Plugin[]; installed: Plugin[]; total: number; listFilter: ListFilter;
   onListFilter: (value: ListFilter) => void; query: string; onQuery: (value: string) => void;
   category: string; categories: string[]; onCategory: (value: string) => void;
   loading: boolean; error: string | null; refreshing: boolean; onRefresh: () => void;
   onBrowse: () => void; onAdd: (mode: AddPluginMode) => void; onOpen: (id: string) => void;
+  onCustomApis: () => void;
   onReset: () => void; attention: number; subtitle: string;
 } & ConnectHandlers) {
   const tabs: { id: ListFilter; label: string; count?: number }[] = [
@@ -1398,6 +1409,7 @@ function PluginWindowCatalog({
               <RefreshCw className="h-3.5 w-3.5" />
             </IconButton>
             <SoftButton onClick={onBrowse}>{translate("plugins_view.browse")}</SoftButton>
+            <SoftButton onClick={onCustomApis}>{translate("custom_apis.title")}</SoftButton>
             <ActionMenu
               label={translate("plugins_view.add")}
               actions={[

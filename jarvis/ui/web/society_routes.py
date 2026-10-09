@@ -83,7 +83,11 @@ def _validated_chat_runner(
     account_id: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
-    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.permissions import (
+        default_permission,
+        normalize_permission,
+        society_mode_supported,
+    )
     from jarvis.agent_chat.service import resolve_runner
 
     chosen_runtime = str(agent.runtime)
@@ -105,6 +109,9 @@ def _validated_chat_runner(
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
+    if not mode and agent.agent_id == rt.lead_id:
+        # The lead uses the app's chat policy; NULL is not a legacy Ask choice.
+        mode = default_permission("jarvis")
     if mode and not society_mode_supported(runner, mode):
         raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
     ceiling = str(
@@ -1963,9 +1970,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     """Create a NEW agent from a template on this install's own model.
 
     Shared by the import route below and the marketplace's install-by-name.
-    The agent asks before it acts where its runner can (``approval_mode=ask``):
-    its instructions were written by somebody else, so the person sees its
-    first moves before trusting it with more.
+    Use the normal creation defaults, including Bypass permissions. Explicit
+    template approval rules and any creator restrictions still apply.
     """
     from jarvis.society.agent_template import TemplateError, create_fields
 
@@ -1977,15 +1983,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     wanted = fields.pop("name")
     name = await _free_agent_name(rt, wanted)
     scope = template.get("knowledge_scope", "shared")
-    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
-    try:
-        created = await create_agent(body, request)
-    except HTTPException as exc:
-        if exc.status_code != 422:
-            raise
-        # This runner cannot hold an approval prompt: the app's default applies.
-        body = CreateAgentBody(name=name, **fields)
-        created = await create_agent(body, request)
+    body = CreateAgentBody(name=name, **fields)
+    created = await create_agent(body, request)
     agent_row = created["agent"]
     if scope == "own" and agent_row.get("knowledge_scope") != "own":
         try:

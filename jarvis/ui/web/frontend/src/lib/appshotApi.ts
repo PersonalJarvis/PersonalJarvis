@@ -22,6 +22,10 @@ export interface AppshotSettings {
   /** Shortcut for an area appshot: drag a rectangle, that part is captured. */
   region_hotkey: string;
   recording_hotkey?: string;
+  recording_resolution?: "720p" | "1080p" | "1440p" | "2160p" | "native";
+  recording_fps?: 30 | 60 | 120;
+  recording_bitrate_mbps?: number;
+  recording_system_audio?: boolean;
   recording_shortcut?: AppshotShortcutStatus;
   target: AppshotTarget;
   sound: boolean;
@@ -63,6 +67,7 @@ export type AppshotSettingsPatch = Partial<
     AppshotSettings,
     "enabled" | "hotkey" | "region_hotkey" | "recording_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
     | "copy_to_clipboard" | "keep_newest"
+    | "recording_resolution" | "recording_fps" | "recording_bitrate_mbps" | "recording_system_audio"
   >
 >;
 
@@ -202,6 +207,8 @@ export interface AppshotLibraryItem {
   edited_at: number;
   /** An original that also has an edited version. */
   has_edit: boolean;
+  /** Finalized recording duration; absent for screenshots and older backends. */
+  duration_s?: number;
 }
 
 export function fetchAppshotLibrary(): Promise<{ items: AppshotLibraryItem[]; max_entries: number }> {
@@ -256,7 +263,16 @@ export interface AppshotRecording {
   duration_s?: number;
   width?: number;
   height?: number;
-  capability?: { available: boolean; detail: string; permission_required: boolean };
+  fps?: number;
+  bitrate_mbps?: number;
+  system_audio?: boolean;
+  display_name?: string;
+  refresh_hz?: number;
+  dropped_frames?: number;
+  capability?: {
+    available: boolean; detail: string; permission_required: boolean;
+    system_audio?: { available: boolean; detail: string };
+  };
   recent?: { id: string; created_at: number }[];
 }
 
@@ -277,4 +293,39 @@ export function requestRecordingPermission(): Promise<unknown> {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ feature: "appshot" }),
   });
+}
+
+// -- video editor: play, trim and speed up a finished recording ---------------
+
+/** Speeds the video editor offers; mirrored by `SPEEDS` in `jarvis.appshot.video_edit`. */
+export const RECORDING_SPEEDS = [0.5, 1, 1.5, 2] as const;
+
+/** Write the trim and speed as a new recording; returns its id (the same id when unchanged). */
+export function exportAppshotRecording(
+  id: string,
+  clip: { start_s: number; end_s: number; speed: number },
+): Promise<{ id: string }> {
+  return request(`/api/appshot/recording/${encodeURIComponent(id)}/export`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(clip),
+  });
+}
+
+/** Copy a recording into Downloads on the machine running Jarvis (desktop only). */
+export function saveAppshotRecording(id: string): Promise<{ path: string; filename: string }> {
+  return request(`/api/appshot/recording/${encodeURIComponent(id)}/save`, { method: "POST" });
+}
+
+/** Open the video editor window on a recording; `false` where no window can open. */
+export async function openAppshotRecordingEditor(id: string): Promise<boolean> {
+  try {
+    const body = await request<{ window?: unknown }>(
+      `/api/appshot/recording/${encodeURIComponent(id)}/open-editor`,
+      { method: "POST" },
+    );
+    return body?.window === true;
+  } catch {
+    return false;
+  }
 }
