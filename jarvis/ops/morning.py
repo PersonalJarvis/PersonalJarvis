@@ -5,13 +5,13 @@ DST-correct), each ONE recurring task in the ordinary task scheduler whose
 ``tool_call`` action runs :class:`MorningBriefingTool` through the
 ``ToolExecutor`` (AP-3):
 
-- **prepare** (default 08:30) — composes the morning briefing and stores it
+- **prepare** (default 06:30) — composes the morning briefing and stores it
   (:class:`BriefingSnapshotStore`). Nothing is said or sent: the briefing
   stands ready for the person to ask for ("what's on today?"). A voice
   question is answered live; when the calendar cannot be read at that
   moment, this prepared version answers instead, with its time.
-- **overview** (default 09:00) — reads the calendar again (changes since
-  08:30 count) and sends the day's overview through the
+- **overview** (default 07:00) — reads the calendar again (changes since
+  06:30 count) and sends the day's overview through the
   :class:`~jarvis.ops.notify.OwnerNotifier` — whether or not the briefing
   was already heard by voice. Its dedup key is the day AND the slot, so a
   second firing (restart, "Run now") of the same slot sends nothing twice.
@@ -59,8 +59,8 @@ TASK_TITLES: Final[dict[str, str]] = {
     TASK_TAG_PREPARE: "Morning briefing (prepare)",
     TASK_TAG_OVERVIEW: "Daily overview (Telegram)",
 }
-DEFAULT_PREPARE_TIME: Final = "08:30"
-DEFAULT_OVERVIEW_TIME: Final = "09:00"
+DEFAULT_PREPARE_TIME: Final = "06:30"
+DEFAULT_OVERVIEW_TIME: Final = "07:00"
 MODES: Final[tuple[str, ...]] = ("prepare", "overview")
 
 _SCHEMA = """

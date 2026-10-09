@@ -104,6 +104,9 @@ class Briefing:
     sections: tuple[BriefingSection, ...]
     text: str
     sources: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    #: sources that could not be read this time ("work", "priorities",
+    #: "categories", or an extension name); the briefing is built without them
+    unavailable: tuple[str, ...] = ()
 
     def section(self, key: str) -> BriefingSection:
         return next(s for s in self.sections if s.key == key)
@@ -115,6 +118,7 @@ class Briefing:
             "sections": [s.to_dict() for s in self.sections],
             "text": self.text,
             "sources": list(self.sources),
+            "unavailable": list(self.unavailable),
         }
 
 
@@ -326,6 +330,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "cal_empty": "No upcoming appointments today.",
         "cal_not_connected": "Calendar not connected.",
         "cal_unavailable": "Calendar could not be read.",
+        "sources_down": "Not reachable right now: {list}.",
+        "src_work": "work items",
+        "src_priorities": "priority marks",
+        "src_categories": "category rules (entries left out to be safe)",
         "all_day": "all day",
         "capacity_decision": "waiting for subscription capacity — wait or approve a paid run",
         "st_queued": "queued",
@@ -369,6 +377,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "cal_empty": "Heute keine anstehenden Termine.",  # i18n-allow
         "cal_not_connected": "Kalender nicht verbunden.",  # i18n-allow
         "cal_unavailable": "Kalender konnte nicht gelesen werden.",  # i18n-allow
+        "sources_down": "Gerade nicht erreichbar: {list}.",  # i18n-allow
+        "src_work": "Aufgaben",  # i18n-allow
+        "src_priorities": "Prioritäten",  # i18n-allow
+        "src_categories": "Kategorie-Regeln (Einträge vorsichtshalber ausgelassen)",  # i18n-allow
         "all_day": "ganztägig",  # i18n-allow
         "capacity_decision": (
             "wartet auf Abo-Kapazität — warten oder bezahlten Lauf freigeben"  # i18n-allow
@@ -413,6 +425,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "cal_empty": "Hoy no hay más citas.",  # i18n-allow
         "cal_not_connected": "Calendario no conectado.",  # i18n-allow
         "cal_unavailable": "No se pudo leer el calendario.",  # i18n-allow
+        "sources_down": "Ahora no disponible: {list}.",  # i18n-allow
+        "src_work": "tareas",  # i18n-allow
+        "src_priorities": "prioridades",  # i18n-allow
+        "src_categories": "reglas de categoría (entradas omitidas por seguridad)",  # i18n-allow
         "all_day": "todo el día",  # i18n-allow
         "capacity_decision": (
             "esperando capacidad de la suscripción — esperar o aprobar un uso de pago"  # i18n-allow
@@ -453,6 +469,10 @@ _PHRASES: Final[dict[str, dict[str, str]]] = {
         "cal_empty": "今天没有即将到来的日程。",  # i18n-allow
         "cal_not_connected": "日历未连接。",  # i18n-allow
         "cal_unavailable": "无法读取日历。",  # i18n-allow
+        "sources_down": "目前无法访问：{list}。",  # i18n-allow
+        "src_work": "任务",  # i18n-allow
+        "src_priorities": "优先级标记",  # i18n-allow
+        "src_categories": "分类规则（为安全起见已省略条目）",  # i18n-allow
         "all_day": "全天",  # i18n-allow
         "capacity_decision": "正在等待订阅额度 — 可继续等待或批准付费运行",  # i18n-allow
         "st_queued": "排队中",  # i18n-allow
@@ -516,8 +536,18 @@ def event_line(event: Mapping[str, Any], table: Mapping[str, str], *, day: date)
     return f"- {flag}{when} {event.get('title')}{where}{tail}"
 
 
+def source_label(name: str, table: Mapping[str, str]) -> str:
+    """How an unreachable source is called in text and speech."""
+    return table.get(f"src_{name}") or name.replace("_", " ").title()
+
+
 def render_text(
-    sections: Sequence[BriefingSection], *, day: date, language: str, address: str | None
+    sections: Sequence[BriefingSection],
+    *,
+    day: date,
+    language: str,
+    address: str | None,
+    unavailable: Sequence[str] = (),
 ) -> str:
     """The deterministic briefing text: headings, bullet lines, nothing invented."""
     table = phrases(language)
@@ -571,6 +601,9 @@ def render_text(
         lines += [item_line(entry, table) for entry in section.items]
         if section.count > len(section.items):
             lines.append(table["more"].format(n=section.count - len(section.items)))
+    if unavailable:
+        labels = ", ".join(source_label(n, table) for n in unavailable)
+        lines += ["", table["sources_down"].format(list=labels)]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -604,12 +637,17 @@ class BriefingComposer:
             raise ValueError("now must be timezone-aware (the person's local time)")
         language = normalize_language(language)
         day = now.date()
-        snapshot, marks, calendar, (rules, profile) = await asyncio.gather(
-            self._snapshot(),
-            self._marks(),
+        unavailable: list[str] = []
+        snapshot, marks, calendar, (rules, profile, rules_ok) = await asyncio.gather(
+            self._read_or(self._snapshot, WorkSnapshot(()), "work", unavailable),
+            self._read_or(self._marks, [], "priorities", unavailable),
             self._read_calendar(day, now, include_calendar),
             self._read_categories(),
         )
+        if any(s.state == "error" for s in snapshot.sources) and "work" not in unavailable:
+            unavailable.append("work")
+        if not rules_ok:
+            unavailable.append("categories")
         configured = _configured(rules)
         items, item_categories, hidden_items = _filter_items(snapshot.items, day, rules, profile)
         calendar, hidden_events = filter_calendar(calendar, day, rules, profile)
@@ -619,34 +657,66 @@ class BriefingComposer:
             item_categories,
             configured,
         )
-        sections += await self._extension_sections(day, now, language, profile)
+        sections += await self._extension_sections(day, now, language, profile, unavailable)
         address = self._read_address()
+        missing = tuple(dict.fromkeys(unavailable))
         return Briefing(
             day=day,
             language=language,
             sections=sections,
-            text=render_text(sections, day=day, language=language, address=address),
+            text=render_text(
+                sections, day=day, language=language, address=address, unavailable=missing
+            ),
             sources=tuple(s.to_dict() for s in snapshot.sources),
+            unavailable=missing,
         )
 
-    async def calendar_for(self, day: date, now: datetime) -> tuple[CalendarDay, int]:
-        """*day*'s appointments, filtered by that day's profile, and how many
-        unassigned ones were left out."""
+    async def calendar_for(
+        self, day: date, now: datetime
+    ) -> tuple[CalendarDay, int, tuple[str, ...]]:
+        """*day*'s appointments, filtered by that day's profile; how many
+        unassigned ones were left out; which sources could not be read."""
         calendar = await self._read_calendar(day, now, True)
-        rules, profile = await self._read_categories()
-        return filter_calendar(calendar, day, rules, profile)
+        rules, profile, rules_ok = await self._read_categories()
+        filtered, hidden = filter_calendar(calendar, day, rules, profile)
+        return filtered, hidden, () if rules_ok else ("categories",)
 
-    async def _read_categories(self) -> tuple[CategoryRules, DayProfile]:
-        if self._categories is None:
-            return CategoryRules(), DayProfile()
+    @staticmethod
+    async def _read_or(
+        read: Callable[[], Awaitable[Any]], fallback: Any, name: str, unavailable: list[str]
+    ) -> Any:
+        """One source; on failure its *fallback*, and *name* is reported."""
         try:
-            return await self._categories()
-        except Exception:  # noqa: BLE001 — unreadable rules: the briefing shows everything
+            return await read()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a dead source is named, the briefing still answers
+            log.warning("ops briefing: source %s unreadable", name, exc_info=True)
+            unavailable.append(name)
+            return fallback
+
+    async def _read_categories(self) -> tuple[CategoryRules, DayProfile, bool]:
+        """Rules, day profile and whether they could be read. Unreadable rules
+        fail closed: every entry counts as hidden, so nothing from an excluded
+        category (e.g. work on a weekend) can slip through."""
+        if self._categories is None:
+            return CategoryRules(), DayProfile(), True
+        try:
+            rules, profile = await self._categories()
+            return rules, profile, True
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — reported as an unreachable source, fails closed
             log.warning("ops briefing: category rules unreadable", exc_info=True)
-            return CategoryRules(), DayProfile()
+            return CategoryRules(), DayProfile({d: frozenset() for d in range(7)}), False
 
     async def _extension_sections(
-        self, day: date, now: datetime, language: str, profile: DayProfile
+        self,
+        day: date,
+        now: datetime,
+        language: str,
+        profile: DayProfile,
+        unavailable: list[str],
     ) -> tuple[BriefingSection, ...]:
         out: list[BriefingSection] = []
         for extension in self._extensions:
@@ -654,8 +724,11 @@ class BriefingComposer:
                 continue
             try:
                 section = await extension.section(day, now, language)
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001 — one module must not sink the briefing
                 log.warning("ops briefing: extension %s failed", extension.name, exc_info=True)
+                unavailable.append(extension.name)
                 continue
             if section is not None:
                 out.append(replace(section, key=f"ext:{extension.name}"))
@@ -792,6 +865,7 @@ async def phrase_briefing(briefing: Briefing, *, brain: Any, config: Any) -> Phr
 
 
 __all__ = [
+    "source_label",
     "LANGUAGES",
     "SECTION_KEYS",
     "Briefing",

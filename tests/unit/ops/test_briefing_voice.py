@@ -275,7 +275,7 @@ async def test_the_channel_is_detected_from_the_calling_turn(app: FastAPI) -> No
     assert telegram["say"] == telegram["text"]
 
 
-async def test_a_voice_briefing_never_stops_the_0900_telegram_overview(
+async def test_a_voice_briefing_never_stops_the_0700_telegram_overview(
     app: FastAPI, tmp_path: Path
 ) -> None:
     store = NotifyStore(tmp_path / "ops.sqlite")
@@ -285,19 +285,19 @@ async def test_a_voice_briefing_never_stops_the_0900_telegram_overview(
     again = await _ask(app, {HEADER_DELIVERY: "spoken", HEADER_TRACE: str(uuid4())})
     assert again["noted_as_delivered"] is False  # noted once
 
-    # 09:00 Europe/Madrid: the overview goes out regardless of the voice briefing.
+    # 07:00 Europe/Madrid: the overview goes out regardless of the voice briefing.
     sent = SimulatedTelegramTransport()
     tool = MorningBriefingTool(
         composer=lambda: _composer(FakeCalendar()),
         notify_store=lambda: store,
         transport=lambda _settings: sent,
-        clock=lambda: datetime(2026, 10, 7, 7, 0, tzinfo=ZoneInfo("UTC")),
+        clock=lambda: datetime(2026, 10, 7, 5, 0, tzinfo=ZoneInfo("UTC")),
     )
-    args = {"mode": "overview", "slot": "09:00", "timezone": "Europe/Madrid", "language": "en"}
+    args = {"mode": "overview", "slot": "07:00", "timezone": "Europe/Madrid", "language": "en"}
     result = await tool.execute(args)
-    again_0900 = await tool.execute(args)
+    again_0700 = await tool.execute(args)
     assert result.success and result.output["delivered"] == 1
-    assert again_0900.output["delivered"] == 0  # one Telegram message per scheduled send
+    assert again_0700.output["delivered"] == 0  # one Telegram message per scheduled send
     assert len(sent.sent) == 1 and sent.sent[0].startswith("Briefing for 2026-10-07")
 
 
@@ -452,7 +452,7 @@ async def test_app_command_from_a_telegram_turn_is_telegram(app: FastAPI) -> Non
     assert result.output["response"]["channel"] == "telegram"
 
 
-# --- 08:30 prepared, on call ------------------------------------------------------------
+# --- 06:30 prepared, on call ------------------------------------------------------------
 
 
 class DeadCalendarExecutor:
@@ -460,7 +460,7 @@ class DeadCalendarExecutor:
         return ToolResult(False, None, "Calendar API 503: backend error")
 
 
-async def test_without_a_readable_calendar_voice_gets_the_0830_briefing(
+async def test_without_a_readable_calendar_voice_gets_the_0630_briefing(
     app: FastAPI, tmp_path: Path
 ) -> None:
     from jarvis.ops.morning import BriefingSnapshot, BriefingSnapshotStore
@@ -471,14 +471,14 @@ async def test_without_a_readable_calendar_voice_gets_the_0830_briefing(
             "en",
             "Briefing for 2026-10-07\n",
             "Today you have one appointment: at 13:00 Lunch.",
-            "2026-10-07T08:30+02:00",
+            "2026-10-07T06:30+02:00",
         )
     )
     app.state.brain._tool_executor_ref = DeadCalendarExecutor()
     body = await _ask(app, {HEADER_DELIVERY: "spoken"})
-    assert body["prepared_at"] == "2026-10-07T08:30+02:00"
+    assert body["prepared_at"] == "2026-10-07T06:30+02:00"
     assert body["say"] == (
-        "I cannot read your calendar right now; this is the briefing from 08:30. "
+        "I cannot read your calendar right now; this is the briefing from 06:30. "
         "Today you have one appointment: at 13:00 Lunch."
     )
     assert "503" not in json.dumps(body)
@@ -490,14 +490,14 @@ async def test_a_live_calendar_always_wins_over_the_prepared_briefing(
     from jarvis.ops.morning import BriefingSnapshot, BriefingSnapshotStore
 
     await BriefingSnapshotStore(tmp_path / "ops.sqlite").save(
-        BriefingSnapshot("2026-10-07", "en", "old", "old spoken", "2026-10-07T08:30+02:00")
+        BriefingSnapshot("2026-10-07", "en", "old", "old spoken", "2026-10-07T06:30+02:00")
     )
     body = await _ask(app, {HEADER_DELIVERY: "spoken"})
     assert body["prepared_at"] is None and "Lunch" in body["say"] and "old" not in body["say"]
 
 
 def test_the_morning_module_cannot_speak() -> None:
-    """08:30 never starts speech: the scheduled module has no path to the voice."""
+    """06:30 never starts speech: the scheduled module has no path to the voice."""
     import ast
 
     from jarvis.ops import morning

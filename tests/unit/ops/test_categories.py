@@ -1,4 +1,5 @@
-"""Work, private and own business — weekdays show all, weekends never show work.
+"""Work, private, own projects, trading, video — weekdays show all, weekends only
+private, trading and video (never work, never other own projects).
 
 The employer here is a made-up "Acme Publishing"; the real names are the
 person's local settings, never code. Dates around the 2026-10-25 DST change
@@ -44,7 +45,9 @@ RULES = make_rules(
     keywords=[("acme", "work"), ("channel", "business")],
     items={"task:t-follow": "work"},
 )
-WORK_FREE_WEEKEND = make_profile({5: ["private", "business"], 6: ["private", "business"]})
+WORK_FREE_WEEKEND = make_profile(
+    {5: ["private", "trading", "video"], 6: ["private", "trading", "video"]}
+)
 
 
 def _events(day: date) -> list[dict[str, Any]]:
@@ -122,7 +125,9 @@ def test_unassigned_is_never_private() -> None:
     assert keep(UNASSIGNED, MON, WORK_FREE_WEEKEND) is True  # weekday shows everything
     assert keep(UNASSIGNED, SAT, WORK_FREE_WEEKEND) is False  # might be work: left out
     assert keep("private", SAT, WORK_FREE_WEEKEND) is True
+    assert keep("trading", SAT, WORK_FREE_WEEKEND) is True
     assert keep("work", SUN, WORK_FREE_WEEKEND) is False
+    assert keep("business", SUN, WORK_FREE_WEEKEND) is False  # other own projects wait
 
 
 def test_rules_are_validated() -> None:
@@ -183,10 +188,10 @@ async def test_a_weekday_shows_work_private_business_and_marks_unassigned() -> N
 
 
 @pytest.mark.parametrize("day", [SAT, SUN])
-async def test_a_weekend_shows_only_private_and_business(day: date) -> None:
-    briefing = await _composer().compose(now=_at(day, 9), language="en")
+async def test_a_weekend_shows_only_private_trading_and_video(day: date) -> None:
+    briefing = await _composer().compose(now=_at(day, 7), language="en")
     titles = _titles(briefing)
-    assert titles == {"Dinner with parents", "Edit channel video", "Upload channel video"}
+    assert titles == {"Dinner with parents"}  # the channel work is "business": it waits
     assert briefing.section("hidden_unassigned").count == 2  # Call Paul, Water the plants
     assert "Acme" not in briefing.text and "Team standup" not in briefing.text
     assert "Follow up on proofs" not in briefing.text  # a work follow-up is left out
@@ -238,7 +243,7 @@ async def test_weekend_changes_leave_work_cancellations_out() -> None:
     assert "Acme" not in result.spoken
 
 
-# --- Telegram at 09:00 follows the same profile -------------------------------------------
+# --- Telegram at 07:00 follows the same profile -------------------------------------------
 
 
 async def test_the_sunday_overview_carries_no_work_notifications(tmp_path: Path) -> None:
@@ -251,14 +256,14 @@ async def test_the_sunday_overview_carries_no_work_notifications(tmp_path: Path)
         composer=_composer,
         notify_store=lambda: store,
         transport=lambda _s: sent,
-        clock=lambda: _at(SUN, 9).astimezone(ZoneInfo("UTC")),
+        clock=lambda: _at(SUN, 7).astimezone(ZoneInfo("UTC")),
     )
     result = await tool.execute(
-        {"mode": "overview", "slot": "09:00", "timezone": "Europe/Madrid", "language": "en"}
+        {"mode": "overview", "slot": "07:00", "timezone": "Europe/Madrid", "language": "en"}
     )
     assert result.success and result.output["day"] == "2026-10-25"
     assert all("Acme" not in m and "proofs" not in m for m in sent.sent)
-    weekday = notifications_from_briefing(await _composer().compose(now=_at(MON, 9)))
+    weekday = notifications_from_briefing(await _composer().compose(now=_at(MON, 7)))
     assert any("Acme cover review" in n.text for n in weekday)  # on Monday it is sent
 
 
@@ -292,17 +297,24 @@ async def test_extensions_follow_the_day_profile_and_never_break_the_briefing() 
         marks=_marks,
         categories=_categories,
         extensions=[
-            FakeExtension("trading", "business"),
+            FakeExtension("trading", "trading"),
+            FakeExtension("youtube", "video"),
             FakeExtension("office", "work"),
-            FakeExtension("broken", "business", fail=True),
+            FakeExtension("projects", "business"),
+            FakeExtension("broken", "trading", fail=True),
         ],
     )
     saturday = await composer.compose(now=_at(SAT, 9), language="en")
     monday = await composer.compose(now=_at(MON, 9), language="en")
-    assert [s.key for s in saturday.sections if s.key.startswith("ext:")] == ["ext:trading"]
+    assert [s.key for s in saturday.sections if s.key.startswith("ext:")] == [
+        "ext:trading",
+        "ext:youtube",
+    ]
     assert [s.key for s in monday.sections if s.key.startswith("ext:")] == [
         "ext:trading",
+        "ext:youtube",
         "ext:office",
+        "ext:projects",
     ]
     assert "Trading (1):\n- trading update" in saturday.text
 
@@ -322,7 +334,7 @@ async def test_the_store_and_routes_keep_rules_locally(tmp_path: Path) -> None:
     body = {
         "calendars": {"Acme": "work"},
         "keywords": [{"keyword": "Acme", "category": "work"}],
-        "weekdays": {"5": ["private", "business"], "6": ["private", "business"]},
+        "weekdays": {"5": ["private", "trading", "video"], "6": ["private", "trading", "video"]},
     }
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
@@ -334,11 +346,8 @@ async def test_the_store_and_routes_keep_rules_locally(tmp_path: Path) -> None:
     assert put.status_code == 200 and bad.status_code == 400
     data = got.json()
     assert data["rules"]["calendars"] == {"acme": "work"}
-    assert data["weekdays"]["5"] == ["business", "private"] and data["weekdays"]["0"] == [
-        "business",
-        "private",
-        "work",
-    ]
+    assert data["weekdays"]["5"] == ["private", "trading", "video"]
+    assert data["weekdays"]["0"] == ["business", "private", "trading", "video", "work"]
     rules, profile = await store.load()
     assert classify_event({"id": "1", "title": "x", "calendar": "ACME"}, rules)[0] == "work"
     assert keep("work", SAT, profile) is False

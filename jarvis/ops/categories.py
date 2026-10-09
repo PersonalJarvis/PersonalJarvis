@@ -1,7 +1,9 @@
 """Work, private and own business — which part of life a briefing item belongs to.
 
 Every appointment and work item gets ONE category: ``work``, ``private``,
-``business`` (the person's own projects) or ``unassigned``. Classification is
+``business`` (the person's own projects), ``trading``, ``video`` (e.g. channel
+statistics) or ``unassigned``. Trading and video are their own categories so
+a day profile can show them without the rest of the own projects. Classification is
 deterministic and explainable — no model call:
 
 1. an explicit assignment of that very item (source + id) wins;
@@ -22,6 +24,7 @@ is reported, so nothing is lost and nothing leaks in.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -31,7 +34,9 @@ from typing import Any, Final
 
 import aiosqlite
 
-CATEGORIES: Final[tuple[str, ...]] = ("work", "private", "business")
+log = logging.getLogger(__name__)
+
+CATEGORIES: Final[tuple[str, ...]] = ("work", "private", "business", "trading", "video")
 UNASSIGNED: Final = "unassigned"
 ALL: Final = frozenset(CATEGORIES)
 KEYWORD_MAX: Final = 200
@@ -182,10 +187,15 @@ CREATE TABLE IF NOT EXISTS ops_categories (
 
 
 class CategoryStore:
-    """The person's classification rules and day profile, in ``ops.sqlite``."""
+    """The person's classification rules and day profile, in ``ops.sqlite``.
+
+    Remembers the last rules it read: if the database is briefly unreadable,
+    those still apply instead of nothing (which would let work through on a
+    work-free day)."""
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
+        self._last: tuple[CategoryRules, DayProfile] | None = None
 
     async def _connect(self) -> aiosqlite.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +206,17 @@ class CategoryStore:
         return conn
 
     async def load(self) -> tuple[CategoryRules, DayProfile]:
+        try:
+            loaded = await self._load()
+        except Exception:
+            if self._last is None:
+                raise
+            log.warning("ops categories: unreadable, using the last rules read", exc_info=True)
+            return self._last
+        self._last = loaded
+        return loaded
+
+    async def _load(self) -> tuple[CategoryRules, DayProfile]:
         conn = await self._connect()
         try:
             cur = await conn.execute("SELECT rules, profile FROM ops_categories WHERE id = 1")
@@ -231,6 +252,7 @@ class CategoryStore:
             await conn.commit()
         finally:
             await conn.close()
+        self._last = (rules, profile)
 
 
 __all__ = [

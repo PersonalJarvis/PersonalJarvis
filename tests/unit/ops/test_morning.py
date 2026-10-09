@@ -1,6 +1,6 @@
 """Daily morning schedule through the existing task scheduler.
 
-08:30 Europe/Madrid prepares the briefing (nothing spoken or sent), 09:00
+06:30 Europe/Madrid prepares the briefing (nothing spoken or sent), 07:00
 reads the calendar again and sends the day's overview — once per day and
 slot, whether or not the briefing was heard by voice. Off by default,
 DST-correct, failures never crash the scheduler, delivery simulated. The full
@@ -51,7 +51,7 @@ from jarvis.tasks.scheduler import TaskScheduler, next_every_due_ns
 from jarvis.tasks.store import TaskStore
 
 MADRID = "Europe/Madrid"
-ON = MorningSettings(True, "08:30", "09:00", MADRID, "en")
+ON = MorningSettings(True, "06:30", "07:00", MADRID, "en")
 CANCELLED = {
     "id": "call",
     "summary": "Client call",
@@ -59,20 +59,20 @@ CANCELLED = {
     "status": "cancelled",
     "updated": "2026-10-07T05:00:00Z",
 }
-# 08:30 and 09:00 Europe/Madrid (CEST, UTC+2) on 2026-10-07.
-AT_0830 = "2026-10-07T06:30:00+00:00"
-AT_0900 = "2026-10-07T07:00:00+00:00"
+# 06:30 and 07:00 Europe/Madrid (CEST, UTC+2) on 2026-10-07.
+AT_PREP = "2026-10-07T04:30:00+00:00"
+AT_OVER = "2026-10-07T05:00:00+00:00"
 
 
 # --- Settings ----------------------------------------------------------------------
 
 
-def test_the_defaults_are_0830_and_0900_and_off() -> None:
+def test_the_defaults_are_0630_and_0700_and_off() -> None:
     settings = MorningSettings()
     assert (settings.enabled, DEFAULT_PREPARE_TIME, DEFAULT_OVERVIEW_TIME) == (
         False,
-        "08:30",
-        "09:00",
+        "06:30",
+        "07:00",
     )
     assert settings.to_dict()["prepare_output"] == "none"
 
@@ -83,7 +83,7 @@ async def test_off_by_default_and_validated(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         await store.save(MorningSettings(enabled=True, timezone="Mars/Olympus"))
     with pytest.raises(ValueError):
-        await store.save(MorningSettings(True, "08:30", "25:00", MADRID))
+        await store.save(MorningSettings(True, "06:30", "25:00", MADRID))
     saved = await store.save(ON)
     assert (await store.settings()) == saved
 
@@ -91,10 +91,10 @@ async def test_off_by_default_and_validated(tmp_path: Path) -> None:
 def test_two_wall_clock_tasks_prepare_and_overview() -> None:
     prepare = task_spec(ON, TASK_TAG_PREPARE)
     overview = task_spec(ON, TASK_TAG_OVERVIEW)
-    assert (prepare.trigger.local_time, overview.trigger.local_time) == ("08:30", "09:00")
+    assert (prepare.trigger.local_time, overview.trigger.local_time) == ("06:30", "07:00")
     assert prepare.trigger.timezone == overview.trigger.timezone == MADRID
     assert prepare.action.args["mode"] == "prepare" and overview.action.args["mode"] == "overview"
-    assert overview.action.args["slot"] == "09:00"
+    assert overview.action.args["slot"] == "07:00"
     assert (prepare.tags, overview.tags) == ((TASK_TAG_PREPARE,), (TASK_TAG_OVERVIEW,))
     assert prepare.action.tool_name == overview.action.tool_name == TOOL_NAME
 
@@ -105,7 +105,7 @@ def _ns(text: str) -> int:
 
 def test_the_times_stay_local_across_the_dst_change() -> None:
     zone = ZoneInfo(MADRID)
-    for tag, moment in ((TASK_TAG_PREPARE, "08:30"), (TASK_TAG_OVERVIEW, "09:00")):
+    for tag, moment in ((TASK_TAG_PREPARE, "06:30"), (TASK_TAG_OVERVIEW, "07:00")):
         spec = task_spec(ON, tag)
         before = next_every_due_ns(spec, _ns("2026-10-24T10:00:00+02:00"))
         after = next_every_due_ns(spec, _ns("2026-10-25T10:00:00+01:00"))
@@ -115,7 +115,7 @@ def test_the_times_stay_local_across_the_dst_change() -> None:
         ]
         assert local == [f"2026-10-25 {moment} CET", f"2026-10-26 {moment} CET"]
     summer = next_every_due_ns(task_spec(ON, TASK_TAG_OVERVIEW), _ns("2026-10-23T10:00:00+02:00"))
-    assert datetime.fromtimestamp(summer / 1e9, UTC).hour == 7  # 09:00 CEST
+    assert datetime.fromtimestamp(summer / 1e9, UTC).strftime("%H:%M") == "05:00"  # 07:00 CEST
 
 
 # --- Schedule ------------------------------------------------------------------------
@@ -215,7 +215,7 @@ def snapshots(tmp_path: Path) -> BriefingSnapshotStore:
 def _tool(
     notify: NotifyStore,
     composer: Any,
-    clock: str = AT_0900,
+    clock: str = AT_OVER,
     transport: SimulatedTelegramTransport | None = None,
     snapshots: BriefingSnapshotStore | None = None,
 ) -> MorningBriefingTool:
@@ -230,61 +230,61 @@ def _tool(
 
 
 def _overview(**kw: Any) -> dict[str, Any]:
-    return {"mode": "overview", "slot": "09:00", "timezone": MADRID, "language": "en", **kw}
+    return {"mode": "overview", "slot": "07:00", "timezone": MADRID, "language": "en", **kw}
 
 
-async def test_0830_prepares_and_neither_speaks_nor_sends(
+async def test_0630_prepares_and_neither_speaks_nor_sends(
     notify: NotifyStore, snapshots: BriefingSnapshotStore
 ) -> None:
     await notify.save_settings(enabled=True, kinds=["daily_briefing", "appointment_cancelled"])
     transport = SimulatedTelegramTransport()
-    result = await _tool(notify, FakeComposerSource(), AT_0830, transport, snapshots).execute(
+    result = await _tool(notify, FakeComposerSource(), AT_PREP, transport, snapshots).execute(
         {"mode": "prepare", "timezone": MADRID, "language": "en"}
     )
     assert result.success and result.output == {"mode": "prepare", "day": "2026-10-07", "sent": 0}
     assert transport.sent == [] and await notify.outbox() == []
     snapshot = await snapshots.get(datetime(2026, 10, 7).date())
-    assert snapshot is not None and snapshot.composed_at.startswith("2026-10-07T08:30")
+    assert snapshot is not None and snapshot.composed_at.startswith("2026-10-07T06:30")
     assert snapshot.text.startswith("Briefing for 2026-10-07")
     assert "Cancelled: Client call 12:00." in snapshot.spoken
 
 
-async def test_0900_reads_the_calendar_again_and_sends_once_per_slot(
+async def test_0700_reads_the_calendar_again_and_sends_once_per_slot(
     notify: NotifyStore, snapshots: BriefingSnapshotStore
 ) -> None:
     await notify.save_settings(enabled=True, kinds=["daily_briefing", "appointment_cancelled"])
     source = FakeComposerSource()
     transport = SimulatedTelegramTransport()
-    await _tool(notify, source, AT_0830, transport, snapshots).execute(
+    await _tool(notify, source, AT_PREP, transport, snapshots).execute(
         {"mode": "prepare", "timezone": MADRID}
     )
-    # Between 08:30 and 09:00 a new appointment appears.
+    # Between 06:30 and 07:00 a new appointment appears.
     source.events = [
         *source.events,
         {
             "id": "dentist",
             "summary": "Dentist",
             "start": "2026-10-07T11:00:00+02:00",
-            "created": "2026-10-07T06:45:00Z",
+            "created": "2026-10-07T04:45:00Z",
         },
     ]
-    first = await _tool(notify, source, AT_0900, transport, snapshots).execute(_overview())
-    again = await _tool(notify, source, AT_0900, transport, snapshots).execute(_overview())
+    first = await _tool(notify, source, AT_OVER, transport, snapshots).execute(_overview())
+    again = await _tool(notify, source, AT_OVER, transport, snapshots).execute(_overview())
     assert first.output["delivered"] == 2 and again.output["delivered"] == 0
     overview = transport.sent[-1]
-    assert "New appointments (1):\n- 11:00 Dentist" in overview  # the 09:00 refresh
+    assert "New appointments (1):\n- 11:00 Dentist" in overview  # the 07:00 refresh
     assert "Cancelled appointments (1):" in overview
-    assert await notify.get(overview_key(datetime(2026, 10, 7).date(), "09:00")) is not None
-    assert [n.hour for n in source.nows] == [8, 9, 9]  # 08:30, then 09:00 twice
+    assert await notify.get(overview_key(datetime(2026, 10, 7).date(), "07:00")) is not None
+    assert [n.strftime("%H:%M") for n in source.nows] == ["06:30", "07:00", "07:00"]
 
 
-async def test_a_voice_briefing_does_not_stop_the_0900_overview(notify: NotifyStore) -> None:
+async def test_a_voice_briefing_does_not_stop_the_0700_overview(notify: NotifyStore) -> None:
     await notify.save_settings(enabled=True, kinds=["daily_briefing"])
     await notify.note_delivered(  # heard by voice at 08:40
         dedup_key="briefing:2026-10-07", kind="daily_briefing", transport="voice"
     )
     transport = SimulatedTelegramTransport()
-    result = await _tool(notify, FakeComposerSource(), AT_0900, transport).execute(_overview())
+    result = await _tool(notify, FakeComposerSource(), AT_OVER, transport).execute(_overview())
     assert result.output["delivered"] == 1
     assert transport.sent[0].startswith("Briefing for 2026-10-07")
 
@@ -305,10 +305,15 @@ async def test_the_day_is_the_persons_local_day(notify: NotifyStore, zone: str, 
 async def test_failures_are_results_not_crashes(notify: NotifyStore) -> None:
     bad_zone = await _tool(notify, FakeComposerSource()).execute(_overview(timezone="Nowhere/Land"))
     assert (bad_zone.success, bad_zone.error) == (False, "invalid_timezone")
-    broken = await _tool(notify, FakeComposerSource(fail=RuntimeError("db locked"))).execute(
-        _overview()
-    )
-    assert (broken.success, broken.error) == (False, "morning_overview_failed:RuntimeError")
+    # A dead source does not stop the 07:00 overview: it is named, the rest goes out.
+    await notify.save_settings(enabled=True, kinds=["daily_briefing"])
+    sent = SimulatedTelegramTransport()
+    broken = await _tool(
+        notify, FakeComposerSource(fail=RuntimeError("db locked")), transport=sent
+    ).execute(_overview())
+    assert broken.success and broken.output["delivered"] == 1
+    assert "Not reachable right now: work items." in sent.sent[0]
+    assert "Cancelled appointments (1):" in sent.sent[0]  # the calendar still answered
     unknown = await _tool(notify, FakeComposerSource()).execute(_overview(mode="speak"))
     assert (unknown.success, unknown.error) == (False, "unknown_mode")
     missing = await MorningBriefingTool(composer=lambda: None, notify_store=lambda: notify).execute(
@@ -339,14 +344,14 @@ async def test_both_scheduled_runs_through_the_real_executor(
     bus = EventBus()
     executor = ToolExecutor(bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus))
     transport = SimulatedTelegramTransport()
-    tools = {TOOL_NAME: _tool(notify, FakeComposerSource(), AT_0900, transport, snapshots)}
+    tools = {TOOL_NAME: _tool(notify, FakeComposerSource(), AT_OVER, transport, snapshots)}
     runner = TaskRunner(store, bus, tool_executor=executor, tool_registry=tools)
     scheduler = TaskScheduler(store=store, bus=bus, runner=runner)
     ids = await apply_schedule(ON, scheduler=scheduler, store=store)
 
     await asyncio.wait_for(runner.run(ids[TASK_TAG_PREPARE], CancelToken()), timeout=5)
-    assert transport.sent == []  # 08:30: nothing goes out
-    for _ in range(2):  # 09:00 fires, then a restart fires it again
+    assert transport.sent == []  # 06:30: nothing goes out
+    for _ in range(2):  # 07:00 fires, then a restart fires it again
         await asyncio.wait_for(runner.run(ids[TASK_TAG_OVERVIEW], CancelToken()), timeout=5)
 
     assert [m.split("\n")[0] for m in transport.sent] == ["Briefing for 2026-10-07"]

@@ -27,6 +27,7 @@ from jarvis.ops.briefing import (
     event_line,
     normalize_language,
     phrases,
+    source_label,
 )
 from jarvis.ops.calendar_day import CalendarDay
 
@@ -60,6 +61,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "nothing_open": "Nothing needs you right now.",
         "hidden": "I left out {n} unassigned entries for today's profile.",
         "as_of": ("I cannot read your calendar right now; this is the briefing from {time}."),
+        "sources_down": "I could not reach {list} right now.",
     },
     "de": {  # i18n-allow: runtime spoken briefing (paired with en/es/zh)
         "today": "Heute",  # i18n-allow
@@ -90,6 +92,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
             "Ich kann deinen Kalender gerade nicht lesen; "  # i18n-allow
             "das ist das Briefing von {time}."  # i18n-allow
         ),
+        "sources_down": "Gerade nicht erreichbar: {list}.",  # i18n-allow
     },
     "es": {  # i18n-allow: runtime spoken briefing (paired with en/de/zh)
         "today": "Hoy",  # i18n-allow
@@ -115,6 +118,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "as_of": (
             "Ahora no puedo leer tu calendario; este es el resumen de las {time}."  # i18n-allow
         ),
+        "sources_down": "Ahora no pude consultar: {list}.",  # i18n-allow
     },
     "zh": {  # i18n-allow: runtime spoken briefing (paired with en/de/es)
         "today": "今天",  # i18n-allow
@@ -138,6 +142,7 @@ _SPOKEN: Final[dict[str, dict[str, str]]] = {
         "nothing_open": "目前没有需要你处理的事。",  # i18n-allow
         "hidden": "按今天的设置，我省略了{n}个未分类的条目。",  # i18n-allow
         "as_of": "我现在无法读取你的日历；这是{time}的简报。",  # i18n-allow
+        "sources_down": "我现在无法访问：{list}。",  # i18n-allow
     },
 }
 
@@ -277,7 +282,18 @@ def spoken_briefing(briefing: Briefing, table: Mapping[str, str]) -> str:
     hidden = briefing.section("hidden_unassigned").count
     if hidden:
         sentences.append(table["hidden"].format(n=hidden))
+    down = _down_sentence(briefing.unavailable, briefing.language, table)
+    if down:
+        sentences.append(down)
     return " ".join(s.strip() for s in sentences if s.strip())
+
+
+def _down_sentence(names: Sequence[str], language: str, table: Mapping[str, str]) -> str | None:
+    """ "I could not reach …" for sources that failed; None when all answered."""
+    if not names:
+        return None
+    labels = [source_label(n, phrases(language)) for n in names]
+    return table["sources_down"].format(list=_list(labels, table))
 
 
 def _written_appointments(calendar: CalendarDay, day: date, language: str) -> str:
@@ -349,8 +365,9 @@ async def answer(
     if focus == "changes":
         days = (today, today + timedelta(days=1))
         reads = [await composer.calendar_for(d, now) for d in days]
-        changed = [_only_changes(r) for r, _hidden in reads]
-        hidden_total = sum(h for _r, h in reads)
+        changed = [_only_changes(r) for r, _hidden, _down in reads]
+        hidden_total = sum(h for _r, h, _down in reads)
+        down = tuple(dict.fromkeys(n for _r, _h, names in reads for n in names))
         sentences: list[str] = []
         texts: list[str] = []
         for d, c in zip(days, changed, strict=True):
@@ -365,17 +382,24 @@ async def answer(
         if hidden_total:
             spoken = f"{spoken} {table['hidden'].format(n=hidden_total)}"
         text = "\n".join(texts) or table["no_changes"] + "\n"
+        down_sentence = _down_sentence(down, language, table)
+        if down_sentence:
+            spoken = f"{spoken} {down_sentence}"
+            text = f"{text}\n{down_sentence}\n"
         return BriefingAnswer(target, focus, language, spoken, text)
 
     # Appointments of one day (also "briefing" for tomorrow: the calendar).
-    cal, hidden = await composer.calendar_for(target, now)
+    cal, hidden, down = await composer.calendar_for(target, now)
     sentences = spoken_appointments(cal, which=day, table=table)
     if hidden:
         sentences.append(table["hidden"].format(n=hidden))
+    text = _written_appointments(cal, target, language)
+    down_sentence = _down_sentence(down, language, table)
+    if down_sentence:
+        sentences.append(down_sentence)
+        text = f"{text}\n{down_sentence}\n"
     spoken = " ".join(sentences)
-    return BriefingAnswer(
-        target, focus, language, spoken, _written_appointments(cal, target, language)
-    )
+    return BriefingAnswer(target, focus, language, spoken, text)
 
 
 __all__ = [

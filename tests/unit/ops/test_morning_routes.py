@@ -85,7 +85,7 @@ async def test_on_then_off_keeps_one_task_per_moment(app: FastAPI) -> None:
     assert on.status_code == 200
     body = on.json()
     assert (body["enabled"], body["language"]) == (True, "de")
-    assert (body["prepare_time"], body["overview_time"]) == ("08:30", "09:00")
+    assert (body["prepare_time"], body["overview_time"]) == ("06:30", "07:00")
     assert body["prepare_output"] == "none"
     for tag in (TASK_TAG_PREPARE, TASK_TAG_OVERVIEW):
         [task] = await _tagged(app, (tag,))
@@ -160,7 +160,7 @@ async def test_the_server_task_stack_runs_the_morning_briefing(tmp_path: Path) -
         notify = NotifyStore(data_dir / "ops.sqlite")
         await notify.save_settings(enabled=True, kinds=["daily_briefing"])
         ids = await apply_schedule(
-            MorningSettings(True, "08:30", "09:00", "UTC", "en"),
+            MorningSettings(True, "06:30", "07:00", "UTC", "en"),
             scheduler=state.task_scheduler,
             store=state.task_store,
         )
