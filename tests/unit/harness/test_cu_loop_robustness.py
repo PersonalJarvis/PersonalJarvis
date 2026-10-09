@@ -1027,7 +1027,7 @@ async def test_progress_announcement_does_not_block_the_loop() -> None:
         plan_script=[_CHROME_PLAN],
         judge_script=['{"done": true, "proof": "ok"}'],
     )
-    bus = SlowAnnouncementBus(block_s=0.75)
+    bus = SlowAnnouncementBus(block_s=5.0)
     ctx = make_ctx(brain, verify=True, bus=bus, announce_progress=True)
 
     start = time.monotonic()
@@ -1037,8 +1037,8 @@ async def test_progress_announcement_does_not_block_the_loop() -> None:
     assert chunks[-1].exit_code == 0
     # With the old blocking publish, the single announced state change costs
     # >= block_s on the loop's own wall clock. Non-blocking must stay well
-    # under one block interval.
-    assert elapsed < 0.5, f"loop blocked on announcement publish ({elapsed:.2f}s)"
+    # under one block interval; the gap leaves room for a slow CI runner.
+    assert elapsed < 3.0, f"loop blocked on announcement publish ({elapsed:.2f}s)"
 
     # The announcement must still go out (fire-and-forget, not dropped).
     pending = set(getattr(loop_mod, "_ANNOUNCE_TASKS", set()))
