@@ -113,7 +113,7 @@ class FakeCalendar:
         return self.day
 
 
-def _composer(calendar: Any = None, address: str | None = "Dennis") -> BriefingComposer:
+def _composer(calendar: Any = None, address: str | None = "Alex") -> BriefingComposer:
     async def _snapshot() -> WorkSnapshot:
         return WorkSnapshot(ITEMS, (SourceReport("task", "ok", len(ITEMS)),))
 
@@ -177,7 +177,7 @@ async def test_the_briefing_is_deterministic() -> None:
 async def test_the_text_states_only_the_facts() -> None:
     briefing = await _composer(FakeCalendar(_cal_day())).compose(now=NOW, language="en")
     text = briefing.text
-    assert text.startswith("Briefing for Dennis, 2026-10-07")
+    assert text.startswith("Briefing for Alex, 2026-10-07")
     assert "Needs you (1):" in text
     assert "Title parked (mission, waiting for subscription capacity" in text
     assert "- [!!] Title hot (task, queued)" in text
