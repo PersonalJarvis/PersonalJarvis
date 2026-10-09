@@ -30,6 +30,13 @@ def _no_nvidia(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detection, "_detect_nvidia_gpus", lambda: [])
 
 
+def _not_a_mac(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apple Silicon answers from unified memory before any card source, so a
+    test of the card sources must not run as a Mac on a macOS runner."""
+    monkeypatch.setattr(detection.sys, "platform", "win32")
+    monkeypatch.setattr(detection.platform, "machine", lambda: "AMD64")
+
+
 def _no_vendor_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detection, "_ollama_reported_gb", lambda: 0.0)
     monkeypatch.setattr(detection, "_windows_registry_vram_gb", lambda: 0.0)
@@ -141,6 +148,7 @@ def test_an_amd_card_is_read_where_nvidia_smi_sees_nothing(
     """The defect this source exists for: a 16 GB Radeon used to report 0, and
     every fit verdict fell back to the system-RAM rule."""
     _no_nvidia(monkeypatch)
+    _not_a_mac(monkeypatch)
     monkeypatch.setattr(detection, "_ollama_reported_gb", lambda: 16.0)
     assert detection.usable_accelerator_gb() == (16.0, "ollama-runtime")
 
@@ -152,6 +160,7 @@ def test_the_os_inventory_answers_when_no_server_has_run(
     before anything is downloaded. Patched at the source-selection seam so the
     assertion holds on whichever OS runs the suite."""
     _no_nvidia(monkeypatch)
+    _not_a_mac(monkeypatch)
     monkeypatch.setattr(detection, "_vendor_neutral_gb", lambda: (12.0, "windows-registry"))
     assert detection.usable_accelerator_gb() == (12.0, "windows-registry")
 
