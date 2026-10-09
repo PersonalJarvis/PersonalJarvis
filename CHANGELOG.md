@@ -11,6 +11,18 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [3.1.0] — 2026-10-09
+
+### Added
+
+- Integrate the remaining local desktop work after 3.0.0 (#514)
+
+### Fixed
+
+- Enqueue the release candidate; fix macOS non-terminal installs (#513)
+
+---
+
 ## [3.0.0] — 2026-10-09
 
 ### Changed
