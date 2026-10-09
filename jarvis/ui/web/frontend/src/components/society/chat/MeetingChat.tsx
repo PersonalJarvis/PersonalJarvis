@@ -115,12 +115,14 @@ export function MeetingChat({ group, roster }: { group: SocietyChatGroup; roster
             <UserBubble key={message.id}
               item={{ type: "user", id: message.id, text: message.text, attachments: [], tsMs: 0 }} />
           ) : (
-            <article key={message.id} className="flex min-w-0 flex-col gap-1.5 self-start">
-              <header className="flex items-center gap-2">
+            <article key={message.id} className="flex min-w-0 max-w-[min(85%,42rem)] flex-col gap-1.5 self-start">
+              <header className="flex items-center gap-2 px-1">
                 {agentOf(message.speaker) ? <AgentSwatch agent={agentOf(message.speaker)!} size={22} /> : null}
                 <span className="text-xs font-medium text-foreground">{nameOf(message.speaker)}</span>
               </header>
-              <Prose text={message.text} />
+              <div className="jarvis-chat-in min-w-0 self-start rounded-[20px] px-4 py-2.5">
+                <Prose text={message.text} />
+              </div>
             </article>
           ))}
           {running ? (

@@ -191,13 +191,13 @@ def test_no_card_for_a_failed_turn_or_plain_text(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("provider", "runner", "build"),
     [
-        ("openai-codex", "codex-cli", "auto"),
-        ("antigravity", "agy-cli", "accept-edits"),
-        ("grok-build", "grok-cli", "acceptEdits"),
-        ("opencode", "opencode-cli", "default"),
+        ("openai-codex", "codex-cli", "full-access"),
+        ("antigravity", "agy-cli", "skip-permissions"),
+        ("grok-build", "grok-cli", "bypassPermissions"),
+        ("opencode", "opencode-cli", "auto"),
         ("kimi", "kimi-cli", "auto"),
         ("cursor", "cursor-cli", "auto"),
-        ("claude-api", "claude-cli", "acceptEdits"),
+        ("claude-api", "claude-cli", "bypassPermissions"),
     ],
 )
 def test_a_finished_plan_gets_a_build_card(
@@ -455,10 +455,10 @@ def test_an_approved_claude_plan_leaves_plan_mode(
     (body,) = answers
     assert body["behavior"] == "allow"
     assert body["updatedPermissions"] == [
-        {"type": "setMode", "mode": "acceptEdits", "destination": "session"}
+        {"type": "setMode", "mode": "bypassPermissions", "destination": "session"}
     ]
-    assert chat.updates == [{"permission_mode": "acceptEdits"}]
-    assert {"permission_mode": "acceptEdits"} in [
+    assert chat.updates == [{"permission_mode": "bypassPermissions"}]
+    assert {"permission_mode": "bypassPermissions"} in [
         e["payload"] for e in events if e["kind"] == "session_updated"
     ]
 

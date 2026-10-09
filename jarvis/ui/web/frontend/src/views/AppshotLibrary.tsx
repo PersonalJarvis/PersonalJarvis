@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GripVertical, Loader2, PenLine, Trash2 } from "lucide-react";
+import { GripVertical, Loader2, PenLine, Play, Trash2, Video } from "lucide-react";
 
 import { setWorkspaceEntryDrag } from "@/components/agentic/explorerDrag";
+import { AppshotRecordingPlayer } from "@/components/appshot/AppshotRecordingPlayer";
 import { Button } from "@/components/ui/button";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useLocaleChunk, useT } from "@/i18n";
@@ -35,7 +36,7 @@ import { useEventStore } from "@/store/events";
  * LIFT_DIALOG_CSS) and comes back the moment the drag ends.
  */
 
-type Filter = "all" | "edited";
+type Filter = "all" | "edited" | "recordings";
 
 /** Rows shown while the gallery is folded; "Show more" opens the rest. */
 const ROWS = 2;
@@ -63,6 +64,12 @@ function useGridColumns(grid: HTMLUListElement | null): number {
 }
 
 const tileKey = (item: AppshotLibraryItem) => `${item.id}:${item.variant}`;
+const isRecording = (item: AppshotLibraryItem) => item.mime.startsWith("video/");
+
+function duration(seconds: number): string {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
 
 /**
  * While a tile is dragged: the Settings dialog and its dim fade out and let
@@ -109,7 +116,8 @@ function Tile({
 }) {
   const t = useT();
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const where = item.app_name || item.label || t("appshots.preview_front_window");
+  const video = isRecording(item);
+  const where = video ? t("appshots.recording_title") : item.app_name || item.label || t("appshots.preview_front_window");
   const edited = item.variant === "edited";
   const nativeDrag = canNativeDrag();
 
@@ -138,14 +146,15 @@ function Tile({
       onDragEnd={() => liftDialog(false)}
       data-testid="appshot-library-tile"
       data-variant={item.variant}
+      data-media={video ? "video" : "image"}
       className="group relative flex cursor-grab flex-col overflow-hidden rounded-lg border border-border bg-background active:cursor-grabbing"
     >
       <button
         type="button"
         onClick={onOpen}
         disabled={busy}
-        aria-label={`${t("appshot_editor.library_edit")}: ${where}`}
-        className="flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-secondary/60 p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-strong"
+        aria-label={`${t(video ? "appshot_editor.library_play" : "appshot_editor.library_edit")}: ${where}`}
+        className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-secondary/60 p-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-border-strong"
       >
         <img
           ref={imageRef}
@@ -155,7 +164,18 @@ function Tile({
           draggable={false}
           className="max-h-full max-w-full rounded-sm object-contain shadow-sm ring-1 ring-border transition-opacity group-hover:opacity-90"
         />
+        {video && (
+          <span className="absolute rounded-full border border-border bg-card/90 p-3 text-foreground shadow-sm">
+            <Play className="h-5 w-5" aria-hidden />
+          </span>
+        )}
       </button>
+      {video && (
+        <span className="pointer-events-none absolute bottom-[4.25rem] right-3 inline-flex items-center gap-1 rounded-md bg-card/95 px-2 py-0.5 text-xs text-foreground">
+          <Video className="h-3 w-3" aria-hidden />
+          {item.duration_s ? duration(item.duration_s) : t("appshot_editor.library_video")}
+        </span>
+      )}
       {edited && (
         <span className="pointer-events-none absolute left-2 top-2 inline-flex items-center gap-1 rounded-full bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground shadow-sm">
           <PenLine className="h-3 w-3" aria-hidden />
@@ -184,7 +204,7 @@ function Tile({
         )}
         <QuickTooltip
           content={t(
-            edited
+            video ? "appshot_editor.library_delete_recording_hint" : edited
               ? "appshot_editor.library_delete_edit_hint"
               : "appshot_editor.library_delete_original_hint",
           )}
@@ -205,7 +225,7 @@ function Tile({
       <div className="min-w-0 px-3 py-2">
         <p className="truncate text-sm font-medium text-foreground">{where}</p>
         <p className="truncate text-xs text-muted-foreground">
-          {[when(item), `${item.width} × ${item.height}`].join(" · ")}
+          {[when(item), item.width > 0 && item.height > 0 ? `${item.width} × ${item.height}` : ""].filter(Boolean).join(" · ")}
         </p>
       </div>
     </li>
@@ -215,11 +235,18 @@ function Tile({
 export function AppshotLibrary({
   enabled,
   refreshKey,
+  recordingsOnly = false,
 }: {
   /** `[appshot].library`; `undefined` while the settings load or on an older backend. */
   enabled: boolean | undefined;
   /** Changes whenever a new appshot was taken or an edit replaced one. */
   refreshKey: string;
+  /**
+   * Only the screen recordings, as tiles inside the recording panel: same
+   * posters, player and two-row fold as the gallery, without its filters and
+   * without "Delete all" (which would take every appshot with it).
+   */
+  recordingsOnly?: boolean;
 }) {
   const t = useT();
   // The gallery's strings live in the editor's locale chunk.
@@ -228,7 +255,7 @@ export function AppshotLibrary({
   const openEditor = useAppshotEditor((s) => s.open);
   const [items, setItems] = useState<AppshotLibraryItem[] | null>(null);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>(recordingsOnly ? "recordings" : "all");
   // Folded: exactly ROWS full rows. Unfolded: `limit` tiles, PAGE more per click.
   const [expanded, setExpanded] = useState(false);
   const [limit, setLimit] = useState(PAGE);
@@ -237,6 +264,7 @@ export function AppshotLibrary({
   const [busyKey, setBusyKey] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [playing, setPlaying] = useState<AppshotLibraryItem | null>(null);
   const confirmTimer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -289,13 +317,20 @@ export function AppshotLibrary({
     () => (items ?? []).filter((item) => item.variant === "edited").length,
     [items],
   );
+  const recordingCount = useMemo(() => (items ?? []).filter(isRecording).length, [items]);
   const shown = useMemo(
-    () => (items ?? []).filter((item) => filter === "all" || item.variant === "edited"),
+    () => (items ?? []).filter((item) => filter === "all" || (
+      filter === "recordings" ? isRecording(item) : item.variant === "edited"
+    )),
     [items, filter],
   );
 
   const open = useCallback(
     async (item: AppshotLibraryItem) => {
+      if (isRecording(item)) {
+        setPlaying(item);
+        return;
+      }
       setBusyKey(tileKey(item));
       try {
         const result = await openAppshotLibraryItem(item);
@@ -354,73 +389,91 @@ export function AppshotLibrary({
   const folded = columns * ROWS;
   const visible = expanded ? Math.max(limit, folded) : folded;
 
+  const titleId = recordingsOnly ? "appshot-recordings-title" : "appshot-library-title";
+
   return (
     <section
-      data-testid="appshot-library"
-      className="mt-5 rounded-xl border border-border bg-card p-5"
-      aria-labelledby="appshot-library-title"
+      data-testid={recordingsOnly ? "appshot-recordings" : "appshot-library"}
+      className={
+        recordingsOnly
+          ? "mt-4 border-t border-border pt-4"
+          : "mt-5 rounded-xl border border-border bg-card p-5"
+      }
+      aria-labelledby={titleId}
     >
       <style>{LIFT_DIALOG_CSS}</style>
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-[min(100%,16rem)] flex-1">
-          <p id="appshot-library-title" className="text-base font-medium text-foreground">
-            {t("appshot_editor.library_title")}
-            {total > 0 && (
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {t("appshot_editor.library_count").replace("{0}", String(total))}
-              </span>
-            )}
-          </p>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {enabled === false
-              ? t("appshot_editor.library_off")
-              : t("appshot_editor.library_subtitle")}
-          </p>
-        </div>
-        {total > 0 && (
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            <div role="tablist" className="flex items-center rounded-lg bg-secondary p-0.5">
-              {(["all", "edited"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="tab"
-                  aria-selected={filter === value}
-                  data-testid={`appshot-library-filter-${value}`}
-                  onClick={() => {
-                    setFilter(value);
-                    setExpanded(false);
-                    setLimit(PAGE);
-                  }}
-                  className={cn(
-                    "h-7 rounded-md px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
-                    filter === value
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {value === "all"
-                    ? t("appshot_editor.library_filter_all")
-                    : `${t("appshot_editor.library_filter_edited")} ${editedCount}`}
-                </button>
-              ))}
-            </div>
-            <Button
-              type="button"
-              variant={confirmClear ? "destructive" : "ghost"}
-              size="sm"
-              disabled={clearing}
-              onClick={() => void clearAll()}
-              data-testid="appshot-library-clear"
-            >
-              {clearing ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}
-              {confirmClear
-                ? t("appshot_editor.library_delete_all_confirm")
-                : t("appshot_editor.library_delete_all")}
-            </Button>
+      {recordingsOnly ? (
+        <p id={titleId} className="text-sm font-medium text-foreground">
+          {t("appshot_editor.library_filter_recordings")}
+          {shown.length > 0 && (
+            <span className="ml-2 font-normal text-muted-foreground">
+              {t("appshot_editor.library_count").replace("{0}", String(shown.length))}
+            </span>
+          )}
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-[min(100%,16rem)] flex-1">
+            <p id={titleId} className="text-base font-medium text-foreground">
+              {t("appshot_editor.library_title")}
+              {total > 0 && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  {t("appshot_editor.library_count").replace("{0}", String(total))}
+                </span>
+              )}
+            </p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {enabled === false
+                ? t("appshot_editor.library_off")
+                : t("appshot_editor.library_subtitle")}
+            </p>
           </div>
-        )}
-      </div>
+          {total > 0 && (
+            <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
+              <div role="tablist" className="flex items-center rounded-lg bg-secondary p-0.5">
+                {(["all", "edited", "recordings"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    aria-selected={filter === value}
+                    data-testid={`appshot-library-filter-${value}`}
+                    onClick={() => {
+                      setFilter(value);
+                      setExpanded(false);
+                      setLimit(PAGE);
+                    }}
+                    className={cn(
+                      "h-7 rounded-md px-3 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong",
+                      filter === value
+                        ? "bg-card text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {value === "all"
+                      ? t("appshot_editor.library_filter_all")
+                      : value === "edited" ? `${t("appshot_editor.library_filter_edited")} ${editedCount}`
+                        : `${t("appshot_editor.library_filter_recordings")} ${recordingCount}`}
+                  </button>
+                ))}
+              </div>
+              <Button
+                type="button"
+                variant={confirmClear ? "destructive" : "ghost"}
+                size="sm"
+                disabled={clearing}
+                onClick={() => void clearAll()}
+                data-testid="appshot-library-clear"
+              >
+                {clearing ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}
+                {confirmClear
+                  ? t("appshot_editor.library_delete_all_confirm")
+                  : t("appshot_editor.library_delete_all")}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <p className="mt-3 text-sm text-destructive" role="alert">
@@ -435,7 +488,7 @@ export function AppshotLibrary({
       ) : empty ? (
         !error && (
           <p className="mt-4 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            {filter === "edited"
+            {filter === "recordings" ? t("appshot_editor.library_empty_recordings") : filter === "edited"
               ? t("appshot_editor.library_empty_edited")
               : t("appshot_editor.library_empty")}
           </p>
@@ -492,6 +545,7 @@ export function AppshotLibrary({
           </div>
         </>
       )}
+      <AppshotRecordingPlayer item={playing} onClose={() => setPlaying(null)} />
     </section>
   );
 }

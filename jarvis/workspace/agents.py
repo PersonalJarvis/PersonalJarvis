@@ -740,11 +740,13 @@ _KIMI_PICKS = LaunchPicks(
 )
 
 #: Cursor CLI takes ``--model`` and ``--mode plan|ask``; Agent mode is the
-#: default (no extra flag). Effort is the model's own, not a CLI flag.
+#: default; --force lets its tools act without permission prompts.
+#: Effort is the model's own, not a CLI flag.
 _CURSOR_PICKS = LaunchPicks(
     provider="cursor",
     model_args=("--model", picks_value),
     permission_args=(
+        ("auto", ("--force",)),
         ("plan", ("--mode", "plan")),
         ("ask", ("--mode", "ask")),
     ),
@@ -1800,7 +1802,13 @@ def build_agent_argv(name: str) -> tuple[str, ...] | None:
         return None
     if agent.launch_command is None:
         return plain_terminal_argv()
-    return _build_pty_argv(agent.launch_command)
+    from jarvis.workspace.launch_picks import launch_argv
+
+    # Only catalog-owned permission defaults enter this shell command;
+    # request-supplied model, effort and permission strings are not accepted.
+    defaults = launch_argv(name)
+    command = " ".join((agent.launch_command, *defaults))
+    return _build_pty_argv(command)
 
 
 def build_install_argv(name: str) -> tuple[str, ...] | None:

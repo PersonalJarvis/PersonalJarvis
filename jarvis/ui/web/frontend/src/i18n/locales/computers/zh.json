@@ -363,6 +363,18 @@
     "cx_key_only_body": "在服务器上运行一次这一行命令，可以在托管面板的网页控制台或任意 SSH 会话中运行。它会添加 {name} 的密钥。然后点击“重试”。",
     "cx_key_only_line": "在服务器上运行的命令",
     "cx_key_only_agent": "或者让服务器上的编程智能体来完成",
-    "cx_try_again": "重试"
+    "cx_try_again": "重试",
+    "cx_ssh_host": "SSH 主机",
+    "cx_ssh_placeholder": "输入主机名或 IP 地址",
+    "cx_invalid_port": "请输入 1 到 65535 之间的端口。",
+    "cx_additional_options": "添加计算机的其他方式",
+    "cx_connection_hint": "选择连接这台计算机的方式。",
+    "cx_connection_type": "连接方式",
+    "cx_connection_server": "服务器地址",
+    "cx_connection_ssh": "SSH",
+    "cx_server_host": "主机",
+    "cx_pairing_code": "配对码",
+    "cx_pairing_hint": "粘贴完整的配对链接，即可自动填写两个字段。",
+    "cx_pairing_unavailable": "暂不支持通过配对码连接。现在可以使用 SSH 连接。"
   }
 }

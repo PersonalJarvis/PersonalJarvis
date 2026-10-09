@@ -39,6 +39,9 @@ _log = logging.getLogger(__name__)
 #: plays the ``error`` one-shot on top of whatever the pet was doing.
 MODE_STATES: dict[str, str] = {
     "idle": "idle",
+    # The realtime transport is still negotiating: the pet is busy getting
+    # through, and turns to listening (with a nod) once the call is up.
+    "connect": "thinking",
     "listen": "listening",
     "dictate": "listening",
     "think": "thinking",

@@ -33,7 +33,11 @@ one click.
     three, each a light-blue sky with soft white clouds in it): start a conversation, or hang up the running one. The
     strokes stand still and dimmed at rest, follow the live audio level while
     listening, dictating or talking, and carry a travelling highlight while
-    thinking or transcribing;
+    thinking or transcribing. While a realtime call is still connecting
+    (`SystemStateChanged(CONNECTING)`) the three strokes bend into the arcs
+    of one ring and spin as the loading loop (a live voice lengthens the
+    arcs); once the provider takes the call they flash green, unbend and
+    slide back into the listening row. The Jarvis Bar shows the same loop;
   - speaker: silence the assistant's voice for this session (TTS volume 0,
     mirrored from `VoiceSpeakerMuteChanged`).
 - **The thought bubble** above the pet's head while Jarvis thinks, drawn in
@@ -53,6 +57,17 @@ one click.
   character (`docs/agent-society/office-map.md`, *Jarvis is the person's
   pet*). A pet the person drew becomes a voxel figure cut from its idle
   frames.
+- **Worn by an agent.** In an agent's look dialog (*Companion → Look →
+  Pet*) any pet from My Pets can replace the agent's shape. It is stored as
+  `companion.pet` in the agent's avatar JSON (`jarvis/society/companion.py`,
+  mirrored by `components/society/companion/appearance.ts`) and drawn by
+  `CompanionMark` wherever the agent appears: roster, chats, mentions, the
+  level hall, the bot stage (each scene plays a pet row, `PET_STATE` in
+  `botStage/scenes.ts`), the live line of its routine traces, and as its 3D
+  companion in the Verse with the pet's own model and gait. The agent's
+  colour stays for its chat bubbles. A pet that does not exist on this
+  machine (deleted, or drawn on another one) shows the shape again; a shared
+  agent template keeps a built-in pet and drops a drawn one.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
@@ -148,7 +163,7 @@ equal.
 |---|---|
 | `idle` | `SystemStateChanged(IDLE)`, no session |
 | `listening` | wake word, `VoiceSessionStarted`, `SystemStateChanged(LISTENING)`, dictation |
-| `thinking` | `SystemStateChanged(THINKING)` |
+| `thinking` | `SystemStateChanged(THINKING)`; also `SystemStateChanged(CONNECTING)` while a realtime call connects (the pet nods once it is connected) |
 | `talking` | `AudioOutFirst`, `SystemStateChanged(SPEAKING)` with audible output |
 | `success` (one-shot, 1.5 s) | `SpeechSpoken.spoken_kind` in `action_done`/`completion`, `JarvisAgentBackgroundCompleted(success=True)`, `ActionExecuted(success=True)` while no turn is running |
 | `error` (one-shot, 2 s) | `ErrorOccurred(recoverable=False)`, `SpeechSpoken.spoken_kind` in `timeout`/`unavailable`/`stt_unavailable`, `VoiceSessionEnded(hangup_reason="error")`, `ActionExecuted(success=False)` while no turn is running |
@@ -352,6 +367,6 @@ The pet must cost next to nothing while idle:
 - the window repaints only when the frame key changes (frame index, plus the
   level bucket while talking), and the timer sleeps until the next frame
   boundary: 6 fps idle, 3 fps asleep, 8–10 fps active, nothing while hidden;
-- the control strip's indicator animates only while listening, talking or thinking.
+- the control strip's indicator animates only while connecting, listening, talking or thinking.
 
 Target: an idle pet adds less than 1 % of one CPU core to the app process.

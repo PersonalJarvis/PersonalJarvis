@@ -24,7 +24,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: ``working`` — its screen is moving.
 #: ``waiting`` — alive and still.
 #: ``asking`` — still, AND showing a question or a choice.
-#: ``failed`` — its agent could not be started.
+#: ``failed`` — its agent could not be started, or (on a live process) its last
+#:   turn ended in an error; the CLI is then back at its prompt.
 #: ``exited`` — its process is gone.
 Activity = Literal[
     "starting", "working", "waiting", "asking", "failed", "exited", "stopped", "unknown",

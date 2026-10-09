@@ -2553,6 +2553,71 @@ class Registry:
             self._start_in_background(session, term)
         return term
 
+    async def restart_terminal(
+        self, wanted: str, workspace_id: str | None = None
+    ) -> tuple[Terminal, bool]:
+        """Start a stopped or failed coding pane again, as the user asked.
+
+        The explicit counterpart of :meth:`start_pending`'s "an exited or failed
+        one is the user's call". The pane keeps its identity (``pane:<history
+        id>``), account and launch picks, and the one start path
+        (:meth:`_attach_locked`) continues its own conversation where the CLI
+        can, fresh only when none exists. Whoever is watching the pane sees the
+        new process. Nothing is typed into it.
+
+        A running agent is never restarted, which would throw away work in
+        flight: the call is then a no-op, so a repeated request starts at most
+        one process. Returns the pane and whether a new process was started.
+        """
+        found = self.find_terminal(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        if not accepts_prompts(term.agent):
+            raise SessionError(
+                f"{term.name} is a {agent_display(term.agent).lower()}, not a coding agent; "
+                "only coding agents are restarted here."
+            )
+
+        async def _discard(_data: Any) -> None:
+            return None
+
+        async with term.attach_lock:
+            if term.status == "live" and term.pty_id:
+                return term, False
+            if term.placing:
+                raise SessionNotReady(term.placing)
+            generation, previous, error = term.process_generation, term.status, term.error
+            if not term.pty_id:
+                # A pty still recorded is re-joined below, never restarted.
+                term.status = "pending"
+            term.error = ""
+            term.stopping = False
+            viewer = term.viewer_output or _discard
+            try:
+                await self._attach_locked(
+                    "pane:" + term.history_id,
+                    term.pty_cols or term.transcript.cols,
+                    term.pty_rows or term.transcript.rows,
+                    viewer,
+                    term.viewer_exit or _discard,
+                    workspace_id=session.id,
+                )
+            except BaseException:
+                if term.status == "pending" and not term.pty_id:
+                    # Refused before any start: the pane is as it was.
+                    term.status, term.error = previous, error
+                raise
+            finally:
+                if viewer is _discard:
+                    self.detach("pane:" + term.history_id, workspace_id=session.id, viewer=_discard)
+        logger.info(
+            "Agentic IDE: restarted {} on request ({})",
+            term.name,
+            "its own conversation" if term.resumed else "a fresh conversation",
+        )
+        return term, term.process_generation != generation
+
     def _host_went_away(self) -> bool:
         """Did the PTY host this process was attached to just drop away?"""
         current = self._pty
@@ -6755,7 +6820,8 @@ class Registry:
                         )
                 if busy in ("failed", "exited"):
                     raise SessionError(
-                        f"{term.name} is not running ({busy}); nothing was sent."
+                        f"{term.name} is not running ({busy}); nothing was sent. Restart it "
+                        "(it continues its own conversation), then send again."
                     )
                 if busy == "asking" and when_busy != "refuse":
                     raise SessionError(
@@ -6810,6 +6876,12 @@ class Registry:
             term.last_submit_at is not None
             and term.submit_generation == term.process_generation
         )
+        if activity == "failed" and term.status == "live" and term.pty_id:
+            # The last TURN failed (Codex records ``task_complete`` with an
+            # error), not the process: the CLI is back at its prompt and takes
+            # the next instruction. Refusing it as "not running" left a failed
+            # Codex pane unreachable for good (live 2026-10-07).
+            return ""
         if activity in ("working", "asking", "failed", "exited"):
             return activity
         # An interrupted turn ("stopped") sits at its prompt like a finished

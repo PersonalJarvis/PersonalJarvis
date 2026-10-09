@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { forgetHeldFiles, useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { discardHeldFiles, forgetHeldFiles, moveHeldFiles, restoreHeldFiles, useChatAttachments } from "@/components/agentchat/useChatAttachments";
 
 /**
  * Files held for an unsent message survive the composer unmounting, the way
@@ -85,5 +85,52 @@ describe("held files across unmounts", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:shot");
     const second = renderHook(() => useChatAttachments(TARGET, () => {}));
     expect(second.result.current.attachments).toEqual([]);
+  });
+
+  it("moves files to an assigned session and restores a failed submission there", async () => {
+    const blank = renderHook(() => useChatAttachments(TARGET, () => {}, { owner, key: "" }));
+    await act(async () => blank.result.current.attachFiles([png()]));
+    await waitFor(() => expect(blank.result.current.attachments).toHaveLength(1));
+    act(() => moveHeldFiles(owner, "", "created"));
+    const assigned = renderHook(() => useChatAttachments({ ...TARGET, sessionId: "created" }, () => {}, { owner, key: "created" }));
+    expect(blank.result.current.attachments).toEqual([]);
+    expect(assigned.result.current.attachments).toEqual([SHOT]);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    let sent!: ReturnType<typeof assigned.result.current.take>;
+    act(() => { sent = assigned.result.current.take(); });
+    expect(assigned.result.current.attachments).toEqual([]);
+    act(() => restoreHeldFiles(owner, "created", sent));
+    expect(assigned.result.current.attachments).toEqual([SHOT]);
+    expect(assigned.result.current.previews).toEqual({ "shot.png": "blob:shot" });
+  });
+
+  it("routes an upload completing after session creation to the assigned draft", async () => {
+    let uploaded!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { uploaded = resolve; })));
+    const blank = renderHook(() => useChatAttachments(TARGET, () => {}, { owner, key: "" }));
+    act(() => blank.result.current.attachFiles([png()]));
+    act(() => moveHeldFiles(owner, "", "created"));
+    const assigned = renderHook(() => useChatAttachments({ ...TARGET, sessionId: "created" }, () => {}, { owner, key: "created" }));
+    await act(async () => uploaded(new Response(JSON.stringify({ attachments: [SHOT], cwd: "C:\\work" }))));
+    await waitFor(() => expect(assigned.result.current.attachments).toEqual([SHOT]));
+    expect(blank.result.current.attachments).toEqual([]);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    const freshBlank = renderHook(() => useChatAttachments(TARGET, () => {}, { owner, key: "" }));
+    expect(freshBlank.result.current.attachments).toEqual([]);
+  });
+
+  it("keeps an abandoned upload out of an explicitly new blank chat", async () => {
+    let uploaded!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { uploaded = resolve; })));
+    const blank = renderHook(() => useChatAttachments(TARGET, () => {}, { owner, key: "" }));
+    act(() => blank.result.current.attachFiles([png()]));
+    act(() => discardHeldFiles(owner, ""));
+    await act(async () => uploaded(new Response(JSON.stringify({ attachments: [SHOT], cwd: "" }))));
+    expect(blank.result.current.attachments).toEqual([]);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:shot");
+    // The same mounted composer can still attach to the newly requested chat.
+    act(() => blank.result.current.attachFiles([png()]));
+    await act(async () => uploaded(new Response(JSON.stringify({ attachments: [SHOT], cwd: "" }))));
+    await waitFor(() => expect(blank.result.current.attachments).toEqual([SHOT]));
   });
 });

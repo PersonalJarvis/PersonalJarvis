@@ -1998,7 +1998,7 @@ class ModelCatalog:
             raise ValueError(f"Unsupported provider: {provider}")
         ep = _ENDPOINTS[provider]
         url = self._resolve_catalog_url(provider, ep)
-        key = cfg.get_provider_secret(provider)
+        key = cfg.resolve_provider_endpoint(provider).credential
         if not key and ep.auth in ("x-api-key", "bearer", "query"):
             raise RuntimeError(f"No API key configured for {provider}.")
         auth = ep.auth
@@ -2014,10 +2014,10 @@ class ModelCatalog:
                 headers = {"Authorization": f"Bearer {key}"}
         elif auth == "query":
             params = {"key": key or ""}
-        elif auth == "none" and ep.secret_slot is not None:
+        elif auth == "none" and (key or ep.secret_slot is not None):
             # Keyless local server with an OPTIONAL stored key (e.g. vLLM
             # --api-key): attach it when present, stay anonymous otherwise.
-            optional = cfg.get_secret(*ep.secret_slot)
+            optional = key or (cfg.get_secret(*ep.secret_slot) if ep.secret_slot else None)
             if optional:
                 headers = {"Authorization": f"Bearer {optional}"}
 
@@ -2039,12 +2039,15 @@ class ModelCatalog:
             resp.raise_for_status()
             models = parse_models_response(provider, resp.json())
             if provider == "ollama":
-                models = await self._enrich_ollama_capabilities(client, url, models)
+                models = await self._enrich_ollama_capabilities(
+                    client, url, models, headers=headers,
+                )
             return models
 
     @staticmethod
     async def _enrich_ollama_capabilities(
-        client: httpx.AsyncClient, tags_url: str, models: list[ModelInfo]
+        client: httpx.AsyncClient, tags_url: str, models: list[ModelInfo],
+        *, headers: dict[str, str] | None = None,
     ) -> list[ModelInfo]:
         """Attach each download's DECLARED capabilities from ``/api/show``.
 
@@ -2071,7 +2074,9 @@ class ModelCatalog:
         async def probe(info: ModelInfo) -> ModelInfo | None:
             async with semaphore:
                 try:
-                    resp = await client.post(f"{root}/api/show", json={"model": info.id})
+                    resp = await client.post(
+                        f"{root}/api/show", json={"model": info.id}, headers=headers,
+                    )
                     resp.raise_for_status()
                     shown = resp.json()
                     caps = shown.get("capabilities")

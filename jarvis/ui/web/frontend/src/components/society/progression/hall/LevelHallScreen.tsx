@@ -37,6 +37,7 @@ import { RanksTab } from "./RanksTab";
 import { RewardsTab } from "./RewardsTab";
 import { StudioTab } from "./StudioTab";
 import { AgentSymbol } from "../../AgentSymbol";
+import { CompanionMark } from "../../companion/CompanionMark";
 import { accessoryItem } from "../../companion/accessories";
 import { resolveCompanion } from "../../companion/appearance";
 import "./hall.css";
@@ -213,15 +214,15 @@ function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
               return (
               <li key={agent.agentId} data-podium={i < 3 ? i + 1 : undefined}>
                 <span className="hall-rank">{i + 1}</span>
-                <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} accessories={look.accessories} size={34} />
+                <CompanionMark appearance={look} size={34} />
                 <LevelChip kind="agent" level={level} />
                 <span className="hall-rank-body">
                   <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${rankOf(subject?.title)}`)}</em></span>
                   <XpBar fraction={levelFraction(subject)} kind="agent" label={t("society.level.agent_xp_label").replace("{0}", agent.name)} />
                   {next && nextItem && (
                     <span className="hall-rank-next">
-                      <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={22}
-                        accessories={{ ...look.accessories, [nextItem.slot]: next[0] }} />
+                      {!look.pet && <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={22}
+                        accessories={{ ...look.accessories, [nextItem.slot]: next[0] }} />}
                       {t("society.hall.next_look").replace("{0}", t(`society.companion.items.${next[0]}`)).replace("{1}", String(next[1]))}
                     </span>
                   )}

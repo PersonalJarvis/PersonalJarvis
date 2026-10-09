@@ -94,7 +94,7 @@ def _executor(
     approval = _WaitSpy(bus, timeout_s=timeout_s)
     executor = ToolExecutor(
         bus,
-        RiskTierEvaluator(safety or SafetyConfig()),
+        RiskTierEvaluator(safety or SafetyConfig(approval_mode="ask")),
         approval,
         default_timeout_s=timeout_s,
     )

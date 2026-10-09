@@ -23,6 +23,7 @@ import { useAgentFollowTarget } from "./useAgentFollowTarget";
 import { bindFollowEscape } from "./followInput";
 import { ownsTextOrUi } from "./input";
 import "./mars.css";
+import { useSyncCompanionPet } from "../companion/companionPetStore";
 
 export interface MarsWorldStageProps {
   topRight?: ReactNode;
@@ -51,6 +52,8 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
   const awake = useCanvasAwake(hostRef);
+  // Agents that wear a pet need the pets inside the canvas.
+  useSyncCompanionPet();
   const [initial] = useState(readViewPreferences);
   const [mode, setMode] = useState<CameraMode>(initial.mode);
   const [followAgentId, setFollowAgentId] = useState(initial.followAgentId);

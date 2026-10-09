@@ -53,6 +53,17 @@ test("shared observers do not serialize and write the same data twice", () => {
   expect(write).toHaveBeenCalledTimes(1);
 });
 
+test("reload preserves disabled providers and the model visibility saved in API Keys", () => {
+  const source = snapshot();
+  source.catalog.providers[0].enabled = false;
+  source.catalog.providers[0].hidden_models = ["small"];
+  writeModelMenuSnapshot(source);
+  const raw = localStorage.getItem(MODEL_MENU_SNAPSHOT_KEY)!;
+  clearModelMenuSnapshot();
+  localStorage.setItem(MODEL_MENU_SNAPSHOT_KEY, raw);
+  expect(readModelMenuSnapshot()?.catalog.providers[0]).toMatchObject({ enabled: false, hidden_models: ["small"] });
+});
+
 test("fresh connection metadata does not make an old live model list fresh", () => {
   const source = snapshot();
   source.liveUpdatedAt = { example: Date.now() - 11 * 60_000 };

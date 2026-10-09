@@ -668,9 +668,22 @@ def test_concurrent_first_requests_build_only_one_chat_service() -> None:
     assert all(svc is state.agent_chat for svc in services)
 
 
-async def test_reattaching_twice_hands_over_the_old_reader_without_killing_the_cli(tmp_path):
+async def test_reattaching_twice_hands_over_the_old_reader_without_killing_the_cli(tmp_path, monkeypatch):
     host, task, port = await _start_host(tmp_path)
     client = await _client(port)
+    attach = host._attach
+    attachments = 0
+
+    async def interleaved(peer, rid, turn):
+        nonlocal attachments
+        attachments += 1
+        if attachments == 2:
+            # A live frame can reach the replacement before the host handles
+            # its attach request. Replay must still start at the first line.
+            await peer.send({"ev": "line", "id": turn.turn_id, "seq": 2, "d": "two"})
+        await attach(peer, rid, turn)
+
+    monkeypatch.setattr(host, "_attach", interleaved)
     try:
         spawned = await client.spawn(
             [sys.executable, "-c", _CHILD],
@@ -702,6 +715,36 @@ async def test_reattaching_twice_hands_over_the_old_reader_without_killing_the_c
         ]
         assert await asyncio.wait_for(second.wait(), 3) == 3
         second.release()
+    finally:
+        client.detach()
+        await _stop(host, task)
+
+
+async def test_failed_attach_can_retry_without_leaving_a_dead_reader(tmp_path, monkeypatch):
+    host, task, port = await _start_host(tmp_path)
+    client = await _client(port)
+    try:
+        spawned = await client.spawn(
+            [sys.executable, "-c", _CHILD], cwd=str(tmp_path), env=None,
+            stdin="hi\n", keep_stdin=True, meta={"turn_id": "retry-attach", "keep_stdin": True},
+        )
+        request = client._request
+
+        async def refused(*_args, **_kwargs):
+            raise ConnectionError("attach reply unavailable")
+
+        monkeypatch.setattr(client, "_request", refused)
+        with pytest.raises(ConnectionError, match="attach reply unavailable"):
+            await client.attach(spawned.host_id)
+        assert client.live() == []
+        monkeypatch.setattr(client, "_request", request)
+        resumed = await client.attach(spawned.host_id)
+        assert resumed is not None
+        assert await resumed.stdout.readline() == b"got hi\n"
+        assert resumed.stdin is not None
+        resumed.stdin.write(b"go\n")
+        assert await asyncio.wait_for(resumed.wait(), 3) == 3
+        resumed.release()
     finally:
         client.detach()
         await _stop(host, task)

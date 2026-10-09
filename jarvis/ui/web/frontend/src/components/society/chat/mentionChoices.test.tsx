@@ -1,5 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useAgentChatStore } from "@/store/agentChat";
+import { composerDraftsFor } from "@/components/agentchat/composerDrafts";
 import { Composer, UserBubble } from "./AgentChatPanel";
 import { mentionChoice, pinnedMessageChoices, withoutChoiceTokens } from "./mentionChoices";
 import { buildMentionCatalog, mentionsInText } from "./mentionItems";
@@ -55,18 +57,25 @@ vi.mock("@/components/agentchat/useComposerDictation", () => ({
   useComposerDictation: () => ({ dictating: false, stop() {}, toggle() {} }),
 }));
 vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () => null }));
-vi.mock("@/components/agentchat/useChatAttachments", () => ({
+vi.mock("@/components/agentchat/useChatAttachments", async (original) => ({
+  ...(await original<typeof import("@/components/agentchat/useChatAttachments")>()),
   useChatAttachments: () => ({
     attachments: [],
     analyzing: 0,
     dragging: false,
     dragHandlers: {},
     clear() {},
+    take: () => ({ attachments: [], previews: {} }),
+    restore() {},
     remove() {},
     attachFiles() {},
   }),
 }));
 afterEach(cleanup);
+beforeEach(() => {
+  useAgentChatStore.setState({ activeSessionId: "society:test", busy: false, lastError: null });
+  composerDraftsFor(useAgentChatStore).setState({ drafts: new Map() });
+});
 
 it("uses Add to select a real branded chip and preserves the existing pin protocol", async () => {
   const send = vi.fn(async (_text: string) => {});
@@ -154,6 +163,7 @@ const teammates = [
 ] as SocietyAgent[];
 
 async function sendDraft(text: string, surface: "society" | "jarvis" = "society") {
+  useAgentChatStore.setState({ activeSessionId: surface === "society" ? "society:gmail-agent" : "jarvis-chat" });
   const send = vi.fn(async (_text: string) => {});
   render(
     <Composer

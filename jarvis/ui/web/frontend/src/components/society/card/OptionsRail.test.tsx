@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { OptionsRail } from "@/components/society/card/OptionsRail";
+import { AgentChatLayout } from "./AgentChatLayout";
 import type { SocietyAgent } from "@/components/society/data";
 
 function agent(over: Partial<SocietyAgent> = {}): SocietyAgent {
@@ -49,7 +50,9 @@ function mount(row: SocietyAgent, onRetired = vi.fn()) {
     client,
     ...render(
       <QueryClientProvider client={client}>
-        <OptionsRail agent={row} onRetired={onRetired} />
+        <AgentChatLayout options={<OptionsRail agent={row} onRetired={onRetired} />}>
+          <section aria-label="Chat"><textarea aria-label="Chat draft" /></section>
+        </AgentChatLayout>
       </QueryClientProvider>,
     ),
   };
@@ -69,6 +72,10 @@ describe("OptionsRail", () => {
   beforeEach(() => {
     fetchMock = vi.fn(async (url: string) => {
       const path = String(url);
+      if (path === "/api/tasks/gm1") {
+        return json({ id: "gm1", title: "Inbox sweep", state: "scheduled", steps: [],
+          spec: { action: { kind: "agent", prompt: "Read the inbox." } } });
+      }
       if (path.includes("/browser/status")) {
         return json({ installed: false, phase: "idle", percent: 0, running: false });
       }
@@ -129,6 +136,51 @@ describe("OptionsRail", () => {
     expect(retire.dataset.armed).toBe("true");
     expect(onRetired).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "DELETE")).toHaveLength(0);
+  });
+
+  test("collapses the entire rail with a reachable toggle and preserves browser and routine drafts", async () => {
+    mount(agent());
+    await screen.findByText("Inbox sweep");
+    const toggle = await screen.findByRole("button", { name: "Collapse Options" });
+    const panel = document.getElementById(toggle.getAttribute("aria-controls")!)!;
+    const browser = screen.getByTestId("agent-browser-preview");
+    const canvas = browser.querySelector("canvas");
+    fireEvent.click(screen.getByTestId("agent-routines-add"));
+    const title = screen.getByRole("textbox", { name: "Title" }) as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Unsaved routine" } });
+    const chat = screen.getByRole("textbox", { name: "Chat draft" }) as HTMLTextAreaElement;
+    fireEvent.change(chat, { target: { value: "Unsent message" } });
+
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(panel.hidden).toBe(true);
+    expect(screen.queryByRole("complementary", { name: "Options" })).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toBe(chat);
+    expect(chat.value).toBe("Unsent message");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand Options" }));
+    expect(panel.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByTestId("agent-browser-preview")).toBe(browser);
+    expect(browser.querySelector("canvas")).toBe(canvas);
+    expect(screen.getByRole("textbox", { name: "Title" })).toBe(title);
+    expect(title.value).toBe("Unsaved routine");
+    expect(fetchMock.mock.calls.some(([, init]) => {
+      const method = (init as RequestInit | undefined)?.method ?? "GET";
+      return method !== "GET";
+    })).toBe(false);
+  });
+
+  test("keeps the selected routine detail open when Options is folded", async () => {
+    mount(agent());
+    fireEvent.click(await screen.findByText("Inbox sweep"));
+    const detail = await screen.findByTestId("agent-routine-detail");
+    const toggle = await screen.findByRole("button", { name: "Collapse Options" });
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: "Expand Options" }));
+    expect(screen.getByTestId("agent-routine-detail")).toBe(detail);
   });
 
   test("switching agent swaps the caption and the routines list", async () => {

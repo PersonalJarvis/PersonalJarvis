@@ -184,6 +184,8 @@ class RuntimeLaunch:
     #: Called exactly once when the turn's process is gone: frees the turn
     #: slot (and lets an idle Gateway be reaped).
     release: Callable[[], None] | None = None
+    #: Prevent reusing a persistent gateway after an unconfirmed termination.
+    invalidate: Callable[[], None] | None = None
 
 
 class AgentRuntimeDriver(Protocol):

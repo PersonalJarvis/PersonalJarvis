@@ -8,7 +8,9 @@ expected degradation.
 
 from __future__ import annotations
 
+import os
 import sys
+from contextlib import suppress
 
 from jarvis.cu.indicator.protocol import EXIT_NO_GUI
 
@@ -26,5 +28,19 @@ def main() -> int:
     return run()
 
 
+def _exit(code: int) -> None:
+    """End without interpreter finalization once the sidecar has cleaned up.
+
+    ``run()`` restores the pointer and closes every card before it returns.
+    Finalization would then free Qt objects and the stdin reader thread in an
+    arbitrary order after the QApplication, which a slow machine turns into
+    an access violation (0xC0000005) on an otherwise clean exit.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with suppress(Exception):  # A gone parent closed the pipe; nothing to flush.
+            stream.flush()
+    os._exit(code)
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit(main())

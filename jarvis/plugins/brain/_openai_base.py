@@ -678,17 +678,30 @@ async def stream_complete(
 
             finish = getattr(choice, "finish_reason", None)
             if finish:
+                if tool_buffer and finish not in {"tool_calls", "stop"}:
+                    # Preserve the stop reason so the caller can retry with a
+                    # larger budget; no partial tool arguments may execute.
+                    tool_buffer.clear()
+                    yield BrainDelta(finish_reason=finish)
+                    continue
                 # Finalize tool calls if present
+                completed_calls = []
                 for idx, buf in sorted(tool_buffer.items()):
                     try:
                         parsed = json.loads(buf["arguments"]) if buf["arguments"] else {}
-                    except json.JSONDecodeError:
-                        parsed = {}
-                    yield BrainDelta(tool_call={
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(
+                            "The provider returned incomplete tool arguments.",
+                        ) from exc
+                    if not isinstance(parsed, dict):
+                        raise ValueError("The provider returned non-object tool arguments.")
+                    completed_calls.append({
                         "id": buf["id"] or f"call_{idx}",
                         "name": reverse_name_map.get(buf["name"], buf["name"]),
                         "input": parsed,
                     })
+                for call in completed_calls:
+                    yield BrainDelta(tool_call=call)
                 tool_buffer.clear()
                 yield BrainDelta(finish_reason=finish)
 

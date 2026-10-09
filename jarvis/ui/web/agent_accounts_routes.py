@@ -21,6 +21,7 @@ import asyncio
 import logging
 import time
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -141,6 +142,51 @@ async def usage(refresh: bool = False) -> dict[str, Any]:
     every account is a network round trip, and they run in parallel.
     """
     return await asyncio.to_thread(_usage, refresh)
+
+
+class ResetConsumeRequest(BaseModel):
+    confirmed: bool = Field(
+        strict=True, description="Explicit confirmation to spend one earned reset."
+    )
+    idempotency_key: UUID = Field(description="Reuse this UUID when retrying the same reset.")
+    credit_id: str | None = Field(default=None, min_length=1, max_length=512)
+    account_key: str = Field(min_length=64, max_length=64)
+
+
+async def _reset_account(account_id: str) -> agent_accounts.AgentAccount:
+    account = await asyncio.to_thread(agent_accounts.resolve, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="That account no longer exists.")
+    return account
+
+
+@router.get("/{account_id}/resets", summary="Read earned usage resets for one subscription")
+async def list_account_resets(account_id: str) -> dict[str, Any]:
+    from jarvis.agent_resets import read_resets
+
+    return await read_resets(await _reset_account(account_id))
+
+
+@router.post(
+    "/{account_id}/resets/consume",
+    summary="Confirm and use one earned subscription reset",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def consume_account_reset(account_id: str, req: ResetConsumeRequest) -> dict[str, Any]:
+    from jarvis.agent_resets import ResetError, consume_reset
+
+    if not req.confirmed:
+        raise HTTPException(status_code=422, detail="Confirm before consuming an earned reset.")
+    account = await _reset_account(account_id)
+    try:
+        return await consume_reset(
+            account,
+            attempt=str(req.idempotency_key),
+            credit_id=req.credit_id,
+            account_key=req.account_key,
+        )
+    except ResetError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code}) from exc
 
 
 @router.post("", summary="Add another subscription")

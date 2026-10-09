@@ -298,6 +298,97 @@ def test_parking_preserves_monitor_geometry_and_does_not_activate(scene):
     args = desktop.positions[-1]
     assert args[:2] == (1, 1)  # Owned Chrome, HWND_BOTTOM.
     assert args[-1] & 0x13 == 0x13  # No move, no size, no activation.
+    assert desktop.alpha[1] == 0
+    assert desktop.styles[1] & 0x00080020 == 0x00080020
+    assert not desktop.styles[1] & 0x08040080
+
+
+def test_parking_hides_later_owned_popups_but_never_other_windows(scene):
+    window, desktop, _codec = scene
+    desktop.styles[1] = 0x40000
+    window.park()
+    assert not desktop.styles[1] & 0x40000
+    popup(window, desktop)
+    desktop.add(3, owner=0)
+    desktop.add(4, pid=900)
+    window._sync_windows()
+    assert desktop.alpha == {1: 0, 2: 0}
+    assert window.click_target(45, 15) == (2, 5, 5)
+
+
+def test_parked_windows_remain_eligible_for_capture_creation(scene):
+    window, desktop, _codec = scene
+    factory = window._capture_factory
+
+    def captureable(**kwargs):
+        # WGC rejects a no-activate window unless it is an explicit app window.
+        hwnd = kwargs["window_hwnd"]
+        style = desktop.styles.get(hwnd, 0)
+        assert not style & 0x80
+        assert not style & 0x08000000 or style & 0x40000
+        return factory(**kwargs)
+
+    window._capture_factory = captureable
+    desktop.styles[1] = 0x40080
+    window.park()
+    assert window._stop_capture(1)
+    window._start_capture(1)
+    desktop.styles[2] = 0x80
+    popup(window, desktop)
+    assert desktop.alpha == {1: 0, 2: 0}
+    assert all(desktop.styles[hwnd] & 0x80000 for hwnd in (1, 2))
+
+
+def test_failed_capture_creation_restores_desktop_transparency(scene):
+    window, desktop, _codec = scene
+    window.park()
+    assert window._stop_capture(1)
+
+    def refused(**_kwargs):
+        raise RuntimeError("capture item unavailable")
+
+    window._capture_factory = refused
+    with pytest.raises(RuntimeError, match="capture item unavailable"):
+        window._start_capture(1)
+    assert desktop.alpha[1] == 0
+    assert desktop.styles[1] & 0x80000
+    assert 1 not in window._captures and 1 not in window._capture_keys
+
+
+def test_parking_preserves_captured_pixels_and_manual_input(scene):
+    window, desktop, _codec = scene
+    window.park()
+    window._captures[1][0].arrive(Pixels(100, 80, 7))
+    frame = window.frame()
+    assert frame["bytes"] == b"owned-window-image"
+    window.input("text", {"text": "test"})
+    assert [row[2] for row in desktop.messages if row[1] == 0x102] == list(map(ord, "test"))
+
+
+def test_parking_fails_visibly_if_windows_cannot_hide_it(scene):
+    window, desktop, _codec = scene
+    desktop.user32.SetLayeredWindowAttributes = NativeCall(lambda *args: False)
+    with pytest.raises(RuntimeError, match="transparent"):
+        window.park()
+
+
+def test_repeated_window_events_do_not_rewrite_desktop_opacity(scene):
+    window, desktop, _codec = scene
+    window.park()
+    popup(window, desktop)
+    desktop.user32.SetLayeredWindowAttributes = NativeCall(
+        lambda *args: pytest.fail("Already hidden windows must not trigger new style events")
+    )
+    window.park()
+    window._sync_windows()
+
+
+def test_recycled_window_is_not_hidden(scene):
+    window, desktop, _codec = scene
+    desktop.windows[1]["pid"] = 900
+    with pytest.raises(RuntimeError, match="owned Chrome window"):
+        window.park()
+    assert desktop.styles == {} and desktop.alpha == {}
 
 
 def test_old_offscreen_parking_position_is_recovered_without_activation(scene):

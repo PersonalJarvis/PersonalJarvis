@@ -95,7 +95,7 @@ describe("AgentRoutinesList", () => {
     let respond!: (response: Response) => void;
     fetchMock.mockImplementation(() => new Promise<Response>((resolve) => { respond = resolve; }));
     mount();
-    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(await screen.findByText("Loading…")).toBeTruthy();
     expect(screen.queryByText("No routines yet.")).toBeNull();
     respond(json({ routines: [] }));
     await screen.findByText("No routines yet.");

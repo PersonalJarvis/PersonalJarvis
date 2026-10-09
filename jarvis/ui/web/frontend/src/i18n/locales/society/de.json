@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "Optionen einklappen",
+      "options_expand": "Optionen ausklappen"
+    },
     "browser_profiles": {
       "profile_unavailable": "Profil getrennt — bitte ein Profil auswählen",
       "chrome_offline": "Chrome nicht verbunden",
@@ -887,6 +891,12 @@
       "dots": "Runde Augen",
       "lines": "Strichaugen",
       "visible": "Auf der Map folgen",
+      "look": "Aussehen",
+      "look_shape": "Form",
+      "look_pet": "Pet",
+      "pet": "Pet",
+      "pet_hint": "Der Agent trägt dieses Pet überall: in Chats, bei der Arbeit und als Begleiter in der Verse.",
+      "no_pets": "Noch keine Pets. Lege eines unter „Meine Pets“ an.",
       "shapes": {
         "circle": "Kreis",
         "squircle": "Weiches Quadrat",

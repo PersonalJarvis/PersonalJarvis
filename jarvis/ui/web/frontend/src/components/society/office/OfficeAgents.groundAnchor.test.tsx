@@ -75,7 +75,11 @@ async function mount(reduced: boolean) {
   const current = createRoot(canvas);
   root = current;
   let state!: RootState;
+  const scene = new THREE.Scene();
+  // Check real geometry and animation without GPU reflection baking.
+  scene.environment = new THREE.Texture();
   current.configure({
+    scene,
     gl: fakeRenderer(canvas) as unknown as NonNullable<Parameters<typeof current.configure>[0]>["gl"],
     frameloop: "never", size: { width: 100, height: 100, top: 0, left: 0 },
     onCreated: (value) => { state = value; },

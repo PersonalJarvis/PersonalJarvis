@@ -80,6 +80,7 @@ function waitsForPerson(blocks: TurnBlock[]): boolean {
   return blocks.some((b) => b.kind === "tool" && (
     (b.approval !== null && b.approval.decision === null)
     || (b.question !== undefined && !b.question.closed)
+    || (b.credential !== undefined && b.credential.status === null)
   ));
 }
 

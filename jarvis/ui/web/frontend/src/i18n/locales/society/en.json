@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "Collapse Options",
+      "options_expand": "Expand Options"
+    },
     "browser_profiles": {
       "profile_unavailable": "Profile disconnected — choose a profile",
       "chrome_offline": "Chrome disconnected",
@@ -887,6 +891,12 @@
       "dots": "Round eyes",
       "lines": "Line eyes",
       "visible": "Follow on the map",
+      "look": "Look",
+      "look_shape": "Shape",
+      "look_pet": "Pet",
+      "pet": "Pet",
+      "pet_hint": "The agent wears this pet everywhere: in chats, while it works and as its companion in the Verse.",
+      "no_pets": "No pets yet. Add one under My Pets.",
       "shapes": {
         "circle": "Circle",
         "squircle": "Soft square",

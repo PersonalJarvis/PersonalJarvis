@@ -30,6 +30,7 @@ from jarvis.core.protocols import Tool, ToolResult
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
     CONVERSATIONAL_RESPONSE_STYLE,
+    CREDENTIAL_GUIDANCE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
 )
@@ -46,9 +47,16 @@ from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool,
 from .coding_threads import CodingThreadTool
 from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
+from .credential_tool import CREDENTIAL_TOOL_NAME, RequestCredentialTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
+from .roster import (
+    PAIR_SESSION_MARKER,
+    AgentRecord,
+    canonical_session_id,
+    has_placeholder_name,
+    is_fresh,
+)
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
 from .share_tool import ShareTemplateTool
@@ -116,6 +124,10 @@ recommendation first with its reason. Unanswered questions take your recommendat
 minutes. Never ask what you can infer or look up; decide everything else yourself.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
+- Credentials: society_request_credential is the only way to get a token, key or password \
+from the user; the rules are under Credentials below. Which credentials are stored is listed \
+at the end of this briefing on every turn; that list is current, so trust it over anything \
+said earlier in the chat.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
 - Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
@@ -420,6 +432,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     # A routine runs unattended: it never gets a way to ask the user.
     if not is_routine_session(session_id):
         tools[ASK_USER_TOOL_NAME] = cast(Tool, AskUserTool(rt, agent_id, session_id=session_id))
+        tools[CREDENTIAL_TOOL_NAME] = cast(
+            Tool, RequestCredentialTool(rt, agent_id, session_id=session_id)
+        )
     if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
@@ -434,6 +449,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
         )
     return tools
 
+
+#: Tools that ask the person themselves: a gate card in front of them would ask twice.
+_UNGATED: Final[tuple[str, ...]] = (ASK_USER_TOOL_NAME, CREDENTIAL_TOOL_NAME)
 
 #: Argument keys that name WHAT a mixed-action tool does (``gmail: send``).
 _VERB_KEYS: Final[tuple[str, ...]] = ("action", "operation", "method", "command", "mode")
@@ -803,11 +821,12 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
                 for name, tool in own.items()
                 # A legacy row still needs a live gate if its permissions change
                 # mid-turn. Asking the user is never gated behind its own card.
-                if name != ASK_USER_TOOL_NAME
+                if name not in _UNGATED
             }
         )
-        if ASK_USER_TOOL_NAME in own:
-            ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
+        for name in _UNGATED:
+            if name in own:
+                ordered[name] = own[name]
         ordered.update(picked)
         return ordered
 
@@ -864,9 +883,41 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
+    context += await _credential_line(rt, agent.agent_id)
+    if is_routine_session(str(getattr(session, "session_id", "") or "")):
+        context += (
+            "\nThis is an unattended routine run: society_request_credential is not available. "
+            "If a credential is missing, report which one in your result."
+        )
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
+    )
+
+
+async def _credential_line(rt: Any, agent_id: str) -> str:
+    """The names of the agent's stored credentials, so it does not ask twice.
+
+    Also said when there are none: a resumed CLI conversation still remembers
+    a token it once saved, and without this line the agent reports a deleted
+    credential as stored instead of asking for it.
+    """
+    from .credentials import vault_for
+
+    try:
+        rows = await asyncio.to_thread(vault_for(rt.data_dir).list, agent_id)
+    except Exception:  # noqa: BLE001 — an unreadable index costs this line, not the turn
+        log.warning("society: credential index unavailable for %s", agent_id, exc_info=True)
+        return ""
+    if not rows:
+        return (
+            "\nStored credentials: none. Ask with society_request_credential when a task "
+            "needs one."
+        )
+    names = ", ".join(f"{row.env} ({row.label})" if row.label else row.env for row in rows)
+    return (
+        "\nStored credentials, set as environment variables in society_shell (values are "
+        f"never shown to you): {names}."
     )
 
 
@@ -886,13 +937,37 @@ def _kind_label(kind: CapabilityKind) -> str:
 #: The introduction frame of a fresh agent (one-click creation): it has a
 #: placeholder name and no role until its person says what it is for.
 FRESH_AGENT_GUIDANCE = (
-    "You were just created and have no role yet; your current name is a placeholder. "
+    "You have no assigned role yet. "
     "If the person has not said what you are for, greet them in one or two sentences, say "
     "you are new, and ask what you should take care of. As soon as they tell you, call "
-    "society_propose_change with kind 'identity': a short fitting name, a one-line title, "
+    "society_propose_change with kind 'identity': a one-line title "
     "and a description written as your standing instructions (goal, responsibilities, "
-    "working style), in the person's language. Then start on the task they gave you. "
+    "working style), in the turn's output language. Then start on the task they gave you. "
+    "Keep your name unless the current naming guidance says it is a placeholder "
+    "or the person explicitly asks for another name. "
     "Never invent a role the person did not describe."
+)
+
+
+AGENT_NAMING_GUIDANCE = (
+    "Your current name is only a temporary creation label. Infer your ongoing responsibility "
+    "from the person's messages in this chat and your standing instructions. As soon as it "
+    "is clear, normally within the first one to three meaningful replies, replace the label "
+    "with a short descriptive name in the turn's output language. Do this on the first clear "
+    "role request; do not wait for three replies or for a request to rename you. "
+    "For example, an assigned Discord moderation role can be named Discord-Mod; apply the "
+    "same principle to any role, rather than picking an unrelated personal name. "
+    "Before your answer, call society_propose_change with kind=identity and payload={name: "
+    "the chosen name}. This first name saves automatically in your own direct user chat; "
+    "no confirmation question is needed. Check that the result says applied; if a name is "
+    "taken, choose another fitting name. If your role is already stored, send only name "
+    "and keep your standing instructions. If you also need to establish your first role, "
+    "you may include title and description. Never claim the name changed without a saved "
+    "result. A greeting, a quoted example, or a task assigned to another agent does not "
+    "establish your role: leave the label until your own responsibility is clear. "
+    "Do not create another agent to name yourself. After choosing a name, keep it through "
+    "ordinary follow-up tasks unless the person asks for a change."
+    " Honor an explicit instruction to keep the current name."
 )
 
 
@@ -937,12 +1012,15 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    if has_placeholder_name(agent):
+        parts.append("## Choosing your name\n" + AGENT_NAMING_GUIDANCE)
     if is_fresh(agent):
         parts.append("## You are new\n" + FRESH_AGENT_GUIDANCE)
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
     parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
     parts.append("## When a tool fails\n" + KEEP_GOING_ON_TOOL_FAILURE)
+    parts.append("## Credentials\n" + CREDENTIAL_GUIDANCE)
     if agent.description.strip():
         parts.append("## Standing instructions\n" + agent.description.strip())
 

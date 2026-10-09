@@ -277,6 +277,25 @@ def is_credential_present(spec: ProviderSpec, binary_path: str | None = None) ->
         # A key is the usual answer but not the only one — see
         # KEYLESS_CREDENTIAL_PROBES (Vertex's Cloud project path).
         return _keyless_credential_present(spec.id)
+    if spec.auth_mode == "claude_cli":
+        from jarvis.claude_auth import ClaudeAuthService
+
+        # An unreadable keyring does not disconnect the CLI's native login.
+        try:
+            key = cfg_mod.get_jarvis_agent_secret("claude-api")
+        except Exception as exc:  # noqa: BLE001 — subscription credentials live independently
+            log.debug("Claude API key status unavailable (%s)", type(exc).__name__)
+            key = None
+        try:
+            # Match the Claude connection card. An OAuth bearer in the API-key
+            # slot is not an API credential and cannot bypass a signed-out CLI.
+            api_key_present = bool(key and not key.startswith("sk-ant-oat"))
+            return ClaudeAuthService(
+                binary_path, api_key_present=api_key_present
+            ).status().connected
+        except Exception as exc:  # noqa: BLE001 — status must survive a missing CLI
+            log.debug("Claude credential status unavailable (%s)", type(exc).__name__)
+            return False
     if spec.auth_mode == "codex":
         if any(bool(cfg_mod.get_secret(k)) for k in spec.secret_keys):
             return True

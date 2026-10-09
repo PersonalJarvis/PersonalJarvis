@@ -1,5 +1,9 @@
 {
   "society": {
+    "card": {
+      "options_collapse": "收起选项",
+      "options_expand": "展开选项"
+    },
     "browser_profiles": {
       "profile_unavailable": "配置文件已断开 — 请选择一个配置文件",
       "chrome_offline": "Chrome 已断开",
@@ -887,6 +891,12 @@
       "dots": "圆眼",
       "lines": "线条眼",
       "visible": "在地图上跟随",
+      "look": "外观",
+      "look_shape": "形状",
+      "look_pet": "宠物",
+      "pet": "宠物",
+      "pet_hint": "这个智能体在所有地方都会以这只宠物出现：聊天中、工作时，以及在 Verse 中作为伙伴。",
+      "no_pets": "还没有宠物。请在“我的宠物”中添加。",
       "shapes": {
         "circle": "圆形",
         "squircle": "圆角方形",

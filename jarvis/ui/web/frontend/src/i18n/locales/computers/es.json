@@ -363,6 +363,18 @@
     "cx_key_only_body": "Ejecuta esta línea una vez en el servidor, en la consola web de tu proveedor o en cualquier sesión SSH. Añade la clave de {name}. Luego pulsa Reintentar.",
     "cx_key_only_line": "Línea para el servidor",
     "cx_key_only_agent": "O deja que lo haga un agente de código en el servidor",
-    "cx_try_again": "Reintentar"
+    "cx_try_again": "Reintentar",
+    "cx_ssh_host": "Host SSH",
+    "cx_ssh_placeholder": "Introduce un host o una dirección IP",
+    "cx_invalid_port": "Introduce un puerto entre 1 y 65535.",
+    "cx_additional_options": "Más formas de añadir un ordenador",
+    "cx_connection_hint": "Elige cómo conectar este ordenador.",
+    "cx_connection_type": "Tipo de conexión",
+    "cx_connection_server": "Dirección del servidor",
+    "cx_connection_ssh": "SSH",
+    "cx_server_host": "Host",
+    "cx_pairing_code": "Código de emparejamiento",
+    "cx_pairing_hint": "Pega una URL de emparejamiento completa para rellenar ambos campos automáticamente.",
+    "cx_pairing_unavailable": "La conexión mediante código de emparejamiento aún no está disponible. Usa SSH para conectarte ahora."
   }
 }

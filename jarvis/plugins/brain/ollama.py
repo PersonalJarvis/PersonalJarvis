@@ -209,6 +209,11 @@ class OllamaBrain:
             )
         return self._client
 
+    def _native_headers(self) -> dict[str, str]:
+        """Native discovery/profile calls use the same endpoint credential as chat."""
+        self._resolve_root()
+        return {"Authorization": f"Bearer {self._credential}"} if self._credential else {}
+
     async def _resolve_model(self, *, need_tools: bool = False, need_vision: bool = False) -> str:
         """The configured model, else the smallest CAPABLE download.
 
@@ -232,7 +237,9 @@ class OllamaBrain:
             return self._discovered[profile]
         root = self._resolve_root()
         try:
-            async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=CLIENT_TIMEOUT, headers=self._native_headers(),
+            ) as client:
                 resp = await client.get(f"{root}/api/tags")
                 resp.raise_for_status()
                 models = resp.json().get("models") or []
@@ -309,7 +316,9 @@ class OllamaBrain:
             return self._caps_cache[name]
         caps_set: set[str] | None = None
         try:
-            async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=CLIENT_TIMEOUT, headers=self._native_headers(),
+            ) as client:
                 resp = await client.post(f"{root}/api/show", json={"model": name})
                 resp.raise_for_status()
                 caps = resp.json().get("capabilities")
@@ -414,7 +423,7 @@ class OllamaBrain:
         run_model = model
         if has_bakeable(opts):
             try:
-                run_model = await ensure_profile(root, model, opts)
+                run_model = await ensure_profile(root, model, opts, headers=self._native_headers())
             except Exception as exc:  # noqa: BLE001 — degrade to the base model, say so
                 if self._requested_context_window is not None:
                     # The runtime already budgets against this window. Sending
@@ -431,7 +440,7 @@ class OllamaBrain:
         if opts.num_ctx:
             self.context_window = opts.num_ctx
         if opts.keep_alive is not None:
-            await warm(root, run_model, opts.keep_alive)
+            await warm(root, run_model, opts.keep_alive, headers=self._native_headers())
         overrides: dict[str, Any] = {}
         defaults = {f.name: f.default for f in fields(BrainRequest)}
         for key, value in to_v1_kwargs(opts).items():

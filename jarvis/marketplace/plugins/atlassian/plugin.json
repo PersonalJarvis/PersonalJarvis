@@ -7,6 +7,7 @@
   "extensions": {
     "io.github.personaljarvis": {
       "display_name": "Atlassian (Jira & Confluence)",
+      "acceptance": "verified",
       "category": "Lists & Tasks",
       "logo_slug": "atlassian",
       "logo_color": "0052CC",

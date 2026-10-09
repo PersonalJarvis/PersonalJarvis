@@ -293,6 +293,23 @@ describe("the timeline's receipt for a message that carried files", () => {
   });
 });
 
+describe("the thumbnail strip", () => {
+  it("shows the picture alone, without a read receipt", () => {
+    render(
+      <ChatAttachmentStrip
+        look="thumbnail"
+        attachments={[{ name: "shot.png", kind: "image", described_by: "none", detail: "", note: "" } as unknown as ChatAttachment]}
+        analyzing={0}
+        onRemove={() => {}}
+        previews={{ "shot.png": "blob:shot" }}
+      />,
+    );
+    const card = screen.getByTestId("chat-attachment-shot.png");
+    expect(card.querySelector("img")?.getAttribute("src")).toBe("blob:shot");
+    expect(card.textContent).not.toContain("not described");
+  });
+});
+
 describe("the app-wide file drop guard", () => {
   function Guarded() {
     useFileDropGuard();
@@ -338,22 +355,5 @@ describe("the app-wide file drop guard", () => {
     window.dispatchEvent(event);
     expect(prevent).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
-  });
-});
-
-describe("the thumbnail strip", () => {
-  it("shows the picture alone, without a read receipt", () => {
-    render(
-      <ChatAttachmentStrip
-        look="thumbnail"
-        attachments={[{ name: "shot.png", kind: "image", described_by: "none", detail: "", note: "" } as unknown as ChatAttachment]}
-        analyzing={0}
-        onRemove={() => {}}
-        previews={{ "shot.png": "blob:shot" }}
-      />,
-    );
-    const card = screen.getByTestId("chat-attachment-shot.png");
-    expect(card.querySelector("img")?.getAttribute("src")).toBe("blob:shot");
-    expect(card.textContent).not.toContain("not described");
   });
 });

@@ -77,7 +77,23 @@ const NOTHING_HELD: HeldFiles = { attachments: [], previews: {} };
  * so two chats with the same session key never share files.
  */
 const parked = new WeakMap<object, Map<string, HeldFiles>>();
+type AttachmentTarget = { key: string; discarded?: boolean };
+const attachmentTargets = new WeakMap<object, Map<string, AttachmentTarget>>();
 const listeners = new Set<() => void>();
+
+function attachmentTarget(owner: object, key: string): AttachmentTarget {
+  let targets = attachmentTargets.get(owner);
+  if (!targets) {
+    targets = new Map();
+    attachmentTargets.set(owner, targets);
+  }
+  let target = targets.get(key);
+  if (!target) {
+    target = { key };
+    targets.set(key, target);
+  }
+  return target;
+}
 
 function heldFor(owner: object, key: string): HeldFiles {
   return parked.get(owner)?.get(key) ?? NOTHING_HELD;
@@ -102,8 +118,42 @@ export function releaseHeldFiles(files: HeldFiles): void {
   Object.values(files.previews).forEach(revokePreview);
 }
 
+/** Restore a submission to its assigned chat, including after session creation. */
+export function restoreHeldFiles(owner: object, key: string, files: HeldFiles): void {
+  updateHeld(owner, key, (current) => ({
+    attachments: [
+      ...files.attachments,
+      ...current.attachments.filter((item) => !files.attachments.some((back) => back.name === item.name)),
+    ],
+    previews: { ...files.previews, ...current.previews },
+  }));
+}
+
+/** Session creation gives the blank draft a stable key without losing new files. */
+export function moveHeldFiles(owner: object, from: string, to: string): void {
+  if (from === to) return;
+  // Uploads already in flight follow this draft to its assigned session.
+  // A later blank chat gets a fresh target instead of inheriting this alias.
+  attachmentTarget(owner, from).key = to;
+  attachmentTargets.get(owner)?.delete(from);
+  const held = heldFor(owner, from);
+  updateHeld(owner, from, () => NOTHING_HELD);
+  restoreHeldFiles(owner, to, held);
+}
+
+/** Explicit New Chat discards the previous blank draft, including late uploads. */
+export function discardHeldFiles(owner: object, key: string): void {
+  attachmentTarget(owner, key).discarded = true;
+  attachmentTargets.get(owner)?.delete(key);
+  updateHeld(owner, key, (current) => {
+    releaseHeldFiles(current);
+    return NOTHING_HELD;
+  });
+}
+
 /** Let go of every draft's held files for one owner, pictures included. */
 export function forgetHeldFiles(owner: object): void {
+  attachmentTargets.delete(owner);
   const drafts = parked.get(owner);
   if (!drafts) return;
   drafts.forEach((held) => Object.values(held.previews).forEach(revokePreview));
@@ -162,6 +212,7 @@ export function useChatAttachments(
   const attach = useCallback(
     async (payload: PaneDropPayload) => {
       if (isEmptyPayload(payload)) return;
+      const uploadTarget = attachmentTarget(owner, key);
       setAnalyzing((n) => n + 1);
       try {
         const { attachments: found, cwd: folder } = await attachChatFilesIn({
@@ -177,6 +228,10 @@ export function useChatAttachments(
           return;
         }
         const pictures = matchPreviews(found, payload.files);
+        if (uploadTarget.discarded) {
+          Object.values(pictures).forEach(revokePreview);
+          return;
+        }
         if (folder) {
           for (const item of found) {
             if (!pictures[item.name] && attachmentMedia(item)) {
@@ -186,7 +241,7 @@ export function useChatAttachments(
         }
         // Written to the draft this drop was made in, even when the person
         // switched away while the file was still being read.
-        updateHeld(owner, key, (current) => {
+        updateHeld(owner, uploadTarget.key, (current) => {
           const nextPreviews = { ...current.previews };
           for (const [name, url] of Object.entries(pictures)) {
             if (nextPreviews[name]) revokePreview(nextPreviews[name]);
@@ -268,13 +323,7 @@ export function useChatAttachments(
   }, [owner, key]);
 
   const restore = useCallback((files: HeldFiles) => {
-    updateHeld(owner, key, (current) => ({
-      attachments: [
-        ...files.attachments,
-        ...current.attachments.filter((item) => !files.attachments.some((back) => back.name === item.name)),
-      ],
-      previews: { ...files.previews, ...current.previews },
-    }));
+    restoreHeldFiles(owner, key, files);
   }, [owner, key]);
 
   return {

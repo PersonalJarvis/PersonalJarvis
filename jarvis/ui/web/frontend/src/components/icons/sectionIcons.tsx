@@ -332,17 +332,10 @@ export const SocialsIcon = defineIcon(
 
 // ── System ────────────────────────────────────────────────────────────────
 
-/** Two stacked server units. */
+/** A cloud: the machines that live somewhere other than this one. */
 export const ComputersIcon = defineIcon(
   "ComputersIcon",
-  <>
-    <rect x="3.5" y="4" width="17" height="7" rx="2.25" />
-    <rect x="3.5" y="13" width="17" height="7" rx="2.25" />
-    <path d="M7.5 7.5h.01" />
-    <path d="M7.5 16.5h.01" />
-    <path d="M12.5 7.5h4" />
-    <path d="M12.5 16.5h4" />
-  </>,
+  <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />,
 );
 
 /** A gear: the general settings. */

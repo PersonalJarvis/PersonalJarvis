@@ -69,7 +69,7 @@ async def test_ollama_really_allocates_the_advertised_context(monkeypatch):
     monkeypatch.setattr(brain, "_resolve_root", lambda: "http://local.invalid")
     seen = []
 
-    async def profile(root, model, options):
+    async def profile(root, model, options, *, headers=None):
         seen.append(options)
         return "prepared-profile"
 

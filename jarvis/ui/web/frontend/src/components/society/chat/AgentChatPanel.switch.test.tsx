@@ -23,6 +23,7 @@ import * as cardData from "../cardData";
 const attachmentState = vi.hoisted(() => ({
   current: [] as ChatAttachment[],
   clear: vi.fn(),
+  restore: vi.fn(),
 }));
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
@@ -43,12 +44,18 @@ vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () =
 vi.mock("@/components/agentchat/useChatAttachments", async (importOriginal) => ({
   // The pure helpers (attachmentMedia, ...) stay real; only the hook is scripted.
   ...(await importOriginal<typeof import("@/components/agentchat/useChatAttachments")>()),
+  restoreHeldFiles: (_owner: object, _key: string, files: { attachments: ChatAttachment[] }) => {
+    attachmentState.current = files.attachments;
+    attachmentState.restore(files);
+  },
   useChatAttachments: () => ({
     attachments: attachmentState.current,
     analyzing: 0,
     dragging: false,
     dragHandlers: {},
     clear: attachmentState.clear,
+    take: () => { const attachments = attachmentState.current; attachmentState.clear(); return { attachments, previews: {} }; },
+    restore: (files: { attachments: ChatAttachment[] }) => { attachmentState.current = files.attachments; attachmentState.restore(files); },
     remove() {},
     attachFiles() {},
   }),
@@ -119,6 +126,7 @@ const gmail = agent({ agentId: "gmail-agent", name: "Gmail Agent" });
 beforeEach(() => {
   attachmentState.current = [];
   attachmentState.clear.mockClear();
+  attachmentState.restore.mockClear();
   useRoutineNavigation.getState().close();
   seq = 0;
   useTranscriptViewStore.setState({ boundaries: {} });
@@ -279,7 +287,7 @@ it.each(["specialist", "lead"] as const)("/clear empties only the %s view and ke
   expect(screen.queryByText("PREVIOUS_CONTEXT_TO_KEEP")).toBeNull();
 });
 
-it.each(["specialist", "lead"] as const)("turns send into stop while the %s is reasoning, then back when the turn ends", async (tier) => {
+it.each(["specialist", "lead"] as const)("keeps follow-up sending available while the %s is reasoning", async (tier) => {
   const current = tier === "lead" ? agent({ agentId: "jarvis", name: "Jarvis", tier }) : gmail;
   const store = tier === "lead" ? useAgentChatStore : useSocietyChatStore;
   store.getState().disconnect();
@@ -287,9 +295,9 @@ it.each(["specialist", "lead"] as const)("turns send into stop while the %s is r
   store.setState({ activeSessionId: current.chatSessionId, timeline: reasoningTurn(), busy: false });
   setJarvisCardMode("chat");
   render(<AgentChatPanel agent={current} roster={[current]} />);
-  expect(screen.getByTestId("composer-stop")).toBeTruthy();
-  expect(screen.queryByTestId("composer-send")).toBeNull();
-  fireEvent.click(screen.getByTestId("composer-stop"));
+  expect(screen.getByRole("button", { name: "society.chat.stop" })).toBeTruthy();
+  expect(screen.getByTestId("composer-send")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "society.chat.stop" }));
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, options]) =>
     String(url).includes("/cancel") && options?.method === "POST",
   )).toBe(true));
@@ -299,7 +307,7 @@ it.each(["specialist", "lead"] as const)("turns send into stop while the %s is r
     ]),
   }));
   expect(screen.getByTestId("composer-send")).toBeTruthy();
-  expect(screen.queryByTestId("composer-stop")).toBeNull();
+  expect(screen.queryByTestId("composer-cancel")).toBeNull();
 });
 
 it("routine-check opens the clicked execution instead of folding its instruction", () => {
@@ -318,8 +326,8 @@ it("shows stop while the send request is in flight, before the turn stream start
   useSocietyChatStore.getState().openSession(gmail.chatSessionId!);
   useSocietyChatStore.setState({ activeSessionId: gmail.chatSessionId, timeline: EMPTY_TIMELINE, busy: true });
   render(<AgentChatPanel agent={gmail} roster={[gmail]} />);
-  expect(screen.getByTestId("composer-stop")).toBeTruthy();
-  expect(screen.queryByTestId("composer-send")).toBeNull();
+  expect(screen.getByRole("button", { name: "society.chat.stop" })).toBeTruthy();
+  expect(screen.getByTestId("composer-send")).toBeTruthy();
 });
 
 const screenshot: ChatAttachment = {
@@ -360,7 +368,7 @@ it("retains the exact draft and attachment when the message request fails", asyn
   fireEvent.click(screen.getByTestId("composer-send"));
   await waitFor(() => expect(useSocietyChatStore.getState().lastError).toBeTruthy());
   await waitFor(() => expect(screen.getByTestId("composer-chip-field").textContent).toBe("  Please inspect this  "));
-  expect(attachmentState.clear).not.toHaveBeenCalled();
+  expect(attachmentState.restore).toHaveBeenCalledWith({ attachments: [screenshot], previews: {} });
   expect(screen.getByText("screen.png")).toBeTruthy();
 });
 

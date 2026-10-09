@@ -323,7 +323,8 @@ class AcpTurn:
             elif self.stop_reason in _STOPPED_EARLY and not self.emitted_text:
                 self._fail(_STOPPED_EARLY[self.stop_reason])
             elif self.stop_reason in _STOPPED_EARLY:
-                # The answer stands, but the chat says it is not the whole one.
+                self._fail(f"{_STOPPED_EARLY[self.stop_reason]} ({self.stop_reason})")
+                # Retain the partial answer while reporting that the turn is incomplete.
                 await io.emit(
                     make_event(
                         "notice",
@@ -336,6 +337,14 @@ class AcpTurn:
                     )
                 )
             return
+
+    async def cancel(self, io: AcpIO) -> None:
+        """Abort the upstream session before its stdio bridge is terminated."""
+        if self._acp_session and not self.saw_result:
+            await io.write({
+                "jsonrpc": "2.0", "method": "session/cancel",
+                "params": {"sessionId": self._acp_session},
+            })
 
     async def _on_agent_request(self, obj: dict[str, Any], method: str, io: AcpIO) -> None:
         rid = obj.get("id")

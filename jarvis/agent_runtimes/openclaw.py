@@ -282,6 +282,7 @@ class _Gateway:
     tracker: Any
     last_used: float = field(default_factory=time.monotonic)
     in_use: int = 0
+    poisoned: bool = False
 
     def alive(self) -> bool:
         return self.proc.returncode is None
@@ -514,6 +515,9 @@ class OpenClawRuntime:
             # create dreaming jobs at startup even with heartbeat disabled.
             # Jarvis owns memory and scheduling; neither may call this key.
             "cron": {"enabled": False},
+            # Detached workshop reviews spend the model key after a turn,
+            # independently of cron and heartbeat. Jarvis owns that work.
+            "skills": {"workshop": {"autonomous": {"mode": "off"}}},
             "plugins": {
                 "deny": list(_DENIED_PLUGINS),
                 "slots": {"memory": "none"},
@@ -612,6 +616,7 @@ class OpenClawRuntime:
             acp_resume=None,
             vendor_session=session_key(turn.agent_id, turn.session_id),
             release=release,
+            invalidate=lambda: setattr(gateway, "poisoned", True),
         )
 
     async def _ensure_gateway(
@@ -642,7 +647,7 @@ class OpenClawRuntime:
                 write_json_if_changed, home / "openclaw.json", config
             )
             if current is not None and (
-                not current.alive() or current.env_hash != env_hash or changed
+                not current.alive() or current.poisoned or current.env_hash != env_hash or changed
             ):
                 await self._stop_gateway(current)
                 current = None

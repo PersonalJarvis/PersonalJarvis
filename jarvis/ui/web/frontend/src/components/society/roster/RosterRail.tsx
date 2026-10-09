@@ -33,6 +33,7 @@ import { useEventStore } from "@/store/events";
 import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 
 import { AgentSwatch } from "../AgentSwatch";
+import { RuntimeBadge } from "../RuntimeBadge";
 import type { AgentRunState, SocietyAgent } from "../data";
 import { AgentRosterActions } from "./AgentRosterActions";
 import { GroupRosterActions } from "./GroupRosterActions";
@@ -630,7 +631,10 @@ export function RosterRail({
                 )}
               >
                 <button type="button" onClick={() => openProfile(agent.agentId)} aria-label={t("society.profile_card.open").replace("{0}", agent.name)} className="shrink-0 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <AgentSwatch agent={agent} size={48} />
+                  <span className="relative flex">
+                    <AgentSwatch agent={agent} size={48} />
+                    {agent.tier !== "lead" ? <RuntimeBadge runtime={agent.runtime} className="absolute bottom-0.5 right-0.5" /> : null}
+                  </span>
                 </button>
                 <button type="button" onClick={() => openAgent(agent.agentId)} aria-current={agent.agentId === activeAgentId ? "true" : undefined} className="flex min-w-0 flex-1 select-none items-center gap-2.5 rounded-md py-2 pl-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <span className="min-w-0 flex-1">

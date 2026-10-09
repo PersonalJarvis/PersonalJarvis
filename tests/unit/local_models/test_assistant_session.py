@@ -65,7 +65,7 @@ def test_ensure_session_creates_once_and_recreates_when_the_tier_moves() -> None
     again = policy.ensure_session(svc, cfg, usable=lambda _p: True)
     assert first.session_id == again.session_id
     assert first.surface == "local-models" and first.provider == "openai"
-    assert first.permission_mode == "ask"
+    assert first.permission_mode == "bypass"
 
     moved = policy.ensure_session(svc, _cfg(model="gpt-y"), usable=lambda _p: True)
     assert moved.session_id != first.session_id and moved.model == "gpt-y"

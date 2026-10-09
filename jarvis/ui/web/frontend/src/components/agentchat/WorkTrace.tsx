@@ -3,12 +3,14 @@ import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, Fil
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
+import { PetStageContext } from "@/components/pets/petStage";
 import { PetMark } from "@/components/pets/PetMark";
 import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
+import { hasPersonCard, isCredentialTool, isQuestionTool, waitsOnCard, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { CredentialCard } from "./CredentialCard";
 import { QuestionCard } from "./QuestionCard";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
@@ -57,12 +59,12 @@ function operation(name: string): string | null {
 }
 
 function attention(block: ToolBlock) {
-  return block.isError || Boolean(block.approval) || Boolean(block.question);
+  return block.isError || Boolean(block.approval) || hasPersonCard(block);
 }
 
 /** An agent's question still waiting for the person — it never folds away. */
 function isOpenQuestion(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && Boolean(block.question && !block.question.closed);
+  return block.kind === "tool" && waitsOnCard(block);
 }
 
 /** Only adjacent, successful, read-only operations may lose individual rows. */
@@ -401,6 +403,7 @@ function Detail({ label, text }: { label: string; text: string }) {
 
 export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
   if (block.question) return <QuestionCard question={block.question} />;
+  if (block.credential) return <CredentialCard credential={block.credential} />;
   return <TraceToolRow block={block} status={status} onDecide={onDecide} />;
 });
 
@@ -554,7 +557,7 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
         {rail ? <Rail items={group.blocks.map((block, i) => ({
           key: block.kind === "tool" ? block.callId : block.id,
           node: inner[i],
-          rail: !(block.kind === "tool" && block.question),
+          rail: !(block.kind === "tool" && hasPersonCard(block)),
         }))} /> : inner}
       </Disclosure>;
       items.push({ key: group.id, rail: true, node: rail ? <div data-trace-summary>{disclosure}</div>
@@ -574,7 +577,7 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
     }
     if (first.kind === "tool") {
       const tool = <TraceTool block={first} status={status} onDecide={onDecide} />;
-      items.push({ key: group.id, rail: !first.question, node: rail ? tool
+      items.push({ key: group.id, rail: !hasPersonCard(first), node: rail ? tool
         : <div className={conversation ? "w-full py-1 text-xs [&_button]:text-xs" : undefined}>{tool}</div> });
       continue;
     }
@@ -602,7 +605,8 @@ function replyNode(block: TextBlock, conversation: boolean, renderText?: (text: 
  * and draw nothing.
  */
 function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
-  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question && !block.isError));
+  const kept = blocks.filter((block) => !(block.kind === "tool" && !block.isError
+    && ((isQuestionTool(block.name) && !block.question) || (isCredentialTool(block.name) && !block.credential))));
   return kept.length === blocks.length ? blocks : kept;
 }
 
@@ -623,6 +627,12 @@ type WorkTraceProps = {
    */
   companion?: boolean;
   /**
+   * An agent's own trace: its face takes the live line instead, and a face
+   * that wears a pet plays the row for what the agent is doing
+   * (PetStageContext). Wins over `companion`.
+   */
+  face?: ReactNode;
+  /**
    * Steps that belong to this turn's work but are not blocks of it (a
    * memory receipt posted after the turn). They sit on the trace above the
    * reply and never below it.
@@ -630,7 +640,7 @@ type WorkTraceProps = {
   extras?: { key: string; node: ReactNode }[];
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, extras }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, face, extras }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
@@ -683,12 +693,14 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     // whenever the trace has no reply between it and the work); a finished
     // conversation turn closes with a quiet line under its reply instead.
     const statusOnRail = !fold && (!conversation || live);
-    const petState = companion && working ? livePetState(blocks) : null;
+    const petState = (companion || face) && working ? livePetState(blocks) : null;
     const statusLine = <div role="status" aria-live="polite" data-trace-status={outcome}
       className={cn("flex min-w-0 flex-wrap items-start gap-x-3 text-xs leading-6 text-muted-foreground",
         statusOnRail ? "py-1" : "pb-2 pt-1", failed && "text-destructive", pending && "text-foreground")}>
       {petState
-        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}><PetMark size={32} state={petState} /></span>
+        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}>{face
+          ? <PetStageContext.Provider value={petState}>{face}</PetStageContext.Provider>
+          : <PetMark size={32} state={petState} />}</span>
         : null}
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
@@ -705,7 +717,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       renderLive: (block) => block.kind === "tool" ? <TraceTool block={block} status={status} onDecide={onDecide} />
         : block.kind === "reasoning" ? <ReasoningTrace block={block} turnLive={live} compact={conversation} />
         : replyNode(block, conversation, renderText),
-      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !block.question),
+      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !hasPersonCard(block)),
       renderNarration: (text, id) => renderText ? renderText(text, id)
         : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={text} /></div>,
       renderDetails: (block) => <ToolDetails block={block} />,
@@ -739,7 +751,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
         <ConversationWorkFold durationMs={durationMs} expandInner={false}
           failureCount={waiting.filter((block) => block.isError).length} attention={waiting.length ? <Rail items={waiting.map((block) => ({
-          key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} />,
+          key: block.callId, rail: !hasPersonCard(block), node: <TraceTool block={block} status={status} onDecide={onDecide} />,
         }))} /> : undefined}>
           <Rail items={workItems} />
         </ConversationWorkFold>
@@ -781,7 +793,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; extras?: WorkTraceProps["extras"] }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; face?: ReactNode; extras?: WorkTraceProps["extras"] }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());
