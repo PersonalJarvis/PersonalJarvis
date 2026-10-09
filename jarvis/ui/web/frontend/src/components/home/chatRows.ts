@@ -208,6 +208,50 @@ export function groupChatRows(rows: ChatRow[], now = Date.now()): Array<{ bucket
   }));
 }
 
+export interface ChatDayGroup {
+  /** Local midnight of the day, so a key stays stable across renders. */
+  dayMs: number;
+  /** "today" and "yesterday" get a word; every other day is a date. */
+  relative: "today" | "yesterday" | null;
+  rows: ChatRow[];
+}
+
+/**
+ * Group rows under one heading per calendar day, newest day first and the
+ * newest chat first inside each day. Days are local days, so a chat at 23:50
+ * and one at 00:10 land under different headings.
+ */
+export function groupChatRowsByDay(rows: ChatRow[], now = Date.now()): ChatDayGroup[] {
+  const startOfDay = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const today = startOfDay(now);
+  const yesterday = startOfDay(today - 1);
+  const days = new Map<number, ChatRow[]>();
+  for (const row of [...rows].sort((a, b) => b.updatedMs - a.updatedMs)) {
+    const day = startOfDay(row.updatedMs);
+    const list = days.get(day);
+    if (list) list.push(row);
+    else days.set(day, [row]);
+  }
+  return [...days.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([dayMs, group]) => ({
+      dayMs,
+      relative: dayMs >= today ? "today" : dayMs === yesterday ? "yesterday" : null,
+      rows: group,
+    }));
+}
+
+/** A day heading's date: "Oct 7", with the year only when it is not this year's. */
+export function formatChatDay(dayMs: number, lang: string, now = Date.now()): string {
+  const d = new Date(dayMs);
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return d.toLocaleDateString(lang, sameYear ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+}
+
 /** Case-insensitive match over title and preview. An empty query keeps everything. */
 export function filterChatRows(rows: ChatRow[], query: string): ChatRow[] {
   const q = query.trim().toLowerCase();
