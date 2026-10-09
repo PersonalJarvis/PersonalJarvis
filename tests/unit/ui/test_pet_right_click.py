@@ -212,11 +212,17 @@ def test_failed_popup_releases_grab_without_hiding_pet(pet, monkeypatch, caplog)
 
 
 @pytest.mark.parametrize("language", context_menu.LABELS)
-def test_menu_reads_current_language_and_explicit_shortcut(tmp_path, language) -> None:
+def test_menu_reads_current_language_and_explicit_shortcut(
+    tmp_path, monkeypatch, language
+) -> None:
     config = tmp_path / "menu.toml"
     config.write_text(f'[ui]\nlanguage="{language}"\n[trigger]\nhotkey_pet_toggle="ctrl+alt+p"')
+    # The shortcut is spelled with each OS's own key names.
+    monkeypatch.setattr(context_menu.sys, "platform", "win32")
     labels, shortcut = context_menu.preferences(config)
     assert labels == context_menu.LABELS[language]
     assert shortcut == "Ctrl+Alt+P"
+    monkeypatch.setattr(context_menu.sys, "platform", "darwin")
+    assert context_menu.preferences(config)[1] == "Control+Option+P"
     config.write_text('[trigger]\nhotkey_pet_toggle=""')
     assert context_menu.preferences(config)[1] == ""
