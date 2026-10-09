@@ -20,6 +20,7 @@ import type { AgentRuntime } from "@/lib/societyApi";
 import { AgentNameTaken, RuntimeProviderUnsupported, useCreateSocietyAgent } from "../data";
 import { defaultCompanion, type CompanionAppearance } from "../companion/appearance";
 import { RuntimeChoice, useAgentRuntimes } from "../card/RuntimePicker";
+import { SandboxChoice } from "../card/AgentSandboxSection";
 import { modelSeats, runtimeSeats } from "../chat/modelChoices";
 import { useModelMenuData } from "../chat/useModelMenuData";
 import { accountChoice, accountHint } from "./brainPicker";
@@ -56,6 +57,7 @@ function CreateAgentDialog() {
   const runtimes = useAgentRuntimes();
   const [name, setName] = useState("");
   const [runtime, setRuntime] = useState<AgentRuntime>("jarvis");
+  const [executionEnvironment, setExecutionEnvironment] = useState<"local" | "sandbox">("local");
   const [providerId, setProviderId] = useState("");
   const [access, rememberAccess] = useModelAccess();
   const [model, setModel] = useState("");
@@ -118,6 +120,7 @@ function CreateAgentDialog() {
       const agent = await createAgent({
         name,
         runtime,
+        executionEnvironment: external ? "local" : executionEnvironment,
         provider: option?.seat.provider.id,
         model: option ? modelValue : undefined,
         accountId: option ? accountValue || option.accountId : undefined,
@@ -216,6 +219,7 @@ function CreateAgentDialog() {
                 />
               ) : null}
 
+              {!external ? <SandboxChoice value={executionEnvironment} onChange={setExecutionEnvironment} disabled={saving} /> : null}
               {chosen && option && accounts.length ? (
                 <div className="flex flex-col gap-1.5 text-sm">
                   <span className="font-medium">{t("society.create_agent.account_label")}</span>

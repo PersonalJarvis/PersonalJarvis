@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
 from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
-from jarvis.society.events import MsgType
+from jarvis.society.events import ExecutionEnvironment, MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
 from jarvis.society.rooms import RoomError
@@ -34,6 +34,83 @@ from jarvis.society.runtime import SocietyRuntime, SocietyRuntimeClosed
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/society", tags=["society"])
+
+
+@router.get("/sandbox")
+async def sandbox_status() -> dict[str, Any]:
+    """Check whether the isolated code sandbox is ready."""
+    from jarvis.society.sandbox import status
+
+    return await status()
+
+
+@router.post("/sandbox/prepare", openapi_extra={"x-jarvis-dangerous": True})
+async def prepare_sandbox() -> dict[str, Any]:
+    """Download the code sandbox runtime image."""
+    from jarvis.society.sandbox import SandboxUnavailable, prepare
+
+    try:
+        return await prepare()
+    except (SandboxUnavailable, TimeoutError) as exc:
+        raise HTTPException(503, str(exc) or "Sandbox image download timed out.") from exc
+
+
+async def _agent_sandbox(request: Request, agent_id: str) -> Any:
+    from jarvis.society.sandbox import for_agent
+
+    rt = await _runtime(request)
+    agent = await rt.roster.get(agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found.")
+    if agent.execution_environment != "sandbox":
+        raise HTTPException(409, "This agent does not use the code sandbox.")
+    return for_agent(rt, agent_id)
+
+
+@router.get("/agents/{agent_id}/sandbox/files")
+async def list_sandbox_files(request: Request, agent_id: str, path: str = ".") -> dict[str, Any]:
+    """List an agent's sandbox output files."""
+    import json
+
+    from jarvis.society.sandbox import SandboxUnavailable
+
+    sandbox = await _agent_sandbox(request, agent_id)
+    try:
+        rc, out = await sandbox.file("list", path)
+        if rc:
+            raise HTTPException(400, out.decode("utf-8", "replace")[-1000:])
+        return {"files": json.loads(out), "path": path}
+    except (SandboxUnavailable, TimeoutError, ValueError) as exc:
+        raise HTTPException(503, str(exc) or "Sandbox did not answer.") from exc
+
+
+@router.get("/agents/{agent_id}/sandbox/file")
+async def download_sandbox_file(request: Request, agent_id: str, path: str) -> Any:
+    """Download one sandbox result, up to 1 MB, without importing it onto the host."""
+    import base64
+    from pathlib import PurePosixPath
+    from urllib.parse import quote
+
+    from starlette.responses import Response
+
+    from jarvis.society.sandbox import MAX_FILE_BYTES, SandboxUnavailable
+
+    sandbox = await _agent_sandbox(request, agent_id)
+    try:
+        rc, out = await sandbox.file("download", path)
+        if rc:
+            raise HTTPException(400, out.decode("utf-8", "replace")[-1000:])
+        content = base64.b64decode(out.strip(), validate=True)
+        if len(content) > MAX_FILE_BYTES:
+            raise HTTPException(413, "File exceeds 1 MB.")
+    except (SandboxUnavailable, TimeoutError, ValueError) as exc:
+        raise HTTPException(503, str(exc) or "Sandbox did not answer.") from exc
+    filename = quote(PurePosixPath(path).name or "result", safe="")
+    return Response(content, media_type="application/octet-stream", headers={
+        "Content-Disposition": f"attachment; filename*=UTF-8''{filename}",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "no-store",
+    })
 
 
 # ------------------------------------------------------------------ runtime
@@ -140,6 +217,7 @@ def _validated_chat_runner(
 
 
 class CreateAgentBody(BaseModel):
+    execution_environment: ExecutionEnvironment = ExecutionEnvironment.LOCAL
     #: Empty = one-click creation: placeholder name, random look, and the agent
     #: proposes its own identity in its first conversation.
     name: str | None = Field(default=None, max_length=40)
@@ -179,6 +257,7 @@ class CreateAgentBody(BaseModel):
 
 
 class PatchAgentBody(BaseModel):
+    execution_environment: ExecutionEnvironment | None = None
     name: str | None = Field(default=None, min_length=1, max_length=40)
     title: str | None = None
     description: str | None = None
@@ -435,6 +514,19 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
 
     fields = body.model_dump(exclude_none=True, exclude=set(BRIEF_FIELDS))
     brief = body.model_dump(include=set(BRIEF_FIELDS))
+    if (
+        "execution_environment" in fields
+        and fields["execution_environment"] != agent.execution_environment
+    ):
+        from jarvis.society.chat_binding import agent_busy
+
+        service = rt.chat_service()
+        if rt.scheduler.active_runs(agent.agent_id) or (
+            service is not None and agent_busy(service, agent)
+        ):
+            raise HTTPException(
+                409, "Stop this agent's active work before changing its environment."
+            )
     if has_brief(brief):
         # A brief rewrites the standing instructions as a whole.
         fields["description"] = compose_description(body.description or "", brief)

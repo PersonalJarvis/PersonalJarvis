@@ -155,6 +155,13 @@ class SocietyStore:
                 "CHECK (runtime IN ('jarvis', 'hermes', 'openclaw'))"
             )
             log.info("society store: migration applied — added runtime")
+        if "execution_environment" not in existing:
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN execution_environment "
+                "TEXT NOT NULL DEFAULT 'local' "
+                "CHECK (execution_environment IN ('local', 'sandbox'))"
+            )
+            log.info("society store: added execution_environment")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:

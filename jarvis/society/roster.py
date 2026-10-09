@@ -36,6 +36,7 @@ from .events import (
     AgentState,
     BrowserMode,
     Checkpoint,
+    ExecutionEnvironment,
     GrantMode,
     KnowledgeScope,
     PermissionCeiling,
@@ -198,6 +199,7 @@ class AgentRecord:
     #: The agent loop that executes turns (``AgentRuntime``); ``jarvis`` for
     #: every agent created before runtimes existed.
     runtime: AgentRuntime = AgentRuntime.JARVIS
+    execution_environment: ExecutionEnvironment = ExecutionEnvironment.LOCAL
 
     @property
     def session_id(self) -> str:
@@ -242,6 +244,7 @@ class AgentRecord:
             "browser_allowed_domains": list(self.browser_allowed_domains),
             "computer_id": self.computer_id,
             "runtime": str(self.runtime),
+            "execution_environment": str(self.execution_environment),
             "session_id": self.session_id,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -293,6 +296,7 @@ class AgentRecord:
             ],
             computer_id=str(row["computer_id"]) if row.get("computer_id") else None,
             runtime=AgentRuntime(str(row.get("runtime") or "jarvis")),
+            execution_environment=ExecutionEnvironment(row.get("execution_environment") or "local"),
             created_ms=int(row.get("created_ms") or 0),
             updated_ms=int(row.get("updated_ms") or 0),
         )
@@ -329,6 +333,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "browser_allowed_domains",
         "computer_id",
         "runtime",
+        "execution_environment",
     }
 )
 
@@ -427,6 +432,28 @@ def _revoke_runtime_grants(agent_id: str) -> None:
     log.info("society: revoked %s runtime gateway grant(s) of %s", revoked, agent_id)
 
 
+def _check_sandbox_placement(row: dict[str, Any]) -> None:
+    if row.get("execution_environment", "local") != "sandbox":
+        return
+    from jarvis.agent_chat.service import resolve_runner
+
+    if row.get("tier") == "lead" or row.get("computer_id"):
+        raise RosterError(
+            FailureReason.BLOCKED_BY_POLICY,
+            "The code sandbox requires a local specialist or orchestrator.",
+        )
+    runner = resolve_runner(
+        str(row.get("provider") or ""), surface="society",
+        runtime=str(row.get("runtime") or "jarvis"), account_id=str(row.get("account_id") or ""),
+    )
+    if runner != "brain":
+        raise RosterError(
+            FailureReason.BLOCKED_BY_POLICY,
+            "Choose a Jarvis API or local model for the code sandbox. "
+            "Native CLI agents and external runtimes are not sandboxed yet.",
+        )
+
+
 def _check_runtime_placement(runtime: Any, computer_id: Any) -> None:
     """An external runtime (Hermes, OpenClaw) runs on this computer only, for now."""
     if str(runtime or "jarvis") != "jarvis" and computer_id:
@@ -437,6 +464,8 @@ def _check_runtime_placement(runtime: Any, computer_id: Any) -> None:
 
 
 def _coerce(field_name: str, value: Any) -> Any:
+    if field_name == "execution_environment":
+        return str(_enum(ExecutionEnvironment, value, field_name))
     """Validate one editable field and return its column value."""
     if field_name == "name":
         return _validate_name(value)
@@ -683,6 +712,7 @@ class Roster:
             if key not in _EDITABLE or key in ("title", "description", "tier"):
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"unknown field {key}")
             row[_JSON_FIELDS.get(key, key)] = _coerce(key, value)
+        _check_sandbox_placement(row)
         await self._store.insert_agent(row)
         created = await self._store.get_agent_row(agent_id)
         assert created is not None
@@ -760,6 +790,7 @@ class Roster:
                 columns.get("runtime", current.get("runtime")),
                 columns.get("computer_id", current.get("computer_id")),
             )
+        _check_sandbox_placement({**current, **columns})
         try:
             await self._store.update_agent(agent_id, columns)
         except sqlite3.IntegrityError as exc:

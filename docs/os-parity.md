@@ -15,6 +15,19 @@ changes that disappear during settling do not trigger re-initialization.
 Regression tests use fake devices and models on Windows. Ubuntu/PipeWire,
 macOS audio devices and NVIDIA T600 inference have not been verified live.
 
+## Agent code sandbox
+
+The optional code sandbox uses the same Docker CLI and Linux image on Windows,
+macOS and Linux. It is capability-probed only when used. Base installation and
+startup need no Docker; unavailable or non-Linux engines return an explicit
+error and never run the command on the host. Windows helper processes use the
+shared no-window flag. The model/controller remains on the host, while code and
+files are restricted to the container and its identity-specific volume.
+
+Real container file/test/export, isolation, timeout and cancellation checks were
+run on Windows with Docker's Linux engine. Policy/schema checks are portable.
+Native macOS and Linux host execution has not been verified.
+
 ## Screenshots paste anywhere (2026-10-05, T2)
 
 Appshots taken by shortcut or button and Jarvis X screenshots go on the

@@ -1507,6 +1507,28 @@ class AgentChatService:
             )
 
             async def run_attempt(active_handle: TurnHandle, run_prompt: str) -> None:
+                if session.surface == "society":
+                    from jarvis.society.runtime import current_runtime
+                    from jarvis.society.surface import agent_id_of
+
+                    sandbox_runtime = current_runtime()
+                    sandbox_agent = (
+                        await sandbox_runtime.roster.get(agent_id_of(session_id) or "")
+                        if sandbox_runtime is not None else None
+                    )
+                    if sandbox_agent is None and runner != "brain":
+                        raise ValueError(
+                            "Agent execution environment is unavailable; native execution refused."
+                        )
+                    if (
+                        sandbox_agent is not None
+                        and getattr(sandbox_agent, "execution_environment", "local") == "sandbox"
+                        and (runner != "brain" or control_runner is not None or native_goal)
+                    ):
+                        raise ValueError(
+                            "The sandbox requires a Jarvis API or local model; "
+                            "a native agent cannot run on the host in sandbox mode."
+                        )
                 if control_runner is not None:
                     vendor = await control_runner(active_handle, text)
                     if vendor:

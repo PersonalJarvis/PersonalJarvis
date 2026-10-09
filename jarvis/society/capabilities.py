@@ -161,6 +161,8 @@ def is_never_granted(tool_name: str) -> bool:
 
 def capability_id_for_tool(tool_name: str) -> str | None:
     """The catalog id of a brain tool name; ``None`` for never-granted tools."""
+    if tool_name == "society_sandbox":
+        return "core:sandbox"
     if tool_name in {"society_browser", "society_browser_action"}:
         return "core:browser"
     if is_never_granted(tool_name):
@@ -176,6 +178,8 @@ def capability_id_for_tool(tool_name: str) -> str | None:
 
 def tool_name_for_capability(capability_id: str) -> str | None:
     """Inverse of :func:`capability_id_for_tool`; ``None`` for skills."""
+    if capability_id == "core:sandbox":
+        return "society_sandbox"
     if capability_id == "core:browser":
         return "society_browser"
     kind, _, rest = capability_id.partition(":")

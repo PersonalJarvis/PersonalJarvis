@@ -5623,6 +5623,19 @@
     "mode_pipeline": "voice in and out"
   },
   "society": {
+    "sandbox": {
+      "environment": "Execution environment",
+      "local": "This computer",
+      "code": "Code sandbox",
+      "scope": "Jarvis API and local models. Python code and files stay in a Linux container. Network, desktop, plugins and host files are unavailable.",
+      "storage": "Files remain in the sandbox. Downloads are limited to 1 MB; commands stop with the chat Stop button.",
+      "checking": "Checking sandbox…",
+      "prepare": "Download runtime",
+      "refresh": "Refresh files",
+      "root": "Workspace",
+      "loading": "Loading files…",
+      "empty": "No files yet."
+    },
     "groups": {
       "create": "New agent team",
       "edit": "Edit agent team",
