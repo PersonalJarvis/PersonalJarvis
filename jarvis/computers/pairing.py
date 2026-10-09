@@ -129,7 +129,7 @@ class ServerPairing:
     def _read(self) -> PairingState:
         try:
             return PairingState.model_validate_json(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except FileNotFoundError:  # no pairings yet is the first-run state
             return PairingState()
         except (ValueError, OSError) as exc:
             raise PairingError("The saved server connections could not be read.", 500) from exc

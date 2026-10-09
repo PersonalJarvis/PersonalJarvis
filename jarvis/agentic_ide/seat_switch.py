@@ -197,7 +197,7 @@ def _handled() -> dict[str, float]:
         if _HANDLED is None:
             try:
                 raw = json.loads(_handled_path().read_text(encoding="utf-8"))
-            except FileNotFoundError:
+            except FileNotFoundError:  # nothing handled yet on a first run
                 raw = {}
             except (OSError, ValueError) as exc:
                 logger.warning(
@@ -255,7 +255,7 @@ def _window_resets(window: Any) -> float | None:
         return None
     try:
         return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
-    except ValueError:
+    except ValueError:  # an unparseable reset time is treated as unknown
         return None
 
 
@@ -864,7 +864,7 @@ def start(registry: Registry) -> None:
         return
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError:  # no loop: called outside the server, nothing to schedule
         return
     _STATE.task = loop.create_task(_run(registry), name="agentic-ide-seat-switch")
 

@@ -275,7 +275,7 @@ def _read_store() -> dict[str, Any]:
     """The stored state, or an empty one for every unreadable shape."""
     try:
         raw = _store_path().read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except FileNotFoundError:  # no store yet is the first-run state
         return {"accounts": [], "active": {}}
     except OSError as exc:
         logger.warning("Agent accounts: store could not be read ({}) — ignoring it", exc)
@@ -338,7 +338,7 @@ def _parse_account(raw: Any) -> AgentAccount | None:
     label = label if isinstance(label, str) and label.strip() else account_id
     try:
         directory = Path(config_dir).expanduser()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # an unusable directory makes the row invalid
         return None
     return AgentAccount(
         id=account_id,
@@ -565,7 +565,7 @@ class AutoSwitch:
 def _clamp_switch_percent(value: Any) -> float:
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # a malformed setting falls back to the default
         return DEFAULT_SWITCH_AT_PERCENT
     if number != number:  # NaN
         return DEFAULT_SWITCH_AT_PERCENT
@@ -724,7 +724,7 @@ def _read_settings(path: Path, fmt: str) -> dict[str, Any] | None:
     """
     try:
         raw = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except OSError:  # an unreadable file means nothing to inherit
         return None
     try:
         if fmt == "json":
@@ -748,7 +748,7 @@ def _open_settings(path: Path, fmt: str) -> Any:
     """
     try:
         raw = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except OSError:  # a missing file is written fresh below
         raw = ""
     try:
         if fmt == "json":

@@ -77,7 +77,7 @@ def parse_status(raw: str) -> list[TailscalePeer]:
     """The peers in ``tailscale status --json`` output; ``[]`` when unreadable."""
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError:  # unreadable status output means no peers
         return []
     if not isinstance(data, dict):
         return []

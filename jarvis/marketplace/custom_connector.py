@@ -267,7 +267,7 @@ def _jsonrpc_payload(body: bytes, content_type: str) -> Mapping[str, Any] | None
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
-        except ValueError:
+        except ValueError:  # not JSON: try the next SSE data line
             continue
         if isinstance(parsed, Mapping) and parsed.get("jsonrpc") == "2.0":
             return parsed
@@ -302,7 +302,7 @@ async def _get_json(client: httpx.AsyncClient, url: str) -> Mapping[str, Any] | 
         return None
     try:
         parsed = response.json()
-    except ValueError:
+    except ValueError:  # a non-JSON answer is not an MCP endpoint
         return None
     return parsed if isinstance(parsed, Mapping) else None
 

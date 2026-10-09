@@ -222,7 +222,7 @@ async def _reachable(host: str, port: int) -> bool:
         _reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=_ROUTE_REACH_TIMEOUT_S
         )
-    except (OSError, TimeoutError):
+    except (OSError, TimeoutError):  # unreachable is the answer this probe reports
         return False
     writer.close()
     with contextlib.suppress(OSError):

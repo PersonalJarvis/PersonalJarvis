@@ -73,7 +73,7 @@ class _Located:
     def mtime(self) -> float:
         try:
             return self.anchor.stat().st_mtime
-        except OSError:
+        except OSError:  # a vanished transcript sorts as oldest
             return 0.0
 
 
@@ -188,7 +188,7 @@ def _copy_part(source: Path, target: Path) -> None:
             src, dst = source.stat(), target.stat()
             if dst.st_mtime >= src.st_mtime and dst.st_size == src.st_size:
                 return
-    except OSError:
+    except OSError:  # unknown freshness: copy again below
         pass
     _copy_file(source, target)
 
@@ -260,7 +260,7 @@ def _ts(value: Any) -> float | None:
             raw = raw[:-1] + "+00:00"
         try:
             parsed = datetime.fromisoformat(raw)
-        except ValueError:
+        except ValueError:  # an unparseable time is treated as absent
             return None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=UTC)
@@ -276,13 +276,13 @@ def _tail_rows(path: Path, limit: int = LIMIT_TAIL_BYTES) -> list[dict[str, Any]
                 handle.seek(size - limit)
                 handle.readline()
             raw_lines = handle.readlines()
-    except OSError:
+    except OSError:  # an unreadable transcript has no rows yet
         return []
     rows: list[dict[str, Any]] = []
     for raw in raw_lines:
         try:
             row = json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError):  # a torn or partial line is skipped
             continue
         if isinstance(row, dict):
             rows.append(row)
@@ -368,7 +368,7 @@ def _last_stop(kind: str, anchor: Path) -> float | None:
     """The unanswered limit stop at the end of ``anchor``, re-read only on change."""
     try:
         stat = anchor.stat()
-    except OSError:
+    except OSError:  # a vanished transcript has no pending stop
         return None
     key = os.path.normcase(str(anchor))
     cached = _READ.get(key)
@@ -422,7 +422,7 @@ def limit_stop(
         return None
     try:
         anchor = _cached_anchor(kind, session_id, Path(home).expanduser(), captured_at)
-    except OSError:
+    except OSError:  # a vanished session has no resumable stop
         return None
     if anchor is None:
         return None
