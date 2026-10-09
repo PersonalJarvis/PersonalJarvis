@@ -8,6 +8,7 @@ the guard does not know would be refused before any route ran.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -769,8 +770,15 @@ def test_every_gateway_call_lands_in_the_cost_ledger(monkeypatch, guarded, tmp_p
         gateway.register_model(token, "gpt-5.2", ModelLimits(400_000, 128_000))
         assert _chat(guarded, token, {**_CHAT, "stream": True}).status_code == 200
         assert _chat(guarded, token, _CHAT).status_code == 200
-        ledger.flush()
-        rows = list(ledger.read_usage(tmp_path / "llm_usage.db", 0, 2**62))
+        # The ledger writes on its own thread; a loaded runner can need more
+        # than one flush window before both rows are on disk.
+        deadline = time.monotonic() + 15
+        while True:
+            ledger.flush()
+            rows = list(ledger.read_usage(tmp_path / "llm_usage.db", 0, 2**62))
+            if len(rows) >= 2 or time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
     finally:
         ledger.set_ledger_path(None)
         gateway.reset()
