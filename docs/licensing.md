@@ -75,6 +75,11 @@ Copyright (c) 2026 T3 Tools Inc. The full text ships in
 [`third_party/t3code/LICENSE`](../third_party/t3code/LICENSE), and every adapted
 file names its source in a header comment.
 
+The Computers settings page (`jarvis/ui/web/frontend/src/views/computers/surface.tsx`
+and `ComputerRow.tsx`) contains portions of the settings layout, environment row,
+status dot and empty state adapted from T3 Code @ `12069ee` under the same MIT
+license; both files name their source in a header comment. The connection features of the same page — several addresses per computer, the SSH-config and Tailscale suggestions, the on/off switch, automatic placement and GitHub sharing (`jarvis/computers/ssh_config.py`, `tailscale.py`, `placement.py`, `github_access.py`; `views/computers/RouteList.tsx`, `Placement.tsx`, `GithubAccess.tsx`, `machineKind.tsx`) — adapt further portions of T3 Code @ `12069ee`, each credited the same way.
+
 The Agentic IDE explorer's coloured file-type icons
 (`jarvis/ui/web/frontend/src/components/agentic/sidePanel/explorer/fileIconSprite.ts`
 and `fileIcon.ts`) contain SVG symbols and file-name rules copied from

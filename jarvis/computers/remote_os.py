@@ -62,6 +62,10 @@ LAUNCH_DIR: Final[str] = "jarvis-agents/.launch"
 #: launcher: ``CLAUDE_CODE_OAUTH_TOKEN`` lives here on a Mac, whose Keychain
 #: is locked in SSH sessions.
 AGENT_ENV_FILE: Final[str] = ".config/jarvis/agent.env"
+#: The GitHub login this PC shared with the agents here (owner-only), sourced
+#: by every launcher after :data:`AGENT_ENV_FILE`; absent unless the user
+#: shared it (``jarvis.computers.github_access``).
+GITHUB_ENV_FILE: Final[str] = ".config/jarvis/github.env"
 
 #: The user's own install folders: put FIRST when present, so a Node.js the
 #: readiness panel installed there wins over an older one from the system.
@@ -360,7 +364,9 @@ def pid_record(host: RemoteHost, pid_file: str) -> str:
 
 
 def _source_agent_env() -> str:
-    return f'[ -f "$HOME/{AGENT_ENV_FILE}" ] && . "$HOME/{AGENT_ENV_FILE}"\n'
+    return "".join(
+        f'[ -f "$HOME/{name}" ] && . "$HOME/{name}"\n' for name in (AGENT_ENV_FILE, GITHUB_ENV_FILE)
+    )
 
 
 def launcher_script(

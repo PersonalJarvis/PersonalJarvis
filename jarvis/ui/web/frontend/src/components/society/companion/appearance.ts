@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ACCESSORY_SLOTS, type AccessoryChoice } from "./accessories";
+import { skinSchema } from "./skins";
 
 export const COMPANION_SHAPES = ["circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
 export type SymbolShape = typeof COMPANION_SHAPES[number];
@@ -23,6 +24,8 @@ export const companionSchema = z.object({
   // A pet from My Pets worn instead of the shape. Open like accessory ids: a pet
   // missing on this machine shows the shape, it never invalidates the look.
   pet: z.string().regex(PET_ID).optional(),
+  // A colour design (gradient + effect) worn instead of the flat colour; see skins.ts.
+  skin: skinSchema.optional(),
   // Accept earlier saved slider values, but every presentation uses one scale.
   sizeM: z.number().finite().min(0.25).max(0.8).default(COMPANION_SIZE_M).transform(() => COMPANION_SIZE_M),
   followDistanceM: z.number().finite().min(0.5).max(2).default(COMPANION_FOLLOW_DISTANCE_M).transform(() => COMPANION_FOLLOW_DISTANCE_M),

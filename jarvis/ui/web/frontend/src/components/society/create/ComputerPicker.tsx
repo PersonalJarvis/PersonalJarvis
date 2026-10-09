@@ -41,7 +41,8 @@ export function ComputerPicker({
   const t = useT();
   const computers = useComputers();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
-  const rows = computers.data ?? [];
+  // A switched-off computer is not offered, unless it is the one already chosen.
+  const rows = (computers.data ?? []).filter((c) => c.enabled !== false || c.id === value);
   const chosen = rows.find((c) => c.id === value);
 
   return (

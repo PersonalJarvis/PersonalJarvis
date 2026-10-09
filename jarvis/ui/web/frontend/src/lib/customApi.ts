@@ -1,17 +1,22 @@
 export interface ApiParameter {
   name: string;
-  location: "path" | "query";
-  type: "string" | "integer" | "number" | "boolean";
+  location: "path" | "query" | "header";
+  type: "string" | "integer" | "number" | "boolean" | "array" | "object";
+  value_schema?: Record<string, unknown> | null;
   required: boolean;
   description: string;
 }
 export interface ApiAction {
   id: string;
   description: string;
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
   path: string;
   parameters: ApiParameter[];
   body_schema: Record<string, unknown> | null;
+  body_required?: boolean;
+  body_encoding?: "json" | "multipart" | "form" | "binary";
+  file_fields?: string[];
+  content_type?: string;
   risk_tier: "monitor" | "ask" | "block";
   response: "auto" | "json" | "text" | "file";
 }
@@ -20,7 +25,7 @@ export interface ApiDefinition {
   name: string;
   description: string;
   base_url: string;
-  auth: { mode: "none" | "bearer" | "header"; header_name: string };
+  auth: { mode: "none" | "bearer" | "header" | "query"; header_name: string };
   enabled: boolean;
   actions: ApiAction[];
 }
@@ -29,10 +34,30 @@ export interface ApiStatus {
   has_credential: boolean;
   tools_ready: boolean;
 }
+export interface ApiConnection {
+  id: string;
+  name: string;
+  website: string;
+  brand_id: string;
+  logo_data: string;
+  categories: string[];
+  action_count: number;
+  omitted_operations: number;
+  enabled: boolean;
+  has_credential: boolean;
+  tools_ready: boolean;
+  status: "configured" | "verified" | "limited";
+}
+export class ApiConnectionError extends Error {
+  constructor(public code: string, public suggestions: string[] = []) { super(code); }
+}
 export async function customApiRequest<T>(path = "", init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/custom-apis${path}`, init);
   const data = await response.json();
-  if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${response.status}`);
+  if (!response.ok) {
+    if (data.detail?.code) throw new ApiConnectionError(data.detail.code, data.detail.suggestions ?? []);
+    throw new Error(typeof data.detail === "string" ? data.detail : `HTTP ${response.status}`);
+  }
   return data as T;
 }
 export function newApiDefinition(): ApiDefinition {

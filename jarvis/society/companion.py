@@ -13,6 +13,10 @@ AccessoryId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,40}$")]
 # for a drawn one). Open-ended like accessory ids: a pet deleted later or
 # missing on another machine shows the shape instead, it never breaks the look.
 PetId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
+HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9a-fA-F]{6}$")]
+# Effect ids stay open like accessory ids: a design saved by a newer build keeps
+# its colours in an older one, which simply draws no effect it does not know.
+SkinEffect = Annotated[str, StringConstraints(pattern=r"^[a-z]{1,20}$")]
 
 #: Mirrors ``COMPANION_SHAPES`` / ``COMPANION_COLORS`` in the frontend's
 #: ``components/society/companion/appearance.ts`` (parity test pins both).
@@ -27,6 +31,24 @@ COMPANION_COLORS: Final[tuple[str, ...]] = (
 )
 
 
+class CompanionSkin(BaseModel):
+    """A colour design worn instead of the flat colour (mirrors ``skinSchema`` in
+    the frontend's ``components/society/companion/skins.ts``).
+
+    ``color`` on the appearance stays the design's blended colour, so every
+    surface that knows only one colour (chat bubbles, thinking dots) still fits.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    colors: list[HexColor] = Field(min_length=2, max_length=4)
+    pattern: Literal["linear", "radial"] = "linear"
+    #: CSS convention: 0 points up, 90 to the right.
+    angle: int = Field(default=135, ge=0, le=359)
+    effect: SkinEffect = "none"
+    name: str = Field(default="", max_length=40, pattern=r"^[^\x00-\x1f\x7f]*$")
+
+
 class CompanionAppearance(BaseModel):
     """One identity for the profile and its presentation-only world follower."""
 
@@ -39,6 +61,8 @@ class CompanionAppearance(BaseModel):
     accessories: dict[AccessorySlot, AccessoryId] = Field(default_factory=dict)
     #: Wear this pet instead of the shape, everywhere the agent appears.
     pet: PetId | None = None
+    #: A colour design (gradient + effect) instead of the flat colour.
+    skin: CompanionSkin | None = None
     sizeM: float = Field(default=0.5, ge=0.25, le=0.8)
     followDistanceM: float = Field(default=1.0, ge=0.5, le=2.0)
 
@@ -60,6 +84,8 @@ def _bare(look: dict[str, Any]) -> dict[str, Any]:
         look.pop("accessories", None)
     if look.get("pet") is None:
         look.pop("pet", None)
+    if look.get("skin") is None:
+        look.pop("skin", None)
     return look
 
 

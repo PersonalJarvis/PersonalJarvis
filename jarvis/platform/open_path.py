@@ -274,19 +274,18 @@ def _open_url_windows(url: str) -> bool:
     URL in the browser's normal, visible profile. Falls back across candidates and
     finally to ShellExecute. Returns True once a launcher is dispatched.
     """
-    host = urlparse(url).netloc
+    host = urlparse(url).hostname
     for exe in _windows_browser_candidates():
         try:
             subprocess.Popen(  # noqa: S603
                 [exe, url], creationflags=NO_WINDOW_CREATIONFLAGS, close_fds=True
             )
-            # Log only scheme://host at INFO — the full URL carries the OAuth
-            # ``state`` (a CSRF token) and ephemeral redirect_uri; keep it at DEBUG.
+            # Never log URL credentials, including one-time pairing fragments.
             log.info("open_url: launched %s -> %s", exe, host)
-            log.debug("open_url: full URL %s", url)
+            log.debug("open_url: browser launch completed")
             return True
         except OSError as exc:
-            log.warning("open_url: %s failed (%s); trying next candidate", exe, exc)
+            log.warning("open_url: %s failed (%s); trying next candidate", exe, type(exc).__name__)
             continue
     # Last resort: hand the URL to the OS association. It may be a UWP handler with
     # no classic exe — but it is also the path that silently opens nothing for a
@@ -299,7 +298,7 @@ def _open_url_windows(url: str) -> bool:
         )
         return True  # best-effort; ShellExecute may open nothing for a dead handler
     except OSError as exc:
-        log.warning("open_url: ShellExecute fallback failed for %s: %s", host, exc)
+        log.warning("open_url: ShellExecute fallback failed for %s: %s", host, type(exc).__name__)
         return False
 
 
@@ -345,7 +344,7 @@ def _run_opener_checked(argv: list[str]) -> bool:
             capture_output=True,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log.warning("open_url: opener %r failed: %s", argv[0], exc)
+        log.warning("open_url: opener %r failed: %s", argv[0], type(exc).__name__)
         return False
     return proc.returncode == 0
 
@@ -355,10 +354,10 @@ def _open_url_macos(url: str) -> bool:
     ``open -a <App>`` fallbacks if the default association is broken. See
     :func:`open_url`. Honest: returns False if nothing opened.
     """
-    host = urlparse(url).netloc
+    host = urlparse(url).hostname
     if _run_opener_checked(["open", url]):
         log.info("open_url: macOS launched default browser -> %s", host)
-        log.debug("open_url: full URL %s", url)
+        log.debug("open_url: browser launch completed")
         return True
     for app in _MACOS_BROWSER_APPS:
         if _run_opener_checked(["open", "-a", app, url]):
@@ -375,10 +374,10 @@ def _open_url_linux(url: str) -> bool:
     opened. The direct-binary launch is fire-and-forget (the browser keeps running)
     so it mirrors the Windows direct launch — success means the process started.
     """
-    host = urlparse(url).netloc
+    host = urlparse(url).hostname
     if _run_opener_checked(["xdg-open", url]):
         log.info("open_url: Linux launched default browser -> %s", host)
-        log.debug("open_url: full URL %s", url)
+        log.debug("open_url: browser launch completed")
         return True
     for binname in _LINUX_BROWSER_BINS:
         exe = shutil.which(binname)
@@ -391,7 +390,7 @@ def _open_url_linux(url: str) -> bool:
             log.info("open_url: Linux opened via %s -> %s", binname, host)
             return True
         except OSError as exc:
-            log.warning("open_url: %s failed (%s); trying next", binname, exc)
+            log.warning("open_url: %s failed (%s); trying next", binname, type(exc).__name__)
             continue
     log.warning("open_url: Linux found no browser to open %s", host)
     return False

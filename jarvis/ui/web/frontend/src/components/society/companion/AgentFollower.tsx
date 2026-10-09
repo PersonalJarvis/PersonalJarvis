@@ -12,6 +12,7 @@ import { advancePetTrail, createPetTrail, petDisplayPosition, recordOwner, type 
 import { useWornPet } from "./companionPetStore";
 import { companionFlies, type CompanionPet } from "./petCompanions";
 import { PetModel, VoxelPet, type PetDrive } from "./PetModel";
+import { advanceSkin, createSkinMaterial } from "./skinMaterial";
 
 class PetBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -59,6 +60,9 @@ const GIGI_LOOK: CompanionAppearance = {
 /** A cached authored mesh, with instance-owned materials and no extra canvas. */
 function ShapeModel({ appearance, lead = false }: { appearance: CompanionAppearance; lead?: boolean }) {
   const { scene } = useGLTF(lead ? gigiModel : companionModels);
+  const reduced = useReducedMotion() ?? false;
+  // The design by value: a freshly parsed but equal skin must not rebuild the material.
+  const skinKey = appearance.skin ? JSON.stringify(appearance.skin) : "";
   const instance = useMemo(() => {
     const original = lead ? scene : scene.getObjectByName(appearance.shape);
     if (!original) throw new Error("Companion silhouette missing from asset");
@@ -67,7 +71,10 @@ function ShapeModel({ appearance, lead = false }: { appearance: CompanionAppeara
     if (!lead) {
       const ink = companionEyeColors(appearance.color);
       // A soft vinyl sheen lets the light show the volume of each body.
-      const body = new MeshStandardMaterial({ color: appearance.color, roughness: 0.62 });
+      let bodyMesh: Mesh | undefined;
+      model.traverse(object => { if ((object as Mesh).isMesh && object.name.includes("Body")) bodyMesh ??= object as Mesh; });
+      const body = appearance.skin ? createSkinMaterial(appearance.skin, bodyMesh?.geometry)
+        : new MeshStandardMaterial({ color: appearance.color, roughness: 0.62 });
       const eyes = new MeshStandardMaterial({ color: ink.eye, roughness: 1 });
       const shine = new MeshStandardMaterial({ color: ink.highlight, roughness: 1 });
       materials.push(body, eyes, shine);
@@ -81,8 +88,10 @@ function ShapeModel({ appearance, lead = false }: { appearance: CompanionAppeara
       });
     }
     return { model, materials };
-  }, [scene, lead, appearance.shape, appearance.color, appearance.eyes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- appearance.skin is read through skinKey
+  }, [scene, lead, appearance.shape, appearance.color, appearance.eyes, skinKey]);
   useEffect(() => () => { instance.materials.forEach(material => material.dispose()); }, [instance]);
+  useFrame((_, delta) => { if (!reduced && skinKey) advanceSkin(instance.materials[0]!, delta); });
   const wearing = !lead && wornAccessories(appearance.accessories).length > 0;
   // Gigi's authored body is 0.4 m; the symbol master is exactly 1 m.
   return <group scale={appearance.sizeM / (lead ? 0.4 : 1)}>

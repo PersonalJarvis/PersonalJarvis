@@ -4780,13 +4780,14 @@ class BrainManager:
         self._dead_provider_models = {
             k for k in self._dead_provider_models if k[0] != provider
         }
-        keys_to_drop = [k for k in self._brain_cache if k[0] == provider]
+        keys_to_drop = [k for k in self._brain_cache
+                        if k[0] == provider or str(k[0]).startswith(provider + "@")]
         for k in keys_to_drop:
             self._brain_cache.pop(k, None)
         self._rate_tracker.clear(provider)
         if was_dead or keys_to_drop:
             log.info(
-                "Provider '%s' reaktiviert (dead=%s, brain_cache_dropped=%d)",
+                "Provider '%s' reactivated (dead=%s, brain_cache_dropped=%d)",
                 provider, was_dead, len(keys_to_drop),
             )
 
@@ -10618,31 +10619,11 @@ class BrainManager:
         """The chain for a caller-picked turn: exactly the pick, no stand-in.
 
         A person who chose a model in the chat gets that model or an honest
-        error — never a silent cross-provider fallback (the "wrong model used,
-        shown right" defect, anti-drift mandate 2026-06-29). The one thing kept
-        from the normal chain is the intelligent-router lead: when the pick
-        cannot emit tool_calls at all, a tool-capable provider leads the turn
-        and falls through to the pick for the answer, exactly as for a
-        tool-incapable voice brain (``_router_lead_key``).
+        error — never a silent cross-provider fallback. A tool-incapable pick
+        does not authorize another provider to lead or bill this turn.
         """
         pick: tuple[str, str | None] = (override.provider, override.model)
-        chain: list[tuple[str, str | None]] = [pick]
-        intelligent = bool(getattr(self._config.brain.routing, "intelligent_router", True))
-        if (
-            intelligent
-            and getattr(self, "_turn_substantive", False)
-            and not self._brain_can_call_tools(override.provider, override.model)
-        ):
-            helper = self._first_tool_capable_provider(level, exclude=override.provider)
-            if helper is not None:
-                log.info(
-                    "Intelligent router: picked %s cannot call tools — %s leads this "
-                    "turn and picks the tool (falls through to %s if none).",
-                    override.provider, helper[0], override.provider,
-                )
-                self._router_lead_key = helper
-                chain.insert(0, helper)
-        return chain
+        return [pick]
 
     def _build_fallback_chain(self, level: str) -> list[tuple[str, str | None]]:
         """Returns a prioritised list of (provider, model) attempts."""

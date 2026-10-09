@@ -95,7 +95,7 @@ function CreateAgentDialog() {
   const accounts = accountChoice(option?.seat ?? null);
   const modelValue = models.some((entry) => entry.id === model) ? model : defaultModel(option);
   const accountValue = option?.seat.provider.id === accountProvider && accounts.some((entry) => entry.id === account) ? account : "";
-  const seatKey = `${runtime}|${chosen?.id ?? ""}|${option?.kind ?? ""}|${accountValue}`;
+  const seatKey = `${chosen?.id ?? ""}|${option?.kind ?? ""}|${accountValue}`;
   useEffect(() => {
     // Another provider or access: its own default model, not the last one's id.
     setModel("");

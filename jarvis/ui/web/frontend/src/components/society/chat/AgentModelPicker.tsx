@@ -104,7 +104,8 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       const matched = seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, titles[index]));
       // Newest of each model line first; earlier versions fold away. Catalogs
       // with their own fold (OpenCode, OpenRouter) keep their order.
-      const ranked = collapsibleModels(seat) ? { current: matched, older: [] } : rankModels(matched);
+      const ranked = seat.kind === "local" || collapsibleModels(seat)
+        ? { current: matched, older: [] } : rankModels(matched);
       return { seat, title: titles[index], models: [...ranked.current, ...ranked.older], older: new Set(ranked.older) };
     }).filter((group) => group.models.length > 0).sort((a, b) =>
       modelGroupOrder(a.seat) - modelGroupOrder(b.seat) || a.title.localeCompare(b.title));

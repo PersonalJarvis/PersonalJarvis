@@ -25,6 +25,16 @@ describe("hrefWithSection", () => {
     // any of them would trade one lost place for another.
     expect(
       hrefWithSection(`${BASE}?solo=1&doc=agent-contract#naming`, "docs"),
-    ).toBe("/?solo=1&doc=agent-contract&view=docs#naming");
+    ).toBe("/?solo=1&doc=agent-contract&window=docs&view=docs#naming");
+  });
+
+  it("keeps the window owner through tab changes and reloads", () => {
+    const next = hrefWithSection(`${BASE}?view=profile&solo=1&window=settings`, "apikeys");
+    expect(next).toBe("/?view=apikeys&solo=1&window=settings");
+    expect(hrefWithSection(new URL(next!, BASE).href, "shortcuts")).toBe("/?view=shortcuts&solo=1&window=settings");
+  });
+
+  it("upgrades an older solo URL before changing its tab", () => {
+    expect(hrefWithSection(`${BASE}?view=profile&solo=1`, "apikeys")).toBe("/?view=apikeys&solo=1&window=profile");
   });
 });

@@ -14,6 +14,9 @@ export interface CuratedModel {
   efforts?: string[];
   /** A short note for the picker's hint ("retires 2026-08-31"). */
   note?: string;
+  /** Catalog capabilities; absent/null means unknown, not unsupported. */
+  tools?: boolean | null;
+  vision?: boolean | null;
 }
 
 export interface PermissionModeOption {
@@ -351,6 +354,8 @@ export interface LiveModel {
   id: string;
   label?: string;
   name?: string;
+  tools?: boolean | null;
+  vision?: boolean | null;
 }
 
 /** The provider's live model list (brain catalog route); [] when the route has none. */

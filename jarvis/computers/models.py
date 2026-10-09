@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: A rented or self-hosted machine reached over the network, or a VM on this box.
 ComputerKind = Literal["server", "local_vm"]
@@ -43,6 +43,29 @@ HealthStatus = Literal[
 ]
 
 
+#: Where an address came from: typed in, suggested by Tailscale, or read from
+#: this PC's ``~/.ssh/config``.
+RouteSource = Literal["manual", "tailscale", "ssh_config"]
+
+#: The id of the route a record without routes is given on read.
+PRIMARY_ROUTE_ID = "r_main"
+
+
+class ComputerRoute(BaseModel):
+    """One address the machine answers on (a LAN IP, a Tailscale name, …)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    host: str
+    port: int = Field(default=22, ge=1, le=65535)
+    #: A short name the user gave this way in ("Home LAN", "Tailscale").
+    label: str | None = None
+    source: RouteSource = "manual"
+    #: When a connection last got through on this address (epoch seconds).
+    last_ok_at: float | None = None
+
+
 class ComputerFacts(BaseModel):
     """What the machine is, read by the last successful check."""
 
@@ -72,6 +95,8 @@ class ComputerHealth(BaseModel):
     mem_used_pct: float | None = None
     disk_used_pct: float | None = None
     uptime_s: int | None = None
+    #: The log correlation id of a failed check, for a bug report.
+    trace_id: str | None = None
 
 
 class Computer(BaseModel):
@@ -99,3 +124,32 @@ class Computer(BaseModel):
     created_at: float
     facts: ComputerFacts | None = None
     health: ComputerHealth = Field(default_factory=ComputerHealth)
+    #: Switched off: kept with its login, but nothing connects to it, nothing
+    #: is checked and no picker offers it until it is switched on again.
+    enabled: bool = True
+    #: Every address the machine answers on, preferred first. A connection
+    #: tries them in this order; ``host``/``port`` mirror the one that last
+    #: got through (``active_route_id``), so readers of a single address keep
+    #: working. A record stored before routes existed gets its ``host`` as the
+    #: only route.
+    routes: list[ComputerRoute] = Field(default_factory=list)
+    active_route_id: str | None = None
+    #: How often "Automatic" sends a new workspace here: 0 never, 1 less,
+    #: 2 normal, 3 more (see :mod:`jarvis.computers.placement`).
+    placement_weight: int = Field(default=2, ge=0, le=3)
+    #: When this PC's GitHub login was last shared with the agents here;
+    #: ``None`` when it is not shared (see :mod:`jarvis.computers.github_access`).
+    github_shared_at: float | None = None
+
+    @model_validator(mode="after")
+    def _routes_cover_the_address(self) -> Computer:
+        if not self.routes:
+            route = ComputerRoute(id=PRIMARY_ROUTE_ID, host=self.host, port=self.port)
+            object.__setattr__(self, "routes", [route])
+            object.__setattr__(self, "active_route_id", route.id)
+        elif self.active_route_id not in {r.id for r in self.routes}:
+            object.__setattr__(self, "active_route_id", self.routes[0].id)
+        return self
+
+    def route(self, route_id: str | None) -> ComputerRoute | None:
+        return next((r for r in self.routes if r.id == route_id), None)

@@ -170,6 +170,9 @@ export function providerChoices(
 export function accessModels(option: AccessOption | null): CuratedModel[] {
   if (!option) return [];
   const models = option.seat.provider.curated_models;
+  // Local tags contain parameter sizes, context sizes and user hashes, which
+  // are not comparable release versions. Preserve the server's catalog order.
+  if (option.kind === "local") return models;
   const ranked = rankModels(models);
   return [...ranked.current, ...ranked.older];
 }

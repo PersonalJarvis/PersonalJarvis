@@ -14,6 +14,8 @@ import {
   ACCESSORY_CATALOG, FACE_SLOTS, partDepth, resolveFill, smoothPath, symbolViewBox, wornAccessories,
   type AccessoryChoice, type AccessoryItem, type AccessoryPart,
 } from "./companion/accessories";
+import { SkinDefs, SkinGlow, SkinOverlay } from "./companion/SkinLayers";
+import type { CompanionSkin } from "./companion/skins";
 import "./agentSymbol.css";
 export type { SymbolShape } from "./companion/appearance";
 
@@ -156,7 +158,7 @@ function ExpressiveEye({ side, cx, cy, rx, ry }: { side: "l" | "r"; cx: number; 
   </g>;
 }
 
-export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false, accessories, expressive = false }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean; accessories?: AccessoryChoice; expressive?: boolean }) {
+export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = false, accessories, expressive = false, skin }: { shape: SymbolShape; color: string; size: number; eyes?: "dots" | "lines"; thinking?: boolean; accessories?: AccessoryChoice; expressive?: boolean; skin?: CompanionSkin }) {
   const eyeY = shape === "cloud" || shape === "triangle" ? 23 : shape === "drop" ? 25 : 17.2;
   const ink = companionEyeColors(color);
   const maskId = `agent-body-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
@@ -165,6 +167,9 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
   const draw = (items: AccessoryItem[], regions = false) => items.map(item => <AccessoryItemShapes key={item.id} item={item} shape={shape} color={color} regions={regions} uid={maskId} />);
   const faceTransform = `translate(2 -0.6) rotate(-14 20 ${eyeY})`;
   const onFace = worn.filter(item => FACE_SLOTS.has(item.slot));
+  // A design paints the body with its gradient; `color` stays its blend for everything else.
+  const skinId = `${maskId}-skin`;
+  const body = (fill: string) => <SymbolBody shape={shape} color={fill} />;
   return (
     <svg aria-hidden focusable="false" data-agent-symbol={shape} data-expressive={expressive ? "true" : undefined} data-thinking={thinking ? "true" : undefined} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox={viewBox} className="society-agent-symbol block">
       <g className="agent-symbol-character">
@@ -180,7 +185,9 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
             <g clipPath={`url(#${clipId})`}><SymbolBody shape={shape} color={resolveFill(part.fill, color)} grow={part.w} /></g>
           </g>;
         }))}
-        <g data-agent-body><SymbolBody shape={shape} color={color} /></g>
+        {skin && <><SkinDefs id={skinId} skin={skin} /><SkinGlow id={skinId} skin={skin} body={body} /></>}
+        <g data-agent-body data-skin={skin ? skin.effect : undefined}>{body(skin ? `url(#${skinId})` : color)}</g>
+        {skin && <SkinOverlay id={skinId} skin={skin} body={body} />}
         {worn.some(item => item.regions) && <>
           <mask id={maskId} maskUnits="userSpaceOnUse" x={-20} y={-20} width={80} height={84}><SymbolBody shape={shape} color="#ffffff" /></mask>
           <g mask={`url(#${maskId})`}>{draw(worn, true)}</g>

@@ -1,226 +1,188 @@
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Cable, Download, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, KeyRound, Loader2, LockKeyhole, MoreHorizontal, Pause, Play, Plus, Search, Trash2, Users } from "lucide-react";
 import { useT } from "@/i18n";
-import { SoftButton } from "@/components/extensions/primitives";
-import { BrandedSelect } from "@/components/ui/select";
-import { actionWithPath, customApiRequest, newApiAction, newApiDefinition,
-  type ApiAction, type ApiDefinition, type ApiParameter, type ApiStatus } from "@/lib/customApi";
+import { ActionMenu, BackLink, IconButton, Panel, PanelHeader, StatusDot } from "@/components/extensions/primitives";
+import { ProviderLogo, providerFamily } from "@/components/providers/ProviderLogo";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { bundledPluginLogo } from "@/lib/pluginLogos";
+import { ApiConnectionError, customApiRequest, type ApiConnection } from "@/lib/customApi";
+import "./CustomApisView.css";
 
-const fieldClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
-const queryKey = ["custom-apis"];
+const QUERY_KEY = ["api-connections"];
 const jsonRequest = (method: string, body: unknown): RequestInit => ({
   method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground">{label}{children}</label>;
+function brandFor(name: string): string {
+  const value = name.toLowerCase().replace(/\b(api|documentation)\b/g, "").replace(/[^a-z0-9]/g, "");
+  return value === "11labs" ? "elevenlabs" : value;
+}
+
+/** Original artwork first; the geometric fallback is a Jarvis-owned connection mark. */
+export function ConnectionLogo({ name, brand = "", image = "", large = false }: {
+  name: string; brand?: string; image?: string; large?: boolean;
+}) {
+  const id = brand || brandFor(name);
+  const size = large ? "!h-14 !w-14 !rounded-xl" : "!h-11 !w-11 !rounded-xl";
+  const bundled = bundledPluginLogo(id);
+  if (providerFamily(id) === id) return <ProviderLogo providerId={id} label={name} className={size} />;
+  if (bundled || image) return <span aria-hidden className={`inline-flex shrink-0 items-center justify-center bg-secondary p-2 ${size}`}>
+    <img src={bundled || image} alt="" className="h-full w-full object-contain" />
+  </span>;
+  const seed = [...name].reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 19);
+  return <span aria-hidden data-testid="generated-connection-mark" className={`inline-flex shrink-0 items-center justify-center bg-secondary text-muted-foreground ${size}`}>
+    <svg viewBox="0 0 32 32" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="11" y="11" width="10" height="10" rx={seed % 2 ? 3 : 1} />
+      {[0, 1, 2, 3].map((i) => <g key={i} transform={`rotate(${i * 90} 16 16)`}>
+        <path d="M16 11V6" /><circle cx="16" cy="4.5" r={seed & (1 << i) ? 2 : 1} fill={seed & (1 << i) ? "currentColor" : "none"} />
+      </g>)}
+    </svg>
+  </span>;
+}
+
+function useConnectionError() {
+  const t = useT();
+  return (error: unknown): string => {
+    if (error instanceof ApiConnectionError) {
+      const key = `custom_apis.errors.${error.code}`;
+      const translated = t(key);
+      return translated === key ? t("custom_apis.failed") : translated;
+    }
+    return t("custom_apis.failed");
+  };
 }
 
 export function CustomApisView({ onBack }: { onBack: () => void }) {
   const t = useT();
+  const errorText = useConnectionError();
   const queryClient = useQueryClient();
-  const list = useQuery({ queryKey, queryFn: () => customApiRequest<ApiStatus[]>(), retry: false });
-  const [editing, setEditing] = useState<ApiStatus | null>(null);
-  const [running, setRunning] = useState<ApiDefinition | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const list = useQuery({ queryKey: QUERY_KEY, queryFn: () => customApiRequest<ApiConnection[]>("/connections"), retry: false });
+  const [editor, setEditor] = useState<ApiConnection | "new" | null>(null);
+  const [details, setDetails] = useState<ApiConnection | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const upload = useRef<HTMLInputElement>(null);
-  const refresh = () => queryClient.invalidateQueries({ queryKey });
-  const start = (definition: ApiDefinition) => {
-    setError(""); setEditing({ definition, has_credential: false, tools_ready: false });
-  };
-  async function loadTemplate() {
-    setBusy(true); setError("");
-    try { start({ ...await customApiRequest<ApiDefinition>("/templates/elevenlabs"), enabled: true }); }
-    catch (e) { setError(e instanceof Error ? e.message : t("custom_apis.failed")); }
-    finally { setBusy(false); }
+  const refresh = () => queryClient.invalidateQueries({ queryKey: QUERY_KEY });
+  async function remove(connection: ApiConnection) {
+    setBusy(connection.id); setError("");
+    try { await customApiRequest(`/${connection.id}`, { method: "DELETE" }); setRemoving(null); await refresh(); }
+    catch (e) { setError(errorText(e)); }
+    finally { setBusy(null); }
   }
-  async function remove(id: string) {
-    setBusy(true); setError("");
-    try { await customApiRequest(`/${id}`, { method: "DELETE" }); setDeleting(null); await refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : t("custom_apis.failed")); }
-    finally { setBusy(false); }
+  async function toggle(connection: ApiConnection) {
+    setBusy(connection.id); setError("");
+    try { await customApiRequest(`/connections/${connection.id}`, jsonRequest("PATCH", { enabled: !connection.enabled })); await refresh(); }
+    catch (e) { setError(errorText(e)); }
+    finally { setBusy(null); }
   }
-  if (editing) return <ApiEditor key={editing.definition.id} initial={editing}
-    onCancel={() => setEditing(null)} onSaved={async () => { setEditing(null); await refresh(); }} />;
-  if (running) return <ApiRunner definition={running} onBack={() => setRunning(null)} />;
-  return <section className="space-y-5" aria-label={t("custom_apis.title")}>
-    <SoftButton onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4" />{t("nav.plugins")}</SoftButton>
-    <div className="flex items-start gap-4">
-      <div className="rounded-xl bg-secondary p-3 text-primary"><Cable className="h-6 w-6" /></div>
-      <div><h2 className="text-xl font-semibold text-foreground">{t("custom_apis.title")}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{t("custom_apis.subtitle")}</p></div>
-    </div>
-    <div className="flex flex-wrap gap-2">
-      <SoftButton onClick={() => start(newApiDefinition())}><Plus className="mr-2 h-4 w-4" />{t("custom_apis.add")}</SoftButton>
-      <SoftButton disabled={busy} onClick={() => void loadTemplate()}>{t("custom_apis.elevenlabs")}</SoftButton>
-      <SoftButton onClick={() => upload.current?.click()}>{t("custom_apis.import")}</SoftButton>
-      <input ref={upload} className="hidden" type="file" accept="application/json,.json" aria-label={t("custom_apis.import")}
-        onChange={async (event) => {
-          const file = event.target.files?.[0]; event.target.value = "";
-          if (!file) return;
-          try {
-            if (file.size > 256_000) throw new Error(t("custom_apis.invalid_file"));
-            const value = JSON.parse(await file.text()) as ApiDefinition;
-            if (!value.name || !value.base_url || !Array.isArray(value.actions) || !value.auth || "credential" in value)
-              throw new Error(t("custom_apis.invalid_file"));
-            // Import is a draft, never an implicit activation or provider call.
-            start(await customApiRequest<ApiDefinition>("/validate", jsonRequest("POST", {
-              ...value, id: crypto.randomUUID().replaceAll("-", ""), enabled: false,
-            })));
-          } catch { setError(t("custom_apis.invalid_file")); }
-        }} />
-    </div>
-    {(error || list.error) && <p role="alert" className="text-sm text-destructive">{error || (list.error as Error).message}
-      {list.error && <button className="ml-2 underline" onClick={() => void list.refetch()}>{t("custom_apis.retry")}</button>}</p>}
-    {list.isPending ? <p role="status" className="text-sm text-muted-foreground">{t("custom_apis.loading")}</p>
-      : list.data?.length === 0 ? <div className="rounded-xl border border-dashed border-border p-8 text-center">
-        <h3 className="font-medium text-foreground">{t("custom_apis.empty")}</h3>
-        <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{t("custom_apis.empty_hint")}</p>
-      </div> : <div className="space-y-3">{list.data?.map((item) => <article key={item.definition.id} className="rounded-xl border border-border bg-card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0"><h3 className="font-semibold text-foreground">{item.definition.name}</h3>
-            <p className="mt-1 break-all text-xs text-muted-foreground">{item.definition.base_url}</p>
-            <p className="mt-2 text-sm text-muted-foreground">{item.definition.description}</p>
-            <p className="mt-2 text-xs text-muted-foreground">{item.definition.actions.length} {t("custom_apis.actions")} · {t(!item.definition.enabled ? "custom_apis.disabled" : item.tools_ready ? "custom_apis.ready" : "custom_apis.saved")}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <SoftButton onClick={() => setEditing(item)}>{t("custom_apis.edit")}</SoftButton>
-            <SoftButton disabled={!item.tools_ready} onClick={() => setRunning(item.definition)}>{t("custom_apis.run")}</SoftButton>
-            <SoftButton onClick={() => {
-              const url = URL.createObjectURL(new Blob([JSON.stringify({ ...item.definition, enabled: false }, null, 2)], { type: "application/json" }));
-              const anchor = document.createElement("a"); anchor.href = url; anchor.download = `api-${item.definition.id}.json`; anchor.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }}><Download className="mr-1 h-3.5 w-3.5" />{t("custom_apis.export")}</SoftButton>
-            <button className="rounded-lg p-2 text-muted-foreground hover:bg-secondary hover:text-destructive" aria-label={`${t("custom_apis.delete")} ${item.definition.name}`} onClick={() => setDeleting(item.definition.id)}><Trash2 className="h-4 w-4" /></button>
-          </div>
+  if (details) return <ConnectionDetails connection={details} onBack={() => setDetails(null)} />;
+  const isEmpty = list.data?.length === 0;
+  const showEditor = editor !== null || isEmpty;
+  if (showEditor) return <section className="space-y-6" aria-label={t("custom_apis.title")}>
+    <BackLink label={isEmpty ? t("nav.plugins") : t("custom_apis.title")}
+      onClick={isEmpty ? onBack : () => setEditor(null)} />
+    <ConnectionForm key={typeof editor === "object" && editor ? editor.id : "new"}
+      initial={typeof editor === "object" ? editor : null}
+      onSaved={async () => { await refresh(); setEditor(null); }} />
+  </section>;
+  return <section className="custom-api-connections space-y-5" aria-label={t("custom_apis.title")}>
+    <BackLink label={t("nav.plugins")} onClick={onBack} />
+    <PanelHeader className="custom-api-header" title={t("custom_apis.title")} subtitle={t("custom_apis.connections_subtitle")}
+      actions={<Button size="sm" onClick={() => setEditor("new")}><Plus />{t("custom_apis.add")}</Button>} />
+    {list.isPending && <div role="status" className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("custom_apis.loading")}</div>}
+    {(error || list.error) && <p role="alert" className="text-sm text-destructive">{error || errorText(list.error)} <button className="underline" onClick={() => void list.refetch()}>{t("custom_apis.retry")}</button></p>}
+    {!!list.data?.length && <Panel><ul className="divide-y divide-border/60" aria-label={t("custom_apis.title")}>
+      {list.data.map((connection) => <li key={connection.id} className="px-4 py-4 sm:px-5">
+        <div className="custom-api-row">
+          <ConnectionLogo name={connection.name} brand={connection.brand_id} image={connection.logo_data} />
+          <button className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setDetails(connection)}>
+            <span className="block truncate text-base font-semibold text-foreground-strong">{connection.name}</span>
+            <span className="mt-0.5 block truncate text-sm text-muted-foreground">{connection.action_count} {t("custom_apis.capabilities_count")} <span className="px-1.5 text-foreground-faint">·</span> {connection.website.replace(/^https?:\/\//, "")}</span>
+          </button>
+          <span className="custom-api-status"><StatusDot tone={!connection.enabled ? "off" : connection.status === "verified" ? "ok" : connection.status === "limited" ? "warn" : "off"}
+            label={t(!connection.enabled ? "custom_apis.paused" : connection.tools_ready ? `custom_apis.status_${connection.status}` : "custom_apis.saved")} /></span>
+          <ActionMenu label={`${t("custom_apis.manage")} ${connection.name}`} actions={[
+            { id: "edit", label: t("custom_apis.edit_key"), icon: <KeyRound className="h-4 w-4" />, onSelect: () => setEditor(connection) },
+            { id: "pause", label: t(connection.enabled ? "custom_apis.pause" : "custom_apis.resume"), icon: connection.enabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />, onSelect: () => void toggle(connection) },
+            { id: "remove", label: t("custom_apis.delete"), icon: <Trash2 className="h-4 w-4" />, separatorAbove: true, onSelect: () => setRemoving(connection.id) },
+          ]} trigger={({ toggle: openMenu }) => <IconButton label={`${t("custom_apis.manage")} ${connection.name}`} onClick={openMenu} disabled={busy === connection.id}><MoreHorizontal className="h-4 w-4" /></IconButton>} />
         </div>
-        {deleting === item.definition.id && <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-3">
-          <p className="text-sm text-muted-foreground">{t("custom_apis.delete_hint")}</p>
-          <SoftButton disabled={busy} onClick={() => void remove(item.definition.id)}>{t("custom_apis.delete")}</SoftButton>
-          <SoftButton disabled={busy} onClick={() => setDeleting(null)}>{t("common.cancel")}</SoftButton>
+        {removing === connection.id && <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-border/60 pt-3">
+          <p className="mr-auto text-sm text-muted-foreground">{t("custom_apis.remove_confirm")}</p>
+          <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => setRemoving(null)}>{t("common.cancel")}</Button>
+          <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => void remove(connection)}>{t("custom_apis.delete")}</Button>
         </div>}
-      </article>)}</div>}
-    <p className="text-xs leading-relaxed text-muted-foreground">{t("custom_apis.availability")}</p>
+      </li>)}
+    </ul></Panel>}
+    <div className="flex gap-2 px-1 text-sm leading-relaxed text-muted-foreground"><Users className="mt-0.5 h-4 w-4 shrink-0" /><p>{t("custom_apis.inheritance")}</p></div>
   </section>;
 }
 
-function ApiEditor({ initial, onCancel, onSaved }: { initial: ApiStatus; onCancel: () => void; onSaved: () => Promise<void> }) {
+function ConnectionForm({ initial, onSaved }: { initial: ApiConnection | null; onSaved: () => Promise<void> }) {
   const t = useT();
-  const [definition, setDefinition] = useState(initial.definition);
+  const errorText = useConnectionError();
+  const [id] = useState(() => initial?.id ?? crypto.randomUUID().replaceAll("-", ""));
+  const [name, setName] = useState(initial?.name ?? "");
   const [credential, setCredential] = useState("");
-  const [schemas, setSchemas] = useState(initial.definition.actions.map((a) => a.body_schema ? JSON.stringify(a.body_schema, null, 2) : ""));
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const updateAction = (index: number, action: ApiAction) => setDefinition((d) => ({ ...d, actions: d.actions.map((a, i) => i === index ? action : a) }));
-  async function save(event: FormEvent) {
-    event.preventDefault(); setError(""); setBusy(true);
+  const [error, setError] = useState<unknown>(null);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError(null); setBusy(true);
     try {
-      let actions: ApiAction[];
-      try { actions = definition.actions.map((a, i) => ({ ...a, body_schema: schemas[i]?.trim() ? JSON.parse(schemas[i]) : null })); }
-      catch { throw new Error(t("custom_apis.invalid_schema")); }
-      await customApiRequest(`/${definition.id}`, jsonRequest("PUT", { definition: { ...definition, actions }, ...(credential ? { credential } : {}) }));
+      await customApiRequest<ApiConnection>("/connect", jsonRequest("POST", { id, name: name.trim(), ...(credential ? { credential } : {}) }));
       setCredential(""); await onSaved();
-    } catch (e) { setError(e instanceof Error ? e.message : t("custom_apis.failed")); }
+    } catch (e) { setError(e); }
     finally { setBusy(false); }
   }
-  return <form onSubmit={(event) => void save(event)} className="space-y-5">
-    <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold text-foreground">{t("custom_apis.configure")}</h2>
-      <SoftButton disabled={busy} onClick={onCancel}>{t("common.cancel")}</SoftButton></div>
-    <fieldset disabled={busy} className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={t("custom_apis.name")}><input required maxLength={100} className={fieldClass} value={definition.name} onChange={(e) => setDefinition({ ...definition, name: e.target.value })} /></Field>
-        <Field label={t("custom_apis.url")}><input required type="url" placeholder="https://api.example.com" className={fieldClass} value={definition.base_url} onChange={(e) => setDefinition({ ...definition, base_url: e.target.value })} /></Field>
-      </div>
-      <Field label={t("custom_apis.description")}><input className={fieldClass} maxLength={2000} value={definition.description} onChange={(e) => setDefinition({ ...definition, description: e.target.value })} /></Field>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label={t("custom_apis.auth")}><BrandedSelect ariaLabel={t("custom_apis.auth")} disabled={busy} className={fieldClass} value={definition.auth.mode}
-          onValueChange={(mode) => setDefinition({ ...definition, auth: { ...definition.auth, mode: mode as ApiDefinition["auth"]["mode"] } })}
-          options={[{ value: "bearer", label: "Bearer token" }, { value: "header", label: t("custom_apis.header_auth") }, { value: "none", label: t("custom_apis.no_auth") }]} /></Field>
-        {definition.auth.mode === "header" && <Field label={t("custom_apis.header")}><input required className={fieldClass} value={definition.auth.header_name} onChange={(e) => setDefinition({ ...definition, auth: { ...definition.auth, header_name: e.target.value } })} /></Field>}
-        {definition.auth.mode !== "none" && <Field label={t("custom_apis.key")}><input type="password" autoComplete="new-password" className={fieldClass} value={credential} placeholder={initial.has_credential ? t("custom_apis.key_saved") : ""} onChange={(e) => setCredential(e.target.value)} /></Field>}
-      </div>
-      <p className="text-xs text-muted-foreground">{t("custom_apis.key_hint")}</p>
-      <label className="flex items-center gap-2 text-sm text-foreground"><input type="checkbox" checked={definition.enabled} onChange={(e) => setDefinition({ ...definition, enabled: e.target.checked })} />{t("custom_apis.enable")}</label>
-      <div className="space-y-4">{definition.actions.map((action, index) => <section key={index} className="space-y-4 rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between"><h3 className="font-medium text-foreground">{t("custom_apis.action")} {index + 1}</h3>
-          <button type="button" disabled={definition.actions.length === 1} aria-label={`${t("custom_apis.remove_action")} ${index + 1}`} className="p-1 text-muted-foreground hover:text-destructive disabled:opacity-30" onClick={() => {
-            setDefinition({ ...definition, actions: definition.actions.filter((_, i) => i !== index) }); setSchemas(schemas.filter((_, i) => i !== index));
-          }}><Trash2 className="h-4 w-4" /></button></div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("custom_apis.action_id")}><input required pattern="[a-z][a-z0-9_]{0,23}" className={fieldClass} value={action.id} onChange={(e) => updateAction(index, { ...action, id: e.target.value })} /></Field>
-          <Field label={t("custom_apis.action_description")}><input required className={fieldClass} value={action.description} onChange={(e) => updateAction(index, { ...action, description: e.target.value })} /></Field>
-          <Field label={t("custom_apis.method")}><BrandedSelect ariaLabel={t("custom_apis.method")} disabled={busy} className={fieldClass} value={action.method} onValueChange={(value) => {
-            const method = value as ApiAction["method"]; updateAction(index, { ...action, method });
-            if (method === "GET") setSchemas(schemas.map((s, i) => i === index ? "" : s));
-          }} options={["GET", "POST", "PUT", "PATCH", "DELETE"].map((value) => ({ value, label: value }))} /></Field>
-          <Field label={t("custom_apis.path")}><input required placeholder="/v1/items/{item_id}" className={fieldClass} value={action.path} onChange={(e) => updateAction(index, actionWithPath(action, e.target.value))} /></Field>
-        </div>
-        {action.parameters.map((parameter, pi) => <div key={pi} className="flex flex-wrap items-end gap-2">
-          <span className="pb-2 text-xs text-muted-foreground">{parameter.location}</span>
-          <div className="min-w-0 flex-1"><Field label={t("custom_apis.parameter")}><input required disabled={parameter.location === "path"} className={fieldClass} value={parameter.name} onChange={(e) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, name: e.target.value } : p) })} /></Field></div>
-          <BrandedSelect ariaLabel={t("custom_apis.type")} disabled={busy} className={`${fieldClass} !w-auto`} value={parameter.type}
-            onValueChange={(value) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, type: value as ApiParameter["type"] } : p) })}
-            options={["string", "integer", "number", "boolean"].map((value) => ({ value, label: value }))} />
-          {parameter.location === "query" && <><label className="pb-2 text-xs text-muted-foreground"><input type="checkbox" checked={parameter.required} onChange={(e) => updateAction(index, { ...action, parameters: action.parameters.map((p, i) => i === pi ? { ...p, required: e.target.checked } : p) })} /> {t("custom_apis.required")}</label>
-            <button type="button" aria-label={t("custom_apis.remove_parameter")} className="p-2 text-muted-foreground" onClick={() => updateAction(index, { ...action, parameters: action.parameters.filter((_, i) => i !== pi) })}><Trash2 className="h-4 w-4" /></button></>}
-        </div>)}
-        <SoftButton onClick={() => updateAction(index, { ...action, parameters: [...action.parameters, { name: "", location: "query", type: "string", required: false, description: "" }] })}>{t("custom_apis.add_query")}</SoftButton>
-        {action.method !== "GET" && <Field label={t("custom_apis.body")}><textarea rows={5} spellCheck={false} className={`${fieldClass} font-mono text-xs`} placeholder={'{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}'} value={schemas[index]} onChange={(e) => setSchemas(schemas.map((s, i) => i === index ? e.target.value : s))} /></Field>}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("custom_apis.response")}><BrandedSelect ariaLabel={t("custom_apis.response")} disabled={busy} className={fieldClass} value={action.response}
-            onValueChange={(value) => updateAction(index, { ...action, response: value as ApiAction["response"] })}
-            options={["auto", "json", "text", "file"].map((value) => ({ value, label: t(`custom_apis.response_${value}`) }))} /></Field>
-          <Field label={t("custom_apis.permission")}><BrandedSelect ariaLabel={t("custom_apis.permission")} disabled={busy} className={fieldClass} value={action.risk_tier}
-            onValueChange={(value) => updateAction(index, { ...action, risk_tier: value as ApiAction["risk_tier"] })}
-            options={["monitor", "ask", "block"].map((value) => ({ value, label: t(`custom_apis.permission_${value}`) }))} /></Field>
-        </div>
-      </section>)}</div>
-      <SoftButton onClick={() => {
-        let index = definition.actions.length + 1;
-        while (definition.actions.some((a) => a.id === `action_${index}`)) index++;
-        setDefinition({ ...definition, actions: [...definition.actions, newApiAction(index)] }); setSchemas([...schemas, ""]);
-      }}>{t("custom_apis.add_action")}</SoftButton>
-    </fieldset>
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    <button type="submit" disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{t("custom_apis.save")}</button>
-  </form>;
+  return <div className="mx-auto w-full max-w-md pb-3 pt-1">
+    <div className="mb-7 flex items-center gap-4">
+      <ConnectionLogo name={name || "Jarvis connection"} brand={initial?.brand_id} image={initial?.logo_data} large />
+      <div className="min-w-0"><h2 className="text-xl font-semibold tracking-tight text-foreground-strong">{t(initial ? "custom_apis.edit_key" : "custom_apis.add_title")}</h2>
+        <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{t(initial ? "custom_apis.edit_hint" : "custom_apis.simple_hint")}</p></div>
+    </div>
+    <form onSubmit={(event) => void submit(event)} className="space-y-5" aria-label={t("custom_apis.add_title")}>
+      <div className="space-y-2"><label htmlFor="api-service-name" className="text-sm font-medium text-foreground">{t("custom_apis.service_name")}</label>
+        <Input id="api-service-name" required readOnly={!!initial} disabled={busy} autoComplete="off" maxLength={100} placeholder={t("custom_apis.name_example")} value={name} onChange={(event) => setName(event.target.value)} className="h-11 rounded-lg bg-secondary/50 text-base" autoFocus={!initial} /></div>
+      <div className="space-y-2"><label htmlFor="api-service-key" className="text-sm font-medium text-foreground">{t("custom_apis.key")}</label>
+        <Input id="api-service-key" type="password" required={!initial} disabled={busy} autoComplete="new-password" maxLength={8192} placeholder={t(initial?.has_credential ? "custom_apis.key_saved" : "custom_apis.key_placeholder")} value={credential} onChange={(event) => setCredential(event.target.value)} className="h-11 rounded-lg bg-secondary/50 font-mono text-base" /></div>
+      {Boolean(error) && <div role="alert" className="rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+        {errorText(error)}
+        {error instanceof ApiConnectionError && error.suggestions.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{error.suggestions.map((suggestion) => <button key={suggestion} type="button" className="rounded-md bg-background px-2 py-1 text-foreground" onClick={() => { setName(suggestion); setError(null); }}>{suggestion}</button>)}</div>}
+      </div>}
+      <Button type="submit" className="h-11 w-full rounded-lg" disabled={busy || !name.trim() || (!initial && !credential)}>
+        {busy ? <><Loader2 className="animate-spin" />{t("custom_apis.connecting")}</> : <>{t(initial ? "custom_apis.save_key" : "custom_apis.connect")}<ArrowRight /></>}
+      </Button>
+      {busy && <p role="status" className="text-center text-sm text-muted-foreground">{t("custom_apis.discovering")}</p>}
+    </form>
+    <div className="mt-5 flex gap-2.5 text-xs leading-relaxed text-muted-foreground"><LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0" /><p>{t("custom_apis.private_key")}</p></div>
+    {!initial && <div className="mt-7 border-t border-border/60 pt-5">
+      <div className="flex items-center gap-2 text-sm font-medium text-foreground"><Check className="h-4 w-4 text-muted-foreground" />{t("custom_apis.automatic")}</div>
+      <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{t("custom_apis.automatic_hint")}</p>
+    </div>}
+  </div>;
 }
 
-function ApiRunner({ definition, onBack }: { definition: ApiDefinition; onBack: () => void }) {
+function ConnectionDetails({ connection, onBack }: { connection: ApiConnection; onBack: () => void }) {
   const t = useT();
-  const [action, setAction] = useState(definition.actions[0].id);
-  const [argumentsText, setArgumentsText] = useState("{}");
-  const [result, setResult] = useState("");
-  const [downloadUrl, setDownloadUrl] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  return <section className="space-y-4">
-    <SoftButton disabled={busy} onClick={onBack}><ArrowLeft className="mr-2 h-4 w-4" />{t("custom_apis.title")}</SoftButton>
-    <h2 className="text-xl font-semibold text-foreground">{definition.name}</h2>
-    <p className="text-sm text-muted-foreground">{t("custom_apis.run_hint")}</p>
-    <Field label={t("custom_apis.action")}><BrandedSelect ariaLabel={t("custom_apis.action")} disabled={busy} className={fieldClass} value={action}
-      onValueChange={(value) => { setAction(value); setResult(""); setError(""); setDownloadUrl(""); }}
-      options={definition.actions.map((a) => ({ value: a.id, label: `${a.method} ${a.description}` }))} /></Field>
-    <Field label={t("custom_apis.arguments")}><textarea disabled={busy} className={`${fieldClass} font-mono`} rows={8} value={argumentsText} onChange={(e) => setArgumentsText(e.target.value)} /></Field>
-    <SoftButton disabled={busy} onClick={async () => {
-      setBusy(true); setError(""); setResult(""); setDownloadUrl("");
-      try {
-        let args: unknown;
-        try { args = JSON.parse(argumentsText); } catch { throw new Error(t("custom_apis.invalid_arguments")); }
-        const value = await customApiRequest<{ success: boolean; output: unknown; error?: string; artifacts?: string[] }>(`/${definition.id}/actions/${action}/run`, jsonRequest("POST", { arguments: args }));
-        if (!value.success) throw new Error(value.error || t("custom_apis.failed"));
-        const output = value.output as { download_url?: unknown } | null;
-        if (value.artifacts?.length && output && typeof output.download_url === "string"
-          && /^\/api\/outputs\/[a-zA-Z0-9_-]+\/files\/tasks\/api\/artifacts\/files\/[a-z0-9_]+\.[a-z0-9]+\/download$/.test(output.download_url)) setDownloadUrl(output.download_url);
-        setResult(JSON.stringify(value.output, null, 2));
-      } catch (e) { setError(e instanceof Error ? e.message : t("custom_apis.failed")); }
-      finally { setBusy(false); }
-    }}>{busy ? t("custom_apis.running") : t("custom_apis.run")}</SoftButton>
-    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {downloadUrl && <a className="inline-flex items-center gap-2 text-sm text-primary underline" href={downloadUrl} download><Download className="h-4 w-4" />{t("custom_apis.download")}</a>}
-    {result && <pre role="status" className="max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-secondary p-4 text-xs text-foreground">{result}</pre>}
+  const [query, setQuery] = useState("");
+  const actions = useQuery({ queryKey: ["api-capabilities", connection.id],
+    queryFn: () => customApiRequest<{ total: number; actions: { id: string; description: string; risk_tier: string }[] }>(`/connections/${connection.id}/actions`), retry: false });
+  const visible = (actions.data?.actions ?? []).filter((action) => action.description.toLowerCase().includes(query.toLowerCase()));
+  return <section className="space-y-5">
+    <BackLink label={t("custom_apis.title")} onClick={onBack} />
+    <div className="flex items-center gap-4"><ConnectionLogo name={connection.name} brand={connection.brand_id} image={connection.logo_data} large />
+      <div><h2 className="text-xl font-semibold text-foreground-strong">{connection.name}</h2><p className="mt-1 text-sm text-muted-foreground">{connection.action_count} {t("custom_apis.capabilities_count")}</p></div></div>
+    <p className="text-sm leading-relaxed text-muted-foreground">{t("custom_apis.capabilities_hint")}</p>
+    <label className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2.5 text-muted-foreground"><Search className="h-4 w-4" /><input type="search" aria-label={t("custom_apis.search_capabilities")} placeholder={t("custom_apis.search_capabilities")} value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none" /></label>
+    {actions.isPending && <p role="status" className="text-sm text-muted-foreground">{t("custom_apis.loading")}</p>}
+    {actions.error && <p role="alert" className="text-sm text-destructive">{t("custom_apis.failed")}</p>}
+    <Panel><ul className="divide-y divide-border/60">{visible.map((action) => <li key={action.id} className="flex items-center gap-3 px-4 py-3 text-sm text-foreground">
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-foreground-faint" /><span>{action.description}</span>
+      {action.risk_tier === "block" && <span className="ml-auto text-xs text-muted-foreground">{t("custom_apis.blocked")}</span>}
+    </li>)}</ul></Panel>
+    {connection.omitted_operations > 0 && <p className="text-xs text-muted-foreground">{t("custom_apis.partial_capabilities").replace("{count}", String(connection.omitted_operations))}</p>}
+    <p className="flex items-center gap-2 text-xs text-muted-foreground"><Users className="h-3.5 w-3.5" />{t("custom_apis.inheritance")}</p>
   </section>;
 }

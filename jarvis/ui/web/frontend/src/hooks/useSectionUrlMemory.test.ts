@@ -29,12 +29,12 @@ describe("useSectionUrlMemory", () => {
     expect(initialSectionFromSearch(window.location.search)).toBe("sessions");
   });
 
-  it("leaves a detached window's own flags alone", () => {
+  it("preserves a detached window's identity while remembering its section", () => {
     window.history.replaceState(null, "", "/?solo=1&view=chats");
     renderHook(() => useSectionUrlMemory());
 
     act(() => useEventStore.getState().setActiveSection("visualization"));
 
-    expect(window.location.search).toBe("?solo=1&view=visualization");
+    expect(window.location.search).toBe("?solo=1&view=visualization&window=chats");
   });
 });
