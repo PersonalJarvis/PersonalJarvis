@@ -313,3 +313,78 @@ async def test_service_continues_to_artifact_after_question_without_another_user
             await svc.cancel(session.session_id)
         await rt.close()
         svc.store.close()
+
+
+# ------------------------------------------------------------------ credential guard
+
+
+def stored(names):
+    async def fake(_session_id):
+        return names
+
+    return fake
+
+
+async def finish_with(gate, *events):
+    for event in events:
+        await gate.emit(event)
+    await gate.emit(make_event("turn_finished", {"status": "done", "usage": {}}))
+
+
+async def test_a_secret_asked_for_in_the_reply_is_steered_to_the_secure_field_once(
+    card_world, monkeypatch
+):
+    from jarvis.agent_chat import turn_completion
+
+    monkeypatch.setattr(turn_completion, "_stored_credentials", stored([]))
+    _, _, gate = card_world
+    ask = make_event(
+        "assistant_text", {"text": "Please paste your Discord bot token here so I can connect."}
+    )
+    await finish_with(gate, ask)
+    prompt = await gate.next_prompt()
+    assert "society_request_credential" in prompt and "Stored credentials right now: none" in prompt
+    assert gate.request in prompt
+    await finish_with(gate, ask)
+    assert await gate.next_prompt() is None
+
+
+async def test_a_turn_that_opened_the_field_is_left_alone(card_world, monkeypatch):
+    from jarvis.agent_chat import turn_completion
+
+    monkeypatch.setattr(turn_completion, "_stored_credentials", stored([]))
+    _, _, gate = card_world
+    call = make_event(
+        "tool_call",
+        {"call_id": "c", "name": "mcp__jarvis__society_request_credential", "input": {}},
+    )
+    await finish_with(
+        gate, call, make_event("assistant_text", {"text": "Please enter the token in the field."})
+    )
+    assert await gate.next_prompt() is None
+
+
+async def test_a_claimed_token_that_is_not_stored_is_corrected(card_world, monkeypatch):
+    from jarvis.agent_chat import turn_completion
+
+    _, _, gate = card_world
+    claim = make_event(
+        "assistant_text", {"text": "Der Bot-Token ist bereits sicher gespeichert."}  # i18n-allow
+    )
+    monkeypatch.setattr(turn_completion, "_stored_credentials", stored(["DISCORD_BOT_TOKEN"]))
+    await finish_with(gate, claim)
+    assert await gate.next_prompt() is None  # it really is stored
+    gate.credential_corrected = False
+    monkeypatch.setattr(turn_completion, "_stored_credentials", stored([]))
+    assert "society_request_credential" in await gate.next_prompt()
+
+
+async def test_chats_without_the_credential_tool_are_never_steered(card_world, monkeypatch):
+    from jarvis.agent_chat import turn_completion
+
+    monkeypatch.setattr(turn_completion, "_stored_credentials", stored(None))
+    _, _, gate = card_world
+    await finish_with(gate, make_event("assistant_text", {"text": "I need your API key."}))
+    prompt = await gate.next_prompt()
+    assert prompt is None or "society_request_credential" not in prompt
+    assert not gate.credential_corrected

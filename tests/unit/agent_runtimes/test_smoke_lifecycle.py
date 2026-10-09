@@ -70,3 +70,34 @@ async def test_success_releases_slot(monkeypatch, tmp_path):
     assert result.status == "done"
     assert result.result_text == "echo: hello"
     assert released == [True]
+
+
+@pytest.mark.parametrize("missing", [False, True])
+async def test_probe_owns_its_gateway_turn_and_releases_it(monkeypatch, tmp_path, missing):
+    from dataclasses import replace
+
+    from jarvis.agent_runtimes import gateway
+
+    turn, released = setup_probe(monkeypatch, tmp_path, missing=missing)
+    token = gateway.grant_token("smoke-owned-turn", "ollama", require_active_turn=True)
+    turn.route = replace(turn.route, api_key=token)
+    grant = gateway.verify(token)
+    create = smoke.asyncio.create_subprocess_exec
+
+    async def capture(*args, **kwargs):
+        assert gateway.capture_turn(grant) is not None
+        return await create(*args, **kwargs)
+
+    monkeypatch.setattr(smoke.asyncio, "create_subprocess_exec", capture)
+    try:
+        if missing:
+            with pytest.raises(OSError):
+                await smoke._run("fake", turn, "hello")
+        else:
+            result, _io = await smoke._run("fake", turn, "hello")
+            assert result.status == "done"
+        assert released == [True]
+        with pytest.raises(gateway.GatewayError, match="no active turn"):
+            gateway.capture_turn(grant)
+    finally:
+        gateway.revoke_agent("smoke-owned-turn")

@@ -87,7 +87,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
           ) : null}
         </div>
       </header>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 pt-2">
         <div className="flex shrink-0 gap-2">
           <button type="button" onClick={() => setAppearanceOpen(true)} data-testid="edit-agent-appearance" className="min-w-0 flex-1 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium text-foreground hover:bg-secondary">{t("society.companion.appearance")}</button>
           {/* The lead is every install's own Jarvis and sample rows are not real agents: neither is shareable. */}
@@ -108,7 +108,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
           onDetailOpenChange={setRoutineOpen}
           sampleRoutines={sample ? agent.routines : undefined}
           variant="rail"
-          className="min-h-0 flex-1"
+          className="min-h-48 flex-1"
         />
       </div>
       {appearanceOpen && <Suspense fallback={null}><AgentAppearanceDialog key={agent.agentId} agent={agent} sample={sample} onClose={() => setAppearanceOpen(false)} /></Suspense>}

@@ -2,7 +2,17 @@ name: Browser runtime
 # Called by ci.yml's `browser` lane (path-gated there) and runnable by hand.
 on:
   workflow_call:
+    inputs:
+      target:
+        type: string
+        default: all
   workflow_dispatch:
+    inputs:
+      target:
+        description: "All platforms, or a focused Windows capture investigation"
+        type: choice
+        options: [all, windows-latest]
+        default: all
 permissions:
   contents: read
 jobs:
@@ -10,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-latest, macos-15-intel]
+        os: ${{ inputs.target == 'windows-latest' && fromJSON('["windows-latest"]') || fromJSON('["ubuntu-latest", "ubuntu-24.04-arm", "windows-latest", "windows-11-arm", "macos-latest", "macos-15-intel"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -39,6 +49,26 @@ jobs:
               stream.write(f"JARVIS_BROWSER_TEST_EXECUTABLE={browser_executable()}\n")
       - name: Test real frames, ownership and protocol
         run: python -m pytest tests/contract/test_browser_live.py tests/contract/test_browser_contract.py tests/contract/test_browser_desktop_mcp.py tests/contract/test_browser_cli_model.py tests/unit/society/test_browser.py tests/unit/society/test_browser_install.py tests/unit/society/test_approvals.py tests/unit/agent_chat/test_jarvis_identity.py tests/unit/agent_chat/test_agent_chat_ladders.py tests/unit/brain/test_tool_gateway.py -q --tb=short --junitxml=browser-results.xml
+      - name: Diagnose Windows capture style support after a failure
+        if: failure() && matrix.os == 'windows-latest' && env.JARVIS_BROWSER_TEST_PYTHON != ''
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+          from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+          from jarvis.society.browser.install import worker_env
+          result = subprocess.run(
+              [os.environ["JARVIS_BROWSER_TEST_PYTHON"],
+               "tests/contract/native_window_probe.py",
+               os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"], "--capture-styles"],
+              env=worker_env(Path(os.environ["RUNNER_TEMP"])),
+              encoding="utf-8", capture_output=True, creationflags=NO_WINDOW_CREATIONFLAGS,
+              timeout=150, check=False,
+          )
+          print(result.stdout, flush=True)
+          print(result.stderr, flush=True)
+          result.check_returncode()
       - name: Preserve browser test evidence
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882

@@ -613,7 +613,12 @@ class OpenAISubscriptionLiveProvider:
         # Optional dependencies are loaded only for an explicitly started call.
         from websockets.asyncio.client import connect
 
-        from ._live_transport import preparing_http_client, websocket_options
+        from ._live_transport import (
+            preparing_http_client,
+            preparing_websocket_options,
+            startup_http_trace,
+            startup_websocket_options,
+        )
 
         offer = str(cfg.offer_sdp or "")
         if not _audio_only_sdp(offer) or len(offer.encode("utf-8")) > _MAX_SDP_BYTES:
@@ -635,9 +640,12 @@ class OpenAISubscriptionLiveProvider:
         try:
             # Local TLS/client construction and selected-account loading are
             # independent. Neither operation can allocate a remote voice call.
-            async with preparing_http_client(
-                self._http_client_factory, timeout=25, follow_redirects=False,
-            ) as preparation:
+            async with (
+                preparing_http_client(
+                    self._http_client_factory, timeout=25, follow_redirects=False,
+                ) as preparation,
+                preparing_websocket_options() as tls_preparation,
+            ):
                 headers = {**await self._headers(), **request_headers}
                 credentials_ready = True
                 mark("credentials_ready")
@@ -649,6 +657,7 @@ class OpenAISubscriptionLiveProvider:
                         CALL_URL,
                         headers=headers,
                         json={"sdp": offer, "session": session},
+                        extensions={"trace": startup_http_trace(mark)},
                     ) as response:
                         if response.status_code == 401 and attempt == 0:
                             # Rejected auth allocated no call. Refresh once;
@@ -669,11 +678,13 @@ class OpenAISubscriptionLiveProvider:
                             raise SubscriptionLiveError("invalid_response")
                         mark("session_response")
                         break
-            on_transport_ready = getattr(cfg, "on_transport_ready", None)
-            if on_transport_ready is not None:
-                # Negotiate browser media while the trusted sideband attaches.
-                # The host keeps microphone output gated until both are ready.
-                await on_transport_ready(answer)
+                on_transport_ready = getattr(cfg, "on_transport_ready", None)
+                if on_transport_ready is not None:
+                    # ICE/DTLS can also overlap a cold local trust-store load.
+                    # The host withholds input until media AND control are ready.
+                    await on_transport_ready(answer)
+                options = await tls_preparation
+                mark("control_tls_ready")
         except asyncio.CancelledError:
             if allocated:
                 await self._retire_allocation(call_id, headers, connector)
@@ -700,9 +711,8 @@ class OpenAISubscriptionLiveProvider:
         # retry pays the host's shared connection permit and includes jitter.
         for attempt in range(3):
             try:
-                options = await websocket_options()
-                mark("control_tls_ready")
                 attach_started_at = time.monotonic()
+                mark("control_connect_started")
                 socket = await connector(
                     SIDEBAND_BASE + call_id,
                     additional_headers=headers,
@@ -711,6 +721,7 @@ class OpenAISubscriptionLiveProvider:
                     max_size=_MAX_FRAME_BYTES,
                     max_queue=32,
                     **options,
+                    **startup_websocket_options(mark),
                 )
                 log.info(
                     "Subscription Live control attached in %.0f ms.",

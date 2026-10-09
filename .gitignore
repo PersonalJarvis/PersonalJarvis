@@ -1,4 +1,4 @@
-# Secrets (nie committen — Secrets liegen im Windows Credential Manager)
+# Secrets (never commit; stored in the system credential manager)
 .env
 .env.local
 .env.*.local

@@ -152,6 +152,10 @@ def _bench_env(port: int) -> dict[str, str]:
             # coerce to bool False but -1 keeps the int field clean.
             "JARVIS__TELEMETRY__FLIGHT_RECORDER_RETENTION_DAYS": "-1",
             "JARVIS__OVERLAY__ENABLED": "false",
+            # Desktop companions use ui.orb_style, not the legacy overlay flag.
+            # Voice-ready benchmarks must not create a second pet/bar beside
+            # the user's running app. Override only this child process's style.
+            "JARVIS__UI__ORB_STYLE": "none",
             "JARVIS_VOICE": "0",
         }
     )

@@ -63,6 +63,7 @@ function asHub(place: PlaceId): KitPlace | null {
 import { CAMERA_FAR_M, cameraOffset } from "./worldCamera";
 import { SKY } from "./worldPalette";
 import { useWorldSettings } from "./worldSettings";
+import { useSyncCompanionPet } from "../companion/companionPetStore";
 
 export interface WorldStageProps {
   /** Where the fallback sends someone whose window cannot draw 3D. */
@@ -87,6 +88,8 @@ export function WorldStage({ onOpenAgents, onSelectAgent, onSelectPlace }: World
   const ready = useLocaleChunk("society");
   const hostRef = useRef<HTMLDivElement>(null);
   const { generation } = useWebglSurface(hostRef);
+  // Agents that wear a pet need the pets inside the canvas.
+  useSyncCompanionPet();
   const awake = useCanvasAwake(hostRef);
   const reduced = useReducedMotion() ?? false;
   const webgl = useWebglSupported();

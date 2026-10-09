@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
     model            TEXT NOT NULL DEFAULT '',
     effort           TEXT NOT NULL DEFAULT '',
     cwd              TEXT NOT NULL DEFAULT '',
-    permission_mode  TEXT NOT NULL DEFAULT 'ask',
+    permission_mode  TEXT NOT NULL DEFAULT 'bypass',
     vendor_session   TEXT,
     created_ms       INTEGER NOT NULL,
     updated_ms       INTEGER NOT NULL,
@@ -266,7 +266,7 @@ class AgentChatStore:
         now = now_ms()
         # The route validated the mode against the runner's ladder; the store
         # keeps the id as given.
-        mode = (permission_mode or "").strip()
+        mode = (permission_mode or "").strip() or "bypass"
         with self._lock:
             self._conn.execute(
                 "INSERT INTO agent_chat_sessions (session_id, title, provider, model, effort, "
@@ -648,6 +648,41 @@ class AgentChatStore:
                 (session_id, before_seq, turn_id),
             ).fetchone()
         return row is not None
+
+    def queue_notice_events(self, session_id: str) -> list[dict[str, Any]]:
+        """Queue receipts only, including waits hidden behind long tool streams."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT kind, payload FROM agent_chat_events WHERE session_id = ? "
+                "AND kind = 'notice' AND json_extract(payload, '$.kind') "
+                "IN ('message_queued', 'message_dequeued') ORDER BY seq",
+                (session_id,),
+            ).fetchall()
+        return [{"kind": row["kind"], "payload": json.loads(row["payload"])} for row in rows]
+
+    def credential_events(self, session_id: str) -> list[dict[str, Any]]:
+        """Pending fields and recent receipts, without loading the chat's text.
+
+        Keep every pending field even in an old turn, plus only the newest 256
+        closed fields for idempotent save retries across a process restart.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "WITH fields AS ("
+                "SELECT json_extract(payload, '$.request_id') AS rid, "
+                "max(CASE WHEN kind = 'credential_required' THEN seq END) AS opened, "
+                "max(CASE WHEN kind = 'credential_resolved' THEN seq END) AS closed "
+                "FROM agent_chat_events WHERE session_id = ? "
+                "AND kind IN ('credential_required', 'credential_resolved') GROUP BY rid"
+                "), retained AS ("
+                "SELECT opened, closed FROM fields WHERE closed IS NULL UNION ALL "
+                "SELECT opened, closed FROM (SELECT opened, closed FROM fields "
+                "WHERE closed IS NOT NULL ORDER BY closed DESC LIMIT 256)"
+                ") SELECT e.kind, e.payload FROM retained r JOIN agent_chat_events e "
+                "ON e.session_id = ? AND (e.seq = r.opened OR e.seq = r.closed) ORDER BY e.seq",
+                (session_id, session_id),
+            ).fetchall()
+        return [{"kind": row["kind"], "payload": json.loads(row["payload"])} for row in rows]
 
     def list_events(
         self, session_id: str, *, after_seq: int = 0, tail: int | None = None

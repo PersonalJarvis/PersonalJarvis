@@ -54,13 +54,16 @@ class PcmCapture extends AudioWorkletProcessor {
 class StartupCapture extends AudioWorkletProcessor {
   private queue = new StartupAudioQueue(sampleRate);
   private failed = false;
+  private started = false;
+  private reportedStart = false;
+  private reportedCatchup = false;
 
   constructor() {
     super();
     this.port.onmessage = (event: MessageEvent) => {
       try {
-        if (event.data.type === "start") this.queue.start();
-        else if (event.data.type === "suspend") this.queue.suspend();
+        if (event.data.type === "start") { this.queue.start(); this.started = true; }
+        else if (event.data.type === "suspend") { this.queue.suspend(); this.started = false; }
         else if (event.data.type === "resume") this.queue.resume();
         else if (event.data.type === "prefix") this.queue.prepend(event.data.samples);
       } catch (error) { this.fail(error); }
@@ -77,7 +80,17 @@ class StartupCapture extends AudioWorkletProcessor {
     const output = outputs[0]?.[0];
     if (!output) return true;
     if (this.failed) { output.fill(0); return true; }
-    try { this.queue.process(inputs[0]?.[0] ?? new Float32Array(output.length), output); }
+    try {
+      this.queue.process(inputs[0]?.[0] ?? new Float32Array(output.length), output);
+      if (this.started && !this.reportedStart) {
+        this.reportedStart = true;
+        this.port.postMessage({ type: "input_started", pending_ms: this.queue.pendingMs });
+      }
+      if (this.started && !this.reportedCatchup && this.queue.pendingMs <= output.length / sampleRate * 1000) {
+        this.reportedCatchup = true;
+        this.port.postMessage({ type: "input_caught_up" });
+      }
+    }
     catch (error) { this.fail(error); }
     return true;
   }

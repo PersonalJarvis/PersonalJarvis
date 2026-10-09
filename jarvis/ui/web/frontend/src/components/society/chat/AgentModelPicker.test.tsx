@@ -11,6 +11,7 @@ import type { SocietyAgentRow } from "@/lib/societyApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { createAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 import { clearModelMenuSnapshot, MODEL_MENU_SNAPSHOT_KEY, writeModelMenuSnapshot } from "./modelMenuSnapshot";
+import { MODEL_ACCESS_KEY } from "@/lib/modelAccess";
 
 const provider = (id: string, overrides: Partial<AgentChatProvider> = {}): AgentChatProvider => ({
   id, label: id, family: id, runner: "brain", models_source: "curated",
@@ -25,6 +26,10 @@ let failSave: boolean;
 let extraProviders: AgentChatProvider[];
 let liveModels: Record<string, { id: string; label: string }[]>;
 let providerRows: unknown[];
+let accessWays: Record<string, string[]>;
+let supportedProviders: string[];
+let runtimeGate: Promise<void> | undefined;
+let failedModelProvider: string;
 let catalogCalls: number;
 let saving: Mock<(saving: boolean) => void>;
 let catalogGate: Promise<void> | undefined;
@@ -32,6 +37,7 @@ let connectionsGate: Promise<void> | undefined;
 let accountsGate: Promise<void> | undefined;
 
 beforeEach(async () => {
+  localStorage.removeItem(MODEL_ACCESS_KEY);
   clearModelMenuSnapshot();
   await loadLocaleChunk("society");
   row = {
@@ -41,12 +47,19 @@ beforeEach(async () => {
   } as unknown as SocietyAgentRow;
   posts = []; failSave = false; saving = vi.fn<(saving: boolean) => void>();
   extraProviders = []; liveModels = {}; providerRows = []; catalogCalls = 0;
+  accessWays = {};
+  supportedProviders = []; runtimeGate = undefined;
+  failedModelProvider = "";
   catalogGate = undefined; connectionsGate = undefined; accountsGate = undefined;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/catalog")) await catalogGate;
     if (url.endsWith("/status")) await connectionsGate;
     if (url.endsWith("/providers")) await accountsGate;
     const response = (data: unknown, ok = true) => ({ ok, status: ok ? 200 : 503, json: async () => data }) as Response;
+    if (url === "/api/agent-runtimes") {
+      await runtimeGate;
+      return response({ runtimes: [], supported_providers: supportedProviders, access: accessWays });
+    }
     if (url.endsWith("/model")) {
       const choice = JSON.parse(String(init?.body));
       posts.push(choice);
@@ -56,13 +69,44 @@ beforeEach(async () => {
     }
     if (url.includes("/catalog")) { catalogCalls++; return response({ providers: [provider("openai"), provider("gemini"), provider("offline"), provider("ollama", { keyless: true, models_source: "live" }), ...extraProviders] }); }
     if (url.endsWith("/status")) return response({ mapping: [{ jarvis: "openai", key_set: true }, { jarvis: "gemini", key_set: true }, { jarvis: "openrouter", key_set: true }, { jarvis: "offline", key_set: false }] });
-    if (url.endsWith("/models")) return response({ models: liveModels[url.split("/").at(-2)!] ?? [] });
+    if (url.endsWith("/models")) {
+      const id = url.split("/").at(-2)!;
+      return response({ models: liveModels[id] ?? [] }, id !== failedModelProvider);
+    }
     if (url.endsWith("/providers")) return response({ providers: providerRows });
     if (url.endsWith("/agents")) return response({ agents: [row] });
     throw new Error(`Unexpected request: ${url}`);
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+test.each(["hermes", "openclaw"] as const)("%s never offers unapproved providers while runtime metadata loads or is empty", async (runtime) => {
+  row = { ...row, runtime };
+  let release!: () => void;
+  runtimeGate = new Promise<void>((resolve) => { release = resolve; });
+  mount();
+  fireEvent.click(screen.getByRole("button", { name: "Model" }));
+  expect(screen.queryByTitle("openai-small")).toBeNull();
+  await act(async () => { release(); await runtimeGate; });
+  await screen.findByText("No matching models. Connect a provider or refresh the list.");
+  expect(screen.queryByTitle("openai-small")).toBeNull();
+  supportedProviders = ["gemini"];
+  fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  await screen.findByTitle("gemini-small");
+  expect(screen.queryByTitle("openai-small")).toBeNull();
+  expect(posts).toEqual([]);
+});
+
+test("a failed OpenRouter catalog reports its error without hiding another provider", async () => {
+  extraProviders = [provider("openrouter", { models_source: "live" })];
+  failedModelProvider = "openrouter";
+  mount(); await open(); show("openrouter");
+  await screen.findByRole("alert");
+  show("gemini");
+  expect(screen.getByTitle("gemini-small")).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(posts).toEqual([]);
+});
 
 test("a first open after page reload needs no request when a snapshot is available", async () => {
   writeModelMenuSnapshot({ version: 1, savedAt: Date.now(),
@@ -193,9 +237,9 @@ test("catalog loading starts when the card mounts, before the picker is clicked"
   expect(catalogCalls).toBe(1);
 });
 
-async function open() {
+async function open(expected = "openai-large") {
   fireEvent.click(screen.getByRole("button", { name: "Model" }));
-  await screen.findByTitle("openai-large");
+  await screen.findByTitle(expected);
   return screen.getByRole("textbox", { name: "Search models" });
 }
 
@@ -387,6 +431,46 @@ test.each([
   const group = screen.getByRole("group", { name: id });
   fireEvent.click(within(group).getByRole("menuitemradio", { name: /Default model/ }));
   await waitFor(() => expect(posts[0]).toEqual({ provider: id, model: "", effort: "", account_id: "" }));
+});
+
+test("one logo covers OpenAI access, defaults to subscription and retains an explicit API choice", async () => {
+  extraProviders = [provider("openai-codex", { family: "openai", runner: "codex-cli", cli_installed: true })];
+  providerRows = [{ id: "openai-codex", subscription: true, accounts: [{ id: "work", label: "Work", connected: true }] }];
+  mount(); await open("openai-codex-small");
+  expect(screen.queryByTestId("agent-model-rail-openai-codex")).toBeNull();
+  expect(screen.getByTestId("agent-model-rail-openai")).toBeTruthy();
+  expect(screen.getByRole("radio", { name: "Subscription" }).getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByTitle("openai-codex-small")).toBeTruthy();
+  fireEvent.click(screen.getByRole("radio", { name: "API key" }));
+  expect(screen.getByTitle("openai-small")).toBeTruthy();
+  expect(posts).toEqual([]);
+  fireEvent.keyDown(screen.getByRole("radio", { name: "API key" }), { key: "Escape" });
+  await open();
+  expect(screen.getByRole("radio", { name: "API key" }).getAttribute("aria-checked")).toBe("true");
+  show("gemini"); show("openai");
+  expect(screen.getByRole("radio", { name: "API key" }).getAttribute("aria-checked")).toBe("true");
+});
+
+test("a dual Claude row saves the exact access and never carries a subscription account onto its API", async () => {
+  row = { ...row, provider: "claude-api", model: "claude-sonnet-5", account_id: "work" };
+  accessWays = { "claude-api": ["api", "subscription"] };
+  extraProviders = [provider("claude-api", { family: "claude", runner: "claude-cli", cli_installed: true,
+    curated_models: [{ id: "opusplan", label: "Opus Plan" }, { id: "claude-sonnet-5", label: "Sonnet" }] })];
+  providerRows = [{ id: "claude-api", subscription: true, accounts: [{ id: "work", label: "Work", connected: true }] }];
+  mount(); await open("claude-sonnet-5");
+  await screen.findByRole("radio", { name: "Subscription" });
+  fireEvent.click(screen.getByRole("button", { name: /Older models/ }));
+  expect(screen.getByTitle("opusplan")).toBeTruthy();
+  fireEvent.click(screen.getByRole("radio", { name: "API key" }));
+  expect(screen.queryByTitle("opusplan")).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Account:/ })).toBeNull();
+  fireEvent.click(screen.getByTitle("claude-sonnet-5"));
+  await waitFor(() => expect(posts[0]).toMatchObject({ provider: "claude-api", model: "claude-sonnet-5", account_id: "api-key" }));
+  await open("claude-sonnet-5");
+  fireEvent.click(screen.getByRole("radio", { name: "Subscription" }));
+  fireEvent.click(screen.getByRole("button", { name: /Older models/ }));
+  fireEvent.click(screen.getByTitle("opusplan"));
+  await waitFor(() => expect(posts[1]).toMatchObject({ provider: "claude-api", model: "opusplan", account_id: "subscription" }));
 });
 
 test("rail marks move with Alt+Arrow and keep their place on reopen", async () => {

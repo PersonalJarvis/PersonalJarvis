@@ -28,13 +28,23 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from jarvis.computers import cloud, identity, local_vm, providers, remote_os
+from jarvis.computers import (
+    cloud,
+    identity,
+    local_vm,
+    providers,
+    remote_os,
+    ssh_config,
+    tailscale,
+)
 from jarvis.computers.models import (
     AuthMethod,
     Computer,
     ComputerHealth,
+    ComputerRoute,
     LoginMode,
     ProviderId,
+    RouteSource,
 )
 from jarvis.computers.probe import PROBE_SCRIPT, WINDOWS_PROBE_SCRIPT, parse_probe
 from jarvis.computers.ssh import (
@@ -57,6 +67,17 @@ log = logging.getLogger(__name__)
 _HOST_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,253}$")
 _USER_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
 _PROBE_TIMEOUT_S = 25.0
+#: With several addresses, one that does not even accept a TCP connection
+#: within this time is skipped for the next one instead of costing the full
+#: SSH login timeout.
+_ROUTE_REACH_TIMEOUT_S = 4.0
+#: A route that could not be reached is skipped by ordinary connections for
+#: this long (a check still tries it, so a preferred route that came back is
+#: picked up again).
+_ROUTE_DOWN_S = 60.0
+#: How stale a route's ``last_ok_at`` may get before a success rewrites it.
+_ROUTE_SEEN_REFRESH_S = 300.0
+_MAX_ROUTES = 8
 
 
 async def _probe(opened: Session, host: remote_os.RemoteHost) -> CommandResult:
@@ -173,6 +194,42 @@ def _new_id() -> str:
     return f"c_{secrets.token_hex(6)}"
 
 
+def _new_route_id() -> str:
+    return f"r_{secrets.token_hex(4)}"
+
+
+def _alias_keys(alias: str | None) -> tuple[str, ...]:
+    """The ``IdentityFile`` keys this PC's ``~/.ssh/config`` names for ``alias``."""
+    if not alias:
+        return ()
+    found = ssh_config.find(alias)
+    return found.identity_files if found is not None else ()
+
+
+def _with_address(row: Computer, host: str, port: int | None = None) -> Computer:
+    """``row`` reached on a new address for its ACTIVE route (an edit, a VM's new IP)."""
+    port = row.port if port is None else port
+    routes = [
+        r.model_copy(update={"host": host, "port": port}) if r.id == row.active_route_id else r
+        for r in row.routes
+    ]
+    return row.model_copy(update={"host": host, "port": port, "routes": routes})
+
+
+async def _reachable(host: str, port: int) -> bool:
+    """Whether anything accepts a TCP connection on ``host:port`` right now."""
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=_ROUTE_REACH_TIMEOUT_S
+        )
+    except (OSError, TimeoutError):  # unreachable is the answer this probe reports
+        return False
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
+    return True
+
+
 def _clean_name(name: str) -> str:
     cleaned = " ".join(name.split())[:80]
     if not cleaned:
@@ -226,6 +283,9 @@ class ComputerService:
         self._store = store or ComputerStore()
         #: Running background jobs (VM creation) per computer id.
         self._jobs: dict[str, asyncio.Task[None]] = {}
+        #: (computer id, route id) -> monotonic time until which that address
+        #: counts as unreachable for ordinary connections.
+        self._route_down: dict[tuple[str, str], float] = {}
 
     # -- reading ------------------------------------------------------------
 
@@ -244,7 +304,19 @@ class ComputerService:
 
     # -- connecting ---------------------------------------------------------
 
-    def _target(self, computer: Computer, *, password: str | None = None) -> SshTarget:
+    def _target(
+        self,
+        computer: Computer,
+        *,
+        password: str | None = None,
+        route: ComputerRoute | None = None,
+    ) -> SshTarget:
+        target = self._login_target(computer, password=password)
+        if route is None:
+            return target
+        return dataclasses.replace(target, host=route.host, port=route.port)
+
+    def _login_target(self, computer: Computer, *, password: str | None = None) -> SshTarget:
         if password is not None:
             return SshTarget(
                 host=computer.host,
@@ -302,6 +374,84 @@ class ComputerService:
 
         self._store.update(computer_id, change)
 
+    def _ordered_routes(self, computer: Computer, *, every: bool) -> list[ComputerRoute]:
+        """The routes to try, preferred first; recently unreachable ones last.
+
+        ``every`` (a check) keeps the plain preference order, so a preferred
+        address that came back is found again.
+        """
+        if every or len(computer.routes) < 2:
+            return list(computer.routes)
+        now = time.monotonic()
+        up = [r for r in computer.routes if self._route_down.get((computer.id, r.id), 0) <= now]
+        down = [r for r in computer.routes if r not in up]
+        return up + down
+
+    async def _open(self, computer: Computer, *, every: bool = False) -> Session:
+        """Log in on the first address that answers; remember which one it was.
+
+        Only an address that cannot be reached falls through to the next one.
+        A refused login or a changed server identity on ANY address stops the
+        attempt: the same machine must show the same identity on every route,
+        so a stranger answering on a second address is never trusted.
+        """
+        if not computer.enabled:
+            raise ComputerError(
+                "This computer is switched off. Switch it on under Settings, Computers to use it.",
+                status=409,
+                kind="disabled",
+            )
+        routes = self._ordered_routes(computer, every=every)
+        first_error: SshError | None = None
+        for index, route in enumerate(routes):
+            last = index == len(routes) - 1
+            if not last and not await _reachable(route.host, route.port):
+                self._route_down[(computer.id, route.id)] = time.monotonic() + _ROUTE_DOWN_S
+                first_error = first_error or SshError(
+                    "unreachable", f"{route.host}:{route.port} could not be reached."
+                )
+                continue
+            try:
+                opened = await open_session(self._target(computer, route=route))
+            except SshError as exc:
+                if exc.kind in ("unreachable", "timeout"):
+                    self._route_down[(computer.id, route.id)] = time.monotonic() + _ROUTE_DOWN_S
+                    if not last:
+                        first_error = first_error or exc
+                        continue
+                    # Every address failed: report the preferred one.
+                    exc = first_error or exc
+                raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+            self._route_down.pop((computer.id, route.id), None)
+            self._note_route(computer, route)
+            self._pin(computer.id, opened)
+            return opened
+        error = first_error or SshError("unreachable", "The server could not be reached.")
+        raise ComputerError(error.message, status=502, kind=error.kind)
+
+    def _note_route(self, computer: Computer, route: ComputerRoute) -> None:
+        """Make ``route`` the active address; refresh when it last got through."""
+        now = time.time()
+        fresh = route.last_ok_at is not None and now - route.last_ok_at < _ROUTE_SEEN_REFRESH_S
+        if computer.active_route_id == route.id and fresh:
+            return
+
+        def change(row: Computer) -> Computer:
+            routes = [
+                r.model_copy(update={"last_ok_at": now}) if r.id == route.id else r
+                for r in row.routes
+            ]
+            return row.model_copy(
+                update={
+                    "routes": routes,
+                    "active_route_id": route.id,
+                    "host": route.host,
+                    "port": route.port,
+                }
+            )
+
+        self._store.update(computer.id, change)
+
     async def connect(self, computer_id: str) -> Session:
         """A long-lived authenticated connection; the caller closes it.
 
@@ -309,24 +459,12 @@ class ComputerService:
         remote terminals). Pins the host key on first contact like
         :meth:`session`.
         """
-        computer = self.get(computer_id)
-        try:
-            opened = await open_session(self._target(computer))
-        except SshError as exc:
-            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
-        self._pin(computer_id, opened)
-        return opened
+        return await self._open(self.get(computer_id))
 
     @contextlib.asynccontextmanager
-    async def session(self, computer_id: str) -> AsyncIterator[Session]:
+    async def session(self, computer_id: str, *, every: bool = False) -> AsyncIterator[Session]:
         """An authenticated connection; pins the host key on first contact."""
-        computer = self.get(computer_id)
-        target = self._target(computer)
-        try:
-            opened = await open_session(target)
-        except SshError as exc:
-            raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
-        self._pin(computer_id, opened)
+        opened = await self._open(self.get(computer_id), every=every)
         try:
             yield opened
         finally:
@@ -347,9 +485,11 @@ class ComputerService:
         computer = self.get(computer_id)
         if computer.health.status == "provisioning" and self.is_busy(computer_id):
             return computer
+        if not computer.enabled:
+            return computer
         now = time.time()
         try:
-            async with self.session(computer_id) as opened:
+            async with self.session(computer_id, every=True) as opened:
                 try:
                     # A check asks afresh: a CLI installed since may live in a
                     # folder the remembered PATH does not have yet.
@@ -364,9 +504,22 @@ class ComputerService:
             status = _ERROR_STATUS.get(exc.kind or "", "error")
             if computer.kind == "local_vm" and status == "offline":
                 status = await self._local_vm_state(computer) or status
+            trace_id = f"cmp-{secrets.token_hex(4)}"
+            log.warning(
+                "computers: check of %s failed [%s] (%s): %s",
+                computer_id,
+                trace_id,
+                exc.kind,
+                exc.message,
+            )
             return self._set_health(
                 computer_id,
-                ComputerHealth(status=status, checked_at=now, message=exc.message),  # type: ignore[arg-type]
+                ComputerHealth(
+                    status=status,  # type: ignore[arg-type]
+                    checked_at=now,
+                    message=exc.message,
+                    trace_id=trace_id,
+                ),
             )
         reading = parse_probe(result.stdout)
         return self._set_health(
@@ -384,7 +537,7 @@ class ComputerService:
         )
 
     async def check_all(self) -> list[Computer]:
-        ids = [c.id for c in self.all()]
+        ids = [c.id for c in self.all() if c.enabled]
         results = await asyncio.gather(*(self.check(cid) for cid in ids), return_exceptions=True)
         for cid, outcome in zip(ids, results, strict=True):
             if isinstance(outcome, BaseException):
@@ -484,6 +637,7 @@ class ComputerService:
         provider_ref: str | None = None,
         region: str | None = None,
         plan: str | None = None,
+        ssh_alias: str | None = None,
     ) -> Computer:
         """Register a server. With a password, plant the key first (default).
 
@@ -492,6 +646,9 @@ class ComputerService:
         the computer is stored with key login. When none opens the server the
         error says whether a password would (``needs_password``) or only a key
         (``key_only``).
+
+        ``ssh_alias`` names a host from this PC's ``~/.ssh/config``: its
+        ``IdentityFile`` keys are offered too in the ``auto`` login.
         """
         computer = Computer(
             id=_new_id(),
@@ -527,7 +684,9 @@ class ComputerService:
             self._save_private_key(computer.id, private_key or "", passphrase)
             computer = computer.model_copy(update={"auth": "private_key"})
         elif auth == "auto":
-            proof = await self._plant_key(self._this_pc_target(computer))
+            proof = await self._plant_key(
+                self._this_pc_target(computer, extra_key_files=_alias_keys(ssh_alias))
+            )
             close(proof)
             computer = computer.model_copy(
                 update={"host_key": proof.host_key, "host_fingerprint": proof.host_fingerprint}
@@ -544,7 +703,9 @@ class ComputerService:
         else:
             delete_secret(_passphrase_slot(computer_id))
 
-    def _this_pc_target(self, computer: Computer) -> SshTarget:
+    def _this_pc_target(
+        self, computer: Computer, *, extra_key_files: tuple[str, ...] = ()
+    ) -> SshTarget:
         """The app's key plus this PC's own SSH keys, for one planting login."""
         try:
             key = identity.private_key()
@@ -557,7 +718,27 @@ class ComputerService:
             host_key=computer.host_key,
             client_key=key,
             use_this_pc=True,
+            extra_key_files=extra_key_files,
         )
+
+    # -- what this PC already knows ------------------------------------------
+
+    def ssh_config_hosts(self) -> list[dict[str, Any]]:
+        """Servers from this PC's ``~/.ssh/config`` and ``known_hosts``."""
+        added = {(r.host.lower(), r.port): c.id for c in self.all() for r in c.routes}
+        return [
+            {**h.to_dict(), "added_as": added.get((h.host.lower(), h.port))}
+            for h in ssh_config.discover()
+        ]
+
+    async def tailscale_status(self) -> dict[str, Any]:
+        """The tailnet's machines and, per computer, the addresses to suggest."""
+        tailnet = await tailscale.peers()
+        return {
+            "available": tailscale.binary() is not None,
+            "peers": [p.to_dict() for p in tailnet],
+            "suggestions": tailscale.suggestions(self.all(), tailnet),
+        }
 
     async def test_connection(
         self,
@@ -569,6 +750,7 @@ class ComputerService:
         password: str | None = None,
         private_key: str | None = None,
         passphrase: str | None = None,
+        ssh_alias: str | None = None,
     ) -> dict[str, Any]:
         """Try a login WITHOUT saving anything; nothing is planted on the server."""
         if importlib.util.find_spec("asyncssh") is None:
@@ -590,7 +772,10 @@ class ComputerService:
                 target = dataclasses.replace(base, client_key=key)
             elif auth == "auto":
                 target = dataclasses.replace(
-                    base, client_key=identity.private_key(), use_this_pc=True
+                    base,
+                    client_key=identity.private_key(),
+                    use_this_pc=True,
+                    extra_key_files=_alias_keys(ssh_alias),
                 )
             else:
                 target = dataclasses.replace(base, client_key=identity.private_key())
@@ -689,11 +874,141 @@ class ComputerService:
             changes["username"] = _check_user(fields["username"])
         if fields.get("port") is not None:
             changes["port"] = int(fields["port"])
+        if fields.get("enabled") is not None:
+            changes["enabled"] = bool(fields["enabled"])
+        if fields.get("placement_weight") is not None:
+            weight = int(fields["placement_weight"])
+            if not 0 <= weight <= 3:
+                raise ComputerError("Choose a share from 0 (never) to 3 (more).")
+            changes["placement_weight"] = weight
         current = self.get(computer_id)
         if "host" in changes and changes["host"] != current.host:
             # A different address is a different machine until proven otherwise.
             changes.update(host_key=None, host_fingerprint=None)
-        updated = self._store.update(computer_id, lambda row: row.model_copy(update=changes))
+
+        def change(row: Computer) -> Computer:
+            if "host" in changes or "port" in changes:
+                row = _with_address(row, changes.get("host", row.host), changes.get("port"))
+            rest = {k: v for k, v in changes.items() if k not in ("host", "port")}
+            return row.model_copy(update=rest)
+
+        updated = self._store.update(computer_id, change)
+        if updated is None:
+            raise ComputerError("This computer does not exist.", status=404)
+        if changes.get("enabled") is False:
+            self._route_down = {k: v for k, v in self._route_down.items() if k[0] != computer_id}
+        return updated
+
+    # -- routes ---------------------------------------------------------------
+
+    async def add_route(
+        self,
+        computer_id: str,
+        *,
+        host: str,
+        port: int = 22,
+        label: str | None = None,
+        source: RouteSource = "manual",
+    ) -> Computer:
+        """Add another address for the same machine, proven to BE that machine.
+
+        The new address must answer with the identity already pinned for this
+        computer; a different identity is a different machine and is refused.
+        A refused login still counts as proof: the identity is checked before
+        any login is tried.
+        """
+        computer = self.get(computer_id)
+        if computer.kind == "local_vm":
+            raise ComputerError("A local virtual machine has exactly one address.")
+        host = _check_host(host)
+        if any(r.host == host and r.port == port for r in computer.routes):
+            raise ComputerError(
+                "This address is already one of this computer's routes.", status=409
+            )
+        if len(computer.routes) >= _MAX_ROUTES:
+            raise ComputerError(f"A computer can have at most {_MAX_ROUTES} addresses.")
+        route = ComputerRoute(
+            id=_new_route_id(),
+            host=host,
+            port=port,
+            label=" ".join((label or "").split())[:40] or None,
+            source=source,
+        )
+        if not computer.host_key:
+            raise ComputerError(
+                "Connect to this computer once before adding another address, so the "
+                "new address can be checked against its identity.",
+                status=409,
+            )
+        try:
+            proof = await open_session(self._target(computer, route=route))
+        except SshError as exc:
+            if exc.kind == "host_key_changed":
+                raise ComputerError(
+                    "A different machine answers on this address (its identity does "
+                    "not match this computer). The address was not added.",
+                    status=409,
+                    kind="host_key_changed",
+                ) from exc
+            if exc.kind in ("unreachable", "timeout"):
+                raise ComputerError(
+                    f"{host}:{port} could not be reached. Add it while the computer "
+                    "answers on this address.",
+                    status=502,
+                    kind=exc.kind,
+                ) from exc
+            if exc.kind != "auth":
+                raise ComputerError(exc.message, status=502, kind=exc.kind) from exc
+            # The identity is verified before any login: a refused login on the
+            # right machine still proves the address.
+        else:
+            close(proof)
+            route = route.model_copy(update={"last_ok_at": time.time()})
+        updated = self._store.update(
+            computer_id, lambda row: row.model_copy(update={"routes": [*row.routes, route]})
+        )
+        if updated is None:
+            raise ComputerError("This computer does not exist.", status=404)
+        return updated
+
+    def remove_route(self, computer_id: str, route_id: str) -> Computer:
+        computer = self.get(computer_id)
+        if computer.route(route_id) is None:
+            raise ComputerError("This address is not one of this computer's routes.", status=404)
+        if len(computer.routes) < 2:
+            raise ComputerError(
+                "This is the computer's only address. Remove the computer instead.", status=409
+            )
+
+        def change(row: Computer) -> Computer:
+            kept = [r for r in row.routes if r.id != route_id]
+            active = row.active_route_id if row.active_route_id != route_id else kept[0].id
+            current = next(r for r in kept if r.id == active)
+            return row.model_copy(
+                update={
+                    "routes": kept,
+                    "active_route_id": active,
+                    "host": current.host,
+                    "port": current.port,
+                }
+            )
+
+        self._route_down.pop((computer_id, route_id), None)
+        updated = self._store.update(computer_id, change)
+        if updated is None:
+            raise ComputerError("This computer does not exist.", status=404)
+        return updated
+
+    def order_routes(self, computer_id: str, route_ids: list[str]) -> Computer:
+        """Set the preference order; ``route_ids`` must name every route once."""
+        computer = self.get(computer_id)
+        if sorted(route_ids) != sorted(r.id for r in computer.routes):
+            raise ComputerError("Name every address of this computer exactly once.")
+        by_id = {r.id: r for r in computer.routes}
+        updated = self._store.update(
+            computer_id,
+            lambda row: row.model_copy(update={"routes": [by_id[i] for i in route_ids]}),
+        )
         if updated is None:
             raise ComputerError("This computer does not exist.", status=404)
         return updated
@@ -857,11 +1172,8 @@ class ComputerService:
             return
         self._store.update(
             computer_id,
-            lambda row: row.model_copy(
-                update={
-                    "host": instance.ipv4 or row.host,
-                    "health": ComputerHealth(status="unknown", checked_at=time.time()),
-                }
+            lambda row: _with_address(row, instance.ipv4 or row.host).model_copy(
+                update={"health": ComputerHealth(status="unknown", checked_at=time.time())}
             ),
         )
         # cloud-init may still be writing the key for a few seconds after boot.
@@ -881,9 +1193,8 @@ class ComputerService:
                 instance = await local_vm.info(computer.provider_ref)
                 if instance is not None and instance.ipv4 and instance.ipv4 != computer.host:
                     # A restarted VM may come back on a new address; same machine.
-                    self._store.update(
-                        computer_id, lambda row: row.model_copy(update={"host": instance.ipv4})
-                    )
+                    ipv4 = instance.ipv4
+                    self._store.update(computer_id, lambda row: _with_address(row, ipv4))
             elif action == "stop":
                 await local_vm.stop(computer.provider_ref)
                 return self._set_health(

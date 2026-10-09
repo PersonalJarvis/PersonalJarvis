@@ -196,7 +196,14 @@ jobs:
           # main requires a merge queue: this adds the candidate to it (the
           # queue squash-merges after its own CI run), or merges directly
           # when the queue is off. Either way, wait for the landed commit.
-          gh pr merge "$CANDIDATE" --merge --match-head-commit "$CANDIDATE_SHA"
+          # `gh pr merge` cannot queue here: with a queue it falls back to
+          # auto-merge, which this repository disables. Enqueue explicitly.
+          pr_id="$(gh pr view "$CANDIDATE" --json id --jq .id)"
+          enqueue='mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { state } } }'
+          if ! gh api graphql -f query="$enqueue" -f id="$pr_id" -f sha="$CANDIDATE_SHA"; then
+            echo "Merge queue unavailable; merging the candidate directly."
+            gh pr merge "$CANDIDATE" --merge --match-head-commit "$CANDIDATE_SHA"
+          fi
           merged=""
           for attempt in {1..150}; do
             merged="$(gh pr view "$CANDIDATE" --json mergeCommit --jq '.mergeCommit.oid // empty')"

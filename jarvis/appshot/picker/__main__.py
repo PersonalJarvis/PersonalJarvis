@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hint", default="")
     # The toolbar's tooltip language ([ui].language); English when absent.
     parser.add_argument("--lang", default="en")
+    parser.add_argument("--resident", action="store_true")
     args = parser.parse_args(argv)
     try:
         from jarvis.appshot.picker.renderer import run  # noqa: PLC0415
@@ -28,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
             "extra to select an area for an appshot.\n"
         )
         return EXIT_NO_GUI
-    return run(args.lang)
+    return run(args.lang, resident=args.resident)
 
 
 if __name__ == "__main__":

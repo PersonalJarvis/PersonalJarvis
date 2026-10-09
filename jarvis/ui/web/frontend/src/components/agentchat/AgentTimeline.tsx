@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
@@ -25,6 +25,7 @@ export function AgentTimeline({
   bubbles = false,
   traceLook = "rail",
   traceCompanion = false,
+  traceFace,
 }: {
   items: TimelineItem[];
   assistantName: string;
@@ -46,6 +47,8 @@ export function AgentTimeline({
   traceLook?: TraceLook;
   /** Jarvis's own chat: live traces show the user's pet at work. */
   traceCompanion?: boolean;
+  /** An agent's own chat: live traces show that agent's face (or the pet it wears) at work. */
+  traceFace?: ReactNode;
 }) {
   const t = useT();
   // On the rail look an agent's answer to a working turn is a quiet line in
@@ -220,6 +223,7 @@ export function AgentTimeline({
         bubbles={bubbles}
         traceLook={traceLook}
         traceCompanion={traceCompanion}
+        traceFace={traceFace}
         messages={messagesByTurn.get(item.id)}
       />
     );
@@ -263,8 +267,8 @@ function stampLabel(at: Date, now: Date): string {
 
 const NO_MESSAGES = new Map<string, TraceMessage[]>();
 
-const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook, traceCompanion = false, messages }: {
-  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook; traceCompanion?: boolean;
+const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook, traceCompanion = false, traceFace, messages }: {
+  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook; traceCompanion?: boolean; traceFace?: ReactNode;
   /** Agent messages that arrived while this turn worked. */
   messages?: TraceMessage[];
 }) {
@@ -282,7 +286,7 @@ const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, 
         {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
       </div>
     )}
-    <TurnTrace turn={turn} look={traceLook} companion={traceCompanion} extras={extras} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
+    <TurnTrace turn={turn} look={traceLook} companion={traceCompanion} face={traceFace} extras={extras} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 

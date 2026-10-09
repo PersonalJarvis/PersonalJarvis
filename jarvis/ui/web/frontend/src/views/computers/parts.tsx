@@ -222,3 +222,4 @@ export function Field({
 
 export const inputClass =
   "h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base text-foreground placeholder:text-foreground-faint transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring";
+

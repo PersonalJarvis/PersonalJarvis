@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, Loader2, RefreshCw } from "lucide-react";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import {
@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
+import { AutoSwitchBar, SeatSwitchProvider, SwitchSeatButton } from "./SeatSwitch";
+import { BankedResets } from "./BankedResets";
 import {
   groupSubscriptions,
   planName,
@@ -52,6 +54,7 @@ function useSubscriptions() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [force, setForce] = useState(0);
+  const identities = useRef(new Map<string, string>());
   useEffect(() => {
     let alive = true;
     let timer: number | undefined;
@@ -65,10 +68,18 @@ function useSubscriptions() {
           refresh = false;
           if (nextUsage) pollMs = Math.max(MIN_POLL_MS, nextUsage.ttl_seconds * 1000);
           if (alive) {
+            const nextIdentities = new Map(nextAccounts.platforms.flatMap((group) => group.accounts.map((account) =>
+              [account.id, JSON.stringify([account.email, account.config_dir, account.mode])] as const)));
+            const previousIdentities = identities.current;
+            identities.current = nextIdentities;
             setAccounts(nextAccounts);
             // A backend without the usage route answers null: the rows still
             // show, just without numbers.
-            setUsage(nextUsage?.accounts ?? []);
+            setUsage((previous) => (nextUsage?.accounts ?? []).map((reading) => {
+              const newer = previous.find((item) => item.account_id === reading.account_id);
+              return newer && previousIdentities.get(reading.account_id) === nextIdentities.get(reading.account_id)
+                && (newer.as_of ?? 0) > (reading.as_of ?? 0) ? newer : reading;
+            }));
             setError("");
           }
         } catch (err) {
@@ -86,7 +97,10 @@ function useSubscriptions() {
     };
   }, [force]);
   const refresh = useCallback(() => setForce((value) => value + 1), []);
-  return { accounts, usage, error, loading, refresh };
+  const updateUsage = useCallback((reading: AccountUsage) => {
+    setUsage((previous) => [...previous.filter((item) => item.account_id !== reading.account_id), reading]);
+  }, []);
+  return { accounts, usage, error, loading, refresh, updateUsage, revision: force };
 }
 
 /** Wall-clock minutes, so reset countdowns stay true between polls. */
@@ -191,7 +205,9 @@ function UsageDetails({ usage, now }: { usage: AccountUsage | null; now: number 
   );
 }
 
-function SubscriptionLine({ row, now }: { row: SubscriptionRow; now: number }) {
+interface ResetProps { revision: number; onUsage: (usage: AccountUsage) => void }
+
+function SubscriptionLine({ row, now, revision, onUsage }: { row: SubscriptionRow; now: number } & ResetProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const detailsId = useId();
@@ -203,61 +219,65 @@ function SubscriptionLine({ row, now }: { row: SubscriptionRow; now: number }) {
   const tightest = tightestWindow(row.usage);
   return (
     <li data-testid="subscription-row" data-account={account.id} data-active={row.active || undefined}>
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={detailsId}
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <ChevronRight
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
-            open && "rotate-90",
+      <div className="flex items-center gap-1.5 pr-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={detailsId}
+          onClick={() => setOpen((value) => !value)}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+              open && "rotate-90",
+            )}
+            aria-hidden
+          />
+          <span className="flex min-w-0 flex-1 flex-col leading-tight">
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-[12.5px] font-medium text-foreground">{title}</span>
+              {row.active && (
+                <QuickTooltip content={t("ide_side_panel.subscriptions.active_tip")} side="bottom" className="inline-flex shrink-0">
+                  <span className="rounded border border-border px-1 text-[9.5px] uppercase tracking-wide text-muted-foreground">
+                    {t("ide_side_panel.subscriptions.active")}
+                  </span>
+                </QuickTooltip>
+              )}
+              {account.warning && (
+                <QuickTooltip content={account.warning} side="bottom" className="inline-flex shrink-0">
+                  <AlertTriangle
+                    data-testid="subscription-warning"
+                    className="h-3.5 w-3.5 text-warning"
+                    aria-label={account.warning}
+                  />
+                </QuickTooltip>
+              )}
+            </span>
+            {subtitle && <span className="truncate text-[11px] text-muted-foreground">{subtitle}</span>}
+          </span>
+          {tightest && (
+            <span
+              data-testid="subscription-peak"
+              className={cn("shrink-0 text-[11px] tabular-nums", TEXT_TONE[tightest.severity] ?? TEXT_TONE.normal)}
+            >
+              {Math.round(tightest.percent)}%
+            </span>
           )}
-          aria-hidden
-        />
-        <span className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[12.5px] font-medium text-foreground">{title}</span>
-            {row.active && (
-              <QuickTooltip content={t("ide_side_panel.subscriptions.active_tip")} side="bottom" className="inline-flex shrink-0">
-                <span className="rounded border border-border px-1 text-[9.5px] uppercase tracking-wide text-muted-foreground">
-                  {t("ide_side_panel.subscriptions.active")}
-                </span>
-              </QuickTooltip>
-            )}
-            {account.warning && (
-              <QuickTooltip content={account.warning} side="bottom" className="inline-flex shrink-0">
-                <AlertTriangle
-                  data-testid="subscription-warning"
-                  className="h-3.5 w-3.5 text-warning"
-                  aria-label={account.warning}
-                />
-              </QuickTooltip>
-            )}
-          </span>
-          {subtitle && <span className="truncate text-[11px] text-muted-foreground">{subtitle}</span>}
-        </span>
-        {tightest && (
-          <span
-            data-testid="subscription-peak"
-            className={cn("shrink-0 text-[11px] tabular-nums", TEXT_TONE[tightest.severity] ?? TEXT_TONE.normal)}
-          >
-            {Math.round(tightest.percent)}%
-          </span>
-        )}
-      </button>
+        </button>
+        <SwitchSeatButton row={row} />
+      </div>
       {open && (
         <div id={detailsId} data-testid="subscription-details" className="pb-2 pl-7 pr-2 pt-1">
           <UsageDetails usage={row.usage} now={now} />
+          <BankedResets key={`${account.id}:${account.email ?? ""}`} accountId={account.id} accountName={title} revision={revision} onUsage={onUsage} />
         </div>
       )}
     </li>
   );
 }
 
-function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: number }) {
+function SubscriptionBlock({ group, now, revision, onUsage }: { group: SubscriptionGroup; now: number } & ResetProps) {
   return (
     <section data-testid="subscription-group" data-platform={group.platform} className="px-2 py-2">
       <header className="flex items-center gap-2 px-2 pb-1">
@@ -267,7 +287,7 @@ function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: numb
       </header>
       <ul className="space-y-0.5">
         {group.rows.map((row) => (
-          <SubscriptionLine key={row.account.id} row={row} now={now} />
+          <SubscriptionLine key={row.account.id} row={row} now={now} revision={revision} onUsage={onUsage} />
         ))}
       </ul>
     </section>
@@ -281,54 +301,58 @@ function SubscriptionBlock({ group, now }: { group: SubscriptionGroup; now: numb
  */
 export function SubscriptionsTab() {
   const t = useT();
-  const { accounts, usage, error, loading, refresh } = useSubscriptions();
+  const { accounts, usage, error, loading, refresh, updateUsage, revision } = useSubscriptions();
   const now = useMinuteClock();
   const groups = groupSubscriptions(accounts, usage);
+  const toolNames = Object.fromEntries(groups.map((group) => [group.platform, group.displayName]));
   return (
-    <div data-testid="ide-subscriptions-tab" className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
-          {t("ide_side_panel.subscriptions.hint")}
-        </span>
-        <QuickTooltip content={t("ide_side_panel.subscriptions.refresh")} side="bottom" className="inline-flex shrink-0">
-          <button
-            type="button"
-            data-testid="subscriptions-refresh"
-            aria-label={t("ide_side_panel.subscriptions.refresh")}
-            disabled={loading}
-            onClick={refresh}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-          >
-            {loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-            )}
-          </button>
-        </QuickTooltip>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {error && (
-          <p data-testid="subscriptions-error" className="mx-3 mt-3 text-[11.5px] text-destructive">
-            {fill(t("ide_side_panel.subscriptions.error"), { error })}
-          </p>
-        )}
-        {!accounts && !error && (
-          <div className="flex justify-center py-6">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
+    <SeatSwitchProvider onSwitched={refresh} toolNames={toolNames}>
+      <div data-testid="ide-subscriptions-tab" className="flex h-full min-h-0 flex-col">
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+          <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground">
+            {t("ide_side_panel.subscriptions.hint")}
+          </span>
+          <QuickTooltip content={t("ide_side_panel.subscriptions.refresh")} side="bottom" className="inline-flex shrink-0">
+            <button
+              type="button"
+              data-testid="subscriptions-refresh"
+              aria-label={t("ide_side_panel.subscriptions.refresh")}
+              disabled={loading}
+              onClick={refresh}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            >
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              )}
+            </button>
+          </QuickTooltip>
+        </div>
+        <AutoSwitchBar />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {error && (
+            <p data-testid="subscriptions-error" className="mx-3 mt-3 text-[11.5px] text-destructive">
+              {fill(t("ide_side_panel.subscriptions.error"), { error })}
+            </p>
+          )}
+          {!accounts && !error && (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden />
+            </div>
+          )}
+          {accounts && groups.length === 0 && (
+            <p data-testid="subscriptions-empty" className="mx-3 mt-3 text-[12px] text-muted-foreground">
+              {t("ide_side_panel.subscriptions.empty")}
+            </p>
+          )}
+          <div className="divide-y divide-border/60">
+            {groups.map((group) => (
+              <SubscriptionBlock key={group.platform} group={group} now={now} revision={revision} onUsage={updateUsage} />
+            ))}
           </div>
-        )}
-        {accounts && groups.length === 0 && (
-          <p data-testid="subscriptions-empty" className="mx-3 mt-3 text-[12px] text-muted-foreground">
-            {t("ide_side_panel.subscriptions.empty")}
-          </p>
-        )}
-        <div className="divide-y divide-border/60">
-          {groups.map((group) => (
-            <SubscriptionBlock key={group.platform} group={group} now={now} />
-          ))}
         </div>
       </div>
-    </div>
+    </SeatSwitchProvider>
   );
 }

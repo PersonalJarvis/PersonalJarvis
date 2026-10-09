@@ -8,6 +8,28 @@ import { clearModelMenuSnapshot } from "./modelMenuSnapshot";
 
 afterEach(() => { cleanup(); clearModelMenuSnapshot(); vi.unstubAllGlobals(); });
 
+test.each(["api-key", "subscription"])("%s access is not sent as a subscription login id", async (account) => {
+  clearModelMenuSnapshot();
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    calls.push(url);
+    if (url.includes("/catalog")) return new Response(JSON.stringify({ providers: [{
+      id: "claude-api", family: "claude", label: "Claude", runner: "claude-cli", cli_installed: true,
+      curated_models: [{ id: "claude-sonnet-5", label: "Sonnet" }], models_source: "curated",
+      keyless: false, default_model: "", effort_levels: [], default_effort: "", permission_modes: [], default_permission_mode: "ask",
+    }] }));
+    if (url.includes("/status")) return new Response(JSON.stringify({ mapping: [{ jarvis: "claude-api", key_set: true }] }));
+    return new Response(JSON.stringify({ providers: [] }));
+  }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const { result } = renderHook(() => useModelMenuData(null, [], { "claude-api": account }), { wrapper });
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.options[0].curated_models[0].id).toBe("claude-sonnet-5");
+  expect(calls.filter((url) => url.includes("account_id"))).toEqual([]);
+  client.clear();
+});
+
 test("changing a pinned account hides the previous models until that account replies", async () => {
   clearModelMenuSnapshot();
   let release!: () => void;

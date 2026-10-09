@@ -1,0 +1,51 @@
+.agent-card-workspace {
+  container: agent-card / inline-size;
+}
+
+@container agent-card (max-width: 760px) {
+  .agent-card-columns {
+    grid-template-columns: minmax(160px, 200px) minmax(0, 1fr);
+  }
+}
+
+@container agent-card (max-width: 480px) {
+  .agent-card-columns {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 140px) minmax(0, 1fr);
+  }
+}
+
+.agent-chat-layout {
+  container: agent-chat-layout / inline-size;
+}
+
+.agent-chat-layout-panes {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.agent-chat-layout-panes[data-options-open="true"] {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.agent-chat-layout-options {
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* Use the available pane width, including when the app navigation is open. */
+@container agent-chat-layout (min-width: 680px) {
+  .agent-chat-layout-panes[data-options-open="true"] {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .agent-chat-layout-options {
+    border-top: 0;
+  }
+}

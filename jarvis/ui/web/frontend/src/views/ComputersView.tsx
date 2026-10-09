@@ -2,26 +2,31 @@
  * Computers — the servers and virtual machines {name} can work on besides
  * this one. A tab of the Settings hub (System group).
  *
- * The page is a quiet table of machines with their state and live load; a
- * row opens the machine's own page (Overview · Console · Access · Agents).
- * Adding one is a guided four-step wizard. Below the table sit the two
- * settings that belong to all machines at once: keeping IDE work going when
- * this PC closes, and {name}'s own SSH key.
+ * One centred column. A small heading names the page; the card under it
+ * holds what belongs to this PC and every machine at once (keeping IDE work
+ * going when this PC closes, {name}'s own SSH key). Below, "Your computers"
+ * lists each machine as one row (glyph, name, one subtitle line, status dot);
+ * a row opens the machine's own page (Overview · Console · Access · Agents),
+ * and "Add computer" opens the guided dialog.
  */
 import { useMemo, useState } from "react";
-import { Fingerprint, Loader2, Plus, RefreshCw, Server } from "lucide-react";
+import { Check, Copy, Loader2, Plus, RefreshCw } from "lucide-react";
 import { Panel } from "@/components/extensions/primitives";
-import { PageHeader } from "@/components/layout/PageHeader";
+import { ComputersIcon } from "@/components/icons/sectionIcons";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { useCheckAll, useComputers, useIdentity } from "@/hooks/useComputers";
+import { useCheckAll, useComputers, useIdentity, useTailscale } from "@/hooks/useComputers";
 import { useLocaleChunk, useT } from "@/i18n";
+import { robustCopy } from "@/lib/clipboard";
 import type { Computer } from "@/lib/computersApi";
 import { ComputerDetail, type DetailTab } from "@/views/computers/ComputerDetail";
-import { ComputerRow, ComputerTableHead } from "@/views/computers/ComputerRow";
+import { ComputerRow } from "@/views/computers/ComputerRow";
 import { KeepWorking } from "@/views/computers/KeepWorking";
-import { CopyField, needsAttention } from "@/views/computers/parts";
+import { needsAttention } from "@/views/computers/parts";
+import { PlacementSection } from "@/views/computers/Placement";
+import { Empty, Group, Row, Section, sectionActionCls } from "@/views/computers/surface";
 import { ConnectDialog } from "@/views/computers/ConnectDialog";
+import { PairedServers, usePairedServers } from "@/views/computers/PairedServers";
 
 /** Keyframes the provisioning bar uses; scoped by name, shipped with the view. */
 const KEYFRAMES = `@keyframes computers-indeterminate {
@@ -29,49 +34,39 @@ const KEYFRAMES = `@keyframes computers-indeterminate {
   100% { transform: translateX(300%); }
 }`;
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
-  const t = useT();
-  return (
-    <div
-      className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-16 text-center"
-      data-testid="computers-welcome"
-    >
-      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-muted-foreground">
-        <Server className="h-5 w-5" aria-hidden />
-      </span>
-      <h2 className="mt-4 text-lg font-semibold text-foreground-strong">{t("computers.empty_title")}</h2>
-      <p className="mt-1.5 max-w-md text-base text-muted-foreground">{t("computers.empty_body")}</p>
-      <Button className="mt-6" onClick={onAdd} data-testid="computers-add-first">
-        <Plus />
-        {t("computers.add")}
-      </Button>
-      <p className="mt-4 text-xs text-muted-foreground">{t("computers.empty_foot")}</p>
-    </div>
-  );
-}
-
 function IdentityRow() {
   const t = useT();
   const identity = useIdentity();
+  const [copied, setCopied] = useState(false);
   if (!identity.data) return null;
+  const { algorithm, fingerprint, public_key } = identity.data;
   return (
-    <Panel className="p-5">
-      <div className="flex items-start gap-3">
-        <Fingerprint className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="min-w-0 flex-1">
-          <div className="text-base font-semibold text-foreground-strong">{t("computers.identity_title")}</div>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("computers.identity_body")}</p>
-          <div className="mt-4">
-            <CopyField
-              label={`${identity.data.algorithm} · ${identity.data.fingerprint}`}
-              value={identity.data.public_key}
-              copyLabel={t("computers.copy")}
-              copiedLabel={t("computers.copied")}
-            />
-          </div>
-        </div>
-      </div>
-    </Panel>
+    <Row
+      title={t("computers.identity_title")}
+      description={t("computers.identity_body")}
+      status={
+        <span className="block truncate font-mono" title={public_key}>
+          {algorithm} · {fingerprint}
+        </span>
+      }
+      control={
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={t("computers.copy")}
+          onClick={() => {
+            void robustCopy(public_key).then((ok) => {
+              if (!ok) return;
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1600);
+            });
+          }}
+        >
+          {copied ? <Check className="text-success" /> : <Copy />}
+          {copied ? t("computers.copied") : t("computers.copy")}
+        </Button>
+      }
+    />
   );
 }
 
@@ -79,14 +74,25 @@ export function ComputersView() {
   const t = useT();
   useLocaleChunk("computers");
   const computers = useComputers();
+  const pairedServers = usePairedServers();
   const checkAll = useCheckAll();
   const [open, setOpen] = useState<{ id: string; tab: DetailTab } | null>(null);
   const [adding, setAdding] = useState(false);
 
   const rows = useMemo(() => computers.data ?? [], [computers.data]);
+  // Tailscale addresses to suggest per computer; nothing without Tailscale.
+  const tailscale = useTailscale(rows.length > 0);
   const current = open ? rows.find((c) => c.id === open.id) ?? null : null;
-  const attention = rows.filter(needsAttention).length;
-  const online = rows.filter((c) => c.health.status === "online").length;
+  // A switched-off computer is neither online nor missing: it is left out of the count.
+  const inUse = rows.filter((c) => c.enabled !== false);
+  const attention = inUse.filter(needsAttention).length;
+  const online = inUse.filter((c) => c.health.status === "online").length;
+  const summary = [
+    t("computers.list_summary").replace("{online}", String(online)).replace("{total}", String(inUse.length)),
+    attention > 0 ? t("computers.list_attention").replace("{count}", String(attention)) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const openComputer = (computer: Computer, tab: DetailTab) => {
     setAdding(false);
@@ -97,95 +103,119 @@ export function ComputersView() {
     <div className="flex h-full min-h-0 w-full flex-col" data-testid="computers-view">
       <style>{KEYFRAMES}</style>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex w-full flex-col gap-6 px-8 pb-10">
-          {!current && (
-            <PageHeader
-              icon={<Server />}
-              title={t("computers.title")}
-              description={t("computers.subtitle")}
-              actions={
-                rows.length > 0 ? (
+        {current && open ? (
+          <div className="flex w-full flex-col px-8 pb-10 pt-6">
+            <ComputerDetail
+              key={current.id}
+              computer={current}
+              initialTab={open.tab}
+              onBack={() => setOpen(null)}
+            />
+          </div>
+        ) : (
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 pb-20 pt-10 sm:px-10">
+            <div className="space-y-2.5">
+              <header
+                className="flex min-h-7 items-center justify-between gap-4 px-3 sm:px-4"
+                data-testid="section-header"
+              >
+                <h1
+                  className="flex min-w-0 items-center gap-2 text-base font-medium text-foreground-strong"
+                  title={t("computers.subtitle")}
+                >
+                  <ComputersIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <span className="truncate">{t("computers.title")}</span>
+                </h1>
+                {rows.length > 0 && (
+                  <span className="truncate text-sm text-muted-foreground">{summary}</span>
+                )}
+              </header>
+
+              {computers.isLoading && (
+                <div className="flex items-center gap-2 px-4 py-10 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t("computers.loading")}
+                </div>
+              )}
+              {computers.isError && (
+                <Panel className="p-5 text-sm text-destructive">{t("computers.load_failed")}</Panel>
+              )}
+              {computers.isSuccess && (
+                <Group>
+                  {rows.length > 0 && <KeepWorking computers={rows} />}
+                  <IdentityRow />
+                </Group>
+              )}
+            </div>
+
+            <PairedServers />
+            {computers.isSuccess && (
+              <Section
+                title={t("computers.list_title")}
+                action={
                   <>
+                    {rows.length > 0 && (
+                      <button
+                        type="button"
+                        className={sectionActionCls}
+                        onClick={() => checkAll.mutate()}
+                        disabled={checkAll.isPending}
+                        data-testid="computers-check-all"
+                      >
+                        {checkAll.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                        {t("computers.check_all")}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={sectionActionCls}
+                      onClick={() => setAdding(true)}
+                      data-testid="computers-add"
+                    >
+                      <Plus />
+                      {t("computers.add")}
+                    </button>
+                  </>
+                }
+              >
+                {rows.length === 0 ? (
+                  <Empty
+                    testId="computers-welcome"
+                    icon={<ComputersIcon />}
+                    title={t(pairedServers.data?.length ? "computers.paired_no_ssh" : "computers.empty_title")}
+                    description={t("computers.empty_body")}
+                  >
                     <Button
                       variant="outline"
-                      onClick={() => checkAll.mutate()}
-                      disabled={checkAll.isPending}
-                      data-testid="computers-check-all"
+                      size="sm"
+                      className="mt-5"
+                      onClick={() => setAdding(true)}
+                      data-testid="computers-add-first"
                     >
-                      {checkAll.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                      {t("computers.check_all")}
-                    </Button>
-                    <Button onClick={() => setAdding(true)} data-testid="computers-add">
                       <Plus />
                       {t("computers.add")}
                     </Button>
-                  </>
-                ) : null
-              }
-            />
-          )}
-
-          {computers.isLoading && (
-            <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> {t("computers.loading")}
-            </div>
-          )}
-          {computers.isError && (
-            <Panel className="p-5 text-sm text-destructive">{t("computers.load_failed")}</Panel>
-          )}
-
-          {current && open && (
-            <div className="pt-6">
-              <ComputerDetail
-                key={current.id}
-                computer={current}
-                initialTab={open.tab}
-                onBack={() => setOpen(null)}
-              />
-            </div>
-          )}
-
-          {!current && computers.isSuccess && rows.length === 0 && <EmptyState onAdd={() => setAdding(true)} />}
-
-          {!current && rows.length > 0 && (
-            <>
-              <section aria-labelledby="computers-list-title">
-                <div className="mb-3 flex items-baseline justify-between gap-3">
-                  <h2 id="computers-list-title" className="text-base font-semibold text-foreground-strong">
-                    {t("computers.list_title")}
-                  </h2>
-                  <span className="text-sm text-muted-foreground">
-                    {t("computers.list_summary")
-                      .replace("{online}", String(online))
-                      .replace("{total}", String(rows.length))}
-                    {attention > 0 && ` · ${t("computers.list_attention").replace("{count}", String(attention))}`}
-                  </span>
-                </div>
-                <div className="overflow-hidden rounded-lg border border-border bg-card" role="table">
-                  <ComputerTableHead />
-                  <ul className="divide-y divide-border" data-testid="computers-list" role="rowgroup">
+                    <p className="mt-4 text-xs text-foreground-faint">{t("computers.empty_foot")}</p>
+                  </Empty>
+                ) : (
+                  <ul className="divide-y divide-border" data-testid="computers-list">
                     {rows.map((computer) => (
-                      <ComputerRow
-                        key={computer.id}
-                        computer={computer}
-                        checking={checkAll.isPending}
-                        onOpen={() => setOpen({ id: computer.id, tab: "overview" })}
-                      />
+                      <li key={computer.id}>
+                        <ComputerRow
+                          computer={computer}
+                          checking={checkAll.isPending}
+                          onOpen={() => setOpen({ id: computer.id, tab: "overview" })}
+                          suggestions={tailscale.data?.suggestions?.[computer.id]}
+                        />
+                      </li>
                     ))}
                   </ul>
-                </div>
-              </section>
+                )}
+              </Section>
+            )}
 
-              <section aria-labelledby="computers-settings-title" className="space-y-4">
-                <h2 id="computers-settings-title" className="text-base font-semibold text-foreground-strong">
-                  {t("computers.settings_title")}
-                </h2>
-                <KeepWorking computers={rows} />
-                <IdentityRow />
-              </section>
-            </>
-          )}
-        </div>
+            {computers.isSuccess && rows.length > 0 && <PlacementSection computers={rows} />}
+          </div>
+        )}
       </ScrollArea>
 
       {adding && <ConnectDialog onClose={() => setAdding(false)} onOpen={openComputer} />}

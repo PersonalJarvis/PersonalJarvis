@@ -704,6 +704,46 @@ async def test_finished_chat_releases_real_browser_for_the_next_task(live, monke
         await live.close()
 
 
+def _owned_windows(root_pid):
+    """Visible top-level windows of a worker's Chrome: title, class, hang and styles."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    import psutil
+
+    try:
+        pids = {child.pid for child in psutil.Process(root_pid).children(recursive=True)}
+    except psutil.Error as exc:
+        return [f"process tree unavailable: {exc}"]
+    user32 = ctypes.windll.user32
+    user32.GetWindowLongW.restype = ctypes.c_long
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value in pids and user32.IsWindowVisible(hwnd):
+            title = ctypes.create_unicode_buffer(256)
+            name = ctypes.create_unicode_buffer(128)
+            user32.GetWindowTextW(hwnd, title, 256)
+            user32.GetClassNameW(hwnd, name, 128)
+            alpha, flags = wintypes.BYTE(), wintypes.DWORD()
+            user32.GetLayeredWindowAttributes(hwnd, None, ctypes.byref(alpha), ctypes.byref(flags))
+            found.append({
+                "class": name.value, "title": title.value,
+                "hung": bool(user32.IsHungAppWindow(hwnd)),
+                "exstyle": hex(user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF),
+                "alpha": alpha.value, "layered_flags": flags.value,
+            })
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found
+
+
 async def test_login_profile_survives_restart_and_stays_with_its_agent(live, site):
     first = SimpleNamespace(
         agent_id="signed-in", model="", browser_allowed_domains=["http*://127.0.0.1"]
@@ -718,8 +758,12 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
         session, _ = await live.subscribe(agent)
         await _control(live, session, "viewer", "takeover", {"enabled": True})
         await _control(live, session, "viewer", "navigate", {"url": site + path})
-        async with asyncio.timeout(15):
-            assert await asyncio.to_thread(PageHandler.wait_for_path, path)
+        if not await asyncio.to_thread(PageHandler.wait_for_path, path):
+            windows = await asyncio.to_thread(_owned_windows, session.proc.pid)
+            raise AssertionError(
+                f"{path} was never requested; requests={PageHandler.page_requests}; "
+                f"chrome_windows={windows}; worker_stderr_end={session.stderr_tail[-3000:]}"
+            )
         await _control(live, session, "viewer", "takeover", {"enabled": False})
         return session
 

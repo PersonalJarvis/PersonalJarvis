@@ -54,6 +54,7 @@ def _turn(
     report_session: str | None = None,
     argv: list[str] | None = None,
     released: list[int] | None = None,
+    cancel_on_delta: bool = False,
 ) -> tuple[str | None, list[dict[str, Any]], list[tuple[str, str]], list[str | None]]:
     resumes: list[str | None] = []
 
@@ -86,6 +87,8 @@ def _turn(
 
     async def emit(event: dict[str, Any]) -> None:
         events.append(event)
+        if cancel_on_delta and event["kind"] == "text_delta":
+            handle.cancel.set()
 
     async def ask(call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
         asked.append((call_id, name))
@@ -113,6 +116,28 @@ def _texts(events: list[dict[str, Any]]) -> list[str]:
 def test_the_runtime_runners_count_as_cli_seats():
     assert rc.supports_cli_runner("hermes-cli")
     assert rc.supports_cli_runner("openclaw-cli")
+
+
+def test_acp_eof_without_prompt_result_is_incomplete(monkeypatch, tmp_path):
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "EOF_PARTIAL")
+    assert _finished(events)["status"] == "error"
+    assert "terminal result" in _finished(events)["error"]
+
+
+def test_acp_token_exhaustion_keeps_partial_text_but_reports_error(monkeypatch, tmp_path):
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "TRUNCATE")
+    assert _texts(events) == ["echo: TRUNCATE"]
+    assert _finished(events)["status"] == "error"
+    assert "max_tokens" in _finished(events)["error"]
+
+
+def test_stop_sends_upstream_acp_cancel_before_terminating_bridge(monkeypatch, tmp_path):
+    log = tmp_path / "frames.jsonl"
+    monkeypatch.setenv("FAKE_ACP_LOG", str(log))
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "WAIT_CANCEL", cancel_on_delta=True)
+    frames = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert any(frame.get("method") == "session/cancel" for frame in frames)
+    assert _finished(events)["status"] == "cancelled"
 
 
 def test_a_fresh_turn_streams_text_reasoning_and_usage(monkeypatch, tmp_path):
@@ -239,6 +264,7 @@ def model_gateway(monkeypatch):
         if state["limited"]:
             raise Limit("private provider body")
         yield BrainDelta(content="I review contributor pull requests for security issues.")
+        yield BrainDelta(finish_reason="stop")
 
     monkeypatch.setattr(gateway, "_deltas", deltas)
     gateway.reset()
@@ -277,6 +303,7 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
 
     endpoint, state = model_gateway
     released = []
+    invalidated = []
 
     class Driver:
         label = "Fake runtime"
@@ -299,6 +326,7 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
                 cwd=tmp_path,
                 acp_resume=turn.resume,
                 release=lambda: released.append(1),
+                invalidate=lambda: invalidated.append(1),
             )
 
     async def agent(_agent_id):
@@ -349,6 +377,7 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
     assert "/continue" not in _finished(events)["error"]
     assert _texts(events) == []
     assert len(state["calls"]) == 1 and released == [1]
+    assert invalidated == [1]
     assert not gateway._FAILURES
     history = json.loads((tmp_path / "gateway-store.json").read_text(encoding="utf-8"))
     assert any("Was ist deine Aufgabe" in prompt for turns in history.values() for prompt in turns)
@@ -360,6 +389,7 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
     assert _finished(recovered)["status"] == "done"
     assert _texts(recovered) == ["I review contributor pull requests for security issues."]
     assert len(state["calls"]) == 2 and released == [1, 1]
+    assert invalidated == [1]  # Healthy recovery keeps its persistent gateway.
     assert not gateway._FAILURES
 
 
@@ -502,9 +532,9 @@ def test_a_runtime_that_exits_without_answering_is_an_error(monkeypatch, tmp_pat
     assert "3" in (finished["error"] or "")
 
 
-def test_a_cut_off_answer_stands_and_says_so(monkeypatch, tmp_path):
+def test_a_cut_off_answer_is_retained_and_reported_incomplete(monkeypatch, tmp_path):
     events, _ = _run_live(monkeypatch, tmp_path, "MAXTOK")
-    assert _finished(events)["status"] == "done"
+    assert _finished(events)["status"] == "error"
     assert _texts(events) == ["echo: MAXTOK"]
     notices = [e["payload"] for e in events if e["kind"] == "notice"]
     assert [n["stop_reason"] for n in notices] == ["max_tokens"]

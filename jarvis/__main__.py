@@ -50,7 +50,7 @@ if len(sys.argv) >= 2 and sys.argv[1] == "--relauncher":
 # The background agent service of a frozen build, same reason: no ``-m`` to
 # start ``jarvis.ui.web.launcher --background-service`` with
 # (see jarvis/core/background_service.py).
-if len(sys.argv) >= 2 and sys.argv[1] == "--background-service":
+if len(sys.argv) >= 2 and sys.argv[1] in {"--background-service", "--persistent-server", "--connect"}:
     from jarvis.ui.web.launcher import main as _launcher_main
 
     raise SystemExit(_launcher_main(sys.argv[1:]))

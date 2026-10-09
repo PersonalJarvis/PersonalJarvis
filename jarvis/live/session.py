@@ -23,6 +23,8 @@ from jarvis.live.tools import LiveTools, take_images
 from jarvis.realtime.audio import StreamingPcm16Resampler
 
 log = logging.getLogger(__name__)
+_STARTUP_CLOSE_SEND_TIMEOUT_S = 2.0
+_STARTUP_CLOSE_TIMEOUT_S = 5.0
 
 
 def _identity(config: Any) -> str:
@@ -163,6 +165,7 @@ class LiveVoiceSession:
         self._brain = brain
         self._surface = surface
         self._connection: Any = None
+        self._opening_task: asyncio.Task | None = None
         self._pump_task: asyncio.Task | None = None
         self._jobs: set[asyncio.Task] = set()
         self._control_tasks: set[asyncio.Task] = set()
@@ -682,6 +685,7 @@ class LiveVoiceSession:
         # off the wake path instead of stacked after a cold-disk sqlite open.
         self._ledger, _ = await asyncio.gather(_open_ledger(), _take_permit())
         assert self._ledger is not None
+        self._startup_timing.mark("local_setup_ready")
         setup_ms = (time.monotonic() - started_at) * 1000.0
         self._tools = LiveTools(
             gateway,
@@ -709,10 +713,6 @@ class LiveVoiceSession:
             claim(self.session_id)
             self._watch_input_mute()
             await self._send_json({"type": "input_mute", "muted": self._input_muted})
-            # The browser already captures. Finish the native handoff now,
-            # before a remote handshake can fill/overflow its 30-second buffer.
-            await self._take_startup_input(message)
-            self._startup_timing.mark("capture_handoff")
             await self._publish_phase("connecting")
             from jarvis.live.recovery import seed_messages
 
@@ -720,21 +720,29 @@ class LiveVoiceSession:
             if self._initial_seed:
                 config["input"] = seed_messages(self._initial_seed, [])
 
+            if self._closing:
+                return
             open_started_at = time.monotonic()
             self._startup_timing.mark("provider_open")
-            self._connection = await self._provider.open_session(
-                ContinuousVoiceStart(
-                    session=config, offer_sdp=offer,
-                    on_transport_ready=self._transport_ready if offer else None,
-                    on_startup_phase=self._startup_timing.mark,
-                )
+            opening = asyncio.create_task(
+                self._open_with_input_handoff(
+                    message,
+                    ContinuousVoiceStart(
+                        session=config, offer_sdp=offer,
+                        on_transport_ready=self._transport_ready if offer else None,
+                        on_startup_phase=self._startup_timing.mark,
+                    ),
+                ),
+                name="live-startup",
             )
+            self._opening_task = opening
+            try:
+                await opening
+            finally:
+                if self._opening_task is opening:
+                    self._opening_task = None
             if self._closing:
-                # A hangup may arrive through another surface during open.
-                try:
-                    await self._connection.send({"type": "session.close"})
-                finally:
-                    await self._connection.close()
+                # end() cancels and awaits opening before closing its result.
                 return
             self._startup_timing.mark("control_connected")
             open_ms = (time.monotonic() - open_started_at) * 1000.0
@@ -755,6 +763,7 @@ class LiveVoiceSession:
                                 "OpenAI Live rejected session setup. "
                                 "Check the selected model and account access."
                             )
+            self._startup_timing.mark("provider_ready")
             self._pump_task = asyncio.create_task(self._pump(), name="live-events")
             from jarvis.brain import provider_health_ledger as health_ledger
             from jarvis.core.events import (
@@ -784,20 +793,13 @@ class LiveVoiceSession:
                         turn_id=self._archive_turn_id,
                     )
                 )
-                await self._bus.publish(
-                    RealtimeSessionReady(
-                        session_id=self.session_id,
-                        provider=self.active_provider,
-                        model=profile.model,
-                        surface=self._surface,
-                        input_sample_rate=24000,
-                        output_sample_rate=24000,
-                        language=self._language,
-                    )
-                )
-            await self._publish_phase()
+            self._startup_timing.mark("lifecycle_started")
             if self._closing:
                 return
+            # Release usable audio before status fan-out and persistence. A
+            # slow observer must not hold the microphone behind a ready control
+            # channel. Session/turn events still precede input, and the browser
+            # separately waits for ICE/DTLS before releasing its local buffer.
             self._startup_timing.mark("audio_ready")
             await self._send_json(
                 {
@@ -818,6 +820,22 @@ class LiveVoiceSession:
                     "input_muted": self._input_muted,
                 }
             )
+            if self._closing:
+                return
+            if self._bus is not None:
+                await self._bus.publish(
+                    RealtimeSessionReady(
+                        session_id=self.session_id,
+                        provider=self.active_provider,
+                        model=profile.model,
+                        surface=self._surface,
+                        input_sample_rate=24000,
+                        output_sample_rate=24000,
+                        language=self._language,
+                    )
+                )
+            await self._publish_phase()
+            self._startup_timing.mark("ready_notifications_done")
             if not offer:
                 # Audio already flows over this socket: agent results that
                 # finished before the call may be offered at once. A WebRTC
@@ -829,6 +847,64 @@ class LiveVoiceSession:
                 await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    async def _open_with_input_handoff(self, message: dict, config: Any) -> None:
+        """Overlap native microphone release with the explicitly requested call.
+
+        Handoff starts first and must finish, including delivery of its local
+        prefix, before audio_ready. Own the provider result immediately so a
+        concurrent handoff failure or hangup cannot orphan an allocated call.
+        Publish the connection to end() only when the handoff also succeeds.
+        """
+        async def handoff() -> None:
+            await self._take_startup_input(message)
+            self._startup_timing.mark("capture_handoff")
+
+        connection = None
+
+        async def open_connection() -> None:
+            nonlocal connection
+            connection = await self._provider.open_session(config)
+            self._startup_timing.mark("control_connected")
+
+        tasks = (
+            asyncio.create_task(handoff(), name="live-input-handoff"),
+            asyncio.create_task(open_connection(), name="live-provider-open"),
+        )
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+            async def reap() -> None:
+                # A cancelled provider may still return an allocated call.
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if connection is None:
+                    return
+                try:
+                    try:
+                        async with asyncio.timeout(_STARTUP_CLOSE_SEND_TIMEOUT_S):
+                            await connection.send({"type": "session.close"})
+                    finally:
+                        async with asyncio.timeout(_STARTUP_CLOSE_TIMEOUT_S):
+                            await connection.close()
+                except Exception:
+                    # Preserve the original cancellation/handoff error.
+                    log.warning("Live handoff cleanup could not confirm the allocated call closed")
+
+            cleanup = asyncio.create_task(reap(), name="live-startup-cleanup")
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    # Hangup and surface disconnect can cancel independently.
+                    # Keep owning cleanup until the remote call is retired.
+                    continue
+            await cleanup
+            raise
+        self._connection = connection
 
     async def _transport_ready(self, answer_sdp: str) -> None:
         """Negotiate media early; this message never releases microphone audio."""
@@ -1043,7 +1119,8 @@ class LiveVoiceSession:
             while not self._closed.is_set():
                 try:
                     event = await self._connection.receive()
-                except Exception:  # Shutdown is quiet; active failures enter the reporting recovery loop.
+                except Exception:
+                    # Shutdown is quiet; active failures enter reporting recovery.
                     if self._closing:
                         return
                     self._had_unconfirmed_wire = True
@@ -1137,6 +1214,15 @@ class LiveVoiceSession:
             # With WebRTC, only measured RTP playback owns the speaking
             # state. Sideband generation can lead playback or include silence.
             from jarvis.live.playback import AudioTimedFrame, playback_frame, source_interval
+
+            timing = self._startup_timing
+            if timing is not None and "first_output_signal_received" not in timing.marks:
+                # Continuous providers emit silent PCM before their first
+                # spoken response. Inspect at most one second per frame until
+                # nonzero PCM arrives; no samples or levels are retained.
+                pcm = base64.b64decode(event["delta"][:64_000])
+                if any(pcm):
+                    timing.mark("first_output_signal_received")
 
             timed = source_interval(event.get("start_ms"), event.get("end_ms"))
             if timed:
@@ -1720,6 +1806,13 @@ class LiveVoiceSession:
         unregister(self.session_id)
         self._closing = True
         self._notify_ended()
+        opening = self._opening_task
+        if opening is not None and opening is not asyncio.current_task():
+            if not opening.done() and not opening.cancelling():
+                opening.cancel()
+            # Stop a hung handoff and retire any allocation before returning
+            # from hangup, even if the provider returns during cancellation.
+            await asyncio.gather(opening, return_exceptions=True)
         if self._recovering and self._pump_task is not None:
             self._closed.set()
             if self._pump_task is not asyncio.current_task():

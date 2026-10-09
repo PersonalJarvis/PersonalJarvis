@@ -33,6 +33,7 @@ gh() {
     'pr merge') return "$LAND_EXIT" ;;
     'pr view') printf '%s\n' "$FAKE_SHA" ;;
     'workflow run') return 0 ;;
+    'api graphql') return "$LAND_EXIT" ;;
     'run list') printf '123\n' ;;
     'run view') printf '\n' ;;
     'run watch') return "$WATCH_EXIT" ;;
@@ -213,7 +214,12 @@ def test_only_a_green_candidate_can_land_and_publish(tmp_path, overrides, succes
     assert (result.returncode == 0) is success, result.stdout + result.stderr
     candidate = "git push origin HEAD:refs/heads/release-cut/v1.2.3-77-2"
     watch = "gh run watch 123 --exit-status --interval 30"
-    merge = f"gh pr merge release-cut/v1.2.3-77-2 --merge --match-head-commit {_SHA}"
+    # The candidate enters main's merge queue pinned to the tested head.
+    merge = next(
+        (c for c in commands if c.startswith("gh api graphql") and "enqueuePullRequest" in c
+         and c.endswith(f"sha={_SHA}")),
+        "enqueue missing",
+    )
     assert commands.index(candidate) < commands.index(watch)
     assert any("--event pull_request" in command for command in commands)
     assert "git push origin HEAD:main" not in commands

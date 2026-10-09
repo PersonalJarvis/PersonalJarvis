@@ -249,6 +249,8 @@ jobs:
           python scripts/ci/run_gates.py "${args[@]}"
       - name: Validate workflow syntax, expressions and action inputs
         if: always()
+        env:
+          GOTOOLCHAIN: go1.27.1
         run: |
           GOBIN="$RUNNER_TEMP/actionlint" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           "$RUNNER_TEMP/actionlint/actionlint" -shellcheck= -pyflakes=

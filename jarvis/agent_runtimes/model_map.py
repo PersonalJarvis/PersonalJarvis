@@ -156,7 +156,16 @@ def login_token_for(provider: str, account_id: str = "") -> str | None:
 def login_providers() -> list[str]:
     """Usable providers that answer on a Claude login, not an API key: the
     picker labels them as billed extra usage. Blocking (keyring)."""
-    return [name for name in _ENDPOINTS if login_token_for(name)]
+    return [name for name in _ENDPOINTS if _login_available(login_token_for(name))]
+
+
+def _login_available(token: str | None) -> bool:
+    """Use the same cached, non-inference billing check as runtime startup."""
+    if not token:
+        return False
+    from jarvis.agent_runtimes.provider_errors import login_blocked
+
+    return login_blocked(token, "") is None
 
 
 def access_choices() -> dict[str, list[str]]:
@@ -170,7 +179,7 @@ def access_choices() -> dict[str, list[str]]:
         found: list[str] = []
         if _saved_key(name, endpoint) is not None:
             found.append("api")
-        if claude_login_token() is not None:
+        if _login_available(claude_login_token()):
             found.append("subscription")
         if found:
             choices[name] = found
@@ -216,6 +225,7 @@ def usable_providers(config: Any) -> list[str]:
     for provider in sorted(_ENDPOINTS, key=lambda name: (not _ENDPOINTS[name].subscription, name)):
         try:
             _checked_model(config, provider, "probe")
+            _check_login_billing(provider, "", "")
         except RouteUnavailable:  # not connected: the provider is simply not offered
             continue
         except Exception:  # noqa: BLE001 — one unreadable provider must not empty the list
@@ -365,6 +375,7 @@ def route_for(
     token = gateway.grant_token(
         agent_id, provider, account_id,
         scope=home_key(agent_id, session_id) if session_id else "",
+        require_active_turn=True,
     )
     gateway.register_model(token, chosen, limits)
     return ModelRoute(

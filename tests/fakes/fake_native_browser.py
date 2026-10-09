@@ -128,6 +128,8 @@ class NativeDesktop:
         self.co_initialized = self.co_uninitialized = 0
         self.hit = 1
         self.positions = []
+        self.styles = {}
+        self.alpha = {}
         self.children = {}
         self.focus = 0
         self.user32 = SimpleNamespace(
@@ -148,6 +150,10 @@ class NativeDesktop:
             GetGUIThreadInfo=NativeCall(self.gui_info),
             SendMessageTimeoutW=NativeCall(self.send),
             SetWindowPos=NativeCall(self.position),
+            GetWindowLongW=NativeCall(lambda hwnd, index: self.styles.get(hwnd, 0)),
+            SetWindowLongW=NativeCall(self.set_style),
+            SetLayeredWindowAttributes=NativeCall(self.set_alpha),
+            GetLayeredWindowAttributes=NativeCall(self.get_alpha),
             MonitorFromWindow=NativeCall(lambda *args: 1),
             GetMonitorInfoW=NativeCall(self.monitor_info),
             PeekMessageW=NativeCall(lambda *args: 1),
@@ -194,6 +200,22 @@ class NativeDesktop:
         self.positions.append(args)
         return True
 
+    def set_style(self, hwnd, index, style):
+        previous = self.styles.get(hwnd, 0)
+        self.styles[hwnd] = style
+        return previous
+
+    def set_alpha(self, hwnd, color, alpha, flags):
+        self.alpha[hwnd] = alpha
+        return True
+
+    def get_alpha(self, hwnd, color, alpha, flags):
+        if hwnd not in self.alpha:
+            return False
+        alpha._obj.value = self.alpha[hwnd]
+        flags._obj.value = 2
+        return True
+
     def gui_info(self, _thread, pointer):
         pointer._obj.hwndFocus = self.focus
         return True
@@ -232,6 +254,7 @@ class NativeDesktop:
         from jarvis.society.browser.native_window import NativeWindow
 
         native = NativeWindow.__new__(NativeWindow)
+        native._parked = False
         kernel = SimpleNamespace(GetCurrentThreadId=NativeCall(lambda: 77))
         native.ctypes = SimpleNamespace(
             **{name: getattr(ctypes, name) for name in (
@@ -252,6 +275,7 @@ class NativeDesktop:
         native._capture_factory = Capture
         native._captures, native._images = {}, {}
         native._capture_keys = {}
+        native._restarted_popups = set()
         native._popups, native._regions, native._hooks = [], [], []
         native._revision, native._encoded_revision, native._geometry_id = 0, -1, 0
         native._windows_dirty = threading.Event()

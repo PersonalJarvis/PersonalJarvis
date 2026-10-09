@@ -57,6 +57,7 @@ from jarvis.agent_chat import attachments as chat_attachments
 from jarvis.agent_chat import runner_cli, typeahead
 from jarvis.agent_chat.catalog import claude_code_models, offers, rows_for
 from jarvis.agent_chat.control_types import CommandRequest, CommandResult
+from jarvis.agent_chat.credential_requests import CredentialRequestBusy
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import (
@@ -76,6 +77,7 @@ from jarvis.agent_chat.service import (
 )
 from jarvis.agent_chat.surface_kits import kit_for
 from jarvis.agent_chat.tools import shell_label
+from jarvis.society.credentials import CredentialError
 
 log = logging.getLogger(__name__)
 
@@ -262,6 +264,14 @@ class MessageBody(BaseModel):
 
 class ApprovalBody(BaseModel):
     decision: str
+
+
+class CredentialBody(BaseModel):
+    #: The secret the person pasted. It goes to the agent's vault and nowhere
+    #: else: never logged, never echoed, never part of a chat event. No length
+    #: constraint here on purpose: a validation error would echo the value in
+    #: its 422 body; the vault refuses a bad value with a 400 that names none.
+    value: Any = Field(default=None, repr=False)
 
 
 class QuestionAnswerBody(BaseModel):
@@ -997,7 +1007,7 @@ def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
 
 
 @router.get("/sessions/{session_id}")
-def get_session(
+async def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(
@@ -1008,9 +1018,14 @@ def get_session(
     session = svc.store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if session.surface in ("jarvis", "society"):
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session_id)
     d = session.to_dict()
     d["running"] = svc.is_running(session_id)
-    return {"session": d, "events": svc.store.list_events(session_id, tail=tail)}
+    events = await asyncio.to_thread(svc.store.list_events, session_id, tail=tail)
+    return {"session": d, "events": events}
 
 
 @router.get(
@@ -1157,6 +1172,7 @@ async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
     await svc.controls.pause(session_id, "Session deleted")
     await svc.controls._clear_saved_native(session_id)
+    await svc.discard_credential_requests(session_id)
     if not svc.store.delete_session(session_id):
         raise HTTPException(status_code=404, detail="session not found")
     svc.controls.store.delete(session_id)
@@ -1310,6 +1326,67 @@ async def skip_question(session_id: str, question_id: str, request: Request) -> 
     if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/credentials/{request_id}",
+    summary="Save the secret an agent asked for in its secure credential field",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def submit_credential(
+    session_id: str, request_id: str, body: CredentialBody, request: Request
+) -> dict[str, Any]:
+    svc = _service(request)
+    if not isinstance(body.value, str):
+        raise HTTPException(status_code=400, detail={
+            "code": "invalid_token", "message": "Enter a credential as text before saving.",
+        })
+    try:
+        ok = await svc.submit_credential(session_id, request_id, body.value)
+    except CredentialRequestBusy:
+        raise HTTPException(status_code=409, detail={
+            "code": "request_busy",
+            "message": "The credential is still being checked. Please wait.",
+        }) from None
+    except CredentialError as exc:
+        status = {
+            "network_error": 503, "validation_timeout": 504, "storage_failed": 503,
+        }.get(exc.code, 400)
+        raise HTTPException(status_code=status, detail={
+            "code": exc.code, "message": str(exc),
+        }) from None
+    except Exception:
+        # A third-party storage exception may include the token. Never emit
+        # its message or traceback into logs, HTTP bodies or the agent timeline.
+        log.warning("agent chat: credential submission failed for %s", session_id)
+        raise HTTPException(status_code=503, detail={
+            "code": "storage_failed", "message": "The credential could not be stored. Try again.",
+        }) from None
+    if not ok:
+        raise HTTPException(status_code=410, detail={
+            "code": "request_closed", "message": "This credential field is already closed.",
+        })
+    return {"ok": True, "request_id": request_id, "status": "saved"}
+
+
+@router.post(
+    "/sessions/{session_id}/credentials/{request_id}/decline",
+    summary="Close an agent's credential field without providing the secret",
+)
+async def decline_credential(session_id: str, request_id: str, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = await svc.decline_credential(session_id, request_id)
+    except CredentialRequestBusy:
+        raise HTTPException(status_code=409, detail={
+            "code": "request_busy",
+            "message": "The credential is still being checked. Please wait.",
+        }) from None
+    if not ok:
+        raise HTTPException(status_code=410, detail={
+            "code": "request_closed", "message": "This credential field is already closed.",
+        })
+    return {"ok": True, "request_id": request_id, "status": "declined"}
 
 
 @router.post(
@@ -1501,6 +1578,10 @@ async def session_stream(ws: WebSocket, session_id: str) -> None:
     # Subscribe BEFORE reading the snapshot so nothing falls between the two.
     q = svc.subscribe(session_id)
     try:
+        if session.surface in ("jarvis", "society"):
+            from jarvis.agent_chat.send_queue import close_orphans
+
+            await close_orphans(svc, session_id)
         events = svc.store.list_events(session_id, after_seq=after)
         d = session.to_dict()
         d["running"] = svc.is_running(session_id)

@@ -2335,6 +2335,16 @@ async def put_autostart(body: AutostartBody, request: Request) -> dict[str, obje
 class BackgroundBody(BaseModel):
     keep_agents_running: bool | None = Field(default=None)
     background_only_at_login: bool | None = Field(default=None)
+    persistent_server: bool | None = None
+    server_url: str | None = Field(default=None, max_length=2048)
+
+    @model_validator(mode="after")
+    def check_server(self) -> BackgroundBody:
+        if self.server_url and self.server_url.strip():
+            from jarvis.core.server_endpoint import server_endpoint
+
+            self.server_url = server_endpoint(self.server_url)
+        return self
 
 
 def _background_payload(request: Request) -> dict[str, object]:
@@ -2345,15 +2355,23 @@ def _background_payload(request: Request) -> dict[str, object]:
 
     cfg = _config(request)
     autostart_cfg = getattr(cfg, "autostart", None)
+    background_cfg = getattr(cfg, "background", None)
     work = work_from_state(request.app.state)
     return {
         "keep_agents_running": keep_running_enabled(cfg),
+        "persistent_server": bool(getattr(background_cfg, "persistent_server", False)),
+        "server_url": str(getattr(background_cfg, "server_url", "") or ""),
+        "running_as_server": bool(getattr(request.app.state, "agent_server_mode", False)),
         "background_only_at_login": bool(getattr(autostart_cfg, "background_only", False)),
         "autostart_enabled": bool(getattr(autostart_cfg, "enabled", True)),
         # This process IS the windowless service (a browser on its port).
-        "running_as_service": SERVICE_FLAG in _sys.argv,
+        "running_as_service": SERVICE_FLAG in _sys.argv or bool(
+            getattr(request.app.state, "agent_server_mode", False)
+        ),
         # Only the default app hands off; a dev instance stops with its window.
-        "supported": current_instance().owns_ambient_duties,
+        "supported": current_instance().owns_ambient_duties or bool(
+            getattr(request.app.state, "agent_server_mode", False)
+        ),
         "work": {
             "routines": work.routines,
             "running": work.running,
@@ -2372,6 +2390,22 @@ async def put_background(body: BackgroundBody, request: Request) -> dict[str, ob
     from jarvis.core import config_writer
 
     cfg = _config(request)
+    if body.persistent_server is not None or body.server_url is not None:
+        section = getattr(cfg, "background", None)
+        persistent = (
+            body.persistent_server if body.persistent_server is not None
+            else bool(getattr(section, "persistent_server", False))
+        )
+        origin = (
+            body.server_url if body.server_url is not None
+            else str(getattr(section, "server_url", "") or "")
+        )
+        await asyncio.to_thread(
+            config_writer.set_agent_server, persistent=persistent, server_url=origin,
+        )
+        if section is not None:
+            section.persistent_server = persistent
+            section.server_url = origin
     if body.keep_agents_running is not None:
         value = bool(body.keep_agents_running)
         config_writer.set_background_keep_running(value)
@@ -2390,6 +2424,10 @@ async def put_background(body: BackgroundBody, request: Request) -> dict[str, ob
                 autostart_cfg.background_only = value  # type: ignore[attr-defined]
             except Exception as exc:  # noqa: BLE001 — same as above
                 log.debug("in-memory autostart.background_only update skipped: %s", exc)
+    if (
+        body.background_only_at_login is not None or body.persistent_server is not None
+        or body.server_url is not None
+    ):
         enabled, _caps, manager, spec = _autostart_components(request)
         if enabled:
             # The login entry carries the mode in its command line; refresh it
@@ -2875,7 +2913,8 @@ async def open_external(body: OpenExternalBody) -> dict[str, object]:
     from jarvis.platform.open_path import open_url
 
     opened = await asyncio.to_thread(open_url, body.url)
-    log.info("open-external: opened=%s url=%s", opened, body.url)
+    # Pairing and OAuth URLs may carry one-time credentials in their fragments.
+    log.info("open-external: opened=%s host=%s", opened, parsed.hostname)
     return {"opened": bool(opened)}
 
 

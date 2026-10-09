@@ -5,6 +5,9 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/appshot/settings         → switches, shortcut state, readiness.
     PUT    /api/appshot/settings         → change one or more switches.
     POST   /api/appshot/take             → take one appshot now (window or area).
+    POST   /api/appshot/recording/{id}/export → trim / speed up a recording as a new one.
+    POST   /api/appshot/recording/{id}/save   → copy a recording into Downloads.
+    POST   /api/appshot/recording/{id}/open-editor → play and trim it in the editor window.
     GET    /api/appshot/latest           → metadata of the last appshot.
     GET    /api/appshot/latest/image     → its picture (never cached).
     PUT    /api/appshot/latest/image     → replace it with the editor's version and
@@ -52,6 +55,10 @@ class SettingsPatch(BaseModel):
     hotkey: str | None = Field(default=None, max_length=64)
     region_hotkey: str | None = Field(default=None, max_length=64)
     recording_hotkey: str | None = Field(default=None, max_length=64)
+    recording_resolution: Literal["720p", "1080p", "1440p", "2160p", "native"] | None = None
+    recording_fps: Literal[30, 60, 120] | None = None
+    recording_bitrate_mbps: int | None = Field(default=None, ge=1, le=100, strict=True)
+    recording_system_audio: bool | None = None
     target: Literal["auto", "message", "voice"] | None = None
     sound: bool | None = None
     effect: bool | None = None
@@ -124,6 +131,7 @@ def _capability() -> dict[str, Any]:
 
 def _settings_payload() -> dict[str, Any]:
     from jarvis.appshot.hotkey import configured_hotkeys, get_shortcut  # noqa: PLC0415
+    from jarvis.appshot.recording_options import RecordingOptions
     from jarvis.core.config import load_config  # noqa: PLC0415
 
     config = load_config()
@@ -141,6 +149,8 @@ def _settings_payload() -> dict[str, Any]:
         "hotkey": hotkeys["window"],
         "region_hotkey": hotkeys["region"],
         "recording_hotkey": hotkeys["recording"],
+        **{f"recording_{key}": value
+           for key, value in RecordingOptions.from_config(block).model_dump().items()},
         "target": block.target,
         "sound": bool(block.sound),
         "effect": bool(block.effect),
@@ -291,6 +301,55 @@ async def recording_video(recording_id: str):
         raise HTTPException(status_code=404, detail="The recording is not available.")
     return FileResponse(path, media_type="video/mp4", filename=f"appshot-{recording_id}.mp4",
                         headers=_NO_STORE)
+
+
+class ClipRequest(BaseModel):
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    speed: float = Field(default=1.0, gt=0, le=4)
+
+
+@router.post("/recording/{recording_id}/export")
+async def export_recording_clip(recording_id: str, body: ClipRequest) -> dict[str, Any]:
+    """Write the video editor's trim and speed as a new recording (the original stays)."""
+    from jarvis.appshot.video_edit import ClipError, export_clip
+
+    try:
+        clip_id = await asyncio.to_thread(
+            export_clip, recording_id, body.start_s, body.end_s, body.speed
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="The recording is not available.") from exc
+    except ClipError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503, detail="Editing videos requires the desktop video packages."
+        ) from exc
+    return {"id": clip_id}
+
+
+@router.post("/recording/{recording_id}/save")
+async def save_recording_copy(recording_id: str) -> dict[str, Any]:
+    """Copy a recording into the Downloads folder of the machine running Jarvis."""
+    from jarvis.appshot.recording_cards import save_recording
+
+    try:
+        path = await asyncio.to_thread(save_recording, recording_id)
+    except OSError as exc:
+        log.warning("appshot: recording could not be saved to Downloads", exc_info=True)
+        raise HTTPException(status_code=500, detail="The video could not be saved.") from exc
+    if path is None:
+        raise HTTPException(status_code=404, detail="The recording is not available.")
+    return {"path": str(path), "filename": path.name}
+
+
+@router.post("/recording/{recording_id}/open-editor")
+async def open_recording_editor(recording_id: str) -> dict[str, Any]:
+    """Open the video editor window on a recording. ``window: false`` = not possible here."""
+    from jarvis.appshot.editor_window import open_recording_window
+
+    return {"window": await open_recording_window(recording_id)}
 
 
 @router.post("/take")
@@ -542,8 +601,8 @@ def _library_id(shot_id: str) -> str:
 
 @router.get("/library")
 async def library_list() -> dict[str, Any]:
-    """Every kept appshot and edit, newest first — no pixels."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Every kept screenshot, edit and recording, newest first — no pixels."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     items = await asyncio.to_thread(library.list_items)
     return {
@@ -556,12 +615,20 @@ async def library_list() -> dict[str, Any]:
 async def library_image(
     shot_id: str, variant: LibraryVariant = "original", thumb: bool = False
 ) -> Response:
-    """One kept picture; ``thumb=1`` sends the gallery's small JPEG."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """One kept image or video; ``thumb=1`` sends a small preview."""
+    from fastapi.responses import FileResponse
+
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     item = await asyncio.to_thread(library.get_item, _library_id(shot_id), variant)
     if item is None:
         raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    if item.mime == "video/mp4" and not thumb:
+        # Stream with byte-range support for seeking; never read an entire
+        # recording into the web server's memory.
+        return FileResponse(
+            item.path, media_type=item.mime, headers={"Cache-Control": "no-store"},
+        )
     if thumb:
         data, mime = await asyncio.to_thread(library.thumbnail, item)
     else:
@@ -591,8 +658,8 @@ async def library_open(shot_id: str, body: LibraryOpenRequest | None = None) -> 
 
 @router.delete("/library/{shot_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def library_delete(shot_id: str, variant: LibraryVariant = "original") -> dict[str, Any]:
-    """Delete an edit only, or — for the original — the whole appshot."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Delete an edit, an original screenshot with its edit, or one recording."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     removed = await asyncio.to_thread(library.delete, _library_id(shot_id), variant)
     if not removed:
@@ -602,7 +669,7 @@ async def library_delete(shot_id: str, variant: LibraryVariant = "original") -> 
 
 @router.delete("/library", openapi_extra={"x-jarvis-dangerous": True})
 async def library_clear() -> dict[str, Any]:
-    """Delete every kept appshot and edit."""
-    from jarvis.appshot import library  # noqa: PLC0415
+    """Delete all kept screenshots, edits and finalized recordings."""
+    from jarvis.appshot import media_library as library  # noqa: PLC0415
 
     return {"ok": True, "removed": await asyncio.to_thread(library.clear)}

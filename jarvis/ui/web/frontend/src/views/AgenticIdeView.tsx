@@ -6,7 +6,7 @@ import { ProjectConnectDialog } from "@/components/agentic/ProjectConnectDialog"
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
-import { RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
+import { RUN_ON_AUTO, RunOnPicker, storeRunOn, storedRunOn } from "@/components/agentic/RunOnPicker";
 import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDialog";
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { storePaneStyle, storedPaneStyle, type PaneStyle } from "@/components/agentic/terminalThemes";
@@ -19,6 +19,7 @@ import { leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkey
 import { appChord } from "@/store/appChordSettings";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
+import { computersApi } from "@/lib/computersApi";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
 import { SplitRightIcon, SplitBelowIcon, SplitLeftIcon, SplitAboveIcon } from "@/components/agentic/splitIcons";
 import type { PaneSplitDirection } from "@/components/agentic/WorkspaceTerminalHeader";
@@ -148,7 +149,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const installed = codingAgents.filter((agent) => agent.installed);
   // On a connected computer the CLI has to be installed THERE, not here: the
   // server is checked before anything is copied, so every coding CLI is offered.
-  const workspaceChoices = workspaceComputer ? codingAgents : installed;
+  // "Automatic" may land on this PC, so it offers only what is installed here.
+  const workspaceChoices = workspaceComputer && workspaceComputer !== RUN_ON_AUTO ? codingAgents : installed;
   const agentChoices = agents.filter((agent) =>
     (agent.kind === "shell" || agent.accepts_prompts !== false) && (agentComputer || agent.installed));
   const dialogOpen = projectDialog || workspaceProject !== null || renameOpen || agentPicker !== null;
@@ -346,12 +348,14 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const createWorkspace = () => void run(async () => {
     if (!workspaceProject || workspaceAgents.length === 0 || workspaceAgents.some((agent) => !agent)) throw new Error("Choose an installed coding agent for every session.");
     storeRunOn(workspaceProject.id, workspaceComputer);
+    // "Automatic" settles on one machine now, by the shares set under Settings, Computers.
+    const runsOn = workspaceComputer === RUN_ON_AUTO ? await computersApi.pickPlacement() : workspaceComputer;
     // Git first: a new branch or worktree decides WHICH folder the agents start in.
     const prepared = workspaceGit.mode === "current" ? null : await prepareGit(workspaceProject.path, workspaceGit);
     const ownCheckout = workspaceGit.mode === "new_worktree" || workspaceGit.mode === "open_worktree";
     const next = await startIdeSession(prepared?.folder ?? workspaceProject.path, workspaceAgents.map((agent) => ({ agent })), {
       projectId: workspaceProject.id, name: workspaceName.trim() || (ownCheckout && prepared?.branch ? prepared.branch : undefined),
-      computerId: workspaceComputer ?? undefined,
+      computerId: runsOn ?? undefined,
       onMessage: notify,
     });
     setState(next);
@@ -714,7 +718,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           </label>
           <WorkspaceAgentSetup agents={workspaceChoices} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} />
           <GitCheckoutPicker folder={workspaceProject.path} value={workspaceGit} onChange={setWorkspaceGit} disabled={busy} context="workspace" />
-          <RunOnPicker value={workspaceComputer} onChange={setWorkspaceComputer} disabled={busy} />
+          <RunOnPicker value={workspaceComputer} onChange={setWorkspaceComputer} disabled={busy} allowAuto />
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
           <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>

@@ -36,7 +36,7 @@ import { openExternalUrl } from "@/lib/openExternal";
 import { bundledPluginLogo } from "@/lib/pluginLogos";
 import { useEventStore, type SectionId } from "@/store/events";
 import { installAgentTemplate, readFileText, type AgentTemplateWire } from "@/lib/agentShare";
-import { AgentSymbol } from "@/components/society/AgentSymbol";
+import { CompanionMark } from "@/components/society/companion/CompanionMark";
 import { resolveCompanion } from "@/components/society/companion/appearance";
 import {
   MARKETPLACE_SUBMIT_URL,
@@ -206,7 +206,7 @@ function AgentTile({ entry }: { entry: Entry }) {
   const appearance = resolveCompanion(entry.agent?.name || entry.name, entry.agent?.avatar?.companion);
   return (
     <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary">
-      <AgentSymbol {...appearance} size={30} />
+      <CompanionMark appearance={appearance} size={30} />
     </div>
   );
 }

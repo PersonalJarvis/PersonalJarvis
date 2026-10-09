@@ -498,9 +498,11 @@ class WebServer:
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
         from .computers_routes import router as computers_router
+        from .server_pairing_routes import router as server_pairing_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .costs_routes import router as costs_router
+        from .custom_api_routes import router as custom_api_router
         from .deck_routes import router as deck_router
         from .desktop_routes import router as desktop_router
         from .diagnostics_routes import router as diagnostics_router
@@ -652,6 +654,7 @@ class WebServer:
         app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
+        app.include_router(custom_api_router)
         app.include_router(marketplace_publish_router)
         app.state.friend_registry = None
         app.state.channel_manager = None
@@ -706,6 +709,7 @@ class WebServer:
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         # Settings -> Computers: the user's own servers and local VMs over SSH.
+        app.include_router(server_pairing_router)
         app.include_router(computers_router)
         # Desktop pets — the `pet` overlay style's pets, look and visibility.
         app.include_router(pets_router)
@@ -757,6 +761,9 @@ class WebServer:
         app.state.agent_chat = None
         app.state.agent_chat_factory = self._build_agent_chat_service
         app.include_router(agent_chat_router)
+        from .agent_server_routes import router as agent_server_router
+
+        app.include_router(agent_server_router)
         # Agent society (jarvis/society) — the roster, the typed board, the
         # scheduler and the mission bridge. Built on the first /api/society
         # call from the factory (store = data/society.db); nothing opens on
@@ -4041,6 +4048,18 @@ class WebServer:
 
     async def stop(self) -> None:
         from jarvis.core import runtime_refs
+
+        appshot_task = getattr(self, "_appshot_shortcut_task", None)
+        if appshot_task is not None:
+            appshot_task.cancel()
+            await asyncio.gather(appshot_task, return_exceptions=True)
+            self._appshot_shortcut_task = None
+        try:
+            from jarvis.appshot.hotkey import stop_appshot_shortcut
+
+            await stop_appshot_shortcut()
+        except Exception:
+            logger.opt(exception=True).warning("Appshot helpers failed to stop")
 
         if runtime_refs.get_web_app() is self.app:
             runtime_refs.set_web_app(None)

@@ -17,6 +17,9 @@ import {
 export const computerKeys = {
   all: ["computers"] as const,
   list: () => ["computers", "list"] as const,
+  sshHosts: () => ["computers", "ssh-hosts"] as const,
+  tailscale: () => ["computers", "tailscale"] as const,
+  placement: () => ["computers", "placement"] as const,
   identity: () => ["computers", "identity"] as const,
   cloud: () => ["computers", "cloud"] as const,
   cloudServers: (p: CloudProviderId) => ["computers", "cloud", p, "servers"] as const,
@@ -102,6 +105,86 @@ export function useCheckAll() {
   return useMutation({
     mutationFn: computersApi.checkAll,
     onSuccess: (rows) => qc.setQueryData(computerKeys.list(), rows),
+  });
+}
+
+/** Edit one record (rename, switch on/off, "Automatic" share). */
+export function useUpdateComputer() {
+  const upsert = useUpsertComputer();
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: Parameters<typeof computersApi.update>[1] }) =>
+      computersApi.update(id, patch),
+    onSuccess: upsert,
+  });
+}
+
+/** Add, reorder and forget a computer's addresses. */
+export function useRouteMutations() {
+  const upsert = useUpsertComputer();
+  const qc = useQueryClient();
+  const settle = (computer: Computer) => {
+    upsert(computer);
+    void qc.invalidateQueries({ queryKey: computerKeys.tailscale() });
+  };
+  return {
+    add: useMutation({
+      mutationFn: ({ id, route }: { id: string; route: Parameters<typeof computersApi.addRoute>[1] }) =>
+        computersApi.addRoute(id, route),
+      onSuccess: settle,
+    }),
+    order: useMutation({
+      mutationFn: ({ id, routeIds }: { id: string; routeIds: string[] }) =>
+        computersApi.orderRoutes(id, routeIds),
+      onSuccess: settle,
+    }),
+    remove: useMutation({
+      mutationFn: ({ id, routeId }: { id: string; routeId: string }) =>
+        computersApi.removeRoute(id, routeId),
+      onSuccess: settle,
+    }),
+  };
+}
+
+/** Servers this PC's own ssh knows; read once per dialog. */
+export function useSshHosts(enabled: boolean) {
+  return useQuery({
+    queryKey: computerKeys.sshHosts(),
+    queryFn: computersApi.sshHosts,
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** This PC's tailnet and the addresses each computer could add. */
+export function useTailscale(enabled = true) {
+  return useQuery({
+    queryKey: computerKeys.tailscale(),
+    queryFn: computersApi.tailscale,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function usePlacement() {
+  return useQuery({ queryKey: computerKeys.placement(), queryFn: computersApi.placement, retry: false });
+}
+
+export function useSetPlacement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: computersApi.setPlacement,
+    onSuccess: (settings) => qc.setQueryData(computerKeys.placement(), settings),
+  });
+}
+
+/** Share this PC's GitHub login with one computer's agents, or take it back. */
+export function useGithubShare() {
+  const upsert = useUpsertComputer();
+  return useMutation({
+    mutationFn: ({ id, share }: { id: string; share: boolean }) =>
+      share ? computersApi.shareGithub(id) : computersApi.unshareGithub(id),
+    onSuccess: upsert,
   });
 }
 

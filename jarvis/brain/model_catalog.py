@@ -894,6 +894,8 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
     """
     out: list[ModelInfo] = []
     if provider == "ollama":
+        from jarvis.brain.ollama_inventory import is_hidden_alias
+
         # Native /api/tags: {"models": [{"name": "qwen3.5:9b", ...}, ...]} —
         # the installed-model list of the user's own server. DOWNLOADED models
         # only: ``:cloud`` entries are ollama.com-proxied references, not
@@ -901,7 +903,7 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
         # the machine (maintainer report 2026-07-25).
         for m in payload.get("models", []) or []:
             raw = (m.get("name") or "").strip()
-            if not raw or raw.endswith(":cloud") or m.get("remote"):
+            if not raw or raw.endswith(":cloud") or m.get("remote") or is_hidden_alias(raw):
                 continue
             out.append(ModelInfo(id=raw, label=raw))
         return out
@@ -1830,6 +1832,13 @@ class ModelCatalog:
         aliases = {model, f"{model}:latest"} if provider == "ollama" else {model}
         return next((item for item in entry[1] if item.id in aliases), None)
 
+    async def invalidate(self, provider: str) -> None:
+        """Forget a previous endpoint's models and failed-fetch cooldown."""
+        async with self._lock:
+            self._cache.pop(provider, None)
+            self._fetch_failed_at.pop(provider, None)
+            await asyncio.to_thread(self._save_cache)
+
     async def list_models(self, provider: str, *, force_refresh: bool = False) -> CatalogResult:
         """Return the catalog for ``provider`` with an honest ``source`` flag.
 
@@ -1998,7 +2007,7 @@ class ModelCatalog:
             raise ValueError(f"Unsupported provider: {provider}")
         ep = _ENDPOINTS[provider]
         url = self._resolve_catalog_url(provider, ep)
-        key = cfg.get_provider_secret(provider)
+        key = cfg.resolve_provider_endpoint(provider).credential
         if not key and ep.auth in ("x-api-key", "bearer", "query"):
             raise RuntimeError(f"No API key configured for {provider}.")
         auth = ep.auth
@@ -2014,10 +2023,10 @@ class ModelCatalog:
                 headers = {"Authorization": f"Bearer {key}"}
         elif auth == "query":
             params = {"key": key or ""}
-        elif auth == "none" and ep.secret_slot is not None:
+        elif auth == "none" and (key or ep.secret_slot is not None):
             # Keyless local server with an OPTIONAL stored key (e.g. vLLM
             # --api-key): attach it when present, stay anonymous otherwise.
-            optional = cfg.get_secret(*ep.secret_slot)
+            optional = key or (cfg.get_secret(*ep.secret_slot) if ep.secret_slot else None)
             if optional:
                 headers = {"Authorization": f"Bearer {optional}"}
 
@@ -2039,12 +2048,15 @@ class ModelCatalog:
             resp.raise_for_status()
             models = parse_models_response(provider, resp.json())
             if provider == "ollama":
-                models = await self._enrich_ollama_capabilities(client, url, models)
+                models = await self._enrich_ollama_capabilities(
+                    client, url, models, headers=headers,
+                )
             return models
 
     @staticmethod
     async def _enrich_ollama_capabilities(
-        client: httpx.AsyncClient, tags_url: str, models: list[ModelInfo]
+        client: httpx.AsyncClient, tags_url: str, models: list[ModelInfo],
+        *, headers: dict[str, str] | None = None,
     ) -> list[ModelInfo]:
         """Attach each download's DECLARED capabilities from ``/api/show``.
 
@@ -2071,7 +2083,9 @@ class ModelCatalog:
         async def probe(info: ModelInfo) -> ModelInfo | None:
             async with semaphore:
                 try:
-                    resp = await client.post(f"{root}/api/show", json={"model": info.id})
+                    resp = await client.post(
+                        f"{root}/api/show", json={"model": info.id}, headers=headers,
+                    )
                     resp.raise_for_status()
                     shown = resp.json()
                     caps = shown.get("capabilities")

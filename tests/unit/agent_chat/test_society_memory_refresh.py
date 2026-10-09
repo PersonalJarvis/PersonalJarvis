@@ -36,3 +36,15 @@ def test_cleared_memory_explicitly_replaces_previous_snapshot():
     output = society_memory_refresh("## You are Scout\n## Your memory\nNothing remembered yet.")
     assert "Nothing remembered yet." in output
     assert "An absent section has no current entries" in output
+
+
+def test_resumed_cli_gets_the_credential_rule_and_the_current_stored_list():
+    text = (
+        "## You are Finn\nDiscord moderator\n\n## Standing instructions\nModerate.\n"
+        "\nClient timezone for this turn: Europe/Berlin."
+        "\nStored credentials: none. Ask with society_request_credential when a task needs one."
+    )
+    identity = Identity(session_id="society:finn", text=text, compact=text)
+    prompt = _with_identity("Use a token, please.", identity, "vendor-session")
+    assert "Credentials are mandatory tool work" in prompt
+    assert "Stored credentials: none." in prompt

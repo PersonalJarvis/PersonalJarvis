@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 from typing import Any
 
 from .questions import CANCELLED, MAX_ASKS_PER_TURN
+from .secret_requests import asks_for_secret, claims_stored_secret
 from .task_recovery import ToolRecovery
+
+log = logging.getLogger(__name__)
 
 _REQUEST = re.compile(
     r"^\s*(?:(?:hello|hi|hallo|hola)[,! ]+)?"  # i18n-allow
@@ -110,6 +114,11 @@ class TurnCompletion:
         self.calls: dict[str, tuple[str, dict[str, Any]]] = {}
         self.receipts = ToolRecovery()
         self.did_work = False
+        # Credential guard: everything the agent said this turn, and whether it
+        # opened a secure credential field (society_request_credential).
+        self.texts: list[str] = []
+        self.credential_asked = False
+        self.credential_corrected = False
         self.background_corrected = False
         self.background_unregistered = False
         self.background_tasks: set[str] = set()
@@ -130,6 +139,7 @@ class TurnCompletion:
         self.receipts.observe(event)
         if kind == "assistant_text":
             self.last_text = str(payload.get("text") or "")
+            self.texts.append(self.last_text)
             from .background_work import has_scheduled_work, promises_background_work
 
             self.background_unregistered = (
@@ -149,6 +159,8 @@ class TurnCompletion:
         elif kind == "tool_call":
             name = str(payload.get("name") or "").rsplit("__", 1)[-1].lower()
             self.calls[str(payload.get("call_id") or "")] = (name, payload.get("input") or {})
+            if name == CREDENTIAL_TOOL:
+                self.credential_asked = True
         elif kind == "tool_result":
             name, _ = self.calls.pop(str(payload.get("call_id") or ""), ("", {}))
             if name == "society_propose_change" and not payload.get("is_error"):
@@ -210,6 +222,9 @@ class TurnCompletion:
                     + "\nOriginal request:\n"
                     + self.context
                 )
+        correction = await self._credential_correction(sid)
+        if correction is not None:
+            return correction
         if self.background_unregistered:
             if (
                 self.allow_correction and not self.background_corrected
@@ -254,6 +269,40 @@ class TurnCompletion:
             )
         return None
 
+    async def _credential_correction(self, sid: str) -> str | None:
+        """Steer a reply that asks for a secret in plain text back to the secure field.
+
+        Once per turn, only when the agent did not open a credential field
+        itself. A reply that claims a credential is stored counts too when the
+        agent has none stored.
+        """
+        if (
+            not self.allow_correction
+            or self.credential_corrected
+            or self.credential_asked
+            or self.receipts.declined
+            or self.receipts.blocked
+        ):
+            return None
+        said = "\n".join(self.texts)
+        stored = await _stored_credentials(sid)
+        if stored is None:
+            return None  # no credential tool in this chat (a routine, or no society)
+        if not asks_for_secret(said) and not (not stored and claims_stored_secret(said)):
+            return None
+        self.credential_corrected = True
+        return (
+            "Your reply asks the user for a credential, says where to put one, or claims one is "
+            f"stored, but you did not call {CREDENTIAL_TOOL}. Secrets reach you only through "
+            f"that tool. Call {CREDENTIAL_TOOL} now for each credential the task needs (env, "
+            "label, and a description of what it is for and where the user creates it), wait "
+            "for its result, then continue the original task. Do not ask for the value in the "
+            "chat and do not repeat the request in plain text. Stored credentials right now: "
+            + (", ".join(stored) if stored else "none")
+            + ". If the task needs no credential from the user, finish without mentioning one."
+            "\nOriginal request:\n" + self.context
+        )
+
     async def publish(self) -> None:
         if self.finish_event is not None:
             payload = {
@@ -264,3 +313,25 @@ class TurnCompletion:
             if self.cost is not None:
                 payload["cost_usd"] = self.cost
             await self.handle.emit({**self.finish_event, "payload": payload})
+
+
+#: The secure credential field's tool (jarvis/society/credential_tool.py).
+CREDENTIAL_TOOL = "society_request_credential"
+
+
+async def _stored_credentials(session_id: str) -> list[str] | None:
+    """Env names stored for the chat's society agent; ``None`` without the tool."""
+    from jarvis.society.credentials import current_vault
+    from jarvis.society.routine_runner import is_routine_session
+    from jarvis.society.surface import agent_id_of
+
+    agent_id = agent_id_of(session_id)
+    vault = current_vault()
+    if agent_id is None or vault is None or is_routine_session(session_id):
+        return None
+    try:
+        rows = await asyncio.to_thread(vault.list, agent_id)
+    except Exception:  # noqa: BLE001 — an unreadable index skips the guard, never the turn
+        log.warning("credential guard: index unavailable for %s", session_id, exc_info=True)
+        return None
+    return [row.env for row in rows]

@@ -275,7 +275,7 @@ def _read_store() -> dict[str, Any]:
     """The stored state, or an empty one for every unreadable shape."""
     try:
         raw = _store_path().read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except FileNotFoundError:  # no store yet is the first-run state
         return {"accounts": [], "active": {}}
     except OSError as exc:
         logger.warning("Agent accounts: store could not be read ({}) — ignoring it", exc)
@@ -289,24 +289,29 @@ def _read_store() -> dict[str, Any]:
         return {"accounts": [], "active": {}}
     accounts = data.get("accounts")
     active = data.get("active")
-    return {
+    switching = data.get("auto_switch")
+    state: dict[str, Any] = {
         "accounts": accounts if isinstance(accounts, list) else [],
         "active": active if isinstance(active, dict) else {},
     }
+    if isinstance(switching, dict):
+        state["auto_switch"] = switching
+    return state
 
 
 def _write_store(state: Mapping[str, Any]) -> None:
     """Atomic write — a half-written store must never be a readable one."""
     path = _store_path()
-    payload = json.dumps(
-        {
-            "version": SCHEMA_VERSION,
-            "accounts": list(state.get("accounts", [])),
-            "active": dict(state.get("active", {})),
-        },
-        indent=2,
-        ensure_ascii=False,
-    )
+    document: dict[str, Any] = {
+        "version": SCHEMA_VERSION,
+        "accounts": list(state.get("accounts", [])),
+        "active": dict(state.get("active", {})),
+    }
+    if isinstance(state.get("auto_switch"), Mapping):
+        # Optional and additive: an older build reads the same version and
+        # simply ignores the key, so it needs no schema bump.
+        document["auto_switch"] = dict(state["auto_switch"])
+    payload = json.dumps(document, indent=2, ensure_ascii=False)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{uuid4().hex[:8]}.tmp")
@@ -333,7 +338,7 @@ def _parse_account(raw: Any) -> AgentAccount | None:
     label = label if isinstance(label, str) and label.strip() else account_id
     try:
         directory = Path(config_dir).expanduser()
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # an unusable directory makes the row invalid
         return None
     return AgentAccount(
         id=account_id,
@@ -531,6 +536,82 @@ def delete_account(account_id: str, *, remove_files: bool = False) -> AgentAccou
     return account
 
 
+# ------------------------------------------------------------ auto switch
+
+#: Where a seat counts as used up and its work moves to the next one: 97 % of
+#: its tightest limit, i.e. three percent left. Late enough not to abandon a
+#: seat with real budget on it, early enough that the turn in flight usually
+#: finishes before the provider refuses the next request.
+DEFAULT_SWITCH_AT_PERCENT = 97.0
+
+#: The bounds a user may move that threshold within. Below 50 a seat would be
+#: abandoned with half its plan unused; at 100 the switch only ever follows a
+#: refusal, which is still handled (see :mod:`jarvis.agentic_ide.seat_switch`).
+MIN_SWITCH_AT_PERCENT = 50.0
+MAX_SWITCH_AT_PERCENT = 100.0
+
+
+@dataclass(frozen=True, slots=True)
+class AutoSwitch:
+    """Whether running work follows a seat that runs out, and at what point."""
+
+    enabled: bool = True
+    at_percent: float = DEFAULT_SWITCH_AT_PERCENT
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "at_percent": self.at_percent}
+
+
+def _clamp_switch_percent(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):  # a malformed setting falls back to the default
+        return DEFAULT_SWITCH_AT_PERCENT
+    if number != number:  # NaN
+        return DEFAULT_SWITCH_AT_PERCENT
+    return max(MIN_SWITCH_AT_PERCENT, min(MAX_SWITCH_AT_PERCENT, number))
+
+
+def auto_switch() -> AutoSwitch:
+    """The stored auto-switch choice; on by default.
+
+    On by default because holding a second seat has exactly one purpose — to
+    keep working when the first one runs out — and a feature that has to be
+    discovered and switched on first fails the user at the very moment it
+    exists for. A user with a single seat is unaffected: there is nothing to
+    switch to.
+    """
+    raw = _read_store().get("auto_switch")
+    if not isinstance(raw, dict):
+        return AutoSwitch()
+    enabled = raw.get("enabled")
+    return AutoSwitch(
+        enabled=enabled if isinstance(enabled, bool) else True,
+        at_percent=_clamp_switch_percent(raw.get("at_percent", DEFAULT_SWITCH_AT_PERCENT)),
+    )
+
+
+def set_auto_switch(*, enabled: bool | None = None, at_percent: float | None = None) -> AutoSwitch:
+    """Change the auto-switch choice; omitted fields keep their stored value."""
+    with _WRITE_LOCK:
+        state = _read_store()
+        current = state.get("auto_switch") if isinstance(state.get("auto_switch"), dict) else {}
+        merged = dict(current)
+        if enabled is not None:
+            merged["enabled"] = bool(enabled)
+        if at_percent is not None:
+            merged["at_percent"] = _clamp_switch_percent(at_percent)
+        state["auto_switch"] = merged
+        _write_store(state)
+    choice = auto_switch()
+    logger.info(
+        "Agent accounts: auto switch {} at {:.0f} %",
+        "on" if choice.enabled else "off",
+        choice.at_percent,
+    )
+    return choice
+
+
 # ------------------------------------------------------------------ spawn
 
 
@@ -643,7 +724,7 @@ def _read_settings(path: Path, fmt: str) -> dict[str, Any] | None:
     """
     try:
         raw = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except OSError:  # an unreadable file means nothing to inherit
         return None
     try:
         if fmt == "json":
@@ -667,7 +748,7 @@ def _open_settings(path: Path, fmt: str) -> Any:
     """
     try:
         raw = path.read_text(encoding="utf-8-sig")
-    except OSError:
+    except OSError:  # a missing file is written fresh below
         raw = ""
     try:
         if fmt == "json":
@@ -1187,16 +1268,21 @@ def start_login(account: AgentAccount) -> Any:
 
 
 __all__ = [
+    "DEFAULT_SWITCH_AT_PERCENT",
     "MAX_ACCOUNTS_PER_PLATFORM",
+    "MAX_SWITCH_AT_PERCENT",
+    "MIN_SWITCH_AT_PERCENT",
     "MAX_LABEL_CHARS",
     "SCHEMA_VERSION",
     "AccountError",
     "AccountSnapshot",
     "AgentAccount",
+    "AutoSwitch",
     "Platform",
     "active_account",
     "active_ids",
     "all_accounts",
+    "auto_switch",
     "builtin_id",
     "config_dir_for",
     "create_account",
@@ -1214,6 +1300,7 @@ __all__ = [
     "rename_account",
     "resolve",
     "set_active",
+    "set_auto_switch",
     "snapshots",
     "spawn_env",
     "start_login",

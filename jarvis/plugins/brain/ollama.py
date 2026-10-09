@@ -173,6 +173,15 @@ class OllamaBrain:
         # image path so one turn never probes the same download twice.
         self._caps_cache: dict[str, set[str] | None] = {}
         self.supports_vision = _declared_vision_support(self._model)
+        if self._model:
+            from jarvis.brain.model_catalog import model_capabilities
+
+            self.supports_tools = model_capabilities("ollama", self._model)["tools"] is not False
+            # Tool fitting and history compaction happen before complete().
+            # Publish an explicit local context limit before either budgets.
+            options = self._model_options(self._model)
+            if options is not None and options.num_ctx:
+                self.context_window = options.num_ctx
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
@@ -206,8 +215,14 @@ class OllamaBrain:
                 api_key=self._credential or "ollama",
                 base_url=f"{root}/v1",
                 timeout=CLIENT_TIMEOUT,
+                max_retries=0,
             )
         return self._client
+
+    def _native_headers(self) -> dict[str, str]:
+        """Native discovery/profile calls use the same endpoint credential as chat."""
+        self._resolve_root()
+        return {"Authorization": f"Bearer {self._credential}"} if self._credential else {}
 
     async def _resolve_model(self, *, need_tools: bool = False, need_vision: bool = False) -> str:
         """The configured model, else the smallest CAPABLE download.
@@ -226,13 +241,25 @@ class OllamaBrain:
         always overrides this.
         """
         if self._model:
+            if need_tools:
+                caps = await self._capabilities(self._model, self._resolve_root())
+                if caps is not None:
+                    self.supports_tools = "tools" in caps
+                    if not self.supports_tools:
+                        raise RuntimeError(
+                            f"The selected Ollama model '{self._model}' does not support tools. "
+                            "Choose a tool-capable model for this agent. "
+                            "No other provider was called."
+                        )
             return self._model
         profile = (need_tools, need_vision)
         if profile in self._discovered:
             return self._discovered[profile]
         root = self._resolve_root()
         try:
-            async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=CLIENT_TIMEOUT, headers=self._native_headers(),
+            ) as client:
                 resp = await client.get(f"{root}/api/tags")
                 resp.raise_for_status()
                 models = resp.json().get("models") or []
@@ -241,12 +268,15 @@ class OllamaBrain:
                 f"Ollama not reachable at {root} — is it running? Start it "
                 "(or install from https://ollama.com/download), then retry."
             ) from exc
+        from jarvis.brain.ollama_inventory import is_hidden_alias
+
         local = [
             m
             for m in models
             if (name := str(m.get("name") or "").strip())
             and not name.endswith(":cloud")
             and not m.get("remote")
+            and not is_hidden_alias(name)
         ]
         if not local:
             raise RuntimeError(
@@ -280,7 +310,11 @@ class OllamaBrain:
             )
             return name
         if need_vision:
-            self.supports_vision = False
+            if any(str(row.get("name")).strip() not in self._caps_cache for row in local):
+                raise RuntimeError(
+                    "Ollama could not report image capabilities for the downloaded models. "
+                    "Check the server connection and retry; no image was sent to a model."
+                )
             raise RuntimeError(
                 f"None of the models downloaded at {root} can see images — run: "
                 f"ollama pull {RECOMMENDED_VISION_PULL} (a multimodal model), "
@@ -309,15 +343,19 @@ class OllamaBrain:
             return self._caps_cache[name]
         caps_set: set[str] | None = None
         try:
-            async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                timeout=CLIENT_TIMEOUT, headers=self._native_headers(),
+            ) as client:
                 resp = await client.post(f"{root}/api/show", json={"model": name})
                 resp.raise_for_status()
                 caps = resp.json().get("capabilities")
             if isinstance(caps, list):
                 caps_set = {str(c) for c in caps}
-        except Exception:  # noqa: BLE001 — probe glitch must not block the pick
+        except Exception:  # noqa: BLE001 — retry unavailable metadata on the next turn
+            log.debug("ollama: capability lookup failed for %s", name, exc_info=True)
             caps_set = None
-        self._caps_cache[name] = caps_set
+        if caps_set is not None:
+            self._caps_cache[name] = caps_set
         return caps_set
 
     async def _pinned_model_can_see(self, model: str) -> bool:
@@ -342,7 +380,16 @@ class OllamaBrain:
             # silently swap it — but we also refuse to answer about a picture
             # it never saw. The caller degrades honestly (Screen Context says
             # it cannot look; the CU planner skips this brain).
-            self.supports_vision = False
+            # An unavailable probe says nothing about model capabilities.
+            # Keep the provider eligible for a later retry after recovery.
+            caps = self._caps_cache.get(model)
+            if caps is None:
+                raise RuntimeError(
+                    "Ollama could not verify this model's image capability. "
+                    "Check the server connection and retry; no image was sent to the model."
+                )
+            if caps is not None:
+                self.supports_vision = "vision" in caps
             raise RuntimeError(
                 f"The configured Ollama model '{model}' cannot see images. Pick a "
                 f"multimodal model on the Ollama card (ollama pull "
@@ -381,7 +428,9 @@ class OllamaBrain:
             return None
         if provider is None:
             return None
-        return provider.models.get(model) or provider.models.get(f"{model}:latest")
+        return (provider.models.get(model)
+                or provider.models.get(model.removesuffix(":latest"))
+                or provider.models.get(f"{model}:latest"))
 
     async def _apply_model_options(self, model: str, req: BrainRequest) -> tuple[str, BrainRequest]:
         """Turn the per-model options into ``(model to stream, request)``.
@@ -414,7 +463,7 @@ class OllamaBrain:
         run_model = model
         if has_bakeable(opts):
             try:
-                run_model = await ensure_profile(root, model, opts)
+                run_model = await ensure_profile(root, model, opts, headers=self._native_headers())
             except Exception as exc:  # noqa: BLE001 — degrade to the base model, say so
                 if self._requested_context_window is not None:
                     # The runtime already budgets against this window. Sending
@@ -431,7 +480,7 @@ class OllamaBrain:
         if opts.num_ctx:
             self.context_window = opts.num_ctx
         if opts.keep_alive is not None:
-            await warm(root, run_model, opts.keep_alive)
+            await warm(root, run_model, opts.keep_alive, headers=self._native_headers())
         overrides: dict[str, Any] = {}
         defaults = {f.name: f.default for f in fields(BrainRequest)}
         for key, value in to_v1_kwargs(opts).items():

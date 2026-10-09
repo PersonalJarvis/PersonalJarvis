@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
+import { CredentialCard } from "@/components/agentchat/CredentialCard";
 import { QuestionCard } from "@/components/agentchat/QuestionCard";
-import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import { waitsOnCard, type TextBlock, type TimelineItem, type ToolBlock, type TurnBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
 import { plural, readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
@@ -30,7 +31,7 @@ import { listSubagents } from "./subagents";
  * MIT License, Copyright (c) 2026 T3 Tools Inc. — third_party/t3code/LICENSE.
  */
 
-const PROSE = cn(
+export const PROSE = cn(
   "py-1 prose prose-neutral max-w-none text-base leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
   "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
   "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
@@ -263,7 +264,7 @@ function ThinkingRow({ grouped = false }: { grouped?: boolean }) {
  * A picture in the agent's words — an image it viewed or made — reads as a
  * small preview in the thread; a click opens it full size.
  */
-const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_img]:max-w-sm [&_[data-kind=image]_img]:border [&_[data-kind=image]_img]:border-border";
+export const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_img]:max-w-sm [&_[data-kind=image]_img]:border [&_[data-kind=image]_img]:border-border";
 
 function StepRow({ item, running, grouped, onOpenChange }: { item: WorkItem; running: boolean; grouped?: boolean; onOpenChange?: OpenChange }) {
   if (item.kind === "call") return <CallRow call={item.call} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
@@ -545,7 +546,7 @@ export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<
 
 /** A call still waiting for the person: an open question or an undecided approval. */
 function waitsForPerson(block: ToolBlock): boolean {
-  return Boolean(block.question && !block.question.closed) || Boolean(block.approval && block.approval.decision === null);
+  return waitsOnCard(block) || Boolean(block.approval && block.approval.decision === null);
 }
 
 function pendingLabel(block: ToolBlock, t: (key: string) => string): { icon: ReactNode; text: string } | null {
@@ -560,7 +561,7 @@ function pendingLabel(block: ToolBlock, t: (key: string) => string): { icon: Rea
  * An approval answered in the turn itself: the waiting line, what the agent
  * asks for, and the three answers under it.
  */
-function ApprovalPrompt({ block, onDecide }: { block: ToolBlock; onDecide?: Decide }) {
+export function ApprovalPrompt({ block, onDecide }: { block: ToolBlock; onDecide?: Decide }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -643,8 +644,12 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
   const running = turn.status === "running";
   const inline = prompts === "inline";
   const pictures = useMemo(() => callPictures(turn.blocks), [turn.blocks]);
+  // Keep credential fields mounted while the surrounding work folds at turn end.
+  // The pasted value lives only in the field, so a remount would discard it.
+  const credentials = turn.blocks.filter((block): block is ToolBlock => block.kind === "tool" && Boolean(block.credential));
   const rows = useMemo(
-    () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) => !(row.kind === "text" && pictures.moved.has(row.block.id))),
+    () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) =>
+      !(row.kind === "text" && pictures.moved.has(row.block.id)) && !(row.kind === "pending" && row.block.credential)),
     [turn.blocks, t, lang, turn.status, pictures],
   );
   const answer = answerText(turn);
@@ -672,6 +677,8 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
     if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
     if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     if (row.kind === "agent") return <SubagentCard key={row.id} block={row.block} turn={turn} />;
+    // A secret is pasted where it is asked for, never into a composer.
+    if (row.block.credential) return <CredentialCard key={row.id} credential={row.block.credential} />;
     if (inline) {
       if (row.block.question) return <QuestionCard key={row.id} question={row.block.question} />;
       if (row.block.approval && row.block.approval.decision === null) return <ApprovalPrompt key={row.id} block={row.block} onDecide={onDecide} />;
@@ -700,6 +707,7 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
     </div>}
     {folded && agents.length > 0 && <div className="space-y-1.5 pt-1" data-testid="thread-turn-subagents">{agents.map(renderRow)}</div>}
     {folded && waiting.map(renderRow)}
+    {credentials.map((block) => <CredentialCard key={block.credential!.requestId} credential={block.credential!} />)}
     {shown.slice(0, extraAt).map(renderRow)}
     {!folded && extraNodes}
     {shown.slice(extraAt).map(renderRow)}

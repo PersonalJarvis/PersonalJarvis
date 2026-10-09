@@ -5,11 +5,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ComputersView } from "@/views/ComputersView";
 import { loadLocaleChunk, setUiLanguage } from "@/i18n";
-import type { Computer } from "@/lib/computersApi";
+import type { Computer, PairedServer } from "@/lib/computersApi";
 
 // Assembled from parts so the literal key header never appears in source;
 // the pre-push credential scanner flags that header as a private key block.
@@ -23,6 +23,7 @@ interface Call {
 }
 
 function installFetch(routes: Record<string, (body: unknown) => unknown>) {
+  routes = { "GET /api/computers/pairing/servers": () => ({ servers: [] }), ...routes };
   const calls: Call[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -304,6 +305,7 @@ describe("ComputersView", () => {
     renderView();
 
     fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.click(await screen.findByTestId("cx-additional-options"));
     fireEvent.click(await screen.findByTestId("cx-account-hostinger"));
     expect(await screen.findByTestId("wz-token")).toBeTruthy();
   });
@@ -369,6 +371,136 @@ describe("ComputersView", () => {
     // And back to the automatic way.
     fireEvent.click(screen.getByTestId("cx-auto-back"));
     expect(screen.getByTestId("cx-auto")).toBeTruthy();
+  });
+
+  it("switches connection forms without losing drafts or sending pairing data to SSH", async () => {
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByTestId("cx-address"), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByRole("radio", { name: "Server address" }));
+    expect(screen.queryByRole("textbox", { name: "SSH host" })).toBeNull();
+    expect(screen.queryByTestId("cx-additional-options")).toBeNull();
+    fireEvent.paste(screen.getByRole("textbox", { name: "Host" }), {
+      clipboardData: { getData: () => "https://backend.example.com/pair?code=ExampleCode" },
+    });
+    expect((screen.getByTestId("cx-server-host") as HTMLInputElement).value).toBe("https://backend.example.com");
+    expect((screen.getByTestId("cx-pairing-code") as HTMLInputElement).value).toBe("ExampleCode");
+    expect((within(screen.getByTestId("cx-server-form")).getByRole("button", { name: "Add computer" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "SSH" }));
+    expect((screen.getByRole("textbox", { name: "SSH host" }) as HTMLInputElement).value).toBe("192.0.2.10");
+    expect(screen.queryByRole("textbox", { name: "Pairing code" })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Server address" }));
+    expect((screen.getByRole("textbox", { name: "Pairing code" }) as HTMLInputElement).value).toBe("ExampleCode");
+  });
+
+  it("pairs a server, opens its real launch URL, checks it and revokes the connection", async () => {
+    let servers: PairedServer[] = [];
+    const server: PairedServer = { id: "s_test", url: "https://backend.example.com", name: "Remote Jarvis", platform: "Linux", created_at: 1, checked_at: 1, online: true };
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "GET /api/computers/pairing/servers": () => ({ servers }),
+      "POST /api/computers/pairing/servers": () => { servers = [server]; return server; },
+      "POST /api/computers/pairing/servers/s_test/open": () => ({ url: "https://backend.example.com/api/computers/pairing/enter#example-ticket" }),
+      "POST /api/settings/open-external": () => ({ opened: true }),
+      "POST /api/computers/pairing/servers/s_test/check": () => { servers = [{ ...server, online: false }]; return servers[0]; },
+      "DELETE /api/computers/pairing/servers/s_test": () => { servers = []; return { removed: true }; },
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.click(await screen.findByRole("radio", { name: "Server address" }));
+    fireEvent.paste(screen.getByTestId("cx-server-host"), { clipboardData: { getData: () => "https://backend.example.com/#pairing_code=ExampleCode" } });
+    fireEvent.submit(screen.getByTestId("cx-server-form"));
+    fireEvent.submit(screen.getByTestId("cx-server-form"));
+    expect(await screen.findByTestId("paired-servers")).toBeTruthy();
+    expect(screen.queryByTestId("computers-connect-dialog")).toBeNull();
+    expect(calls.filter((call) => call.method === "POST" && call.url === "/api/computers/pairing/servers")).toHaveLength(1);
+    expect(calls.find((call) => call.method === "POST" && call.url === "/api/computers/pairing/servers")?.body).toEqual({ host: "https://backend.example.com", code: "ExampleCode" });
+    expect(calls.some((call) => call.url === "/api/computers/test")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Open server" }));
+    await waitFor(() => expect(calls.some((call) => call.url === "/api/settings/open-external")).toBe(true));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Check again" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByText(/Connection unavailable/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect and revoke access" }));
+    await waitFor(() => expect(screen.queryByTestId("paired-servers")).toBeNull());
+  });
+
+  it("keeps pairing details after a failed connection and can retry", async () => {
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/pairing/servers": () => { throw new Error("Pairing rejected"); },
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.click(await screen.findByRole("radio", { name: "Server address" }));
+    fireEvent.change(screen.getByTestId("cx-server-host"), { target: { value: "backend.example.com" } });
+    fireEvent.change(screen.getByTestId("cx-pairing-code"), { target: { value: "ExampleCode" } });
+    fireEvent.submit(screen.getByTestId("cx-server-form"));
+    expect(await screen.findByText("Pairing rejected")).toBeTruthy();
+    expect((screen.getByTestId("cx-pairing-code") as HTMLInputElement).value).toBe("ExampleCode");
+    fireEvent.submit(screen.getByTestId("cx-server-form"));
+    await waitFor(() => expect(calls.filter((call) => call.method === "POST")).toHaveLength(2));
+  });
+
+  it("creates a pairing code only on request and can revoke a paired client", async () => {
+    let clients = [{ id: "g_test", name: "Laptop", created_at: 1 }];
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "GET /api/computers/pairing/clients": () => ({ clients }),
+      "POST /api/computers/pairing/code": () => ({ code: "ExampleCode", expires_at: Date.now() / 1000 + 300 }),
+      "DELETE /api/computers/pairing/clients/g_test": () => { clients = []; return { removed: true }; },
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.click(await screen.findByRole("radio", { name: "Server address" }));
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Allow another computer to connect to this Jarvis" }));
+    expect(await screen.findByText("Laptop")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Generate pairing code" }));
+    expect(await screen.findByText("ExampleCode")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Revoke access" }));
+    await waitFor(() => expect(screen.queryByText("Laptop")).toBeNull());
+  });
+
+  it("validates the visible SSH port and sends explicit login overrides", async () => {
+    const calls = installFetch({
+      "GET /api/computers": () => ({ computers: [] }),
+      "GET /api/computers/providers": () => ({ providers: PROVIDERS }),
+      "GET /api/computers/identity": () => IDENTITY,
+      "POST /api/computers/test": () => ({
+        ok: false, kind: "unreachable", message: null, facts: null,
+        host_fingerprint: null, latency_ms: null,
+      }),
+    });
+    renderView();
+    fireEvent.click(await screen.findByTestId("computers-add-first"));
+    fireEvent.change(await screen.findByLabelText("SSH host"), { target: { value: "ssh root@192.0.2.10:2222" } });
+    fireEvent.change(screen.getByTestId("cx-username"), { target: { value: "deploy" } });
+    const port = screen.getByTestId("cx-port");
+    for (const value of ["0", "65536", "1.5", "-1"]) {
+      fireEvent.change(port, { target: { value } });
+      expect((screen.getByTestId("cx-connect") as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByRole("alert").textContent).toContain("between 1 and 65535");
+    }
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    fireEvent.change(port, { target: { value: "2200" } });
+    fireEvent.click(screen.getByTestId("cx-connect"));
+    await screen.findByTestId("cx-edit");
+    expect(calls.find((call) => call.url === "/api/computers/test")?.body).toMatchObject({
+      host: "192.0.2.10", username: "deploy", port: 2200, auth: "auto",
+    });
   });
 
   it("lists a machine, opens it and runs a console command", async () => {

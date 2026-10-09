@@ -125,6 +125,8 @@ export interface ComboboxProps {
   browseGroups?: ComboboxGroup[];
   /** A column drawn left of the search and the list (a rail of sections). */
   aside?: ReactNode;
+  /** Controls above the browsed rows; hidden while searching across all groups. */
+  browseHeader?: ReactNode;
   /** Told whenever the panel opens or closes. */
   onOpenChange?: (open: boolean) => void;
   /** The panel's narrowest width; defaults to 288 px. */
@@ -268,6 +270,7 @@ export function Combobox({
   triggerPrefix,
   browseGroups,
   aside,
+  browseHeader,
   onOpenChange,
   panelMinWidth = MIN_PANEL_WIDTH,
 }: ComboboxProps) {
@@ -691,6 +694,7 @@ export function Combobox({
               </div>
             )}
 
+            {!query.trim() && browseHeader}
             <div
               ref={attachList}
               id={listId}

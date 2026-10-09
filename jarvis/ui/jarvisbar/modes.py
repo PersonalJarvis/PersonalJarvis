@@ -24,6 +24,22 @@ from __future__ import annotations
 #: Voice-session modes, driven by the supervisor state machine.
 VOICE_MODES: tuple[str, ...] = ("idle", "listen", "speak", "think")
 
+#: The call was accepted but the realtime transport is still negotiating
+#: (``SupervisorState.CONNECTING``): the wake word was heard, the opening words
+#: are being buffered, and the provider has not taken a single frame yet. On a
+#: hosted provider this lasts a moment, on a self-hosted one seconds — long
+#: enough that a bar showing the plain listening look claimed the user was
+#: already being heard.
+#:
+#: - ``connect`` — a loading loop until the provider accepts the session; the
+#:   surface then plays a short "connected" flourish on its way to ``listen``.
+#:   It is part of the call, so its close-X hangs up like the listening one.
+CONNECT_MODES: tuple[str, ...] = ("connect",)
+
+#: Modes during which a voice call is running: a click on the talk control or
+#: the phone hangs up instead of starting a new call.
+ACTIVE_VOICE_MODES: tuple[str, ...] = CONNECT_MODES + ("listen", "speak", "think")
+
 #: Dictation modes. Dictation runs OUTSIDE the voice state machine (it raises no
 #: ``SystemStateChanged``), so it gets its own modes rather than borrowing a
 #: voice one — reusing ``listen``/``think`` would re-arm the close-X hang-up and
@@ -48,4 +64,4 @@ DICTATION_MODES: tuple[str, ...] = ("dictate", "dictate_transcribing")
 NOTICE_MODES: tuple[str, ...] = ("notice",)
 
 #: Every mode a surface accepts. Anything else is dropped by ``show()``.
-MODES: tuple[str, ...] = VOICE_MODES + DICTATION_MODES + NOTICE_MODES
+MODES: tuple[str, ...] = VOICE_MODES + CONNECT_MODES + DICTATION_MODES + NOTICE_MODES

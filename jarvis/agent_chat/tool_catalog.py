@@ -38,6 +38,10 @@ class ToolChoice(BaseModel):
     available: bool = True
     tool_names: tuple[str, ...] = ()
     skill: str = ""
+    # A plugin the owner added here (custom connector or upload). The Add
+    # menu lists these even before they are connected, so a connector just
+    # added is never hidden behind a search.
+    user_added: bool = False
 
 
 def category_for(name: str) -> Category:
@@ -99,8 +103,24 @@ def build_catalog(
                 brand=spec.id,
                 available=available,
                 tool_names=names,
+                user_added=getattr(spec, "source", "") == "local",
             )
         )
+        owned.update(names)
+    custom_apis: dict[str, list[str]] = {}
+    for name, tool in usable.items():
+        api_id = getattr(tool, "custom_api_id", None)
+        if isinstance(api_id, str) and api_id:
+            custom_apis.setdefault(api_id, []).append(name)
+    for api_id, names in custom_apis.items():
+        tool = usable[names[0]]
+        label = str(getattr(tool, "custom_api_name", api_id))
+        rows.append(ToolChoice(
+            id=f"plugin:custom-api-{api_id}", label=label,
+            description=str(getattr(tool, "custom_api_description", "") or tool.description),
+            brand=str(getattr(tool, "custom_api_brand", "")),
+            category="plugins", group=label, tool_names=tuple(names),
+        ))
         owned.update(names)
     servers: dict[str, list[str]] = {}
     for name, tool in usable.items():

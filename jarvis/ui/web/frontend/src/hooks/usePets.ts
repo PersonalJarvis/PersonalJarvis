@@ -54,6 +54,20 @@ export function useActivePet(): Pet | null {
   return useMemo(() => pickActivePet(data), [data]);
 }
 
+/**
+ * One pet by id, for an agent that wears it: undefined while the shared
+ * answer loads, null when this machine has no such pet (or the answer
+ * failed), so the caller can fall back to the agent's shape.
+ */
+export function usePetById(id: string | undefined): Pet | null | undefined {
+  const { data, isError } = useQuery({ queryKey: petKeys.all, queryFn: fetchPets, staleTime: Infinity, enabled: !!id });
+  return useMemo(() => {
+    if (!id) return null;
+    if (!data) return isError ? null : undefined;
+    return (Array.isArray(data.pets) ? data.pets : []).find((pet) => pet.id === id) ?? null;
+  }, [data, id, isError]);
+}
+
 function useInvalidatePets() {
   const qc = useQueryClient();
   return () => qc.invalidateQueries({ queryKey: petKeys.all });

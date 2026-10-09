@@ -1,0 +1,55 @@
+/* Companion design effects (SkinLayers.tsx): transforms and opacity only. */
+.society-agent-symbol .agent-skin-stars circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-skin-twinkle 2.6s ease-in-out infinite;
+}
+@keyframes agent-skin-twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.6); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+
+.society-agent-symbol .agent-skin-shine {
+  animation: agent-skin-shine 3.4s ease-in-out infinite;
+}
+@keyframes agent-skin-shine {
+  0% { transform: translateX(0); }
+  55%, 100% { transform: translateX(78px); }
+}
+
+.society-agent-symbol .agent-skin-flow {
+  animation: agent-skin-flow 7s linear infinite;
+}
+/* One gradient period (FLOW_PERIOD), so the loop has no seam. */
+@keyframes agent-skin-flow {
+  from { transform: translateX(0); }
+  to { transform: translateX(-40px); }
+}
+
+.society-agent-symbol .agent-skin-glow {
+  animation: agent-skin-glow 2.8s ease-in-out infinite alternate;
+}
+@keyframes agent-skin-glow {
+  from { opacity: 0.45; }
+  to { opacity: 0.95; }
+}
+
+.society-agent-symbol .agent-skin-glint {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-skin-glint 3.3s ease-in-out infinite;
+}
+@keyframes agent-skin-glint {
+  0%, 60%, 100% { transform: scale(0) rotate(0deg); opacity: 0; }
+  72% { transform: scale(1) rotate(45deg); opacity: 1; }
+  86% { transform: scale(0.5) rotate(80deg); opacity: 0.6; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .society-agent-symbol .agent-skin-stars circle,
+  .society-agent-symbol .agent-skin-flow,
+  .society-agent-symbol .agent-skin-glow { animation: none; }
+  .society-agent-symbol .agent-skin-stars circle { opacity: 0.85; }
+  .society-agent-symbol .agent-skin-shine { animation: none; transform: translateX(32px); opacity: 0.5; }
+  .society-agent-symbol .agent-skin-glint { animation: none; transform: scale(0.85) rotate(45deg); opacity: 0.9; }
+}

@@ -464,18 +464,20 @@ async def _apply_identity(rt: Any, agent: AgentRecord, payload: dict[str, Any]) 
         key: list(agent.approval_rules.get(key, []))
         for key in ("require_approval", "always_allow")
     }
-    derived_focus, derived_rules = rt.derive(
-        fields.get("title", agent.title), fields.get("description", agent.description)
-    )
-    focus = list(agent.focus)
-    for cap_id in derived_focus:
-        if cap_id not in focus:
-            focus.append(cap_id)
-    if focus != list(agent.focus):
-        fields["focus"] = focus
-    has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
-    if not has_rules and derived_rules.get("require_approval"):
-        fields["approval_rules"] = derived_rules
+    if "title" in fields or "description" in fields:
+        # Naming an existing role must not rewrite its focus or approval rules.
+        derived_focus, derived_rules = rt.derive(
+            fields.get("title", agent.title), fields.get("description", agent.description)
+        )
+        focus = list(agent.focus)
+        for cap_id in derived_focus:
+            if cap_id not in focus:
+                focus.append(cap_id)
+        if focus != list(agent.focus):
+            fields["focus"] = focus
+        has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
+        if not has_rules and derived_rules.get("require_approval"):
+            fields["approval_rules"] = derived_rules
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
     except RosterError as exc:  # reported on the outcome card as "failed"; nothing changed

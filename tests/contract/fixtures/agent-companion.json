@@ -3,7 +3,12 @@
     {"shape":"circle","color":"#8b5cf6"},
     {"shape":"cloud","color":"#112233","eyes":"lines","enabled":false,"sizeM":0.25,"followDistanceM":2},
     {"shape":"drop","color":"#FFAA00","eyes":"dots","enabled":true,"sizeM":0.8,"followDistanceM":0.5},
-    {"shape":"hexagon","color":"#7ab6ef","accessories":{"head":"crown","mouth":"cigar","outfit":"suit","held":"future_item_2"}}
+    {"shape":"hexagon","color":"#7ab6ef","accessories":{"head":"crown","mouth":"cigar","outfit":"suit","held":"future_item_2"}},
+    {"shape":"drop","color":"#79c7c4","pet":"cocoa"},
+    {"shape":"circle","color":"#8b5cf6","pet":"u0123456789abcdef"},
+    {"shape":"circle","color":"#7a3fb8","skin":{"colors":["#e05cc5","#6a2fc2","#160f3d"],"pattern":"radial","angle":135,"effect":"stars","name":"Galaxy"}},
+    {"shape":"drop","color":"#123456","skin":{"colors":["#000000","#FFFFFF"]}},
+    {"shape":"hexagon","color":"#123456","skin":{"colors":["#111111","#222222","#333333","#444444"],"pattern":"linear","angle":359,"effect":"futureeffect","name":""}}
   ],
   "invalid": [
     {"shape":"unknown","color":"#123456"},
@@ -20,6 +25,24 @@
     {"shape":"circle","color":"#123456","accessories":{"head":"Crown"}},
     {"shape":"circle","color":"#123456","accessories":{"head":"../../etc"}},
     {"shape":"circle","color":"#123456","accessories":{"head":7}},
-    {"shape":"circle","color":"#123456","accessories":["crown"]}
+    {"shape":"circle","color":"#123456","accessories":["crown"]},
+    {"shape":"circle","color":"#123456","pet":"Cocoa"},
+    {"shape":"circle","color":"#123456","pet":"../pets/cocoa"},
+    {"shape":"circle","color":"#123456","pet":""},
+    {"shape":"circle","color":"#123456","pet":7},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111"]}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222","#333333","#444444","#555555"]}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#fff","#000000"]}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","url(x)"]}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"pattern":"conic"}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"angle":360}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"angle":-1}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"angle":12.5}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"angle":"90"}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"effect":"Stars!"}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"name":"line\nbreak"}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"name":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}},
+    {"shape":"circle","color":"#123456","skin":{"colors":["#111111","#222222"],"url":"https://example.org"}},
+    {"shape":"circle","color":"#123456","skin":"galaxy"}
   ]
 }

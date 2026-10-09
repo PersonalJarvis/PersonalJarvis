@@ -1,17 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
-import { Download, Loader2, Square, Video } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Loader2, Square, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
+import { AppshotLibrary } from "@/views/AppshotLibrary";
 import {
-  appshotRecordingUrl, controlAppshotRecording, fetchAppshotRecording,
-  requestRecordingPermission, type AppshotRecording, type AppshotSettings,
+  controlAppshotRecording, fetchAppshotRecording,
+  requestRecordingPermission, type AppshotRecording, type AppshotSettings, type AppshotSettingsPatch,
 } from "@/lib/appshotApi";
-import { AppshotShortcutField } from "@/views/AppshotShortcutField";
+import { AppshotRecordingSettings } from "./AppshotRecordingSettings";
 
-export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
+/** Start, stop, quality and the kept videos as playable tiles. Its shortcut
+ *  lives with the other appshot shortcuts at the top of the page. */
+export function AppshotRecordingPanel({ settings, saving, onSaved, onSettings }: {
   settings: AppshotSettings;
   saving: boolean;
-  onShortcut: (shortcut: string) => Promise<void>;
+  onSaved?: (id: string) => void;
+  onSettings?: (patch: AppshotSettingsPatch) => Promise<void>;
 }) {
   const t = useT();
   const [recording, setRecording] = useState<AppshotRecording | null>(null);
@@ -19,10 +23,11 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [revision, setRevision] = useState(0);
-  const [shortcutNote, setShortcutNote] = useState<string | null>(null);
-  const onShortcutStatus = useCallback((text: string | null) => {
-    setShortcutNote((current) => (current === text ? current : text));
-  }, []);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+
+  useEffect(() => {
+    if (recording?.phase === "saved" && recording.id) onSaved?.(recording.id);
+  }, [recording?.phase, recording?.id, onSaved]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -76,26 +81,14 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
           <p className="mt-1 text-sm text-muted-foreground">{t("appshots.recording_hint")}</p>
         </div>
         <Button type="button" variant={active ? "secondary" : "default"}
-          disabled={busy || recording?.phase === "stopping" || (!active && (!settings.enabled || !recording?.capability?.available))}
+          disabled={busy || recording?.phase === "stopping" || (!active && (saving || settingsDirty || !settings.enabled || !recording?.capability?.available))}
           onClick={() => void control()} data-testid="appshots-recording-control">
           {busy || recording?.phase === "stopping" ? <Loader2 className="animate-spin" aria-hidden /> : active ? <Square aria-hidden /> : <Video aria-hidden />}
           {active ? t(stop ? "appshots.recording_stop" : "appshots.recording_cancel") : t("appshots.recording_start")}
         </Button>
       </div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-        <p className="text-sm text-foreground">{t("appshots.recording_shortcut")}</p>
-        <AppshotShortcutField value={settings.recording_hotkey ?? ""} disabled={saving || Boolean(active)}
-          isMac={/Mac/i.test(navigator.platform || "")} testId="appshots-recording-hotkey"
-          label={t("appshots.recording_shortcut")} onSave={onShortcut} onStatus={onShortcutStatus} />
-      </div>
-      {shortcutNote && (
-        <p className="mt-2 text-sm text-muted-foreground" data-testid="appshots-recording-hotkey-status">
-          {shortcutNote}
-        </p>
-      )}
-      {settings.recording_shortcut?.detail && settings.recording_hotkey && !settings.recording_shortcut.armed && (
-        <p className="mt-2 text-sm text-muted-foreground">{settings.recording_shortcut.detail}</p>
-      )}
+      {onSettings && <AppshotRecordingSettings settings={settings} recording={recording}
+        disabled={saving || busy || Boolean(active)} onSave={onSettings} onDirty={setSettingsDirty} />}
       {recording?.capability?.detail && <p className="mt-3 text-sm text-muted-foreground">{recording.capability.detail}</p>}
       {recording?.capability?.permission_required && (
         <Button type="button" variant="secondary" className="mt-2" disabled={busy} onClick={async () => {
@@ -109,27 +102,19 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
         {recording && !["idle", "error"].includes(recording.phase) ? t(`appshots.recording_${recording.phase}`) : ""}
         {recording?.phase === "recording" || recording?.phase === "saved" ? ` · ${time}` : ""}
       </p>
+      {recording?.width && recording?.height && recording?.fps && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          {recording.display_name ? `${recording.display_name} · ` : ""}
+          {recording.width} × {recording.height} · {recording.fps} FPS · {recording.bitrate_mbps} Mbps
+        </p>
+      )}
+      {Boolean(recording?.dropped_frames) && <p className="mt-1 text-xs text-muted-foreground">
+        {t("appshots.recording_dropped_hint")}
+      </p>}
       {(error || loadError || recording?.message) && <p role="alert" className="mt-2 text-sm text-destructive">{error || loadError || recording?.message}</p>}
-      {recording?.phase === "saved" && (
-        <div className="mt-3">
-          <video key={recording.id} src={appshotRecordingUrl(recording.id)} controls preload="metadata"
-            className="max-h-80 w-full rounded-lg bg-secondary" aria-label={t("appshots.recording_title")} />
-          <a href={appshotRecordingUrl(recording.id)} download className="mt-3 inline-flex items-center gap-2 text-sm text-foreground underline underline-offset-4">
-            <Download className="h-4 w-4" aria-hidden />{t("appshots.recording_download")}
-          </a>
-        </div>
-      )}
-      {Boolean(recording?.recent?.length) && (
-        <ul className="mt-4 space-y-2 border-t border-border pt-3">
-          {recording?.recent?.filter((video) => recording.phase !== "saved" || video.id !== recording.id).map((video) => (
-            <li key={video.id}>
-              <a href={appshotRecordingUrl(video.id)} download className="text-sm text-foreground underline underline-offset-4">
-                {t("appshots.recording_download")} · {new Date(video.created_at * 1000).toLocaleString()}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* A new or removed video changes the recorder's list; the tiles reload then. */}
+      <AppshotLibrary enabled={undefined} recordingsOnly
+        refreshKey={(recording?.recent ?? []).map((video) => video.id).join(",")} />
     </section>
   );
 }

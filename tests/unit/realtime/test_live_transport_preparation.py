@@ -190,7 +190,7 @@ async def test_subscription_prepares_client_during_credentials_and_reports_phase
     try:
         connection = await provider.open_session(config)
         assert phases == ["credentials_ready", "http_client_ready", "session_response",
-                          "control_tls_ready"]
+                          "control_tls_ready", "control_connect_started"]
         context = wire.connects[0][1]["ssl"]
         assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
         assert wire.auth_refreshes == [False] and len(wire.requests) == 1

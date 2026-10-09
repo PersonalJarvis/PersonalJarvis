@@ -236,6 +236,92 @@ Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/
 [Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
 [Cursor MCP](https://docs.cursor.com/en/cli/mcp).
 
+## AppShot capture pixel integrity (2026-10-04, T2)
+
+Packed RGB capture frames are mapped read-only, copied with their actual row
+stride, and unmapped before entering the encoder queue. They do not go through
+Qt's GPU presentation conversion. This fixes intermittent striped/color-shifted
+frames seen in native Windows area recordings. Zero-filled startup buffers are
+skipped; Windows opaque-desktop sources also reject uninitialized alpha values.
+Valid opaque black frames remain recordable. The first usable video frame starts
+at timestamp zero, avoiding an empty startup interval in MP4 playback.
+
+A separate visible Windows test application supplied moving content to the real
+picker/capture/encoder flow. A 15.5-second, 1918-by-948 capture produced 947
+decoded frames with no color-patch corruption, a zero first timestamp, and 226
+distinct positions of the moving marker. Regression tests cover row padding,
+buffer reuse, map failure/cleanup, rotation, mirror, startup transparency and
+opaque black frames. YUV portal sources retain Qt conversion with a detached
+copy; macOS/Linux native capture remains unverified. This evidence supersedes
+the earlier frame-count-only check for visual recording correctness.
+
+## AppShot recording quality and output audio (2026-10-04, T2)
+
+Recording presets default to 1080p at 60 FPS and a 12 Mbps video target.
+Resolution choices through 4K plus native preserve source aspect ratio without
+upscaling; 30/60/120 FPS choices are capped by the selected monitor's refresh
+rate. Missing portal refresh information caps at 60 FPS. The same validation,
+size calculation, MP4 encoding and settings routes apply on every OS. Qt
+Multimedia supplies streaming frames after explicit selection; encoder startup
+tries available hardware H.264 backends, then software H.264/MPEG-4. Missing
+drivers or unsupported dimensions fall back before any packet is written.
+Windows full-screen capture from a 4K/60 Hz monitor to Full HD measured about
+59.6 captured frames/second, with a 120 FPS request correctly capped at 60.
+High-resolution timestamps avoid discarding distinct frames due to coarse
+Windows clock ticks. Native macOS/Linux performance is still unverified.
+
+System audio is opt-in and captures only the default playback device's loopback.
+Windows uses WASAPI through the optional SoundCard desktop dependency. A real
+Windows capture produced an MP4 with synchronized video and audible AAC stereo
+at 48 kHz; deterministic tests cover silent recording, rescaling, all three
+frame rates, invalid settings, and audio retention through trim/speed edits.
+Linux uses PulseAudio/PipeWire monitor sources; native Linux audio remains
+unverified. macOS audio loopback is unavailable and is visibly disabled, while
+silent recording keeps working. No fallback ever opens a microphone. Headless
+installs need no audio backend and keep their existing capture-unavailable state.
+
+## AppShot recording startup latency (2026-10-03, T2)
+
+The primary desktop instance prepares one idle recording worker after shortcut
+arming when AppShots are enabled. Standby loads Qt and the encoder libraries;
+it creates no capture session, windows, video files, or permission prompts and
+takes no pixels. A user start still checks current permissions before sending
+the selection command. After a recording finishes, a fresh worker is prepared.
+Disabling AppShots releases standby; application shutdown also finalizes any
+active recording and reaps its process.
+
+Windows native checks measured about 150–260 ms from a prepared start to the
+visible picker, versus about 1.7 seconds for a cold process on the same desktop.
+Two consecutive selected-area recordings produced playable MP4s and reused their
+prepared workers. Timeout, cancellation during spawn, dead-worker recovery,
+permission revocation and shutdown have focused regression coverage. Standby
+was checked to create neither widgets nor screen grabs. macOS and Linux use the
+same ownership protocol; their native latency remains unmeasured, and a first
+permission dialog or Wayland portal selection still requires user interaction.
+
+## AppShot recording frame and completion card (2026-10-03, T2)
+
+The selected recording area keeps a click-through border until recording stops.
+Elapsed time and a stop button sit below it; the toolbar moves above the area or
+inside the work area when the selection reaches the screen edges. A finalized
+video uses the existing screenshot flight animation to enter a bottom-right
+preview card. Its poster shows the first video frame with a prominent play button
+and a video/duration label. The card can play the local file, save a separate copy
+to Downloads, or drag the MP4 to another application. Screenshot and video previews share the
+indicator process and its shutdown/capture-suppression lifecycle.
+
+Windows area and 4K full-screen recordings were verified with the desktop Python
+runtime: persistent frame, elapsed time, stop-button completion, playable MP4,
+and a visible corner card. Both the frame and toolbar successfully enabled
+native capture exclusion. A separate explicitly capturable visual pass verified
+their geometry and appearance without confusing that pass with clean video output.
+
+macOS and X11 use the same Qt positioning code but remain unverified on real
+desktops. Native capture exclusion is Windows-specific; controls are placed outside
+the recorded area when space permits. Wayland portals do not expose global source
+coordinates: the normal stop window remains available there, while a desktop-wide
+boundary and corner flight retain the indicator's existing Wayland limitation.
+
 ## Live computer control by the session's own model (2026-10-03, T3)
 
 Voice sessions operate the screen through `computer` (ADR-0039). The same
@@ -286,6 +372,17 @@ Hover, right/middle/double clicks and scrolling target that widget; keyboard
 input follows the owned focus. Offscreen positions from older builds recover
 onto a monitor without activating Chrome. Hooks and captures have bounded
 cleanup, and stale geometry rejects input.
+
+The owned Windows browser and its native popups use zero desktop opacity and
+non-activating tool-window styles while their original pixels remain available
+to Windows Graphics Capture. This prevents a separate window or edge strip
+from appearing outside the Jarvis preview. Regular Chrome keeps rendering while
+occluded so the embedded view can update. This applies only to Jarvis-owned
+windows; attached user Chrome windows and the page streams on other operating
+systems are unchanged. Fake Win32 tests cover ownership, popup visibility,
+input, and failure handling; a live Windows check covers invisible window
+startup and continued capture. macOS and Linux native window capture remains
+unverified.
 
 Manual website sign-in stays inside the embedded viewer. Vision-capable agents
 with unrestricted website access can use approved native window controls;
@@ -1147,6 +1244,8 @@ implementations, not stubs.
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
 | Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The two-sided shortcuts (both Alt, both Shift, both Ctrl) read key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash and the area picker (both Shift keys, drag a rectangle, then mark it up with its toolbar) are PySide6 overlays where one can run; the markings are burnt into the capture with Pillow on every OS (`jarvis/appshot/markup.py`); Wayland/headless report the area picker unavailable. The appshot editor is web code and behaves the same everywhere; its Copy, and every shortcut or button appshot, writes the picture natively in several formats (`jarvis/platform/clipboard_image.py`): Windows the registered PNG format + `CF_DIB`, macOS `public.png` + `public.tiff` via `osascript -l JavaScript`, Linux `wl-copy` or `xclip`; the editor falls back to the browser clipboard without them. Save goes to `~/Downloads` on every OS. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; a headless host has no local voice stack, so the browser that presses Start holds the call over `/ws/audio` (realtime, or the classic STT → brain → TTS bridge while `[browser_voice].enabled`, the default — issue #399); WASAPI logic is inert-by-data off Windows |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The two-sided shortcuts (both Alt, both Shift, both Ctrl) read key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash and the area picker (both Shift keys, drag a rectangle, then mark it up with its toolbar) are PySide6 overlays where one can run. The main instance prepares their runtimes after wake-ready without capturing pixels; selections reuse Qt but release all screen images and windows after completion. The markings are burnt into the capture with Pillow on every OS (`jarvis/appshot/markup.py`); Wayland/headless report the area picker unavailable. The appshot editor is web code and behaves the same everywhere; its Copy, and every shortcut or button appshot, writes the picture natively in several formats (`jarvis/platform/clipboard_image.py`): Windows the registered PNG format + `CF_DIB`, macOS `public.png` + `public.tiff` via `osascript -l JavaScript`, Linux `wl-copy` or `xclip`; the editor falls back to the browser clipboard without them. Save goes to `~/Downloads` on every OS. Verified live on Windows only; see `docs/appshots.md` |
+| Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
 | Agent society hands (own shell, browser via browser-use, learned skills) | Shell: local subprocess in the agent's workspace on every OS (Git Bash/PowerShell/bash/sh pick as the chat's folder tools), no container by decision. Browser: browser-use lives in a managed venv under the data dir (its pins collide with the app's), installed on demand — `uv`/`venv`, a 3.11–3.13 interpreter preferred, Chromium downloaded once; headless runs need no display, so a headless Linux box runs agents' browsers; the headed login session needs a display (409 without one is the follow-up); attach mode needs a running Chrome with `--remote-debugging-port`. Learning is pure files + the brain, OS-neutral |
@@ -1286,6 +1385,7 @@ build: the first release with this code needs one live update per OS.
 | P-41 | Low | CLI install / connect terminal | Pressing **Install** or **Connect** in the CLI section opens a REAL terminal window and runs the command there, because an interactive OAuth login belongs in a shell the user can see and type into. That spawn was Windows-only until 2026-08-28 (`wt` -> `pwsh` -> `powershell`), so on macOS and Linux the two buttons reported "No external terminal available" and no CLI could be installed from the app at all. macOS now goes through `osascript` to Terminal.app, Linux through the first of seven emulators that exists (Debian's `x-terminal-emulator` alternative first, so the user's own default wins), and the window is held open afterwards the way `-NoExit` holds it on Windows. One install click now carries all the way to signed in: the terminal runs the install, refreshes PATH in that same shell, and continues into the CLI's login command, stopping at the first step that fails. The chain operator differs per OS on purpose — Windows PowerShell 5.1 is a possible fallback shell and `&&` is a parser error there, so the Windows spelling nests `if ($?)` instead | `jarvis/clis/external_terminal.py` (`_spawn_windows`, `_spawn_macos`, `_spawn_linux`, `chain_commands`, `path_refresh_command`), `jarvis/ui/web/cli_routes.py::spawn_external`, `tests/unit/clis/test_install_path.py` | Windows: verified live (wt path, composed install+login command). macOS/Linux: same code path, the branch itself unverified from this machine. A box with no screen has no window to open, so there the endpoint falls back to the in-app streaming install job and the UI says so instead of claiming a terminal appeared — a headless server can still install a CLI, it just cannot run an interactive login |
 | P-42 | High | Outbound sockets (every lane) | Every connection borrows an ephemeral port from a pool the OS owns, and a closed one keeps that port through TIME_WAIT. The ceiling and the linger differ per OS, and so does what gives out first: **Windows** 16 384 ports / 120 s — the tightest by far, and the port pool is what empties, which stops EVERY process on the machine from connecting (the desktop appears frozen, then heals itself when TIME_WAIT expires); **Linux** 28 232 ports / 60 s, but `RLIMIT_NOFILE` is normally the tighter of the two (1024 on a stock `python:3.11-slim`), so the backend dies of EMFILE while the desktop around it is fine; **macOS** 16 384 ports / 15 s, so it recovers fastest. BUG-215 was the Windows shape: an unjittered wake storm (one socket per pane, per window, per instance, all on one `visibilitychange`) on top of a standing per-call-client burn. The rule that follows is to cap the burst, never to widen a limit — code that fits the Windows budget fits everywhere | `jarvis/ui/web/frontend/src/lib/connectBudget.ts` (`jitteredDelay`, `spreadDelay`, `requestConnect`), `jarvis/core/http_pool.py` (`HttpClientPool`, `SyncHttpClientPool`, `default_limits`), `jarvis/core/socket_budget.py` (`read_platform_limits`, `take_census`, `SocketBudgetWatchdog`), `jarvis/realtime/local_server/supervisor.py::_port_open` (`SO_LINGER`) | Identical on all three: one shared connect budget in the frontend, pooled keep-alive clients in Python, and a watchdog armed by BOTH entry points (desktop shell and `--headless`) that reads the ceiling per platform — `netsh` on Windows (parsed as integers, because it translates its own field names), `/proc/sys/net/ipv4/ip_local_port_range` plus `RLIMIT_NOFILE` on Linux, `sysctl net.inet.ip.portrange.*` on macOS. A host that answers none of them falls back to the documented default and says the number was assumed; a host with no ceiling at all logs one line and throttles nothing, because a watchdog that cannot see must never be what stops the app working. macOS additionally refuses the system-wide socket table to an unprivileged process, so the census there counts this process only and labels the number a floor. Guards: `tests/contract/test_socket_budget.py` (all three hosts faked, plus a German and a Japanese `netsh`), `tests/unit/core/test_socket_budget_watchdog.py`, `jarvis/ui/web/frontend/src/lib/connectBudget.test.ts` |
 | P-45 | Medium | Hermes / OpenClaw agent runtimes | A society agent can run on Hermes or OpenClaw instead of Jarvis' own loop (docs/agent-runtimes.md), driven over ACP: Hermes as one `hermes acp` process per turn, every agent a profile of one Jarvis-owned Hermes data root (`<runtimes_root>/hermes-home/profiles/<agent>`, one shared dependency environment, prepared by the setup job); OpenClaw through `openclaw acp` against a supervised per-agent Gateway. Setup goes to the pinned `tested` release (`runtime-versions.json`) per OS: Hermes' `install.ps1` / `install.sh` at the pinned commit without browser tools or desktop control; OpenClaw as Jarvis' own copy with a private Node.js — `install.ps1 -NodeOnly` plus that Node's npm on Windows (no winget/UAC), `install-cli.sh --prefix` on macOS/Linux (no sudo). POSIX installer scripts are downloaded first and run under `set -euo pipefail`, so a missing `curl`/`git` or a failed download fails the job with a plain reason. Containment differs per OS exactly as for every CLI seat: a Job Object on Windows; a process group on POSIX plus a descendant tracker that also reaps children started under `setsid` (Hermes runs shell commands that way), found by tree walks and by a per-turn environment mark every descendant inherits, and a `gateway.pid` sweep that stops a Gateway a crashed app left behind (POSIX only — the Job Object already reaps it on Windows). Hermes' Windows home maintenance would register its data root's `bin` on the user's PATH; a `bin` file blocks that, POSIX uses `cli.expose_on_path: false`, and stale entries from older builds are removed once per run. Stop sends ACP `session/cancel` before any kill, and a stall watchdog ends a turn whose runtime stopped responding | `jarvis/agent_runtimes/` (`hermes.py`, `openclaw.py`, `base.py` (`which`, `RuntimeGate`, `HomeFileLock`, `posix_installer`, `windows_installer`), `manager.py`, `versions.py`, `runtime-versions.json`, `path_cleanup.py`), `jarvis/agent_chat/runner_cli.py` (ACP cancel + stall watchdog), `jarvis/core/process_tree.py::DescendantTracker`, `jarvis/core/path_augment.py::refresh_from_persistent_path` | Windows: verified 2026-10-07 with Hermes 0.21.5 and OpenClaw 2026.9.8 through the replay e2e spikes (both model-gateway protocols; Hermes prepare 37–45 s once, first turn 6.8–8.3 s; OpenClaw first turn 31–55 s including the Gateway cold start; the user PATH unchanged, checked against the registry), and through `tests/unit/agent_runtimes/` (fake ACP agent, fake OpenClaw CLI, injected registry). macOS/Linux: the same code paths; the setsid reaping, `flock` locks, `install-cli.sh` and `pipefail` wrapper run only on POSIX CI runners (unit tests, `agent-runtimes-canary.yml`), not verified on a real Mac or Linux desktop from this machine. Headless `python:3.11-slim`: nothing is installed or started unless an agent is switched to a runtime; without `curl`/`git` the setup fails with that reason instead of reporting success. Guards: `tests/unit/agent_runtimes/`, `tests/unit/society/test_agent_runtime_field.py` |
+| P-46 | Low | Computers: this PC's SSH hosts and Tailscale | The add dialog lists the servers this PC's own `ssh` already knows and each computer can take a second address from Tailscale. Both read only local files or the local CLI, and both differ per OS only in where those live: `~/.ssh/config` and `~/.ssh/known_hosts` under the home folder (`%USERPROFILE%\.ssh` on Windows, where Git for Windows and the Windows OpenSSH client keep the same files), `Include` globs resolved relative to `~/.ssh` as OpenSSH does; the Tailscale CLI from `PATH`, else `C:\Program Files\Tailscale\tailscale.exe` (Windows) or the app bundle's `/Applications/Tailscale.app/Contents/MacOS/Tailscale` (macOS); Linux packages put it on `PATH`. A missing file, a missing CLI, a logged-out Tailscale or any error means simply nothing to offer. Every address a computer has must show the same pinned server identity, on every OS, so a second address can never reach a different machine | `jarvis/computers/ssh_config.py`, `jarvis/computers/tailscale.py` (`binary`, `peers`), `jarvis/computers/service.py` (`_open`, `add_route`), `jarvis/computers/ssh.py::key_files` | Windows: verified live 2026-10-08 (known_hosts read from `%USERPROFILE%`, no Tailscale installed: empty suggestions; routes, failover and the identity check against two local SSH servers). macOS/Linux: same code, unverified on a real box; the parsers are pure and covered by `tests/unit/computers/test_ssh_config_and_tailscale.py`, the failover by `tests/unit/computers/test_routes_and_switch.py`. Headless `python:3.11-slim`: no `~/.ssh`, no Tailscale: both lists are empty and nothing else changes |
 
 ## Agent conversation continuity and learning (2026-09-07)
 
@@ -1636,6 +1736,25 @@ sessions and releases it when the worker exits. This prevents the capture
 library's cached WinRT factories from outliving their apartment during manual
 handover. Each window still stops its capture and event threads on close.
 
+The shared turn-host client accepts a replacement reader's output only after
+the host acknowledges attachment. Earlier live frames remain in the host's
+replay buffer, so a fast process cannot displace the first replayed line.
+Failed attachments release their local reader and can retry with the host's
+authoritative process metadata. Socket tests exercise both paths without
+depending on Windows, macOS, or Linux scheduling speed.
+
+A stopped Windows popup capture discards its stale pixels and retries once while
+the same owned popup remains visible. Parked owned windows remain fully
+transparent and mouse-transparent. They clear the tool-window, app-window,
+and no-activate extended styles: native capture rejects the no-activate style
+when the app-window style is absent. Positioning still uses SWP_NOACTIVATE
+and keeps the owned window behind the application, including popup recovery.
+Input waits for the replacement's first
+frame. A repeated failure, failed restart, or unfinished capture cleanup reports
+an error instead of retaining an unusable preview or starting overlapping captures.
+Closing the popup resets its retry allowance. Regression tests use native-window
+fakes; this recovery does not establish a successful live Chrome sync or sign-in.
+
 macOS and Linux keep their existing managed browser behavior. They do not expose
 this sign-in capability because the current native capture/input implementation
 is Windows-only. The module imports without Win32 dependencies on those systems;
@@ -1726,3 +1845,19 @@ Agent notebook migration explicitly normalizes the final `USER.md` and
 `MEMORY.md` filename spelling on case-insensitive filesystems. The migration
 journal and backups continue to preserve the original content on every OS.
 The inherited-lock and migration recovery contracts run in the OS test shards.
+
+## Independent agent server and clients
+
+The opt-in independent server uses the existing headless backend on Windows,
+macOS and Linux. Its lifetime no longer depends on a desktop client, an idle
+timer or a desktop handover. Windows runs it in the user session rather than
+as a SYSTEM service. The client uses pywebview where installed; the same server
+also serves ordinary browsers. Remote origins require HTTPS or a local tunnel.
+
+Windows evidence covers the real headless process, readiness and explicit stop,
+the startup budget, and scripted disconnect/reconnect contracts for Jarvis,
+Hermes and OpenClaw. The shared lifecycle and configuration tests are portable;
+native macOS/GTK client windows and live remote-host/provider execution have
+not been verified by these checks. Device capture, wake word and overlays keep
+their existing device and permission requirements; opening a client does not
+grant the server access to that client's desktop.

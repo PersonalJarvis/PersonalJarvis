@@ -145,7 +145,9 @@ class CodingSessionControl:
                 raise SessionError("A nonempty assignment is required.")
             if term.status in ("dead", "error", "exited"):
                 raise SessionError(
-                    "The coding terminal has stopped. Inspect it before opening another."
+                    "The coding terminal has stopped; nothing was sent. Restart the same "
+                    "terminal (workspace-orchestrate restart, or its pane's Restart button; it "
+                    "continues its own conversation) instead of opening another."
                 )
             from jarvis.core.image_references import ImageReferenceError, get_store
 

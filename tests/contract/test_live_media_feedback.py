@@ -75,7 +75,8 @@ async def test_native_microphone_meter_remains_visible_while_connecting(presenta
     await bus.publish(SystemStateChanged(new_state="LISTENING", previous="IDLE"))
     await bus.publish(SystemStateChanged(new_state="CONNECTING", previous="LISTENING"))
     mic_level.publish(0.65)
-    assert surface.mode == "listen"
+    # The loading loop shows the handshake; the meter inside it keeps moving.
+    assert surface.mode == "connect"
     assert surface.level == pytest.approx(0.65)
 
 

@@ -54,6 +54,11 @@ async def test_persisted_run_links_survive_reopening_without_loading_main_chat(w
         await store.close()
 
 
+#: Hang guards, not speed budgets: a loaded Windows runner needs more than a
+#: few seconds to start a chat turn, and a real hang still fails.
+_HANG_GUARD_S = 15
+
+
 async def test_busy_main_chat_queues_routine_without_mixing_transcripts(world, monkeypatch):
     runtime, service, main, brain = world
     started = asyncio.Event()
@@ -68,7 +73,7 @@ async def test_busy_main_chat_queues_routine_without_mixing_transcripts(world, m
 
     monkeypatch.setattr(brain, "generate", respond)
     await service.send(main.session_id, "Main conversation")
-    await asyncio.wait_for(started.wait(), 2)
+    await asyncio.wait_for(started.wait(), _HANG_GUARD_S)
     created = asyncio.Event()
     create_session = service.store.create_session
 
@@ -82,10 +87,10 @@ async def test_busy_main_chat_queues_routine_without_mixing_transcripts(world, m
         run_owned_routine(runtime, "digest", ("society", "agent:mailbox"), "Read mail")
     )
     try:
-        await asyncio.wait_for(created.wait(), 2)
+        await asyncio.wait_for(created.wait(), _HANG_GUARD_S)
         assert service.is_running(main.session_id)
         release.set()
-        assert await asyncio.wait_for(routine, 3) == brain.reply
+        assert await asyncio.wait_for(routine, _HANG_GUARD_S) == brain.reply
         messages = [
             e for e in service.store.list_events(main.session_id) if e["kind"] == "user_message"
         ]
@@ -132,7 +137,7 @@ async def test_cancelling_routine_preserves_main_chat(world, monkeypatch, via_ch
         run_owned_routine(runtime, "digest", ("society", "agent:mailbox"), "Read mail")
     )
     try:
-        await asyncio.wait_for(started.wait(), 2)
+        await asyncio.wait_for(started.wait(), _HANG_GUARD_S)
         if via_chat:
             session = next(
                 s

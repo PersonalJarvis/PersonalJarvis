@@ -20,6 +20,12 @@ contains portions adapted from T3 Code (https://github.com/pingdotgg/t3code),
 Copyright (c) 2026 T3 Tools Inc., used under the MIT License - see
 third_party/t3code/LICENSE.
 
+The Computers settings page (jarvis/ui/web/frontend/src/views/computers/surface.tsx
+and ComputerRow.tsx) contains portions adapted from T3 Code under the same MIT
+License, Copyright (c) 2026 T3 Tools Inc. So do its connection features: jarvis/computers/
+ssh_config.py, tailscale.py, placement.py and github_access.py, and the views RouteList.tsx,
+Placement.tsx, GithubAccess.tsx and machineKind.tsx beside it.
+
 The Agentic IDE explorer's file-type icons (jarvis/ui/web/frontend/src/components/
 agentic/sidePanel/explorer/fileIconSprite.ts and fileIcon.ts) contain SVG symbols
 and file-name rules from @pierre/trees (https://www.npmjs.com/package/@pierre/trees),

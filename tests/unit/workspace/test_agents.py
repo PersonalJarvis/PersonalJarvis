@@ -180,6 +180,7 @@ def test_build_agent_argv_wraps_command_in_a_shell() -> None:
     assert argv is not None
     # the agent command appears in the argv, wrapped by a shell
     assert any("claude" in part for part in argv)
+    assert any("--permission-mode bypassPermissions" in part for part in argv)
     assert len(argv) >= 2  # shell + at least one flag/command
     assert build_agent_argv("nope") is None
 

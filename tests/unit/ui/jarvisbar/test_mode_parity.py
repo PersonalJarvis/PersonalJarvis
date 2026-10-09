@@ -146,7 +146,7 @@ def test_the_null_surface_swallows_every_mode(mode: str) -> None:
 #: Every look ``renderer.render`` knows how to draw. Derived from the mode
 #: vocabulary so a new mode either resolves to an existing look or brings its
 #: own — it can never resolve to a look nothing draws.
-_RENDERABLE_LOOKS = ("idle", "speak", "think") + modes.NOTICE_MODES
+_RENDERABLE_LOOKS = ("idle", "speak", "think") + modes.NOTICE_MODES + modes.CONNECT_MODES
 
 
 @pytest.mark.parametrize("mode", modes.MODES)

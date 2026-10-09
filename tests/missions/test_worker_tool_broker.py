@@ -228,7 +228,7 @@ async def test_ask_tier_waits_then_resumes_the_exact_call_after_approval() -> No
     approval = ApprovalWorkflow(bus, timeout_s=1.0)
     executor = ToolExecutor(
         bus,
-        RiskTierEvaluator(SafetyConfig()),
+        RiskTierEvaluator(SafetyConfig(approval_mode="ask")),
         approval,
         default_timeout_s=1.0,
     )
@@ -284,7 +284,7 @@ async def test_denied_ask_tier_never_executes_the_tool() -> None:
     approval = ApprovalWorkflow(bus, timeout_s=1.0)
     executor = ToolExecutor(
         bus,
-        RiskTierEvaluator(SafetyConfig()),
+        RiskTierEvaluator(SafetyConfig(approval_mode="ask")),
         approval,
         default_timeout_s=1.0,
     )

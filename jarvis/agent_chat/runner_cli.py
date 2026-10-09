@@ -94,6 +94,7 @@ from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
+    CREDENTIAL_GUIDANCE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
 )
@@ -373,6 +374,7 @@ def _account_env(platform: str) -> dict[str, str]:
             account = pinned
         else:
             account = agent_accounts.active_account(platform)  # type: ignore[arg-type]
+        account = _seat_with_budget(platform, account)
         env = agent_accounts.spawn_env(platform, account.id, base=os.environ)  # type: ignore[arg-type]
     except CliUnavailable:
         raise
@@ -385,6 +387,76 @@ def _account_env(platform: str) -> dict[str, str]:
     if snapshot is not None:
         snapshot[platform] = dict(env)
     return env
+
+
+def _seat_with_budget(platform: str, account: Any) -> Any:
+    """``account``, or the active seat when ``account`` ran out of its plan.
+
+    A thread pinned to a seat that refused for its usage limit would fail
+    every turn until that seat refills; with automatic switching on, the turn
+    runs on the seat the rest of the work already moved to
+    (:mod:`jarvis.agentic_ide.seat_switch`). Its conversation follows it
+    (``_carry_thread_conversation``).
+    """
+    try:
+        from jarvis import agent_accounts
+        from jarvis.agentic_ide import seat_switch
+
+        replacement = seat_switch.preferred_seat(platform, account.id)
+        if replacement is None:
+            return account
+        return agent_accounts.resolve(replacement) or account
+    except Exception as exc:  # noqa: BLE001 - the pinned seat is still a valid answer
+        log.debug("Seat failover unavailable for %s (%s)", platform, type(exc).__name__)
+        return account
+
+
+#: Runner -> (account platform, resume kind) for the CLIs whose conversations
+#: can follow a seat switch (:mod:`jarvis.agentic_ide.seat_handoff`).
+_SEAT_CONVERSATIONS: dict[str, tuple[str, str]] = {
+    "claude-cli": ("claude", "claude_session"),
+    "codex-cli": ("codex", "codex_rollout"),
+    "grok-cli": ("grok-build", "grok_session"),
+}
+
+
+#: (runner, conversation id) -> the seat dir its last turn ran on. A thread
+#: whose seat did not change since needs no search across the other seats —
+#: for Codex that search is a sweep of every rollout folder.
+_CARRIED_HOMES: dict[tuple[str, str], str] = {}
+
+
+def _carry_thread_conversation(runner: str, resume: str | None, env: dict[str, str]) -> None:
+    """Make a resumed thread find its conversation on the seat it runs on now.
+
+    Each seat keeps its own history, so after a switch ``--resume <id>`` on
+    the new seat would answer "no conversation found" and the thread would
+    lose everything it knew. The newest copy across the CLI's seats is
+    carried into the seat this turn runs on. Filesystem work: off the loop.
+    """
+    pair = _SEAT_CONVERSATIONS.get(runner)
+    if not resume or pair is None:
+        return
+    platform, kind = pair
+    try:
+        from jarvis import agent_accounts
+        from jarvis.agentic_ide import seat_handoff
+
+        if platform not in agent_accounts.platforms():
+            return
+        variable = agent_accounts.env_var(platform)
+        raw = env.get(variable or "", "").strip()
+        home = Path(raw).expanduser() if raw else agent_accounts.native_dir(platform)
+        key = (runner, resume)
+        if _CARRIED_HOMES.get(key) == os.path.normcase(str(home)):
+            return
+        homes = [account.config_dir for account in agent_accounts.list_accounts(platform)]
+        if seat_handoff.carry_conversation(kind, resume, home, homes):
+            if len(_CARRIED_HOMES) > 512:
+                _CARRIED_HOMES.clear()
+            _CARRIED_HOMES[key] = os.path.normcase(str(home))
+    except Exception as exc:  # noqa: BLE001 - a fresh start is the honest fallback
+        log.warning("Conversation could not follow the seat for %s: %s", runner, exc)
 
 
 def _registry_env(agent: str, base: dict[str, str]) -> dict[str, str]:
@@ -1376,6 +1448,9 @@ def _with_identity(
                 + AGENT_QUESTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
+                + CREDENTIAL_GUIDANCE
+                + jarvis_harness.society_credential_state(identity.text)
+                + "\n"
                 + CONVERSATIONAL_TURN_REMINDER
                 + "\n</jarvis_turn_context>\n\n"
                 + prompt
@@ -3468,6 +3543,7 @@ async def _run_cli_once(
                     resume=resume,
                     identity=identity,
                 )
+                await asyncio.to_thread(_carry_thread_conversation, runner, resume, plan.env)
             if getattr(handle, "tools_disabled", False):
                 from .native_control import disable_cli_tools
 
@@ -3781,7 +3857,7 @@ async def _drive_cli(
                     translate(obj, state)
                 continue
             if plan.acp is not None:
-                if _provider_error():
+                if _provider_error() or handle.cancel.is_set():
                     # Do not present a runtime's synthetic error prose as an
                     # assistant answer, or process tools after the failure.
                     continue
@@ -3991,6 +4067,9 @@ async def _drive_cli(
         run lives in its Gateway and keeps calling the model and running
         tools after its bridge dies. The caller kills afterwards either way.
         """
+        if plan.provider_failure is not None:
+            # Revoke inference before waiting for the runtime to acknowledge stop.
+            plan.provider_failure.cancel()
         if plan.acp is None or hosted or proc.returncode is not None:
             return
         frame = plan.acp.cancel_frame()
@@ -4128,6 +4207,7 @@ async def _drive_cli(
             # in the turn host and the next app start carries the turn on.
             proc.detach()
         else:
+            await _acp_cancel()
             _kill(proc)
         raise
     finally:
@@ -4190,7 +4270,7 @@ async def _drive_cli(
         elif plan.shape == "codex" and state.failed_tools:
             status = "error"
             error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
-        elif runner in {"claude-cli", "glm-cli"} and not state.saw_result:
+        elif (runner in {"claude-cli", "glm-cli"} or plan.acp is not None) and not state.saw_result:
             status = "error"
             error_text = f"{runner} exited without a terminal result; its output may be incomplete."
 

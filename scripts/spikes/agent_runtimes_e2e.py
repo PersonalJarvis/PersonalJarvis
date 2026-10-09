@@ -53,6 +53,8 @@ class _IO:
 
 
 async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
+    from jarvis.agent_runtimes import gateway
+
     runtime = driver(name)
     launch = await runtime.launch(turn)
     acp = AcpTurn(
@@ -66,7 +68,12 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
     )
     tree = make_process_tree("runtime-e2e")
     proc = None
+    failure = None
+    token = turn.route.api_key or ""
     try:
+        if gateway.verify(token) is not None:
+            # Match the chat runner's ownership of each model-gateway turn.
+            failure = gateway.watch_failure(token, effort=turn.effort or "")
         with (turn.workspace.parent / "runtime-stderr.log").open("ab") as stderr:
             proc = await asyncio.create_subprocess_exec(
                 *launch.argv,
@@ -101,6 +108,8 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
             await asyncio.wait_for(proc.wait(), timeout=30)
             return acp, io
     finally:
+        if failure is not None:
+            gateway.unwatch_failure(token, failure)
         tree.close()
         try:
             if proc is not None:

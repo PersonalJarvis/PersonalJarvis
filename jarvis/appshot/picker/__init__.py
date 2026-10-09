@@ -1,4 +1,4 @@
-"""The area picker for region appshots — a one-shot PySide6 sidecar.
+"""The area picker for region appshots — an isolated PySide6 sidecar.
 
 ``python -m jarvis.appshot.picker --lang de`` dims every screen, lets the
 user drag one rectangle, mark it up in place with a toolbar and prints
@@ -6,10 +6,15 @@ the result as one JSON line on stdout, then exits. The main process never
 imports PySide6 (AP-26); it talks to this process through
 :mod:`jarvis.appshot.region`.
 
+With ``--resident``, it starts in pixel-free standby. Each ``start`` command
+opens a fresh selection; finishing releases its windows and pixels while
+keeping Qt loaded. ``quit`` or parent EOF exits the process.
+
 Wire format (one JSON object per line):
 
 stdout::
 
+    {"event": "standby"}                                # resident runtime loaded
     {"event": "ready"}                                  # overlay is up
     {"event": "marking"}                                # area chosen, toolbar up
     {"event": "selection", "screen": {"x":…, "y":…,     # the Qt screen,
@@ -22,6 +27,9 @@ stdout::
 
 stdin::
 
+    {"cmd": "start", "language": "en", "monitors": [],   # resident: fresh capture
+     "windows": []}
+    {"cmd": "quit"}                                     # release the runtime
     {"cmd": "layout", "monitors": [...],                # mss monitors and the
      "windows": [[l, t, w, h], ...]}                    # snap targets, top first
     {"cmd": "cancel"}                                   # e.g. a global Esc
@@ -38,6 +46,7 @@ from typing import Any
 EXIT_NO_GUI = 3
 
 EVENT_READY = "ready"
+EVENT_STANDBY = "standby"
 EVENT_MARKING = "marking"
 EVENT_SELECTION = "selection"
 #: What finishing the selection asks for besides taking the appshot.
@@ -48,6 +57,8 @@ ACTION_EDIT = "edit"
 ACTIONS = (ACTION_DONE, ACTION_COPY, ACTION_SAVE, ACTION_EDIT)
 CMD_CANCEL = "cancel"
 CMD_LAYOUT = "layout"
+CMD_START = "start"
+CMD_QUIT = "quit"
 
 
 def encode(payload: dict[str, Any]) -> str:
@@ -71,8 +82,11 @@ __all__ = [
     "ACTION_SAVE",
     "CMD_CANCEL",
     "CMD_LAYOUT",
+    "CMD_START",
+    "CMD_QUIT",
     "EVENT_MARKING",
     "EVENT_READY",
+    "EVENT_STANDBY",
     "EVENT_SELECTION",
     "EXIT_NO_GUI",
     "decode",

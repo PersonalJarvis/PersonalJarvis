@@ -25,6 +25,7 @@ from starlette.requests import HTTPConnection
 
 from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 from jarvis.core.protocols import started_by_user
+from jarvis.society.companion import CompanionSkin
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
@@ -94,7 +95,11 @@ def _validated_chat_runner(
     account_id: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
-    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.permissions import (
+        default_permission,
+        normalize_permission,
+        society_mode_supported,
+    )
     from jarvis.agent_chat.service import resolve_runner
 
     chosen_runtime = str(agent.runtime)
@@ -112,6 +117,9 @@ def _validated_chat_runner(
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
+    if not mode and agent.agent_id == rt.lead_id:
+        # The lead uses the app's chat policy; NULL is not a legacy Ask choice.
+        mode = default_permission("jarvis")
     if mode and not society_mode_supported(runner, mode):
         raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
     ceiling = str(
@@ -542,8 +550,11 @@ async def agent_conversations(agent_id: str, request: Request) -> dict[str, Any]
         row["running"] = svc.is_running(sid)
         # An approval card or a question waits for the person in this chat.
         questions = getattr(svc, "pending_questions", None)
+        credentials = getattr(svc, "pending_credential_requests", None)
         row["waiting"] = bool(
-            svc.pending_approvals(sid) or (questions(sid) if callable(questions) else [])
+            svc.pending_approvals(sid)
+            or (questions(sid) if callable(questions) else [])
+            or (credentials(sid) if callable(credentials) else [])
         )
         row["owner_id"] = owner_id
         row["counterpart_id"] = other_id
@@ -563,6 +574,42 @@ async def archive_agent(agent_id: str, request: Request) -> dict[str, Any]:
     except RosterError as exc:
         raise _typed_error(exc) from exc
     return {"agent": archived.to_dict()}
+
+
+@router.get(
+    "/agents/{agent_id}/credentials",
+    summary="List the credentials an agent stored (names and labels, never values)",
+)
+async def list_agent_credentials(agent_id: str, request: Request) -> dict[str, Any]:
+    from jarvis.society.credentials import vault_for
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    rows = await asyncio.to_thread(vault_for(rt.data_dir).list, agent.agent_id)
+    return {"agent_id": agent.agent_id, "credentials": [row.to_dict() for row in rows]}
+
+
+@router.delete(
+    "/agents/{agent_id}/credentials/{env}",
+    summary="Delete one of an agent's stored credentials",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def delete_agent_credential(agent_id: str, env: str, request: Request) -> dict[str, Any]:
+    from jarvis.society.credentials import CredentialError, vault_for
+
+    rt = await _runtime(request)
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        deleted = await asyncio.to_thread(vault_for(rt.data_dir).delete, agent.agent_id, env)
+    except CredentialError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    if not deleted:
+        raise HTTPException(404, "no such credential")
+    return {"ok": True, "env": env}
 
 
 async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[str]:
@@ -858,6 +905,32 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
         if agent is not None:
             created.append(agent.to_dict())
     return {"agents": created, "total": len(created)}
+
+
+# --------------------------------------------------------------- designs
+
+
+@router.get("/designs", summary="The person's saved companion designs")
+def get_designs() -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    return {"designs": design_library.list_designs()}
+
+
+@router.post("/designs", summary="Save a companion design for any agent to wear")
+def post_design(skin: CompanionSkin) -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    return design_library.save_design(skin)
+
+
+@router.delete("/designs/{design_id}", summary="Delete a saved companion design")
+def delete_design(design_id: str) -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    if not design_library.delete_design(design_id):
+        raise HTTPException(404, "Design not found")
+    return {"deleted": design_id}
 
 
 # --------------------------------------------------------------- providers
@@ -1902,9 +1975,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     """Create a NEW agent from a template on this install's own model.
 
     Shared by the import route below and the marketplace's install-by-name.
-    The agent asks before it acts where its runner can (``approval_mode=ask``):
-    its instructions were written by somebody else, so the person sees its
-    first moves before trusting it with more.
+    Use the normal creation defaults, including Bypass permissions. Explicit
+    template approval rules and any creator restrictions still apply.
     """
     from jarvis.society.agent_template import TemplateError, create_fields
 
@@ -1916,15 +1988,8 @@ async def install_template(template: dict[str, Any], request: Request) -> dict[s
     wanted = fields.pop("name")
     name = await _free_agent_name(rt, wanted)
     scope = template.get("knowledge_scope", "shared")
-    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
-    try:
-        created = await create_agent(body, request)
-    except HTTPException as exc:
-        if exc.status_code != 422:
-            raise
-        # This runner cannot hold an approval prompt: the app's default applies.
-        body = CreateAgentBody(name=name, **fields)
-        created = await create_agent(body, request)
+    body = CreateAgentBody(name=name, **fields)
+    created = await create_agent(body, request)
     agent_row = created["agent"]
     if scope == "own" and agent_row.get("knowledge_scope") != "own":
         try:

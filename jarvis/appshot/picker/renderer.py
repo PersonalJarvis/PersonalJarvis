@@ -264,6 +264,12 @@ class _SelectWindow(QWidget):
         self._patches = annotate.HidePatches(frozen, self._scale)
         self._toolbar: annotate.Toolbar | None = None
 
+    def release_capture(self) -> None:
+        """Drop pixels explicitly, including the preview's bound-method cycle."""
+        self._frozen = None
+        self._patches = annotate.HidePatches(None, self._scale)
+        self._markup = _MarkupState()
+
     # -- data from the main process ------------------------------------------
     def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
         """Map capture-space window rects onto this screen's logical pixels."""
@@ -1075,10 +1081,14 @@ class _SelectWindow(QWidget):
 class Picker(QObject):
     """Owns the per-screen windows and reports exactly one result."""
 
-    def __init__(self, app: QApplication, *, language: str = "en") -> None:
+    def __init__(
+        self, app: QApplication, *, language: str = "en", resident: bool = False
+    ) -> None:
         super().__init__()
         self._app = app
         self.language = language
+        self._resident = resident
+        self._started = False
         self._windows: list[_SelectWindow] = []
         self._focused: _SelectWindow | None = None
         #: The window whose area is being marked up; the others stay inert.
@@ -1086,6 +1096,10 @@ class Picker(QObject):
         self._done = False
 
     def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        self._done = False
         screens = QGuiApplication.screens()
         # Freeze every screen BEFORE any overlay window exists.
         frozen = {id(s): self._grab(s) for s in screens}
@@ -1158,6 +1172,16 @@ class Picker(QObject):
             win.hide()
         # The overlay must be off the glass before the parent grabs.
         self._app.processEvents()
+        # Keep only the GUI runtime warm. Bound Qt callbacks can outlive the
+        # native widget until GC, so explicitly release its pixels first.
+        for win in self._windows:
+            win.release_capture()
+            win.close()
+            win.deleteLater()
+        self._windows.clear()
+        self._focused = None
+        self.marking = None
+        self._started = False
         if info is None or frac is None:
             _emit({"event": wire.EVENT_SELECTION, "cancelled": True})
         else:
@@ -1170,7 +1194,8 @@ class Picker(QObject):
             if markup is not None:
                 payload["markup"] = markup
             _emit(payload)
-        self._app.quit()
+        if not self._resident:
+            self._app.quit()
 
     @Slot(str)
     def on_line(self, raw: str) -> None:
@@ -1178,7 +1203,13 @@ class Picker(QObject):
         if payload is None:
             return
         cmd = payload.get("cmd")
-        if cmd == wire.CMD_CANCEL:
+        if cmd == wire.CMD_START and self._resident and not self._started:
+            self.language = str(payload.get("language") or "en")
+            self.start()
+            self.set_layout(payload.get("monitors", []), payload.get("windows", []))
+        elif cmd == wire.CMD_QUIT:
+            self.on_eof()
+        elif cmd == wire.CMD_CANCEL and self._started:
             self.finish(None, None)
         elif cmd == wire.CMD_LAYOUT:
             monitors = payload.get("monitors")
@@ -1188,7 +1219,9 @@ class Picker(QObject):
 
     @Slot()
     def on_eof(self) -> None:
-        self.finish(None, None)
+        if self._started:
+            self.finish(None, None)
+        self._app.quit()
 
 
 class _StdinPump(QObject):
@@ -1208,7 +1241,7 @@ class _StdinPump(QObject):
         self.eof.emit()
 
 
-def run(language: str = "en") -> int:
+def run(language: str = "en", *, resident: bool = False) -> int:
     """Picker main loop. Returns the process exit code."""
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -1222,11 +1255,18 @@ def run(language: str = "en") -> int:
 
     hide_from_dock()  # macOS: no "Python" Dock icon for the resident picker
     app.setQuitOnLastWindowClosed(False)
-    picker = Picker(app, language=language)
+    if not QGuiApplication.screens():
+        return wire.EXIT_NO_GUI
+    picker = Picker(app, language=language, resident=resident)
     pump = _StdinPump()
     pump.line.connect(picker.on_line, Qt.ConnectionType.QueuedConnection)
     pump.eof.connect(picker.on_eof, Qt.ConnectionType.QueuedConnection)
-    picker.start()
+    if resident:
+        # Import/initialize Qt without taking pixels, creating windows or
+        # stealing focus. The next start command samples the current desktop.
+        _emit({"event": wire.EVENT_STANDBY})
+    else:
+        picker.start()
     pump.start()
     return app.exec()
 

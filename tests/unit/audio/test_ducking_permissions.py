@@ -475,6 +475,7 @@ async def test_a_report_that_hangs_never_holds_the_controller_session_start_up(m
 
     try:
         await asyncio.wait_for(controller._on_start(object()), 5)
+        await asyncio.wait_for(asyncio.gather(*controller._tasks), 5)
         assert entered.is_set()  # the report really was out while the session started
         assert controller._muted == [2]  # the other player still ducked
         assert not controller._lock.locked()
@@ -553,6 +554,7 @@ async def test_the_controller_lock_is_free_while_the_dialog_is_open(monkeypatch)
         # The user starts and ends a voice session while the dialog is still open:
         # neither handler waits for it, and neither asks anything.
         await asyncio.wait_for(bus.subs["VoiceSessionStarted"](object()), 5)
+        await asyncio.wait_for(asyncio.gather(*controller._tasks), 5)
         assert controller._muted == []  # no grant yet: nothing was scripted
         await asyncio.wait_for(bus.subs["VoiceSessionEnded"](object()), 5)
         assert not ask.done() and tcc.requests("automation") == []
@@ -564,6 +566,7 @@ async def test_the_controller_lock_is_free_while_the_dialog_is_open(monkeypatch)
     # The ducker's own state lock-free too: a later session ducks with the new grant.
     get_permission_service().invalidate()
     await asyncio.wait_for(bus.subs["VoiceSessionStarted"](object()), 5)
+    await asyncio.wait_for(asyncio.gather(*controller._tasks), 5)
     assert controller._muted == [1]
 
 

@@ -65,6 +65,9 @@ class SshTarget:
     #: once, to plant the app's own key; never stored.
     use_this_pc: bool = False
     client_key: asyncssh.SSHKey | None = None
+    #: With ``use_this_pc``: further key files to offer, the ``IdentityFile``
+    #: lines this PC's ``~/.ssh/config`` names for the host.
+    extra_key_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,21 @@ def this_pc_keys() -> list[Any]:
     from asyncssh.public_key import load_default_keypairs
 
     return list(load_default_keypairs())
+
+
+def key_files(paths: tuple[str, ...]) -> list[Any]:
+    """The readable, unencrypted keys among ``paths``; the rest are skipped."""
+    import asyncssh
+
+    keys: list[Any] = []
+    for path in paths:
+        try:
+            keys.append(asyncssh.read_private_key(path))
+        except (OSError, asyncssh.KeyImportError, asyncssh.KeyEncryptionError, ValueError) as exc:
+            # A protected or unreadable key cannot be offered without a prompt;
+            # the default keys and the agent are still tried.
+            log.info("computers: skipping key file %s (%s)", path, type(exc).__name__)
+    return keys
 
 
 def _password_probe(offered: list[bool]) -> Any:
@@ -183,7 +201,8 @@ async def open_session(target: SshTarget, *, timeout_s: float = CONNECT_TIMEOUT_
     offered: list[bool] = []
     if target.use_this_pc:
         own = [target.client_key] if target.client_key is not None else []
-        options["client_keys"] = [*own, *this_pc_keys()] or ()
+        extra = key_files(target.extra_key_files)
+        options["client_keys"] = [*own, *extra, *this_pc_keys()] or ()
         options["agent_path"] = THIS_PC_AGENT
         # Keys only; a password offer is noted, never answered.
         options["preferred_auth"] = "publickey,keyboard-interactive,password"

@@ -67,7 +67,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from jarvis.core.config import DEFAULT_CONFIG_FILE as JARVIS_TOML_PATH
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
-from jarvis.ui.jarvisbar.modes import MODES
+from jarvis.ui.jarvisbar.modes import ACTIVE_VOICE_MODES, MODES
 from jarvis.ui.overlay_styles import LEGACY_STYLE_ALIASES, ORB_STYLES, PERSISTENT_ORB_STYLES
 from jarvis.ui.pets.states import ACTION_STATES, DEFAULT_PET_ID, NO_PET_ID, ONE_SHOT_STATES
 from ui.orb import controls as orb_controls
@@ -2118,6 +2118,7 @@ class PetControlStrip(OrbControlRow):
         notify_off: bool | None = None,
         ring: int | None = None,
         call_ring: int | None = None,
+        spin: int | None = None,
     ) -> None:
         """Update what the strip says, repainting only on a real change."""
         _ = can_attach  # the pet strip has no attach control
@@ -2129,6 +2130,7 @@ class PetControlStrip(OrbControlRow):
             level=current.level if level is None else int(level),
             motion=current.motion if motion is None else str(motion),
             phase=current.phase if phase is None else int(phase),
+            spin=current.spin if spin is None else int(spin),
             hovered=current.hovered,
             notify_off=current.notify_off if notify_off is None else bool(notify_off),
             ring=current.ring if ring is None else int(ring),
@@ -2216,6 +2218,9 @@ FRAME_INTERVAL_MS = 16
 #: ticks at least this often, so the strokes follow the voice even when the
 #: figure is slow.
 PET_PULSE_INTERVAL_MS = 100
+#: The loading loop and the "connected" flourish turn faster than a level can
+#: change, so the strip ticks at this rate while either is on screen.
+PET_CONNECT_INTERVAL_MS = 40
 #: A level older than this no longer moves the strip's strokes (the voice stopped).
 PET_LEVEL_FRESH_S = 0.25
 #: Overlay modes and what the strip's indicator shows for them. Dictation
@@ -2276,10 +2281,12 @@ class OrbOverlay:
         # stays decoupled from the bus — OrbBusBridge injects a
         # callable that publishes ``VoiceMuteToggleRequested``.
         self._mute_toggle_callback: Callable[[], None] | None = None
-        # Right-click on the orb raises the main desktop window. OrbBusBridge
+        # Right-click on non-pet orbs raises the main window. OrbBusBridge
         # injects a callable that publishes ``ShowWindowRequested``; the orb
         # itself stays bus-agnostic (same contract as the mute toggle).
         self._on_show_window: Callable[[], None] | None = None
+        self._on_visibility_changed: Callable[[bool], None] | None = None
+        self._context_menu = None
         # The control row's actions. Each is optional: wired, the callback
         # decides (the macOS host forwards it to the parent process, which is
         # the only place a SpeechPipeline exists); unwired, the row falls back
@@ -2347,6 +2354,9 @@ class OrbOverlay:
         self._photo: ImageTk.PhotoImage | None = None
         self._image_id: int | None = None
         self._mode: str = "idle"
+        # The strip's clock of the strokes bending into the loading loop while
+        # a call connects, and of their one-shot back out (time.monotonic()).
+        self._connect_timeline = orb_controls.ConnectTimeline()
         self._ext_level: float | None = None
         self._ext_level_at: float = -math.inf
         self._t0: float = 0.0
@@ -2557,7 +2567,7 @@ class OrbOverlay:
         #   <B1-Motion> → drag-update (only fires while LMB held)
         #   <ButtonRelease-1> → drag-finish (or no-op if it was a click)
         #   <Double-Button-1> → mute toggle (fires after Button-1+Release)
-        #   <Button-3>       → raise the main desktop window (spec 2026-06-02)
+        #   <Button-3>       → pet context menu, or raise the main window
         #   <Button-2>       → reset position (moved off the old right-click menu)
         # User spec 2026-05-17: double-click on the orb mutes Jarvis.
         # Spec 2026-06-02: right-click now opens the Jarvis window (same as the
@@ -2988,7 +2998,7 @@ class OrbOverlay:
             return
         row.set_on_action(self._on_control_action)
         row.set_state(
-            active=self._mode in ("listen", "think", "speak"),
+            active=self._mode in ACTIVE_VOICE_MODES,
             speaker_muted=self._speaker_muted,
         )
         if isinstance(row, PetControlStrip):
@@ -3011,7 +3021,7 @@ class OrbOverlay:
         """
         if self._pet_strip_always or self._pet_id == NO_PET_ID:
             return True
-        if self._mode in PET_VOICE_MODES or self._mode in PET_THINK_MODES:
+        if self._mode in ACTIVE_VOICE_MODES + PET_VOICE_MODES + PET_THINK_MODES:
             return True
         notices = self._notices
         if notices is not None and notices.count:
@@ -3031,7 +3041,7 @@ class OrbOverlay:
         # A live conversation keeps the controls out: hanging up is the one
         # thing the user reaches for mid-call, and hunting for a row that hides
         # itself is worse than a row that stays.
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             return
         row.hide_after_grace()
 
@@ -3040,7 +3050,7 @@ class OrbOverlay:
         row = self._controls
         if row is None:
             return
-        active = self._mode in ("listen", "think", "speak")
+        active = self._mode in ACTIVE_VOICE_MODES
         row.set_state(active=active)
         if self._style == "pet":
             # The pet alone at rest; its strip joins it while it is useful.
@@ -3098,7 +3108,7 @@ class OrbOverlay:
 
     def _do_call(self) -> None:
         """The phone disc: call Jarvis (ringing as it dials), or hang up."""
-        if self._mode not in ("listen", "think", "speak"):
+        if self._mode not in ACTIVE_VOICE_MODES:
             self._ring_phone()
         self._do_talk_or_hangup()
 
@@ -3204,7 +3214,7 @@ class OrbOverlay:
 
     def _do_talk_or_hangup(self) -> None:
         """The mic disc: start a conversation, or end the running one."""
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             self._do_hangup()
             return
         callback = self._on_talk
@@ -3232,7 +3242,7 @@ class OrbOverlay:
 
     def _do_close(self) -> None:
         """X: end the conversation and put the orb away, like the in-app X."""
-        if self._mode in ("listen", "think", "speak"):
+        if self._mode in ACTIVE_VOICE_MODES:
             self._do_hangup()
         row = self._controls
         if row is not None:
@@ -3303,19 +3313,52 @@ class OrbOverlay:
         self._on_speaker_toggle = callback
 
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
-        """Inject the right-click → raise-main-window action.
+        """Inject the main-window action used by non-pet orb right-clicks.
 
-        Fired on a right-click of the orb. Same bus-agnostic contract as
+        Same bus-agnostic contract as
         ``set_on_mute_toggle``: OrbBusBridge passes a callable that publishes
         ``ShowWindowRequested``. Pass ``None`` to detach.
         """
         self._on_show_window = callback
 
     def _on_right_click(self, _event: tk.Event | None = None) -> None:
-        """Right-click → raise the main desktop window via the injected
-        callback. Replaces the old Reset/Mute context menu (spec 2026-06-02):
-        "Reset position" now lives on middle-click, mute stays on the
-        double-double-click gesture. No callback wired → safe no-op."""
+        """Open the pet's menu; other orb styles raise the main window."""
+        if self._style == "pet":
+            self._show_pet_context_menu(_event)
+            return
+        self._open_main_window()
+
+    def _show_pet_context_menu(self, event: tk.Event | None = None) -> None:
+        root = self._root
+        if root is None:
+            return
+        from jarvis.ui.pets.context_menu import preferences
+        from ui.orb.pet_context_menu import PetContextMenu
+
+        try:
+            if self._context_menu is not None:
+                self._context_menu.destroy()
+            labels, shortcut = preferences()
+            menu = PetContextMenu(root, scale=getattr(self, "_dpi_ratio", 1.0))
+            self._context_menu = menu
+            menu.add_command(
+                label=labels[0], command=self._open_main_window,
+                state="normal" if self._on_show_window is not None else "disabled",
+            )
+            menu.add_command(label=labels[1], command=self._on_reset_double_click)
+            menu.add_separator()
+            menu.add_command(
+                label=labels[2], accelerator=shortcut, command=lambda: self.set_visible(False),
+            )
+            x, y = (event.x_root, event.y_root) if event is not None else root.winfo_pointerxy()
+            try:
+                menu.tk_popup(int(x), int(y))
+            finally:
+                menu.grab_release()
+        except tk.TclError:
+            logging.getLogger("jarvis.orb").exception("Pet context menu could not be opened")
+
+    def _open_main_window(self) -> None:
         callback = self._on_show_window
         if callback is None:
             return
@@ -3615,6 +3658,9 @@ class OrbOverlay:
 
     def _actually_hide(self) -> None:
         self._pending_hide_after_id = None
+        menu = getattr(self, "_context_menu", None)
+        if menu is not None:
+            menu.destroy()
         # The controls belong to the orb, not to the desktop: a row of buttons
         # left floating where the sphere used to be is a widget with nothing
         # behind it.
@@ -4020,6 +4066,20 @@ class OrbOverlay:
         self._user_hidden = not bool(visible)
         self._note_activity()
         self._enqueue_ui(self._apply_user_visibility)
+        self._notify_visibility_changed()
+
+    def set_on_visibility_changed(self, callback: Callable[[bool], None] | None) -> None:
+        """Report pet dismissal to the companion host's parent process."""
+        self._on_visibility_changed = callback
+
+    def _notify_visibility_changed(self) -> None:
+        callback = self._on_visibility_changed
+        if self._style != "pet" or callback is None:
+            return
+        try:
+            callback(not self._user_hidden)
+        except Exception:  # noqa: BLE001 — observers must not break the Tk loop
+            logging.getLogger("jarvis.orb").debug("pet visibility callback failed", exc_info=True)
 
     def toggle_visible(self) -> None:
         """The pet shortcut: hide the pet, or show it and bring it to the front."""
@@ -4152,9 +4212,11 @@ class OrbOverlay:
         if not self._user_hidden and self._window_mapped():
             self._user_hidden = True
             self._apply_user_visibility()
+            self._notify_visibility_changed()
             return
         self._user_hidden = False
         self._reveal_pet(raise_to_front=True)
+        self._notify_visibility_changed()
 
     def _reveal_pet(self, *, raise_to_front: bool) -> None:
         """Map the pet window, its strip, and restart the frame loop."""
@@ -4425,6 +4487,7 @@ class OrbOverlay:
         if mode not in MODES:
             raise ValueError(f"Unknown mode: {mode!r} (allowed: {', '.join(MODES)})")
         changed = mode != self._mode
+        self._connect_timeline.note_mode(self._mode, mode, time.monotonic())
         self._mode = mode
         renderer = getattr(self, "_renderer", None)
         if isinstance(renderer, PetRenderer):
@@ -4579,7 +4642,13 @@ class OrbOverlay:
             self._frame_key = key
         delay_ms = int(renderer.next_frame_delay_ms(t))
         if self._pump_strip_level():
-            delay_ms = min(delay_ms, PET_PULSE_INTERVAL_MS)
+            row = self._controls
+            connecting = isinstance(row, PetControlStrip) and row.state.motion in (
+                "connect",
+                "connected",
+            )
+            pulse_ms = PET_CONNECT_INTERVAL_MS if connecting else PET_PULSE_INTERVAL_MS
+            delay_ms = min(delay_ms, pulse_ms)
         return delay_ms
 
     def _show_photo(self, photo: Any) -> None:
@@ -4592,26 +4661,32 @@ class OrbOverlay:
         """Drive the strip's three strokes. True while they move.
 
         Listening or talking: the strokes follow the live audio level.
-        Thinking: a highlight travels across them. At rest they stand still
-        and the strip is not repainted at all.
+        Thinking: a highlight travels across them. Connecting: the loading
+        strokes bend into a spinning loop, then straighten once connected. At
+        rest they stand still and the strip is not repainted at all.
         """
         row = self._controls
         if not isinstance(row, PetControlStrip):
             return False
         now = time.monotonic()
-        if self._mode in PET_VOICE_MODES:
+        look = self._connect_timeline.look(self._mode, now)
+        phase = spin = 0
+        if look is not None:
+            # Connecting: the strokes bend into the loading loop; connected:
+            # the one-shot back out of it.
+            motion, phase, spin = look.motion, look.phase, look.spin
+        elif self._mode in PET_VOICE_MODES:
             motion = "voice"
         elif self._mode in PET_THINK_MODES:
             motion = "think"
         else:
             motion = "rest"
         fresh = now - self._ext_level_at <= PET_LEVEL_FRESH_S
-        level = orb_controls.quantize_level(self._ext_level) if motion == "voice" and fresh else 0
-        row.set_state(
-            level=level,
-            motion=motion,
-            phase=orb_controls.indicator_phase(motion, now),
-        )
+        metered = motion in ("voice", "connect")
+        level = orb_controls.quantize_level(self._ext_level) if metered and fresh else 0
+        if look is None:
+            phase = orb_controls.indicator_phase(motion, now)
+        row.set_state(level=level, motion=motion, phase=phase, spin=spin)
         return motion != "rest"
 
     def _arm_frame(self, delay_ms: int) -> None:
