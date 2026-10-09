@@ -4,6 +4,7 @@ import { AgentSymbol } from "../AgentSymbol";
 import { AccessoryPicker } from "./AccessoryPicker";
 import { COMPANION_COLORS, COMPANION_SHAPES, type CompanionAppearance } from "./appearance";
 import { CompanionMark } from "./CompanionMark";
+import { DesignPicker } from "./DesignPicker";
 import { PetSprite } from "@/components/pets/PetSprite";
 import { usePets } from "@/hooks/usePets";
 import gigiMark from "@/assets/gigi-companion-avatar.png";
@@ -18,7 +19,8 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
   preview3d?: boolean;
 }) {
   const t = useT();
-  const update = (patch: Partial<CompanionAppearance>) => onChange({ ...value, ...patch });
+  // Picking a plain colour takes the design off; the design picker sends both together.
+  const update = (patch: Partial<CompanionAppearance>) => onChange({ ...value, ...("color" in patch && !("skin" in patch) ? { skin: undefined } : {}), ...patch });
   const petsQuery = usePets();
   const pets = petsQuery.data?.pets ?? [];
   // The look is a shape or a pet; "Pet" stays chosen even before a pet exists to pick.
@@ -59,7 +61,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       <div className="flex flex-wrap gap-2">{COMPANION_SHAPES.map(shape => <button key={shape} type="button"
         aria-label={t(`society.companion.shapes.${shape}`)} aria-pressed={value.shape === shape}
         onClick={() => update({ shape })} className={`grid h-12 w-12 place-items-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${value.shape === shape ? "border-foreground bg-secondary" : "border-border hover:bg-secondary"}`}>
-        <AgentSymbol shape={shape} color={value.color} eyes={value.eyes} accessories={value.accessories} size={36} />
+        <AgentSymbol shape={shape} color={value.color} eyes={value.eyes} accessories={value.accessories} skin={value.skin} size={36} />
       </button>)}</div>
     </div>
     <div className="flex items-center justify-between gap-3 text-sm"><span>{t("society.companion.eyes")}</span>
@@ -81,6 +83,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
         <input type="color" aria-label={t("society.companion.custom_color")} value={value.color} onChange={e => update({ color: e.target.value })} className="aspect-square h-auto w-full rounded border border-border bg-background" />
       </div>
     </div>}
+    {!lead && kind === "shape" && <DesignPicker skin={value.skin} color={value.color} onChange={(skin, color) => update({ skin, color })} />}
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.visible")}
       <Switch checked={value.enabled} onCheckedChange={enabled => update({ enabled })} aria-label={t("society.companion.visible")} />
     </label>

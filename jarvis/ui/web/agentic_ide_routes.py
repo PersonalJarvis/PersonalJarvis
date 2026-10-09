@@ -536,6 +536,37 @@ class ActiveAccountRequest(BaseModel):
     )
 
 
+class SwitchSeatRequest(BaseModel):
+    """Which subscription a coding CLI and all of its running agents move to."""
+
+    agent: str = Field(
+        description=(
+            "Coding CLI to switch. GET /api/agent-accounts for the CLIs this "
+            "build can switch."
+        )
+    )
+    account_id: str = Field(description="Id of a stored subscription of that agent.")
+
+
+class AutoSwitchRequest(BaseModel):
+    """When running work moves off a subscription that is running out."""
+
+    enabled: bool | None = Field(
+        default=None,
+        description="Move work to the next subscription automatically. Omit to keep.",
+    )
+    at_percent: float | None = Field(
+        default=None,
+        ge=50,
+        le=100,
+        description=(
+            "Spent share of a plan limit at which its work moves on, e.g. 97 "
+            "for three percent left. A refused request always moves the work. "
+            "Omit to keep."
+        ),
+    )
+
+
 class ActivateWorkspaceRequest(BaseModel):
     """Which workspace should be on screen."""
 
@@ -3325,6 +3356,72 @@ async def set_active_account(req: ActiveAccountRequest) -> dict:
     }
 
 
+@router.post(
+    "/accounts/switch",
+    summary="Switch a coding CLI and its running agents to another subscription",
+)
+async def switch_seat(req: SwitchSeatRequest) -> dict:
+    """Make one subscription the active seat AND move the running agents onto it.
+
+    Every pane of that CLI follows: an idle agent is restarted on the new seat
+    at once and continues its own conversation (the conversation is carried
+    into the new seat's history); an agent in the middle of a turn moves the
+    moment the turn ends. Panes already signed in as the same login stay put.
+    New panes, chat threads and agents start on the new seat from now on.
+    """
+    from jarvis import agent_accounts
+    from jarvis.agentic_ide import seat_switch
+
+    if req.agent not in agent_accounts.platforms():
+        raise HTTPException(status_code=422, detail=f"{req.agent} has no switchable subscriptions.")
+    registry = get_registry()
+    try:
+        event = await seat_switch.switch_seat(registry, req.agent, req.account_id)
+    except agent_accounts.AccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    seat_switch.start(registry)
+    display = AGENT_DISPLAY.get(req.agent, req.agent)
+    parts = [f"{display} now runs on {event.to_label}."]
+    if event.moved:
+        parts.append(f"{event.moved} agent(s) moved with their conversations.")
+    if event.queued:
+        parts.append(f"{event.queued} working agent(s) follow when their turn ends.")
+    return {
+        "ok": True,
+        "agent": req.agent,
+        "active_account": event.to_account,
+        "active_label": event.to_label,
+        "moved": event.moved,
+        "queued": event.queued,
+        "message": " ".join(parts),
+    }
+
+
+@router.get("/accounts/auto-switch", summary="Automatic subscription switching")
+async def get_auto_switch() -> dict:
+    """Whether work moves to the next subscription on its own, and what happened.
+
+    ``at_percent`` is the spent share at which a seat's work moves on;
+    ``exhausted`` lists seats out of rotation until they refill; ``events``
+    the most recent switches, newest first.
+    """
+    from jarvis.agentic_ide import seat_switch
+
+    return {"ok": True, **await asyncio.to_thread(seat_switch.status)}
+
+
+@router.put("/accounts/auto-switch", summary="Change automatic subscription switching")
+async def set_auto_switch(req: AutoSwitchRequest) -> dict:
+    """Turn automatic switching on or off, or move its threshold."""
+    from jarvis import agent_accounts
+    from jarvis.agentic_ide import seat_switch
+
+    await asyncio.to_thread(
+        lambda: agent_accounts.set_auto_switch(enabled=req.enabled, at_percent=req.at_percent)
+    )
+    return {"ok": True, **await asyncio.to_thread(seat_switch.status)}
+
+
 @router.post("/terminals", summary="Open one more terminal")
 async def add_terminal(req: AddTerminalRequest) -> dict:
     """Add a terminal to the running workspace, beside or below another one.
@@ -3425,9 +3522,13 @@ def put_offload_on_quit(req: OffloadOnQuitRequest) -> dict:
 
     if req.computer_id:
         try:
-            get_service().get(req.computer_id)
+            chosen = get_service().get(req.computer_id)
         except ComputerError as exc:
             raise HTTPException(status_code=404, detail=exc.message) from exc
+        if not chosen.enabled:
+            raise HTTPException(
+                status_code=409, detail="This computer is switched off. Switch it on first."
+            )
     offload_on_quit.set_target(req.computer_id)
     return {"computer_id": offload_on_quit.target()}
 

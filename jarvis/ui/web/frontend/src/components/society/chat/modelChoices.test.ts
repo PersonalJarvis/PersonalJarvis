@@ -33,6 +33,16 @@ test("live labels retain model-specific effort metadata and duplicate ids collap
   expect(modelEffort(seat, "small", "high")).toBe("low");
 });
 
+test("agent model choices exclude only explicitly tool-incapable models", () => {
+  const [seat] = modelSeats([option({ id: "ollama", runner: "brain", keyless: true,
+    connected: true, cli_installed: null, models_source: "live" })], [], { ollama: [
+    { id: "text-only", label: "Text", tools: false },
+    { id: "custom-import", label: "Custom", tools: true },
+    { id: "unknown", label: "Unknown", tools: null },
+  ] });
+  expect(seat.provider.curated_models.map((model) => model.id)).toEqual(["custom-import", "unknown"]);
+});
+
 test("free model detection does not infer price from labels, size or unrelated aliases", () => {
   for (const id of ["opencode/next-free", "openrouter/vendor/model:free", "opencode/big-pickle"]) {
     expect(isFreeOpenCodeModel({ id, label: "Model" })).toBe(true);

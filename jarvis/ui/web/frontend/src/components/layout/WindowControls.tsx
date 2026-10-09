@@ -5,6 +5,7 @@ import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeCont
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { windowIdentity } from "@/lib/sectionWindows";
 
 export interface DesktopChrome {
   frameless: boolean;
@@ -44,7 +45,7 @@ export function useDesktopChrome(): DesktopChrome & {
 
   const command = useCallback((action: "minimize" | "maximize" | "close") => {
     const solo = useEventStore.getState().solo;
-    const view = solo ? useEventStore.getState().activeSection : null;
+    const view = solo ? windowIdentity(window.location.search, useEventStore.getState().activeSection) : null;
     void fetch("/api/window/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

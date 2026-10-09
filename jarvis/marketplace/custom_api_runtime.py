@@ -19,6 +19,7 @@ from jarvis.core.http_guard import public_only_async
 from jarvis.core.http_pool import HttpClientPool
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.marketplace.custom_api import ApiAction, ApiDefinition, CustomApiStore, validate_path
+from jarvis.marketplace.custom_api_transport import QUERY_AUTH_EXTENSION, ApiTransport, encode_body
 
 log = logging.getLogger(__name__)
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -89,6 +90,7 @@ class CustomApiTool:
         self.custom_api_id = definition.id
         self.custom_api_name = definition.name
         self.custom_api_description = definition.description
+        self.custom_api_brand = definition.connection.brand_id if definition.connection else ""
         self.display_name = f"{definition.name}: {action.description[:80]}"
         self.description = (
             f"[ACTION-ONLY · API: {definition.name}] {action.description} "
@@ -100,7 +102,7 @@ class CustomApiTool:
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
         return {
-            "level": "read" if self.action.method == "GET" else "modify",
+            "level": "read" if self.action.method in {"GET", "HEAD", "OPTIONS"} else "modify",
             "summary": f"{self.action.method} {self.definition.name}: {self.action.description}",
         }
 
@@ -124,15 +126,47 @@ class CustomApiTool:
                 path = path.replace("{" + name + "}", encoded)
             validate_path(path)
             headers = {"Accept": "*/*"}
+            for name, value in args.get("header", {}).items():
+                if name.lower() in {
+                    "host",
+                    "authorization",
+                    "cookie",
+                    "content-length",
+                    "connection",
+                    "transfer-encoding",
+                    "proxy-authorization",
+                }:
+                    return ToolResult(
+                        False, None, "This request header is controlled by the connection"
+                    )
+                headers[name] = str(value)
             if current.auth.mode == "bearer":
                 headers["Authorization"] = f"Bearer {key}"
             elif current.auth.mode == "header":
                 headers[current.auth.header_name] = key or ""
             query = {
-                k: str(v).lower() if isinstance(v, bool) else str(v)
+                k: v
+                if isinstance(v, list)
+                else str(v).lower()
+                if isinstance(v, bool)
+                else json.dumps(v)
+                if isinstance(v, dict)
+                else str(v)
                 for k, v in args.get("query", {}).items()
+                if v is not None
             }
-            body = {"json": args["body"]} if "body" in args else {}
+            extensions = (
+                {QUERY_AUTH_EXTENSION: (current.auth.header_name, key)}
+                if current.auth.mode == "query"
+                else {}
+            )
+            body = (
+                await asyncio.to_thread(encode_body, self.action, args["body"])
+                if "body" in args
+                else {}
+            )
+            if self.action.body_encoding == "binary":
+                headers["Content-Type"] = self.action.content_type
             # No retries, including on timeout: an action may already have run.
             # No redirects: credentials stay on the exact configured origin.
             async with asyncio.timeout(60):
@@ -141,6 +175,7 @@ class CustomApiTool:
                     current.base_url + path,
                     params=query,
                     headers=headers,
+                    extensions=extensions,
                     **body,
                 ) as response:
                     if not 200 <= response.status_code < 300:
@@ -212,6 +247,163 @@ class CustomApiTool:
             )
 
 
+class CustomApiCatalogTool(CustomApiTool):
+    """Discover any operation without flooding every model turn with schemas."""
+
+    is_action_tool = False
+    yields_instructions_only = True
+
+    def __init__(
+        self,
+        definition: ApiDefinition,
+        store: CustomApiStore,
+        pool: HttpClientPool,
+        output_dir: Path | None = None,
+    ) -> None:
+        super().__init__(
+            definition,
+            ApiAction(
+                id="actions",
+                path="/",
+                description="Find available actions and inspect their input parameters",
+            ),
+            store,
+            pool,
+            output_dir,
+        )
+        self.risk_tier = "safe"
+        self.description = (
+            f"Discover {definition.name} actions. {definition.description[:1200]}. "
+            "Search with query, then supply an action ID to get its input schema. "
+            f"Execute it with api_{definition.id}_call. This lookup makes no provider request."
+        )
+        self.schema = {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search by task, capability or operation name",
+                },
+                "action": {"type": "string", "description": "Exact action ID to inspect"},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+            },
+            "additionalProperties": False,
+        }
+
+    async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
+        from jsonschema import Draft202012Validator
+
+        if not Draft202012Validator(self.schema).is_valid(args):
+            return ToolResult(False, None, "Invalid action search")
+        try:
+            current = await asyncio.to_thread(self.store.get, self.definition.id)
+            if current != self.definition or not current.enabled:
+                return ToolResult(False, None, "API connection changed; reload its tools")
+            if args.get("action"):
+                action = next((a for a in current.actions if a.id == args["action"]), None)
+                if action is None:
+                    return ToolResult(
+                        False, None, "Unknown action ID; search the available actions"
+                    )
+                return ToolResult(
+                    True,
+                    {
+                        "id": action.id,
+                        "description": action.description,
+                        "input_schema": action.input_schema(),
+                        "risk_tier": action.risk_tier,
+                        "call_tool": f"api_{current.id}_call",
+                    },
+                )
+            words = str(args.get("query", "")).lower().split()
+            actions = [
+                a
+                for a in current.actions
+                if all(word in f"{a.id} {a.description} {a.path}".lower() for word in words)
+            ]
+            offset = int(args.get("offset", 0))
+            return ToolResult(
+                True,
+                {
+                    "service": current.name,
+                    "total": len(actions),
+                    "next_offset": offset + 15 if len(actions) > offset + 15 else None,
+                    "actions": [
+                        {
+                            "id": a.id,
+                            "description": a.description,
+                            "method": a.method,
+                            "risk_tier": a.risk_tier,
+                        }
+                        for a in actions[offset : offset + 15]
+                    ],
+                    "instruction": "Use action=<id> to inspect arguments before calling",
+                },
+            )
+        except (ValueError, OSError):
+            log.warning("Custom API action catalog is unavailable for %s", self.definition.id)
+            return ToolResult(False, None, "The connection's action catalog is unavailable")
+
+
+class CustomApiCallTool(CustomApiTool):
+    def __init__(
+        self,
+        definition: ApiDefinition,
+        store: CustomApiStore,
+        pool: HttpClientPool,
+        output_dir: Path | None = None,
+    ) -> None:
+        super().__init__(
+            definition,
+            ApiAction(
+                id="call", path="/", description="Execute an action on this connected service"
+            ),
+            store,
+            pool,
+            output_dir,
+        )
+        self._actions = {a.id: a for a in definition.actions}
+        self.description = (
+            f"Use {definition.name}. {definition.description[:1200]}. "
+            f"First find the operation and its arguments with api_{definition.id}_actions. "
+            "Pass its exact ID as action and its path/query/body arguments as arguments. "
+            "The connection supplies credentials; never ask for or pass an API key."
+        )
+        self.schema = {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "arguments": {"type": "object"},
+            },
+            "required": ["action", "arguments"],
+            "additionalProperties": False,
+        }
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str:
+        action = self._actions.get(str(args.get("action", "")))
+        return action.risk_tier if action else "block"
+
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
+        action = self._actions.get(str(args.get("action", "")))
+        description = action.description if action else "Unknown action"
+        return {
+            "level": "read" if action and action.method in {"GET", "HEAD", "OPTIONS"} else "modify",
+            "summary": f"{self.definition.name}: {description}",
+        }
+
+    async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
+        from jsonschema import Draft202012Validator
+
+        if not Draft202012Validator(self.schema).is_valid(args):
+            return ToolResult(False, None, "Provide an action ID and its arguments")
+        action = self._actions.get(args["action"])
+        if action is None:
+            return ToolResult(False, None, "Unknown action ID; inspect the available actions")
+        return await CustomApiTool(
+            self.definition, action, self.store, self.pool, self.output_dir
+        ).execute(args["arguments"], ctx)
+
+
 class CustomApiRuntime:
     """Cached tool surface, with HTTP clients allocated only on first use."""
 
@@ -229,6 +421,14 @@ class CustomApiRuntime:
         self._pools: dict[str, HttpClientPool] = {}
         self._lock = asyncio.Lock()
         self._stopped = False
+        self._discovery: Any = None
+
+    def discovery(self) -> Any:
+        if self._discovery is None:
+            from jarvis.marketplace.custom_api_discovery import ApiDiscovery
+
+            self._discovery = ApiDiscovery()
+        return self._discovery
 
     async def refresh(self) -> None:
         async with self._lock:
@@ -247,7 +447,7 @@ class CustomApiRuntime:
                     definition.id,
                     HttpClientPool(
                         timeout_s=45,
-                        transport=self.transport,
+                        transport=ApiTransport(self.transport),
                         client_kwargs={
                             "follow_redirects": False,
                             "trust_env": False,
@@ -255,8 +455,17 @@ class CustomApiRuntime:
                         },
                     ),
                 )
-                for action in definition.actions:
-                    tool = CustomApiTool(definition, action, self.store, pool, self.output_dir)
+                if definition.connection is not None:
+                    available = [
+                        CustomApiCatalogTool(definition, self.store, pool, self.output_dir),
+                        CustomApiCallTool(definition, self.store, pool, self.output_dir),
+                    ]
+                else:
+                    available = [
+                        CustomApiTool(definition, a, self.store, pool, self.output_dir)
+                        for a in definition.actions
+                    ]
+                for tool in available:
                     tools[tool.name] = tool
             registry = get_registry()
             for name in self.tools:
@@ -276,7 +485,7 @@ class CustomApiRuntime:
                         ),
                         description=tool.description[:250],
                         risk_tier=tool.risk_tier,
-                        requires_evidence=True,
+                        requires_evidence=tool.is_action_tool,
                     )
                 )
             self.tools = tools
@@ -290,3 +499,5 @@ class CustomApiRuntime:
             for pool in self._pools.values():
                 await pool.aclose()
             self._pools.clear()
+            if self._discovery is not None:
+                await self._discovery.close()

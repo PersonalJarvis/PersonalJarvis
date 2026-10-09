@@ -53,6 +53,15 @@ def test_per_model_output_and_large_catalog_limits():
     assert resolve_limits(config(8192, 64000), "ollama", "small", small).max_output_tokens == 1024
 
 
+def test_latest_alias_never_bypasses_a_saved_smaller_context():
+    cfg = JarvisConfig()
+    cfg.brain.providers["ollama"] = BrainProviderConfig(models={
+        "example": OllamaModelOptions(num_ctx=8192, num_predict=1024),
+    })
+    metadata = ModelInfo("example:latest", "Example", context_length=131072)
+    assert resolve_limits(cfg, "ollama", "example:latest", metadata) == ModelLimits(8192, 1024)
+
+
 @pytest.mark.parametrize("context,output", [(8192, 1024), (1_000_000, 65536)])
 def test_both_runtime_configs_use_the_resolved_model(context, output, tmp_path):
     route = ModelRoute(

@@ -2832,7 +2832,9 @@ class BaseUrlResponse(BaseModel):
 
 
 @router.put("/providers/{provider_id}/base-url")
-async def set_provider_base_url(provider_id: str, body: BaseUrlBody) -> BaseUrlResponse:
+async def set_provider_base_url(
+    provider_id: str, body: BaseUrlBody, request: Request,
+) -> BaseUrlResponse:
     """Set (or clear) the server URL of a local/self-hosted provider.
 
     Only cards with ``supports_base_url`` accept one (400 otherwise). The URL
@@ -2862,6 +2864,26 @@ async def set_provider_base_url(provider_id: str, body: BaseUrlBody) -> BaseUrlR
     from jarvis.core import config_writer
 
     config_writer.set_provider_base_url(provider_id, cleaned or None)
+    # Cached Society and voice instances must not keep the previous server.
+    from jarvis.core.config import BrainProviderConfig
+
+    live_brain = getattr(request.app.state, "brain", None)
+    for config in (_resolve_cfg(request), getattr(live_brain, "_config", None)):
+        if config is None:
+            continue
+        previous = config.brain.providers.get(provider_id) or BrainProviderConfig()
+        config.brain.providers[provider_id] = previous.model_copy(
+            update={"base_url": cleaned or None},
+        )
+    reactivate = getattr(live_brain, "reactivate_provider", None)
+    if callable(reactivate):
+        reactivate(provider_id)
+    await _get_model_catalog(request).invalidate(provider_id)
+    from jarvis.agent_runtimes.gateway import invalidate_provider_metadata
+
+    invalidate_provider_metadata(provider_id)
+    _health_ledger.forget_providers([provider_id], modality=_health_ledger.MODALITY_BRAIN)
+    _invalidate_section_health_state(request)
     return BaseUrlResponse(
         provider=provider_id,
         base_url=cleaned or None,

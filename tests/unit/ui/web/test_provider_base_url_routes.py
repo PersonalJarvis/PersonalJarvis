@@ -18,11 +18,14 @@ from jarvis.ui.web.server import WebServer
 
 
 @pytest.fixture
-def server() -> WebServer:
+def server(tmp_path) -> WebServer:
+    from jarvis.brain.model_catalog import ModelCatalog
+
     cfg = JarvisConfig()
     cfg.ui.dev_mode = True
     srv = WebServer(cfg, bus=EventBus())
     srv.app.state.config = cfg
+    srv.app.state.model_catalog = ModelCatalog(cache_path=tmp_path / "catalog.json")
     return srv
 
 
@@ -60,6 +63,45 @@ def test_put_clear_resets_to_vendor_default(
     assert resp.status_code == 200
     assert resp.json()["base_url"] is None
     assert recorded_writes == [("ollama", None)]
+
+
+def test_endpoint_change_releases_scoped_clients_and_old_catalog(
+    server, recorded_writes, monkeypatch,
+):
+    import time
+
+    from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+    from jarvis.brain.model_catalog import ModelInfo
+    from jarvis.core.config import BrainProviderConfig
+    from tests.unit.brain.test_turn_override import _manager
+
+    brain = _manager()
+    brain._config.brain.providers["ollama"] = BrainProviderConfig(base_url="http://old:11434")
+    brain._brain_cache[("ollama", "model")] = object()
+    brain._brain_cache[("ollama@society/test", "model")] = object()
+    unrelated = object()
+    brain._brain_cache[("other@society/test", "model")] = unrelated
+    server.app.state.brain = brain
+    catalog = server.app.state.model_catalog
+    catalog._cache["ollama"] = (time.time(), [ModelInfo("old-model", "Old model")])
+    catalog._fetch_failed_at["ollama"] = time.time()
+    local_grant = gateway.Grant("test", "ollama")
+    remote_grant = gateway.Grant("test", "openai")
+    monkeypatch.setattr(gateway, "_CATALOG", object())
+    monkeypatch.setattr(gateway, "_MODEL_LIMITS", {
+        local_grant: {"model": ModelLimits(128_000)},
+        remote_grant: {"model": ModelLimits(200_000)},
+    })
+    with TestClient(server.app) as client:
+        response = client.put("/api/providers/ollama/base-url", json={"base_url": "http://new:11434"})
+    assert response.status_code == 200
+    assert brain._config.brain.providers["ollama"].base_url == "http://new:11434"
+    assert not any(key[0].startswith("ollama") for key in brain._brain_cache)
+    assert brain._brain_cache[("other@society/test", "model")] is unrelated
+    assert "ollama" not in catalog._cache and "ollama" not in catalog._fetch_failed_at
+    assert gateway._CATALOG is None and local_grant not in gateway._MODEL_LIMITS
+    assert gateway._MODEL_LIMITS[remote_grant]["model"].context_window == 200_000
 
 
 def test_put_rejects_non_http_scheme(

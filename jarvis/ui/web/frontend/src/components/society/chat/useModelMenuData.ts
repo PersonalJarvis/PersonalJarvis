@@ -70,7 +70,7 @@ export function useModelMenuData(chatCatalog: AgentChatCatalog | null = null, ch
   }), [liveProviders]);
   const models = useQueries({ queries: liveProviders.map((provider) => ({
     queryKey: ["society", "model-menu", "live", provider.id],
-    queryFn: async (): Promise<CuratedModel[]> => (await fetchProviderModels(provider.id, { strict: true })).map((model) => ({ id: model.id, label: model.label ?? model.name ?? model.id })),
+    queryFn: async (): Promise<CuratedModel[]> => (await fetchProviderModels(provider.id, { strict: true })).map((model) => ({ ...model, label: model.label ?? model.name ?? model.id })),
     initialData: saved?.live[provider.id], initialDataUpdatedAt: saved?.liveUpdatedAt?.[provider.id] ?? saved?.savedAt,
     enabled: Boolean(availableConnections), ...QUERY_POLICY, staleTime: 10 * 60_000, retry: false, refetchOnMount,
   })), combine });

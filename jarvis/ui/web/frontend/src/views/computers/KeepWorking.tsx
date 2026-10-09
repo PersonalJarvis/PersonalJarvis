@@ -67,6 +67,7 @@ export function KeepWorking({ computers }: { computers: Computer[] }) {
     { value: OFF, label: t("computers.keep_off") },
     ...computers
       .filter((computer) => computer.health.status !== "provisioning" && !isWindows(computer))
+      .filter((computer) => computer.enabled !== false || computer.id === value)
       .map((computer) => ({ value: computer.id, label: computer.name })),
   ];
 

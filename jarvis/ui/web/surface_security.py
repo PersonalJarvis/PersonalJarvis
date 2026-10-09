@@ -794,7 +794,16 @@ def _external_http_auth(path: str, method: str) -> bool:
 
 def _http_auth_exception(path: str, method: str) -> bool:
     return (
-        _is_static_request(path, method)
+        # These exact routes authenticate a one-use pairing code, a scoped
+        # paired credential, or a one-use opening ticket inside the handler.
+        (path == "/api/computers/pairing/redeem" and method == "POST")
+        or (path == "/api/computers/pairing/status" and method == "GET")
+        or (
+            path in {"/api/computers/pairing/launch", "/api/computers/pairing/disconnect"}
+            and method == "POST"
+        )
+        or (path == "/api/computers/pairing/enter" and method in {"GET", "POST"})
+        or _is_static_request(path, method)
         or (path == "/api/health" and method == "GET")
         or (path == "/api/ui/shell-painted" and method == "POST")
         # First-boot reads remain public. Mutations use the same authenticated

@@ -1403,6 +1403,15 @@ def _with_output_capacity(request: Any, limits: ModelLimits) -> Any:
     return replace(request, max_tokens=max(min(budget, room), _MIN_OUTPUT_TOKENS))
 
 
+def invalidate_provider_metadata(provider: str) -> None:
+    """A changed endpoint must not reuse the previous server's model limits."""
+    global _CATALOG
+    _CATALOG = None
+    with _LOCK:
+        for grant in [grant for grant in _MODEL_LIMITS if grant.provider == provider]:
+            del _MODEL_LIMITS[grant]
+
+
 def reset() -> None:
     """Forget every token, client and remembered signature (tests)."""
     global _CATALOG

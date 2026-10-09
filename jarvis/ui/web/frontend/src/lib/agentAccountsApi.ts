@@ -302,3 +302,67 @@ export function groupFor(
 ): AccountPlatformGroup | undefined {
   return data?.platforms?.find((group) => group.platform === platform);
 }
+
+/** What one switch did: where the CLI now runs and how its agents followed. */
+export interface SeatSwitchResult {
+  active_account: string;
+  active_label: string;
+  /** Agents restarted on the new seat now (or stopped panes re-pointed). */
+  moved: number;
+  /** Working agents that move the moment their current turn ends. */
+  queued: number;
+  message: string;
+}
+
+/**
+ * Make one subscription the active seat AND move every running agent of that
+ * CLI onto it, each continuing its own conversation.
+ */
+export function switchSeat(platform: AccountPlatform, accountId: string): Promise<SeatSwitchResult> {
+  return send<SeatSwitchResult>("/api/agentic-ide/accounts/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent: platform, account_id: accountId }),
+  });
+}
+
+/** One switch as the backend recorded it. */
+export interface SeatSwitchEvent {
+  at: number;
+  platform: string;
+  /** "manual" | "limit" | "threshold" | "no_seat" */
+  reason: string;
+  to_account: string | null;
+  to_label: string;
+  from_label: string;
+  moved: number;
+  queued: number;
+}
+
+/** Whether work follows a seat that runs out, and what happened lately. */
+export interface AutoSwitchState {
+  enabled: boolean;
+  /** Spent share of a plan limit at which its work moves on. */
+  at_percent: number;
+  watching: boolean;
+  /** Seats out of rotation, until their epoch-second refill. */
+  exhausted: { account_id: string; until: number }[];
+  /** Newest first. */
+  events: SeatSwitchEvent[];
+}
+
+export async function fetchAutoSwitch(): Promise<AutoSwitchState | null> {
+  const res = await fetch("/api/agentic-ide/accounts/auto-switch", { cache: "no-store" });
+  // An older backend has no such route: the panel then simply has no bar.
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as AutoSwitchState;
+}
+
+export function updateAutoSwitch(change: { enabled?: boolean; at_percent?: number }): Promise<AutoSwitchState> {
+  return send<AutoSwitchState>("/api/agentic-ide/accounts/auto-switch", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(change),
+  });
+}

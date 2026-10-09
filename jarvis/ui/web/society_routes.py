@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
 from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
+from jarvis.society.companion import CompanionSkin
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
@@ -903,6 +904,32 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
         if agent is not None:
             created.append(agent.to_dict())
     return {"agents": created, "total": len(created)}
+
+
+# --------------------------------------------------------------- designs
+
+
+@router.get("/designs", summary="The person's saved companion designs")
+def get_designs() -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    return {"designs": design_library.list_designs()}
+
+
+@router.post("/designs", summary="Save a companion design for any agent to wear")
+def post_design(skin: CompanionSkin) -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    return design_library.save_design(skin)
+
+
+@router.delete("/designs/{design_id}", summary="Delete a saved companion design")
+def delete_design(design_id: str) -> dict[str, Any]:
+    from jarvis.society import design_library
+
+    if not design_library.delete_design(design_id):
+        raise HTTPException(404, "Design not found")
+    return {"deleted": design_id}
 
 
 # --------------------------------------------------------------- providers

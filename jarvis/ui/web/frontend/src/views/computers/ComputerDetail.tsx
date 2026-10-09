@@ -21,6 +21,7 @@ import {
 import { BackLink, FactRows, Panel, SegmentedFilter } from "@/components/extensions/primitives";
 import { Button } from "@/components/ui/button";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { MachineIcon, wearsMachineGlyph } from "./machineKind";
 import {
   useCheckComputer,
   useIdentity,
@@ -32,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { computersApi, type CommandResult, type Computer } from "@/lib/computersApi";
 import { AccessPanel } from "./AccessPanel";
 import { AgentReadiness } from "./AgentReadiness";
+import { GithubAccess } from "./GithubAccess";
 import { statusLabel } from "./ComputerRow";
 import {
   CopyField,
@@ -512,7 +514,13 @@ export function ComputerDetail({
 
       <header className="flex flex-col gap-4 md:flex-row md:items-start">
         <div className="flex min-w-0 flex-1 items-start gap-4">
-          <ProviderLogo providerId={computer.provider} label={computer.name} className="h-12 w-12" />
+          {wearsMachineGlyph(computer.provider) ? (
+            <span aria-hidden className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-secondary">
+              <MachineIcon computer={computer} className="h-5 w-5 text-muted-foreground" />
+            </span>
+          ) : (
+            <ProviderLogo providerId={computer.provider} label={computer.name} className="h-12 w-12" />
+          )}
           <div className="min-w-0 flex-1">
             {renaming ? (
               <input
@@ -666,7 +674,12 @@ export function ComputerDetail({
 
       {tab === "console" && <Console computer={computer} />}
       {tab === "access" && <AccessPanel computer={computer} />}
-      {tab === "agents" && <AgentReadiness computer={computer} />}
+      {tab === "agents" && (
+        <div className="space-y-4">
+          <AgentReadiness computer={computer} />
+          <GithubAccess computer={computer} />
+        </div>
+      )}
     </div>
   );
 }

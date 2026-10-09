@@ -65,7 +65,8 @@ def resolve_limits(config: Any, provider: str, model: str, metadata: Any = None)
     if provider == "ollama":
         providers = getattr(getattr(config, "brain", None), "providers", {})
         options = getattr(providers.get(provider), "models", {})
-        selected = options.get(model) or options.get(f"{model}:latest")
+        selected = (options.get(model) or options.get(model.removesuffix(":latest"))
+                    or options.get(f"{model}:latest"))
         allocated = positive_int(getattr(selected, "num_ctx", None))
         if allocated:
             context = min(allocated, declared_context or allocated)
