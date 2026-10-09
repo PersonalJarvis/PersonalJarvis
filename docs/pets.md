@@ -69,9 +69,17 @@ one click.
   machine (deleted, or drawn on another one) shows the shape again; a shared
   agent template keeps a built-in pet and drops a drawn one.
 
-The pet stays on screen while Jarvis is idle. The global shortcut
+The pet stays on screen while Jarvis is idle. Right-clicking the figure or its
+control strip opens a menu with **Open app**, **Reset position**, and **Hide pet**.
+The popup follows the app's light, dark or system appearance: neutral surfaces,
+rounded rows, Inter labels, line icons and a JetBrains Mono shortcut hint.
+Arrow keys move between available actions; Enter selects, Escape or an outside
+click dismisses the popup. It stays within the pointer's monitor work area.
+Only choosing **Hide pet** hides the whole pet, including its bubble and cards.
+The menu shows the current restore shortcut beside that action. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
-back and to the front; hiding lasts until the next app start. The shortcut is
+back and to the front; voice updates do not undo dismissal. The pet returns
+when shown again or on the next app start. The shortcut is
 changed on the My Pets page (Customize); an empty value switches it off. On
 Wayland, global shortcuts are a no-op, as for every other shortcut.
 

@@ -1,5 +1,21 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Desktop pet context menu (2026-10-08, T2)
+
+The pet's figure and control strip share a branded right-click popup on desktop
+hosts: open the app, reset the position, or hide the pet. Opening or dismissing
+the menu does not hide the figure. Labels follow the current interface language
+and the hide entry shows the configured shortcut. The existing global Pet
+visibility shortcut restores it; its existing
+Wayland limitation is unchanged. The macOS companion host reports local
+dismissal to its parent so settings and host recovery retain the user's choice.
+The popup uses the existing native RGBA surface and shared app theme tokens,
+with bundled Inter and JetBrains Mono fonts (system-font fallback when needed).
+Tests cover menu choices, mouse/keyboard cancellation, focus and grab cleanup,
+monitor-edge placement, translated labels, the event-bus shortcut and companion
+protocol. Both themes were inspected from the actual popup renderer. Native
+pointer input and macOS/Linux desktop behavior remain unverified.
+
 ## Local voice and audio topology refresh (issue #464, T2)
 
 Local final transcription uses its configured model independently of the wake
