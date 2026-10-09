@@ -1505,12 +1505,6 @@ body {
     transform-origin: 50% 50%;
   }
 
-  /* White outline does the lighting. A small lift keeps the black body a
-     figure on charcoal instead of a hole. */
-  .dark .gigi-body {
-    filter: brightness(1.15);
-  }
-
   .gigi-compact .gigi-root,
   .gigi-compact .gigi-svg {
     animation: none;

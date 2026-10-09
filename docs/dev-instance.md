@@ -55,7 +55,7 @@ AppUserModelID). The first dev start also writes the Start-Menu entry
 `Personal Jarvis Dev` through the same code path the default app uses, so the
 taskbar button is named and iconed from the first launch.
 
-The dev icon is rendered by `scripts/make_dev_icon.py` into both icon homes
+The dev icon is rendered by `scripts/make_app_icon.py` into both icon homes
 (`jarvis/assets/icons/` ships with the package, `assets/icons/` is the
 build-tool copy).
 

@@ -55,7 +55,7 @@ export function BootSplash({
     >
       <div className="jbs-group">
         <div className="jbs-mark" aria-hidden="true">
-          <img src="/jarvis-gigi-256.png" alt="" width={256} height={256} />
+          <img src="/jarvis-gigi-256.png?v=hood" alt="" width={256} height={256} />
         </div>
         <div className="name">{name}</div>
         <div
