@@ -4303,7 +4303,7 @@ class MarketplaceConfig(BaseModel):
     # registry's GitHub Pages deployment; forks and air-gapped mirrors point
     # this at their own compiled index. Empty string disables the community
     # section entirely (browse shows only the shipped seed catalog).
-    community_index_url: str = "https://personaljarvis.github.io/marketplace/index.json"
+    community_index_url: str = "https://dodaios.github.io/marketplace/index.json"
     # Where the in-app Publish flow submits packages. The endpoint verifies
     # the GitHub identity and opens the registry PR as the marketplace bot;
     # forks point this at their own deployment. Empty string hides Publish,

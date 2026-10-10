@@ -957,14 +957,14 @@ wheels = [
 [[package]]
 name = "cryptography"
 version = "50.0.2"
-source = { registry = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/" }
+source = { registry = "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/" }
 dependencies = [
     { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9d/af/182eb91b0df3fe75c4d9f26fe70684569566745f6ba7e5c9c73a862c5252/cryptography-50.0.2.tar.gz", hash = "sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/56/d194340cc4a57535e82e1bee9e89667ac4b7c13b5d3f59686deae3094dd5/cryptography-50.0.2-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb" },
-    { url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl", hash = "sha256:bb9df0f60294d8608d909a39c750238b48b03f51e2c8df8b2a029000a565c0d8" },
+    { url = "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl", hash = "sha256:bb9df0f60294d8608d909a39c750238b48b03f51e2c8df8b2a029000a565c0d8" },
     { url = "https://files.pythonhosted.org/packages/d9/69/c9bd862c3bf43d6399c433caf002df16e2dffd4be49bdf515cda38038711/cryptography-50.0.2-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:79def8d059362e7831389ed3be0ecdf58a89386e1271e35dd9f5af84e81bffd0" },
     { url = "https://files.pythonhosted.org/packages/21/69/64cef1f702bf6657e0cc186ed1a2891d50d29fb41586b254e1c07adea261/cryptography-50.0.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:630ebfea3bf689d075f82316324ff7433dc447fe6bc1bfc76524b74b4a9567d2" },
     { url = "https://files.pythonhosted.org/packages/38/6b/61a3f8d8c5e1e49a6cddccafc4015cc1c0021360ab0acb4080e7a423644a/cryptography-50.0.2-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f9f6143a8c75945eb960d9eb98905a441394abfa24afaae239d514ffb2586480" },
@@ -977,7 +977,7 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6c/5d/906970b83bbfc1f5bbfb677a143c181f2801f23b6a7204a3b47c42c97e65/cryptography-50.0.2-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:25784ce8b9621c90c643efb9e1e2162ab3b0224cae446ad5e70e7fcb1ce18b51" },
     { url = "https://files.pythonhosted.org/packages/68/e3/f2298d3bb55e0c4a91841ec4d01b3f020ba8c5fbf15ccdcc6dcf03f97025/cryptography-50.0.2-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:85d0d9a31b9098e98534226d5686b47264b95e62ce459dc2e62fdfc809f9fe93" },
     { url = "https://files.pythonhosted.org/packages/9a/4f/adfc442765721292fff86d314ce385d3249d22db42295c0dd057727b60f3/cryptography-50.0.2-cp311-abi3-win_amd64.whl", hash = "sha256:7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c" },
-    { url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-win_arm64.whl", hash = "sha256:88b0a2dac04700ebef175acd16ac8929b5cdce0110155982ccaf26f568cadc81" },
+    { url = "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-win_arm64.whl", hash = "sha256:88b0a2dac04700ebef175acd16ac8929b5cdce0110155982ccaf26f568cadc81" },
     { url = "https://files.pythonhosted.org/packages/ce/cb/52eb3770c0d0be2702a98c6e96065ddc0a2877cf0845aa9c23397c142cd4/cryptography-50.0.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:f785f6161f202ab04d8ca194158968798e480ca058943907972da5f12e2881e8" },
     { url = "https://files.pythonhosted.org/packages/19/8e/aa1fc533d4546b127b45de8aa024eb5933d23eff9debfe25931e56861095/cryptography-50.0.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0ecbc5652bdb6fc9eaf89a7d196e20941adfe812f43bc4ca05d9150496821047" },
     { url = "https://files.pythonhosted.org/packages/6a/64/72bc3f75176e7e406b748a3e3830432b8c51297b38368713df04dc04898a/cryptography-50.0.2-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ab50ee449bf968271e820086f10a33d101dd060370abc10bcd22279be2656539" },
@@ -3040,7 +3040,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "comtypes", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=1.2" },
     { name = "croniter", specifier = ">=6.0" },
-    { name = "cryptography", specifier = ">=50.0.2", index = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/" },
+    { name = "cryptography", specifier = ">=50.0.2", index = "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/" },
     { name = "ddgs", specifier = "==9.14.3" },
     { name = "discord-py", marker = "extra == 'channels'", specifier = ">=2,<3" },
     { name = "elevenlabs", specifier = ">=1.5" },

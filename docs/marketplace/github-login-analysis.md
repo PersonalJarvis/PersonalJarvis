@@ -20,7 +20,7 @@ Everything in §1 was measured against the live repos and the live site on
 | Piece | State on 2026-08-14 |
 |---|---|
 | Registry repo `PersonalJarvis/marketplace` | Live. `submissions/`, `plugins/`, `skills/`, `registry.json`, `schemas/submission.schema.json`, four CI scripts (`validate.py`, `automerge_gate.py`, `expand.py`, `build_index.py`), three workflows (`validate`, `automerge`, `publish`). |
-| Compiled feed | Live — `https://personaljarvis.github.io/marketplace/index.json` answers 200; Pages serves `main` at `/`. |
+| Compiled feed | Live — `https://dodaios.github.io/marketplace/index.json` answers 200; Pages serves `main` at `/`. |
 | Ownership ledger | `registry.json` holds two entries (`sentry`, `three-bullet-brief`), each with `publisher` = a GitHub **login string** and a SemVer version. |
 | Auto-merge gate | Merges only when the PR touches exactly one `submissions/<name>.json`, validation passes, **`publisher` equals the PR author's login**, and (on updates) the owner is unchanged and the version strictly increases. |
 | Submission format | One JSON file. A skill embeds its complete `SKILL.md` as the `skill_md` string (≤ 64 KB); the whole file is capped at 128 KB; descriptions at 500 chars. |
