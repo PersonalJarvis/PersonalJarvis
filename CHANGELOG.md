@@ -11,6 +11,14 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [3.1.1] — 2026-10-10
+
+### Fixed
+
+- Never report a stopped event loop as stalled (#523)
+
+---
+
 ## [3.1.0] — 2026-10-09
 
 ### Added
