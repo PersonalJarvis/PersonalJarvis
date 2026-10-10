@@ -56,6 +56,7 @@ if str(_SOURCE_ROOT) not in sys.path:
 from jarvis.core.branding import (  # noqa: E402 - bootstrap source path above
     MACOS_APP_NAME,
     MANAGED_INSTALL_MARKER,
+    OFFICIAL_REPO_SLUG,
     PRODUCT_NAME,
 )
 
@@ -904,7 +905,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     # Most installs never find their way back to the repo page; one quiet line
     # in the finale is the only place a new user learns how to support it.
     rows.append(("Like it?", "a GitHub star helps others find it:", "muted"))
-    rows.append(("", "github.com/PersonalJarvis/PersonalJarvis", "brand"))
+    rows.append(("", f"github.com/{OFFICIAL_REPO_SLUG}", "brand"))
 
     title = f"{PRODUCT_NAME} is {'updated' if update else 'ready'}"
     key_w = 13

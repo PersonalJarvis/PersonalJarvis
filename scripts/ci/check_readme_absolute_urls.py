@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         f"check_readme_absolute_urls: FAILED - {len(offenders)} repo-relative URL(s) "
         f"in {path}. PyPI cannot resolve these; they render as broken images and "
         "dead links on the project page. Use the full "
-        "https://github.com/PersonalJarvis/PersonalJarvis/{raw,blob,tree}/main/... "
+        "https://github.com/Dodaios/Dodaios/{raw,blob,tree}/main/... "
         "form instead:",
         file=sys.stderr,
     )

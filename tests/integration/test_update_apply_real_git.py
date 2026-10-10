@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import jarvis.ui.web.update_routes as u
+from jarvis.core.branding import DEFAULT_OFFICIAL_REPO_SLUG
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="git binary required"
@@ -39,7 +40,8 @@ def _git_output(args: list[str], cwd: Path) -> str:
 def _make_upstream_and_install(tmp_path: Path) -> tuple[Path, Path, Path]:
     # The upstream path deliberately contains the official slug so the real
     # origin-URL guard passes against a purely local remote.
-    upstream = tmp_path / "PersonalJarvis" / "PersonalJarvis.git"
+    owner, name = DEFAULT_OFFICIAL_REPO_SLUG.split("/")
+    upstream = tmp_path / owner / f"{name}.git"
     upstream.parent.mkdir(parents=True)
     _git(["init", "--bare", "-b", "main", str(upstream)], tmp_path)
 

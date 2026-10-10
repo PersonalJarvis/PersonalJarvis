@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--branch", default="main", help="release branch")
     parser.add_argument(
         "--repo-slug",
-        default="PersonalJarvis/PersonalJarvis",
+        default="Dodaios/Dodaios",
         help="GitHub owner/name for --verify-release",
     )
     args = parser.parse_args(argv)

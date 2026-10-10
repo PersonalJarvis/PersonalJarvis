@@ -28,7 +28,7 @@ The base profile is cloud-first: no torch, no GPU, no Node.js, no audio
 hardware assumed.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash -s -- --headless --no-launch
+curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.sh | bash -s -- --headless --no-launch
 ```
 
 `--headless` skips the desktop-automation tools and the Node.js check.

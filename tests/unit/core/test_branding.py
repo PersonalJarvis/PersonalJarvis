@@ -42,13 +42,13 @@ _CURRENT_IDENTITY = {
     "LINUX_APP_NAME": "Personal Jarvis",
     "LINUX_DESKTOP_ENTRY_FILE_NAME": "personal-jarvis.desktop",
     "LINUX_WM_CLASS": "personal-jarvis",
-    "DEFAULT_OFFICIAL_REPO_SLUG": "PersonalJarvis/PersonalJarvis",
+    "DEFAULT_OFFICIAL_REPO_SLUG": "Dodaios/Dodaios",
     "OFFICIAL_REPO_SLUG_ENV_VAR": "JARVIS_OFFICIAL_REPO_SLUG",
-    "OFFICIAL_REPO_SLUG": "PersonalJarvis/PersonalJarvis",
-    "OFFICIAL_REPO_URL": "https://github.com/PersonalJarvis/PersonalJarvis",
-    "OFFICIAL_REPO_GIT_URL": "https://github.com/PersonalJarvis/PersonalJarvis.git",
+    "OFFICIAL_REPO_SLUG": "Dodaios/Dodaios",
+    "OFFICIAL_REPO_URL": "https://github.com/Dodaios/Dodaios",
+    "OFFICIAL_REPO_GIT_URL": "https://github.com/Dodaios/Dodaios.git",
     "OFFICIAL_RELEASES_LATEST_API_URL": (
-        "https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/latest"
+        "https://api.github.com/repos/Dodaios/Dodaios/releases/latest"
     ),
     "UPDATER_USER_AGENT": "PersonalJarvis-Updater",
 }

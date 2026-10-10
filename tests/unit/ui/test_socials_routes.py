@@ -27,8 +27,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 DISCORD_URL = "https://discord.gg/x7USduHxbc"
-REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis"
-PROFILE_URL = "https://github.com/PersonalJarvis"
+REPO_URL = "https://github.com/Dodaios/Dodaios"
+PROFILE_URL = "https://github.com/Dodaios"
 JARVIS_X_URL = "https://x.com/Ruben_Luetke"
 INSTAGRAM_URL = "https://www.instagram.com/personaljarvis/"
 

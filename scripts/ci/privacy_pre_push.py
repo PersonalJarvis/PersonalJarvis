@@ -9,10 +9,11 @@ it genuinely cannot run, but it FAILS CLOSED on every positive finding.
 It enforces exactly three things on an ordinary push:
 
   (A) Public-repo guard. A direct push to the PUBLIC distribution repo
-      (PersonalJarvis/PersonalJarvis) is hard-blocked. The only sanctioned path
-      to public is the depersonalized public-release snapshot, which scrubs the
-      tree first. Detected by remote name == "public" OR a remote URL
-      containing (case-insensitive) "personaljarvis/personaljarvis".
+      (Dodaios/Dodaios, formerly PersonalJarvis/PersonalJarvis) is hard-blocked.
+      The only sanctioned path to public is the depersonalized public-release
+      snapshot, which scrubs the tree first. Detected by remote name == "public"
+      OR a remote URL containing (case-insensitive) "dodaios/dodaios" or the
+      previous "personaljarvis/personaljarvis" slug.
 
   (B) Private-identity guard. No commit being pushed may carry a private
       maintainer email (author OR committer). Only the GitHub noreply form is
@@ -75,12 +76,14 @@ def target_is_public(remote_name: str, remote_url: str) -> bool:
     """True iff the push target is the PUBLIC distribution repo.
 
     Matched by remote name == "public" OR the remote URL containing (case-
-    insensitive) "personaljarvis/personaljarvis". Hyphenated or otherwise
-    non-flagship repo slugs deliberately do NOT match.
+    insensitive) "dodaios/dodaios" or the previous slug
+    "personaljarvis/personaljarvis". Hyphenated or otherwise non-flagship repo
+    slugs deliberately do NOT match.
     """
     if remote_name == "public":
         return True
-    return "personaljarvis/personaljarvis" in (remote_url or "").lower()
+    url = (remote_url or "").lower()
+    return "dodaios/dodaios" in url or "personaljarvis/personaljarvis" in url
 
 
 def offenders_from_log(log_text: str, private_emails: set[str]) -> list[dict]:

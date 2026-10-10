@@ -73,17 +73,17 @@ def test_versions_equal_is_normalized_and_fail_closed() -> None:
 
 def test_remote_is_official_accepts_only_exact_repo() -> None:
     # https, ssh, and a local path on either slash style all resolve.
-    assert u._remote_is_official("https://github.com/PersonalJarvis/PersonalJarvis.git")
-    assert u._remote_is_official("git@github.com:PersonalJarvis/PersonalJarvis.git")
-    assert u._remote_is_official("C:\\x\\PersonalJarvis\\PersonalJarvis")
+    assert u._remote_is_official("https://github.com/Dodaios/Dodaios.git")
+    assert u._remote_is_official("git@github.com:Dodaios/Dodaios.git")
+    assert u._remote_is_official("C:\\x\\Dodaios\\Dodaios")
     # A different repo is rejected...
     assert not u._remote_is_official("https://github.com/someone/fork.git")
     # ...and so is a look-alike fork whose name merely starts with the slug...
     assert not u._remote_is_official(
-        "https://github.com/PersonalJarvis/PersonalJarvisEvil.git"
+        "https://github.com/Dodaios/DodaiosEvil.git"
     )
     # ...or one under a different owner with the right repo name.
-    assert not u._remote_is_official("https://github.com/evil/PersonalJarvis.git")
+    assert not u._remote_is_official("https://github.com/evil/Dodaios.git")
 
 
 def test_remote_override_still_rejects_lookalike_repos(
@@ -96,7 +96,7 @@ def test_remote_override_still_rejects_lookalike_repos(
     )
     assert not u._remote_is_official("https://github.com/evil/RenamedRepo.git")
     assert not u._remote_is_official(
-        "https://github.com/PersonalJarvis/PersonalJarvis.git"
+        "https://github.com/Dodaios/Dodaios.git"
     )
 
 
