@@ -32,6 +32,7 @@
  * the floor's centre. It spawns new Jarvis agents downstairs and new coding
  * agents upstairs, and everyone new to the floor appears on its pad.
  */
+import { translate } from "@/i18n";
 import type { AgentRunState, AgentTier } from "../data";
 import { REWARD_IDS } from "../progression/levelCatalog";
 import { agentsAmbience } from "./agentsAmbience";
@@ -390,7 +391,7 @@ export function groupDepartments(agents: readonly OfficeAgentInput[]): { label: 
   if (ordered.length <= MAX_DEPARTMENTS) return ordered;
   const kept = ordered.slice(0, MAX_DEPARTMENTS - 1);
   const rest = ordered.slice(MAX_DEPARTMENTS - 1).flatMap((g) => g.members).sort(byArrival);
-  return [...kept, { label: "Other", members: rest }];
+  return [...kept, { label: translate("society.floor.department_other"), members: rest }];
 }
 
 function benchCount(members: number): number {

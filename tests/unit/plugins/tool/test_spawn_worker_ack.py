@@ -328,14 +328,11 @@ async def test_ctx_output_language_overrides_stale_brain_arg() -> None:
 
 
 @pytest.mark.asyncio
-async def test_spanish_turn_caps_mission_language_to_de_but_acks_in_es() -> None:
-    """An "es" turn must not thread "es" into the de/en-only mission contract.
+async def test_spanish_turn_dispatches_and_acks_in_es() -> None:
+    """An "es" turn dispatches a Spanish mission and acks in Spanish.
 
-    MissionManager.dispatch + the mission voice readback are de/en only, so the
-    mission language is capped to "de" for a Spanish turn (the spoken ACK itself
-    is still Spanish via the composer). Threading "es" into dispatch would
-    violate its Literal["de","en"] contract and the completion readback has no
-    "es" template.
+    MissionManager.dispatch and the mission voice readback speak every
+    supported reply language, so the completion readback follows the turn.
     """
     mgr = _FakeMissionManager()
     announcer = _FakeAnnouncer()
@@ -351,7 +348,26 @@ async def test_spanish_turn_caps_mission_language_to_de_but_acks_in_es() -> None
     await _drain_background_tasks()
 
     assert announcer.calls[0]["language"] == "es"
-    assert mgr.dispatch_calls[0]["language"] == "de"
+    assert mgr.dispatch_calls[0]["language"] == "es"
+
+
+@pytest.mark.asyncio
+async def test_portuguese_turn_dispatches_and_acks_in_pt() -> None:
+    mgr = _FakeMissionManager()
+    announcer = _FakeAnnouncer()
+    tool = SpawnWorkerTool(bus=EventBus(), manager=mgr, announcer=announcer)
+    utter = "Abre o meu Gmail e procura faturas novas"  # i18n-allow: PT fixture
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance=utter,
+        config={"output_language": "pt"},
+        memory_read=None,
+    )
+    await tool.execute({"utterance": utter, "action": "vê o Gmail"}, ctx)  # i18n-allow
+    await _drain_background_tasks()
+
+    assert announcer.calls[0]["language"] == "pt"
+    assert mgr.dispatch_calls[0]["language"] == "pt"
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import { treeLayout } from "./treeLayout";
 import { workspaceLayout } from "./workspaceDocking";
 import { fetchWorkspaceLayout, type TransferPlacement, type TransferSide, type WorkspaceLayoutView } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 
 /** The pane being moved and the open workspace it goes to. */
 export interface MovePaneRequest {
@@ -28,14 +29,13 @@ type MapPane = WorkspaceLayoutView["terminals"][number];
  * pointer is the one that lights up, the same rule the grid's own drag uses.
  * Clipped buttons hit-test by their shape, so the whole tile is the target.
  */
-const SIDES: { side: TransferSide; words: string; clip: string; key: string }[] = [
-  { side: "left", words: "left of", clip: "polygon(0 0, 50% 50%, 0 100%)", key: "ArrowLeft" },
-  { side: "right", words: "right of", clip: "polygon(100% 0, 100% 100%, 50% 50%)", key: "ArrowRight" },
-  { side: "above", words: "above", clip: "polygon(0 0, 100% 0, 50% 50%)", key: "ArrowUp" },
-  { side: "below", words: "below", clip: "polygon(0 100%, 50% 50%, 100% 100%)", key: "ArrowDown" },
+const SIDES: { side: TransferSide; clip: string; key: string }[] = [
+  { side: "left", clip: "polygon(0 0, 50% 50%, 0 100%)", key: "ArrowLeft" },
+  { side: "right", clip: "polygon(100% 0, 100% 100%, 50% 50%)", key: "ArrowRight" },
+  { side: "above", clip: "polygon(0 0, 100% 0, 50% 50%)", key: "ArrowUp" },
+  { side: "below", clip: "polygon(0 100%, 50% 50%, 100% 100%)", key: "ArrowDown" },
 ];
 const anchorOf = (pane: MapPane) => pane.history_id ? `pane:${pane.history_id}` : pane.name;
-const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** A pane on the map, drawn like the real one: a title row over its task. */
 function MiniPane({ pane, dimmed = false }: { pane: MapPane; dimmed?: boolean }) {
@@ -50,6 +50,7 @@ function MiniPane({ pane, dimmed = false }: { pane: MapPane; dimmed?: boolean })
 
 /** Where the moved pane would sit: its own mark in the accent, or "no room". */
 function Ghost({ request, chosen, allowed, children }: { request: MovePaneRequest; chosen: boolean; allowed: boolean; children?: ReactNode }) {
+  const t = useT();
   return <div className={cn(
     "flex h-full min-h-0 w-full min-w-0 flex-col items-center justify-center gap-1 rounded-lg border-2 px-2 text-center",
     !allowed ? "border-dashed border-destructive/50 bg-destructive/5 text-destructive"
@@ -59,7 +60,7 @@ function Ghost({ request, chosen, allowed, children }: { request: MovePaneReques
       {chosen && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}
       <AgentMark agent={request.pane.agent} label={request.pane.displayName} variant="plain" size="sm" />
       <span className="truncate">{request.pane.name}</span>
-    </span> : <span className="text-[11px] font-medium">No room</span>}
+    </span> : <span className="text-[11px] font-medium">{t("ide_panes.move.no_room")}</span>}
     {children}
   </div>;
 }
@@ -75,6 +76,7 @@ function Ghost({ request, chosen, allowed, children }: { request: MovePaneReques
  * keeps the quick path. Arrow keys pick a side of the focused pane.
  */
 export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
+  const t = useT();
   const [view, setView] = useState<WorkspaceLayoutView | null>(null);
   const [loadError, setLoadError] = useState("");
   const [choice, setChoice] = useState<TransferPlacement | null>(null);
@@ -123,12 +125,11 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
 
   const summary = (() => {
     if (!view) return "";
-    if (!panes.length) return `${targetName} is empty, so ${paneName} fills it.`;
-    if (!shown) return `${paneName} joins ${targetName}, and every pane gets an even share.`;
+    if (!panes.length) return fill(t("ide_panes.move.summary_empty"), { workspace: targetName, pane: paneName });
+    if (!shown) return fill(t("ide_panes.move.summary_even"), { workspace: targetName, pane: paneName });
     const pane = panes.find((entry) => anchorOf(entry) === shown.anchor);
-    const words = SIDES.find((entry) => entry.side === shown.side)?.words ?? shown.side;
     if (!pane) return "";
-    return `${capital(words)} ${pane.name}: ${paneName} takes half of its space.`;
+    return fill(t(`ide_panes.move.summary_${shown.side}`), { anchor: pane.name, pane: paneName });
   })();
   const submit = () => { if (!busy && view) onConfirm(choice); };
 
@@ -143,9 +144,9 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
               <FolderInput className="h-[18px] w-[18px]" aria-hidden />
             </div>
             <div className="min-w-0 flex-1">
-              <Dialog.Title className="truncate text-base font-semibold">Move {paneName} to {targetName}</Dialog.Title>
+              <Dialog.Title className="truncate text-base font-semibold">{fill(t("ide_panes.move.title"), { pane: paneName, workspace: targetName })}</Dialog.Title>
               <Dialog.Description className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                Point at a pane and click the side it should go on. The agent keeps running.
+                {t("ide_panes.move.description")}
               </Dialog.Description>
             </div>
           </div>
@@ -154,9 +155,9 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
             onMouseLeave={() => setHover(null)}>
             <div data-testid="move-pane-map" className="relative h-full w-full">
               {!view && !loadError && <div className="flex h-full items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />Loading {targetName}…</div>}
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{fill(t("ide_panes.move.loading"), { workspace: targetName })}</div>}
               {view && panes.length === 0 && request && <div className="h-full p-0.5"><Ghost request={request} chosen allowed>
-                <span className="text-[11px] text-primary/80">Fills the empty workspace</span></Ghost></div>}
+                <span className="text-[11px] text-primary/80">{t("ide_panes.move.fills_empty")}</span></Ghost></div>}
               {request && panes.map((pane, index) => {
                 const box = boxes[index];
                 if (!box) return null;
@@ -170,19 +171,19 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
                   : [<MiniPane key="pane" pane={pane} />];
                 if (ghostFirst) parts.reverse();
                 return <div key={pane.key} data-testid={`move-pane-tile-${pane.name}`} data-lit={lit ?? undefined}
-                  tabIndex={0} role="group" aria-label={`${pane.name}. Arrow keys choose the side ${paneName} goes on.`}
+                  tabIndex={0} role="group" aria-label={fill(t("ide_panes.move.tile_aria"), { anchor: pane.name, pane: paneName })}
                   onKeyDown={(event) => onTileKey(event, pane)}
                   className="absolute rounded-xl p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.w * 100}%`, height: `${box.h * 100}%` }}>
                   <div className={cn("flex h-full w-full gap-1", horizontal ? "flex-row" : "flex-col")}>
                     {parts.map((part) => <div key={part.key} className="min-h-0 min-w-0 flex-1">{part}</div>)}
                   </div>
-                  {SIDES.map(({ side, words, clip }) => {
+                  {SIDES.map(({ side, clip }) => {
                     const allowed = fits(pane, side);
                     return <button key={side} type="button" tabIndex={-1} aria-disabled={!allowed || busy}
                       aria-pressed={choice?.anchor === anchor && choice.side === side}
                       data-testid={`move-pane-${pane.name}-${side}`}
-                      aria-label={`Place ${paneName} ${words} ${pane.name}`}
+                      aria-label={fill(t(`ide_panes.move.place_${side}`), { anchor: pane.name, pane: paneName })}
                       onMouseEnter={() => setHover({ anchor, side })}
                       onClick={() => pick(pane, side)}
                       style={{ clipPath: clip }}
@@ -201,11 +202,11 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
           <div className="mt-4 flex items-center justify-end gap-2">
             <button type="button" disabled={busy} onClick={onCancel}
               className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
-              Cancel</button>
+              {t("common.cancel")}</button>
             <button type="submit" data-testid="move-pane-confirm" disabled={busy || !view}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover disabled:opacity-50">
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-              Move to {targetName}</button>
+              {fill(t("ide_panes.move.confirm"), { workspace: targetName })}</button>
           </div>
         </form>
       </Dialog.Content>

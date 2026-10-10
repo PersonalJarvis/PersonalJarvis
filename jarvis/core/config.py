@@ -1638,7 +1638,7 @@ class BrainConfig(BaseModel):
         validation_alias=AliasChoices("tool_model", "computer_use"),
     )
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
-    # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
+    # "auto" mirrors the user's input language (DE/EN/ES/PT); "de"/"en"/"es"/"pt" force
     # that language as a hard rule for every Jarvis reply. Consumed by
     # ``BrainManager._reply_language_directive``. Persisted via
     # ``config_writer.set_reply_language``.
@@ -2146,7 +2146,7 @@ class UIConfig(BaseModel):
     # value, so a voice command or the Control API can change it and the open UI
     # switches live (a ConfigReloaded / UiLanguageChanged event reaches the
     # frontend over /ws). Distinct from brain.reply_language (what Jarvis SPEAKS).
-    language: Literal["en", "de", "es", "zh"] = "en"
+    language: Literal["en", "de", "es", "pt", "zh"] = "en"
     # Colour theme of the whole desktop app: "dark" (the product default —
     # matte black + signal yellow), "light" (warm paper + dark gold), or
     # "system" (follow the OS appearance, re-evaluated live when the OS flips).

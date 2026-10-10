@@ -49,7 +49,7 @@ OVERRIDES: dict[str, SpecOverride] = {
     "ui.language": SpecOverride(
         risk_tier="safe", needs_restart=False,
         description=(
-            "Interface / display language of the whole app (en/de/es/zh) — what "
+            "Interface / display language of the whole app (en/de/es/pt/zh) — what "
             "the user SEES. Applies live, no restart."
         ),
     ),
@@ -60,7 +60,7 @@ OVERRIDES: dict[str, SpecOverride] = {
     "brain.reply_language": SpecOverride(
         risk_tier="safe", needs_restart=False,
         description=(
-            "Reply language for spoken/chat output (auto/de/en/es). Canonical "
+            "Reply language for spoken/chat output (auto/de/en/es/pt). Canonical "
             "language setting; applies to the next turn (no restart)."
         ),
     ),

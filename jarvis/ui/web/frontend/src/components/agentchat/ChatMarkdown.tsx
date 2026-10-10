@@ -2,7 +2,7 @@ import { Children, createContext, lazy, Suspense, useContext, useEffect, useMemo
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertCircle, Download, Maximize2, X } from "lucide-react";
-import { useT } from "@/i18n";
+import { translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { openLocalPath } from "@/lib/openLocalPath";
@@ -159,10 +159,10 @@ function onChatLinkClick(event: { preventDefault(): void }, href: string, label 
 // Stable component identities are essential: changing these on each streamed
 // token would unmount videos, reset playback and discard image error state.
 const MARKDOWN_COMPONENTS: Components = {
-  img: ({ src = "", alt = "image" }) => {
+  img: ({ src = "", alt = translate("chat_media.image_fallback") }) => {
     const local = localPathFromChatHref(src);
     if (local) return <a href={src} title={local} onClick={event => onChatLinkClick(event, src, alt || local)}>{alt || local}</a>;
-    return <MediaPreview src={src} label={alt || "image"} kind={mediaKind(src) ?? "image"} />;
+    return <MediaPreview src={src} label={alt || translate("chat_media.image_fallback")} kind={mediaKind(src) ?? "image"} />;
   },
   a: function MediaLink({ href = "", children }) {
     const imageKeys = useContext(ImageKeysContext);

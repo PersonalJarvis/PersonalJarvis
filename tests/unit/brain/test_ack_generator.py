@@ -349,7 +349,7 @@ class TestVariety:
 
 
 class TestLanguageCoverage:
-    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
     def test_all_pools_carry_all_supported_languages(self, lang: str) -> None:
         # Runtime-output-language doctrine: a phrase table missing a
         # supported language silently degrades that language's turns.
@@ -373,6 +373,22 @@ class TestLanguageCoverage:
         for token in ("Okay, einen Moment", "One moment", "Ich "):  # i18n-allow: German leak-detection tokens
             assert token not in ack
 
+    @pytest.mark.parametrize(
+        "tool",
+        [
+            "dispatch_to_harness", "run_shell", "search_web", "spawn_sub_jarvis",
+            "multi_spawn", "open_app", "run_skill", "gmail", "google_calendar",
+            "remember", "verify_via_curl", "start_preview_server",
+            "set_config_value", "cli_gh", "unknown_tool",
+        ],
+    )
+    def test_every_family_answers_in_european_portuguese(self, tool: str) -> None:
+        ack = generate_ack(tool, {"query": "x", "tasks": [1, 2]}, language="pt", picker=_fresh())
+        assert ack
+        leaks = ("Okay, einen Moment", "One moment", "Ich ", "Vale", "Listo")  # i18n-allow
+        for token in leaks:
+            assert token not in ack
+
     @pytest.mark.parametrize("hint", ["en", "EN", "en-US", "english", "en-GB"])
     def test_english_hints_resolve_to_en(self, hint: str) -> None:
         ack = generate_ack("run_shell", {}, language=hint, picker=_fresh())
@@ -387,6 +403,11 @@ class TestLanguageCoverage:
     def test_spanish_hint_resolves_to_es(self) -> None:
         ack = generate_ack("run_shell", {}, language="es", picker=_fresh())
         assert ack in _SHELL_ACK["es"]
+
+    @pytest.mark.parametrize("hint", ["pt", "PT", "pt-PT"])
+    def test_portuguese_hint_resolves_to_pt(self, hint: str) -> None:
+        ack = generate_ack("run_shell", {}, language=hint, picker=_fresh())
+        assert ack in _SHELL_ACK["pt"]
 
     def test_none_language_defaults_to_de(self) -> None:
         ack = generate_ack("run_shell", {}, language=None, picker=_fresh())  # type: ignore[arg-type]

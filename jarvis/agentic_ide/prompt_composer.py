@@ -270,7 +270,11 @@ _FILLER_RE = re.compile(
     r"\b(?:"
     r"ähm|ähmm|äh|ehm|hmm|einfach\s+mal|gell|weißt\s+du|"
     r"verstehst\s+du|sozusagen|jetzt\s+mal|mal\s+eben|"
-    r"uh|erm|you\s+know|i\s+mean|o\s+sea"
+    r"uh|erm|you\s+know|i\s+mean|o\s+sea|"
+    # European Portuguese: hesitation sounds plus the "o sea" equivalent.
+    # "tipo", "pronto", "pois" and "quer dizer" stay out: each is a content
+    # word or phrase ("o que quer dizer isto" = "what does this mean").
+    r"hum+|hã|ãh+|ou\s+seja"  # i18n-allow: input vocab
     r")\b[\s,]*",
     re.IGNORECASE,
 )
@@ -280,6 +284,7 @@ _POLITENESS_PREFIX_RE = re.compile(
     r"(?:kannst|k[oö]nntest|w[uü]rdest|willst|magst|k[oö]nnen)\s+(?:du|sie)\b\s*"
     r"|(?:could|can|would|will)\s+you\b\s*"
     r"|(?:puedes|podr[ií]as)\b\s*"
+    r"|(?:podes|poderias|consegues)\b\s*"  # i18n-allow: input vocab
     r"|(?:bitte|please|por\s+favor|mal|kurz|schnell|eben|just|quickly)\b[\s,]*"
     r")+",
     re.IGNORECASE,

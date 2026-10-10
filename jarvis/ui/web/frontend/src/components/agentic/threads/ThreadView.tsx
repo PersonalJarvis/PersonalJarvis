@@ -3,6 +3,7 @@ import { Check, ChevronDown, FolderPlus } from "lucide-react";
 import { prepareGit } from "@/lib/gitApi";
 import type { AgentChatSession } from "@/lib/agentChatApi";
 import { useEventStore } from "@/store/events";
+import { translate, useT } from "@/i18n";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
 import { useThreadTerminalsStore } from "@/store/threadTerminals";
@@ -24,6 +25,7 @@ import { projectIdFor, rememberedSeat, useThreadChatStore } from "./threadModel"
  * message starts the thread — in the project's checkout or a fresh worktree.
  */
 export function ThreadView({ onScreen }: { onScreen: boolean }) {
+  const t = useT();
   const pushToast = useEventStore((state) => state.pushToast);
   const projects = useIdeProjectsStore((state) => state.projects);
   const activeWorkspaceId = useIdeProjectsStore((state) => state.activeWorkspaceId);
@@ -149,7 +151,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
 
   const prepareDraft = useCallback(async (): Promise<string | null> => {
     if (!project) {
-      pushToast("error", "Connect a project folder first.");
+      pushToast("error", translate("ide_threads.connect_folder_first"));
       return null;
     }
     startingIn.current = project.id;
@@ -226,13 +228,14 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   if (!project) {
     return <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center" data-testid="thread-view-empty">
       <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
-      <h1 className="text-lg font-medium">Connect a project</h1>
-      <p className="max-w-md text-sm text-muted-foreground">Threads run a coding agent in a project folder. Connect one to start.</p>
-      <button type="button" onClick={connectProject} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-secondary">Connect folder</button>
+      <h1 className="text-lg font-medium">{t("ide_threads.connect_a_project")}</h1>
+      <p className="max-w-md text-sm text-muted-foreground">{t("ide_threads.empty_body")}</p>
+      <button type="button" onClick={connectProject} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-secondary">{t("ide_threads.connect_folder")}</button>
     </div>;
   }
 
   const threadKey = selection.sessionId ?? `draft:${project.id}`;
+  const [buildBefore, buildAfter = ""] = t("ide_threads.build_in").split("{project}");
   const empty = isDraft && timeline.items.length === 0;
 
   const strip = <ThreadBranchBar folder={folder} draft={isDraft} checkout={checkout} onCheckout={setCheckout}
@@ -242,19 +245,19 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     {empty
       ? <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-10">
         <h2 className="text-center text-2xl font-normal tracking-tight text-foreground sm:text-3xl">
-          What should we build in{" "}
+          {buildBefore}
           <button ref={projectAnchor} type="button" aria-haspopup="menu" aria-expanded={projectMenu} onClick={() => setProjectMenu(!projectMenu)}
             className="inline-flex items-center gap-1 rounded-md font-semibold text-foreground-strong hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             data-testid="thread-project-picker">
             {project.name}<ChevronDown aria-hidden className="h-4 w-4 text-muted-foreground" />
-          </button>?
+          </button>{buildAfter}
         </h2>
-        <ThreadPopover anchor={projectAnchor} open={projectMenu} onClose={() => setProjectMenu(false)} label="Projects" width={260}>
+        <ThreadPopover anchor={projectAnchor} open={projectMenu} onClose={() => setProjectMenu(false)} label={t("ide_threads.projects")} width={260}>
           <div role="menu">
             {visible.map((entry) => <ThreadMenuItem key={entry.id} label={entry.name} selected={entry.id === project.id}
               hint={entry.id === project.id ? <Check className="h-3.5 w-3.5" /> : undefined}
               onSelect={() => { setProjectMenu(false); useIdeThreadsStore.getState().newThread(entry.id); }} />)}
-            <ThreadMenuItem icon={<FolderPlus className="h-3.5 w-3.5" />} label="Connect another folder" onSelect={() => { setProjectMenu(false); connectProject(); }} />
+            <ThreadMenuItem icon={<FolderPlus className="h-3.5 w-3.5" />} label={t("ide_threads.connect_another")} onSelect={() => { setProjectMenu(false); connectProject(); }} />
           </div>
         </ThreadPopover>
         <div className="mt-7 w-full">

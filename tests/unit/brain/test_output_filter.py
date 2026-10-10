@@ -944,6 +944,30 @@ def test_fallback_phrase_localized_to_spanish() -> None:
     assert dump.cleaned != FALLBACK_PHRASES["de"]
 
 
+def test_fallback_phrase_localized_to_european_portuguese() -> None:
+    """Same doctrine for pt: a pt-pinned user hears the pt fallback, not German."""
+    from jarvis.brain.output_filter import FALLBACK_PHRASES
+
+    assert "pt" in FALLBACK_PHRASES, "European Portuguese fallback phrase missing"
+    dump = scrub_for_voice("{'exit_code': 0, 'cost_usd': 0.0}", language="pt")
+    assert dump.fallback_used is True
+    assert dump.cleaned == FALLBACK_PHRASES["pt"]
+    trace = scrub_for_voice(
+        "Traceback (most recent call last):\n  File x\nValueError: boom",
+        language="pt",
+    )
+    assert trace.fallback_used is True
+    assert trace.cleaned == FALLBACK_PHRASES["pt"]
+    assert dump.cleaned not in (FALLBACK_PHRASES["de"], FALLBACK_PHRASES["es"])
+
+
+def test_portuguese_serp_footer_is_deleted_whole() -> None:
+    text = "A nota 2 começa nos 34,5 pontos. Mais resultados de www.publico.pt"
+    result = scrub_for_voice(text, language="pt")
+    assert "publico" not in result.cleaned.lower()
+    assert "resultados" not in result.cleaned.lower()
+
+
 def test_scrub_keeps_humanized_readback_with_quotes() -> None:
     """No false positive: a clean readback that merely quotes a UI label (and
     contains an apostrophe + colon-free) must pass through untouched."""
@@ -1189,14 +1213,14 @@ def test_url_is_replaced_by_a_spoken_placeholder_not_deleted() -> None:
 
 @pytest.mark.parametrize(
     ("language", "expected"),
-    [("de", "der Website"), ("en", "the website"), ("es", "el sitio web")],
+    [("de", "der Website"), ("en", "the website"), ("es", "el sitio web"), ("pt", "o site")],
 )
 def test_url_placeholder_is_localized(language: str, expected: str) -> None:
     """Runtime-output-language doctrine: the placeholder table carries every
     supported locale — a Spanish-pinned user never hears the German one."""
     from jarvis.brain.output_filter import SOURCE_LINK_PLACEHOLDER
 
-    assert set(SOURCE_LINK_PLACEHOLDER) >= {"de", "en", "es"}
+    assert set(SOURCE_LINK_PLACEHOLDER) >= {"de", "en", "es", "pt"}
     result = scrub_for_voice("Mehr dazu auf https://example.org heute.", language=language)
     assert expected in result.cleaned
     assert "example.org" not in result.cleaned

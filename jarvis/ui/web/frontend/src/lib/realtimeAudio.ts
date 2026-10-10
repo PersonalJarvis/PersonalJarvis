@@ -10,6 +10,7 @@ import { beginSpeechPlayback, clearSpeechPlayback, setTimedSpeechSession, spoken
 import { audibleContextTime, DevicePlaybackTimeline, type AudioInterval, type RenderedAudioInterval } from "./playbackTimeline";
 import { TimedAudioFrame, TimedTextFrame, TimedSpeechTracker } from "./timedSpeech";
 import { acquireRealtimeAudio, releaseRealtimeAudio, type PreparedRealtimeAudio } from "./realtimeAudioPreparation";
+import { translate } from "@/i18n";
 
 export function buildAudioSocketUrl(ticket?: string | null): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
@@ -886,7 +887,7 @@ export class RealtimeAudioClient {
           if (event.data?.type === "input_started") this.markStartup("input_started");
           else if (event.data?.type === "input_caught_up") this.markStartup("input_caught_up");
           if (event.data?.type !== "error" || this.intentionalClose) return;
-          this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
+          this.cb.onStatus?.("provider_error", { error: translate("voice.startup_audio_lost") });
           void this.disconnect();
         };
       }
@@ -1076,7 +1077,7 @@ export class RealtimeAudioClient {
             }
           }).catch(error => {
             console.warn("Voice reconnection offer failed", error);
-            this.cb.onStatus?.("provider_error", { error: "Voice reconnection failed." });
+            this.cb.onStatus?.("provider_error", { error: translate("voice.reconnect_failed") });
           });
         } else if (type === "audio_stopping") {
           this.startupNode?.port.postMessage({ type: "suspend" });
@@ -1202,7 +1203,7 @@ export class RealtimeAudioClient {
     this.startupPreroll.push(frame);
     this.startupPrerollBytes += frame.byteLength;
     if (this.startupPrerollBytes > (this.ctx?.sampleRate ?? 48000) * 2 * STARTUP_PREROLL_SECONDS) {
-      this.cb.onStatus?.("provider_error", { error: "Voice startup audio could not be retained. Please start again." });
+      this.cb.onStatus?.("provider_error", { error: translate("voice.startup_audio_lost") });
       void this.disconnect();
     }
   }

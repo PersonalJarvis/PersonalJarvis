@@ -12,6 +12,7 @@ from jarvis.society.routine_intent import requests_routine_creation
         "Kannst du mir eine Routine erstellen?",  # i18n-allow: input fixture
         "Erstelle die Routine.",  # i18n-allow: input fixture
         "Create a daily routine that checks GitHub issues.",
+        "Cria essa rotina.",  # i18n-allow: input fixture
     ],
 )
 def test_explicit_routine_creation_is_recognized(utterance: str) -> None:
@@ -25,6 +26,8 @@ def test_explicit_routine_creation_is_recognized(utterance: str) -> None:
         "Die Routine wurde erstellt.",  # i18n-allow: input fixture
         "Show my routines.",
         "Create a skill for daily checks.",
+        "Como crio uma rotina?",  # i18n-allow: input fixture
+        "Mostra as minhas rotinas.",  # i18n-allow: input fixture
     ],
 )
 def test_non_creation_turns_do_not_trigger_a_write(utterance: str) -> None:

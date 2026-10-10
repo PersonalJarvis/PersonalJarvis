@@ -65,6 +65,7 @@ import {
 } from "@/components/outputs/ArtifactViewer";
 import { MarkdownProse, splitFrontMatter } from "@/components/outputs/MarkdownProse";
 import { deliverableFiles, runNeedsReview } from "@/components/visualization/RunPanels";
+import { uiLocale } from "@/lib/boardInsights";
 
 /** Files drawn in place; the rest are listed and one click from Files. */
 const MAX_INLINE_FILES = 12;
@@ -91,7 +92,7 @@ const STATUS_DOT: Record<OutputStatus, string> = {
 
 function formatWhen(seconds: number | undefined): string {
   if (!seconds) return "";
-  return new Date(seconds * 1000).toLocaleString(undefined, {
+  return new Date(seconds * 1000).toLocaleString(uiLocale(), {
     year: "numeric",
     month: "short",
     day: "numeric",

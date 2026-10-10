@@ -1220,7 +1220,7 @@ def is_informational_request(prompt: str) -> bool:
 
 # A worker clarification is not a completed informational deliverable. Match
 # only an explicit clarification lead near the beginning; substantive answers
-# that merely end with "let me know" remain valid. German and Spanish entries
+# that merely end with "let me know" remain valid. German, Spanish and Portuguese entries
 # are literal runtime-output classifiers (the multilingual product surface).
 _CLARIFICATION_LEAD_RE = re.compile(
     r"\b(?:"
@@ -1232,7 +1232,11 @@ _CLARIFICATION_LEAD_RE = re.compile(
     r".{0,80}\b(?:brauche|welch|was)|"  # i18n-allow
     r"was\s+genau\s+(?:soll|moechtest|möchtest|willst)\s+du|"  # i18n-allow
     r"(?:pregunta|duda)\s+(?:rápida|breve)\s+de\s+aclaraci[oó]n|"  # i18n-allow
-    r"antes\s+de\s+(?:empezar|continuar).{0,80}\b(?:necesito|aclarar|cu[aá]l|qu[eé])"
+    r"antes\s+de\s+(?:empezar|continuar).{0,80}\b(?:necesito|aclarar|cu[aá]l|qu[eé])|"
+    # European Portuguese
+    r"(?:pergunta|d[uú]vida)\s+r[aá]pida|podes\s+esclarecer|"  # i18n-allow
+    r"o\s+que\s+(?:exatamente|ao\s+certo)\s+(?:queres|devo)|"  # i18n-allow
+    r"antes\s+de\s+(?:come[cç]ar|continuar).{0,80}\b(?:preciso|esclarecer|qual)"  # i18n-allow
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )

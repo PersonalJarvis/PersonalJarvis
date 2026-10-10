@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
+from jarvis.missions.events import MISSION_LANGUAGES
+
 from .approvals import Approvals
 from .bridge import MissionBridge
 from .browser.session import BrowserJobs
@@ -1088,7 +1090,7 @@ class SocietyRuntime:
             "prompt": _agent_frame(target, task),
             "source_actor": "hauptjarvis",
         }
-        if language in ("de", "en"):
+        if language in MISSION_LANGUAGES:
             kwargs["language"] = language
         mission_id = await manager.dispatch(**kwargs)
         self._owners[str(mission_id)] = target.agent_id

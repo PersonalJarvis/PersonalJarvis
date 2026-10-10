@@ -6,9 +6,16 @@
  * "PERSONAL JARVIS" sign looked off-brand. A recording 2D context captures
  * every font the face sets and every line of text it draws.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { LOBBY_RENDERERS } from "./LobbyDecor";
+
+// The component is called as a plain function below, so `useT` must not be a real hook.
+vi.mock("@/i18n", async () => {
+  const { default: en } = await import("@/i18n/locales/society/en.json");
+  const lookup = (key: string) => key.split(".").reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], en);
+  return { useT: () => (key: string) => (typeof lookup(key) === "string" ? lookup(key) as string : key) };
+});
 
 const fonts: string[] = [];
 const texts: string[] = [];

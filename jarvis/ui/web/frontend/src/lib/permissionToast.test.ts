@@ -138,7 +138,7 @@ describe("the copy", () => {
     episode({ origin: "background", feature: "wake_word" }),
   ];
 
-  it.each(["en", "de", "es"] as UiLanguage[])("every sentence, name and button exists in %s", (language) => {
+  it.each(["en", "de", "es", "pt"] as UiLanguage[])("every sentence, name and button exists in %s", (language) => {
     useI18nStore.getState().setUi(language, { push: false });
     for (const shape of SHAPES) {
       const plan = planPermissionToast(shape)!;
@@ -157,13 +157,13 @@ describe("the copy", () => {
   });
 
   it("keeps the sentences short, calm and free of pane names and jargon", () => {
-    for (const language of ["en", "de", "es"] as UiLanguage[]) {
+    for (const language of ["en", "de", "es", "pt"] as UiLanguage[]) {
       useI18nStore.getState().setUi(language, { push: false });
       for (const shape of SHAPES) {
         const plan = planPermissionToast(shape)!;
         const text = translate(plan.messageKey);
         expect(text.length, text).toBeLessThan(170);
-        expect(text).not.toMatch(/Privacy & Security|Privacidad y seguridad|Datenschutz & Sicherheit|TCC|tccutil|[>]/);
+        expect(text).not.toMatch(/Privacy & Security|Privacidad y seguridad|Privacidade e segurança|Datenschutz & Sicherheit|TCC|tccutil|[>]/);
       }
     }
   });

@@ -43,9 +43,12 @@ _GO_AHEAD_WORDS = frozenset(
         # Spanish
         "sí", "si", "claro", "vale", "dale", "confirmo", "hazlo", "envía", "envialo",
         "envíalo", "adelante",
+        # European Portuguese  # i18n-allow: spoken confirmation vocabulary
+        "sim", "avança", "avanca", "força", "forca", "pode", "podes", "faz",
+        "isso", "manda", "envia", "certo", "confirmado",
     }
 )  # fmt: skip
-_APPROVAL_LOCALES = ("de", "en", "es")
+_APPROVAL_LOCALES = ("de", "en", "es", "pt")
 _RECENT_SEGMENTS = 4
 _REQUEST_TEXT_CHARS = 1200
 # Declared before every other tool so the size budget never drops them.

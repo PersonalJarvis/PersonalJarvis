@@ -15,6 +15,7 @@ import { Check, Copy } from "lucide-react";
 
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 
 /** The three install surfaces, computed server-side. */
 export interface InstallStandardWire {
@@ -25,24 +26,25 @@ export interface InstallStandardWire {
 
 // In the order a visitor tries them: the curated CLI command, the zero-install
 // uvx runner, the assistant prompt.
+// `label` and `hint` are translation keys, translated where rendered.
 const INSTALL_TABS = [
-  { id: "cli", label: "CLI", hint: "Runs in any terminal while the app is running." },
+  { id: "cli", label: "install_standard.tab_cli", hint: "install_standard.hint_cli" },
   {
     id: "runner",
-    label: "uvx",
-    hint: "No install needed — uv fetches the CLI and runs the same command.",
+    label: "install_standard.tab_runner",
+    hint: "install_standard.hint_runner",
   },
   {
     id: "prompt",
-    label: "Prompt",
-    hint: "Paste this to your assistant — it runs the install for you.",
+    label: "install_standard.tab_prompt",
+    hint: "install_standard.hint_prompt",
   },
 ] as const;
 type InstallTabId = (typeof INSTALL_TABS)[number]["id"];
 
 export function InstallStandard({
   install,
-  heading = "Install",
+  heading,
   note,
 }: {
   install: InstallStandardWire;
@@ -51,6 +53,7 @@ export function InstallStandard({
   /** One extra line under the tabs' own hint, for surface-specific context. */
   note?: string;
 }) {
+  const tr = useT();
   const [tab, setTab] = useState<InstallTabId>("cli");
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -65,7 +68,7 @@ export function InstallStandard({
     <section>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-foreground">
-          {heading}
+          {heading ?? tr("install_standard.heading")}
         </h3>
         <div className="flex items-center">
           {INSTALL_TABS.map((t, i) => (
@@ -86,7 +89,7 @@ export function InstallStandard({
                   tab === t.id ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {t.label}
+                {tr(t.label)}
               </button>
             </span>
           ))}
@@ -107,8 +110,8 @@ export function InstallStandard({
             if (await robustCopy(value)) setCopied(true);
           }}
           className="grid h-7 w-7 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={copied ? "Copied" : "Copy"}
-          aria-label={`Copy the ${active.label} install command`}
+          title={tr(copied ? "install_standard.copied" : "install_standard.copy")}
+          aria-label={fill(tr("install_standard.copy_named"), { method: tr(active.label) })}
         >
           {copied ? (
             <Check className="h-3.5 w-3.5 text-primary" />
@@ -117,7 +120,7 @@ export function InstallStandard({
           )}
         </button>
       </div>
-      <p className="mt-1.5 text-xs text-muted-foreground">{note ?? active.hint}</p>
+      <p className="mt-1.5 text-xs text-muted-foreground">{note ?? tr(active.hint)}</p>
     </section>
   );
 }

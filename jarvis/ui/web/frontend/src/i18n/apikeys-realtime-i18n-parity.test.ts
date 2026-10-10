@@ -1,6 +1,6 @@
 /**
  * The realtime tab of the API Keys page renders every `apikeys_realtime.*`
- * string in all three locales. A key present in one locale and missing in
+ * string in every locale. A key present in one locale and missing in
  * another renders as a raw key there, so the sets must match exactly.
  */
 import { describe, expect, it } from "vitest";
@@ -8,10 +8,11 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Block = Record<string, string>;
 
-const LOCALES = { en, de, es } as unknown as Record<string, { apikeys_realtime?: Block }>;
+const LOCALES = { en, de, es, pt } as unknown as Record<string, { apikeys_realtime?: Block }>;
 
 describe("apikeys_realtime i18n parity", () => {
   const reference = Object.keys(LOCALES.en.apikeys_realtime ?? {}).sort();

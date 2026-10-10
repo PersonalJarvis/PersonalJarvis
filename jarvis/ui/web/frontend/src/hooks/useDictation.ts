@@ -164,7 +164,7 @@ export function cleanupReasonLabel(
 }
 
 /** Languages dictation can be pinned to; `auto` lets the provider decide. */
-export type DictationLanguage = "auto" | "de" | "en" | "es";
+export type DictationLanguage = "auto" | "de" | "en" | "es" | "pt";
 
 /**
  * Live state of dictation mode from GET /api/dictation/status.

@@ -54,7 +54,7 @@ import {
 } from "@/components/extensions/primitives";
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
-import { translate, useT } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import {
   useCliTestRun,
@@ -771,7 +771,7 @@ function ResultPanel({ result }: { result: TestRunResponse }) {
 
       {/* Meta row: tool, risk tier, exit code, duration. */}
       <div className="flex flex-wrap items-center gap-2">
-        <MetaChip label="Tool">
+        <MetaChip label={t("cli_test_hub_view.meta_tool")}>
           <span data-testid="result-tool" className="font-mono">
             {result.tool_called ?? "—"}
           </span>
@@ -900,6 +900,7 @@ function ExitCodeBadge({
   compact?: boolean;
   testId?: string;
 }) {
+  const t = useT();
   if (code === null || code === undefined) {
     return (
       <span
@@ -907,7 +908,7 @@ function ExitCodeBadge({
         data-exit="null"
         className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-0.5 text-micro text-muted-foreground"
       >
-        {!compact && <span className="text-muted-foreground">Exit</span>}
+        {!compact && <span className="text-muted-foreground">{t("cli_test_hub_view.exit_label")}</span>}
         <span>—</span>
       </span>
     );
@@ -924,15 +925,18 @@ function ExitCodeBadge({
           : "border-destructive/50 bg-destructive/10 text-destructive",
       )}
     >
-      {!compact && <span className="font-normal text-muted-foreground">Exit</span>}
+      {!compact && (
+        <span className="font-normal text-muted-foreground">{t("cli_test_hub_view.exit_label")}</span>
+      )}
       {code}
     </span>
   );
 }
 
 function StepExitCode({ code }: { code: number | null }) {
+  const t = useT();
   if (code === null || code === undefined) {
-    return <span className="text-muted-foreground">exit —</span>;
+    return <span className="text-muted-foreground">{fill(t("cli_test_hub_view.step_exit"), { code: "—" })}</span>;
   }
   return (
     <span
@@ -941,7 +945,7 @@ function StepExitCode({ code }: { code: number | null }) {
         code === 0 ? "text-muted-foreground" : "text-destructive",
       )}
     >
-      exit {code}
+      {fill(t("cli_test_hub_view.step_exit"), { code })}
     </span>
   );
 }

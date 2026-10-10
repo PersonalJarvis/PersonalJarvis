@@ -9,6 +9,7 @@ import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import cursorLogo from "@/assets/editors/cursor.svg?url";
 import vscodeLogo from "@/assets/editors/vscode.svg?url";
+import { fill, translate, useT } from "@/i18n";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
@@ -28,22 +29,22 @@ const PANE_DROP_ACTIVE = "data-[pane-drop-active=true]:bg-primary/10 data-[pane-
  * back in step. Shown instead of the server's bare "Method Not Allowed",
  * which names the HTTP verdict rather than the fix.
  */
-const REORDER_NEEDS_RESTART = "This view is newer than the backend — restart the app and try again.";
+const REORDER_NEEDS_RESTART = "ide_projects.reorder_needs_restart";
 
 /** A reorder failure in the user's terms: a stale backend gets the fix, anything else the server's own words. */
 function reorderErrorMessage(error: unknown): string {
-  if (error instanceof IdeApiError && error.status === 405) return REORDER_NEEDS_RESTART;
-  if (error instanceof ChatLibraryError && error.status === 405) return REORDER_NEEDS_RESTART;
+  if (error instanceof IdeApiError && error.status === 405) return translate(REORDER_NEEDS_RESTART);
+  if (error instanceof ChatLibraryError && error.status === 405) return translate(REORDER_NEEDS_RESTART);
   return error instanceof Error ? error.message : String(error);
 }
 
 /** Why opening a folder failed, in the user's terms. */
 function revealErrorMessage(error: unknown): string {
   if (error instanceof ChatLibraryError && error.message === "native-file-actions-disabled") {
-    return "Opening folders works in the desktop app only.";
+    return translate("ide_projects.reveal_desktop_only");
   }
   if (error instanceof ChatLibraryError && (error.status === 405 || (error.status === 404 && error.message === "Not Found"))) {
-    return REORDER_NEEDS_RESTART;
+    return translate(REORDER_NEEDS_RESTART);
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -55,7 +56,7 @@ function revealErrorMessage(error: unknown): string {
  */
 function removalErrorMessage(error: unknown): string {
   if (error instanceof IdeApiError && (error.status === 405 || (error.status === 404 && error.message === "Not Found"))) {
-    return REORDER_NEEDS_RESTART;
+    return translate(REORDER_NEEDS_RESTART);
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -99,10 +100,11 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
 
 /** The agent sessions behind a row: a quiet number that makes room for the row's actions on hover. */
 function SessionCount({ count, hover }: { count: number; hover: "group" | "group/space" }) {
+  const t = useT();
   const fade = hover === "group"
     ? "group-hover:opacity-0 group-focus-within:opacity-0"
     : "group-hover/space:opacity-0 group-focus-within/space:opacity-0";
-  return <span aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}
+  return <span aria-label={fill(t(count === 1 ? "ide_projects.sessions_one" : "ide_projects.sessions_other"), { count })}
     className={`shrink-0 text-[13px] tabular-nums text-muted-foreground/70 transition-opacity [@media(hover:none)]:opacity-0 ${fade}`}>{count}</span>;
 }
 
@@ -121,6 +123,7 @@ function saveExpansion(value: Record<string, boolean>): void {
 
 /** Compact, accessible navigation over real projects and their workspace IDs. */
 export function IdeProjectTree() {
+  const t = useT();
   const projects = useIdeProjectsStore((state) => state.projects);
   const activeWorkspaceId = useIdeProjectsStore((state) => state.activeWorkspaceId);
   const pendingWorkspaceId = useIdeProjectsStore((state) => state.pendingWorkspaceId);
@@ -278,7 +281,7 @@ export function IdeProjectTree() {
 
   const copyPath = async (path: string) => {
     const copied = await robustCopy(path);
-    pushToast(copied ? "success" : "error", copied ? "Folder path copied" : "Could not copy the folder path");
+    pushToast(copied ? "success" : "error", copied ? t("ide_projects.path_copied") : t("ide_projects.path_copy_failed"));
   };
 
   const revealFolder = async (projectId: string) => {
@@ -325,9 +328,9 @@ export function IdeProjectTree() {
   const openIn = async (projectId: string, target: string, label: string) => {
     // A cold editor can take seconds to draw its first window; say at once
     // that the click landed instead of leaving the user guessing.
-    pushToast("info", `Opening ${label}…`);
+    pushToast("info", fill(t("ide_projects.opening"), { label }));
     try {
-      if (!(await openProjectIn(projectId, target))) pushToast("error", `${label} could not be started`);
+      if (!(await openProjectIn(projectId, target))) pushToast("error", fill(t("ide_projects.open_failed"), { label }));
     } catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
@@ -346,7 +349,7 @@ export function IdeProjectTree() {
       await startIdeSession(
         workspace.folder || project.path,
         panes.map((pane) => ({ agent: pane.agent, ...(pane.account ? { account: pane.account } : {}) })),
-        { projectId: project.id, name: `${workspace.name} copy` },
+        { projectId: project.id, name: fill(t("ide_projects.workspace_copy"), { workspace: workspace.name }) },
       );
       requestRefresh();
     } catch (error) { pushToast("error", (error as Error).message); }
@@ -356,20 +359,20 @@ export function IdeProjectTree() {
   const interruptAgents = async (workspace: ProjectWorkspace, panes: WorkspacePaneRow[]) => {
     const results = await Promise.allSettled(panes.map((pane) => interruptTerminal(pane.key, workspace.id)));
     const failed = results.filter((result) => result.status === "rejected").length;
-    if (failed) pushToast("error", `${failed} of ${panes.length} agents could not be interrupted.`);
-    else pushToast("success", `Interrupted ${panes.length} ${panes.length === 1 ? "agent" : "agents"}.`);
+    if (failed) pushToast("error", fill(t("ide_projects.interrupt_failed"), { failed, total: panes.length }));
+    else pushToast("success", fill(t(panes.length === 1 ? "ide_projects.interrupted_one" : "ide_projects.interrupted_other"), { count: panes.length }));
   };
 
   // A whole workspace to a connected computer (or back): one folder transfer,
   // every pane's conversation carried, the agents then run there in tmux.
   const computers = useComputerChoices();
   const placeWorkspaceOn = async (workspace: ProjectWorkspace, computerId: string | null) => {
-    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? "the computer") : "this computer";
-    pushToast("info", `Moving ${workspace.name} to ${target}. This can take a minute.`);
+    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? t("ide_projects.the_computer")) : t("ide_projects.this_computer");
+    pushToast("info", fill(t("ide_projects.moving"), { workspace: workspace.name, target }));
     try {
       const { message } = await placeWorkspace(workspace.id, computerId);
       window.dispatchEvent(new CustomEvent("jarvis:ide-panes-reconnect", { detail: { workspaceId: workspace.id } }));
-      pushToast("success", `${workspace.name} now runs on ${target}. ${message}`.trim());
+      pushToast("success", `${fill(t("ide_projects.moved"), { workspace: workspace.name, target })} ${message}`.trim());
     } catch (error) { pushToast("error", (error as Error).message); }
   };
 
@@ -526,13 +529,13 @@ export function IdeProjectTree() {
         }}
         className={`group relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted ${active ? "text-foreground" : ""} ${soloSelected || soloPending ? "bg-muted" : ""} ${isProjectDragged ? "opacity-40" : ""} ${isProjectDropBefore ? "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary" : ""} ${isProjectDropAfter ? "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary" : ""} ${projectDraggable ? "cursor-grab active:cursor-grabbing" : ""} ${PANE_DROP_ACTIVE}`}>
         {renamingId === project.id ? <form className="flex min-w-0 flex-1 items-center gap-1 px-2" onSubmit={(event) => { event.preventDefault(); const name = draftName.trim(); if (name && name !== project.name) void mutate(project, { name }); else setRenamingId(null); }}>
-          <input autoFocus aria-label={`Rename ${project.name}`} value={draftName} maxLength={80} disabled={working}
+          <input autoFocus aria-label={fill(t("ide_projects.rename_named"), { target: project.name })} value={draftName} maxLength={80} disabled={working}
             onChange={(event) => setDraftName(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setRenamingId(null); } }}
             className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
-          <button type="submit" aria-label={`Save ${project.name}`} disabled={working || !draftName.trim()} className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"><Check className="h-4 w-4" /></button>
-          <button type="button" aria-label={`Cancel renaming ${project.name}`} onClick={() => setRenamingId(null)} className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+          <button type="submit" aria-label={fill(t("ide_projects.save_named"), { target: project.name })} disabled={working || !draftName.trim()} className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"><Check className="h-4 w-4" /></button>
+          <button type="button" aria-label={fill(t("ide_projects.cancel_rename_named"), { target: project.name })} onClick={() => setRenamingId(null)} className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </form> : <>
-          <button type="button" aria-label={solo ? `Open ${project.name}` : `${open ? "Collapse" : "Expand"} ${project.name}`}
+          <button type="button" aria-label={fill(t(solo ? "ide_projects.open_named" : open ? "ide_projects.collapse_named" : "ide_projects.expand_named"), { target: project.name })}
             aria-expanded={solo ? undefined : open}
             aria-current={soloSelected ? "page" : undefined} aria-busy={soloPending || undefined}
             data-testid={solo ? `ide-workspace-${solo.id}` : undefined}
@@ -548,7 +551,7 @@ export function IdeProjectTree() {
               if (!neighbour) return;
               void moveProject(project.id, neighbour.id, event.key === "ArrowUp");
             }}
-            title={soloBlocked ? "This workspace cannot be restored on this machine" : `${project.name} — drag to reorder, or press Alt plus arrow keys to move`}
+            title={soloBlocked ? t("ide_projects.not_restorable") : fill(t("ide_projects.drag_hint"), { target: project.name })}
             className={`flex min-h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-left text-[15px] [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
             {/* The folder itself shows the fold: open while its rows show, closed when folded. */}
             {soloPending
@@ -557,12 +560,12 @@ export function IdeProjectTree() {
                 ? <FolderOpen aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
                 : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
             <span className="min-w-0 flex-1 truncate">{project.name}</span>
-            {soloPending && <span className="sr-only">Switching workspace</span>}
+            {soloPending && <span className="sr-only">{t("ide_projects.switching")}</span>}
             {/* An open project's rows carry their own counts; the total only speaks for a folded one. */}
             {count > 0 && (solo || !open) && <SessionCount count={count} hover="group" />}
           </button>
           <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
-            <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
+            <button type="button" aria-label={fill(t("ide_projects.project_actions_for"), { target: project.name })} title={t("ide_projects.project_actions")} aria-haspopup="menu" aria-expanded={projectMenuOpen}
               data-tree-menu-anchor
               onClick={(event) => toggleAnchoredMenu(event, solo
                 ? { kind: "workspace", projectId: project.id, workspaceId: solo.id }
@@ -570,7 +573,7 @@ export function IdeProjectTree() {
               className={`rounded p-1 hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${projectMenuOpen ? "bg-background/70 text-foreground" : "text-muted-foreground"}`}>
               {working ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
             </button>
-            <button type="button" aria-label={`New workspace in ${project.name}`} title="New workspace" onClick={() => newWorkspace(project.id)}
+            <button type="button" aria-label={fill(t("ide_projects.new_workspace_in"), { project: project.name })} title={t("ide_projects.new_workspace")} onClick={() => newWorkspace(project.id)}
               className="rounded p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Plus className="h-3.5 w-3.5" />
             </button>
@@ -632,7 +635,7 @@ export function IdeProjectTree() {
               >
                 <input
                   autoFocus
-                  aria-label={`Rename ${workspace.name}`}
+                  aria-label={fill(t("ide_projects.rename_named"), { target: workspace.name })}
                   value={draftWorkspaceName}
                   maxLength={80}
                   disabled={mutatingId === workspace.id}
@@ -647,7 +650,7 @@ export function IdeProjectTree() {
                 />
                 <button
                   type="submit"
-                  aria-label={`Save ${workspace.name}`}
+                  aria-label={fill(t("ide_projects.save_named"), { target: workspace.name })}
                   disabled={mutatingId === workspace.id || !draftWorkspaceName.trim()}
                   className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-40"
                 >
@@ -655,7 +658,7 @@ export function IdeProjectTree() {
                 </button>
                 <button
                   type="button"
-                  aria-label={`Cancel renaming ${workspace.name}`}
+                  aria-label={fill(t("ide_projects.cancel_rename_named"), { target: workspace.name })}
                   onClick={() => setRenamingWorkspaceId(null)}
                   className="rounded p-1 text-muted-foreground hover:text-foreground"
                 >
@@ -666,7 +669,7 @@ export function IdeProjectTree() {
               <>
                 <button type="button" data-testid={`ide-workspace-${workspace.id}`}
             aria-current={selected ? "page" : undefined} aria-busy={pending || undefined}
-            title={workspace.status === "closed" && !workspace.restorable ? "This workspace cannot be restored on this machine" : workspace.status === "open" ? `${workspace.name} — drag to reorder, or press Alt plus arrow keys to move` : undefined}
+            title={workspace.status === "closed" && !workspace.restorable ? t("ide_projects.not_restorable") : workspace.status === "open" ? fill(t("ide_projects.drag_hint"), { target: workspace.name }) : undefined}
             disabled={workspace.status === "closed" && !workspace.restorable}
             onClick={() => activateWorkspace(workspace.id)}
             onKeyDown={(event) => {
@@ -684,7 +687,7 @@ export function IdeProjectTree() {
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
             {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
               : workspace.terminals > 0 && <SessionCount count={workspace.terminals} hover="group/space" />}
-            {pending && <span className="sr-only">Switching workspace</span>}
+            {pending && <span className="sr-only">{t("ide_projects.switching")}</span>}
             </button>
             {(() => {
               const spaceMenuOpen = contextMenu?.kind === "workspace" && contextMenu.workspaceId === workspace.id;
@@ -695,7 +698,7 @@ export function IdeProjectTree() {
               const reveal = pending && !spaceMenuOpen
                 ? "pointer-events-none opacity-0"
                 : `focus-visible:opacity-100 group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`;
-              return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
+              return <button type="button" aria-label={fill(t("ide_projects.workspace_actions_for"), { target: workspace.name })} title={t("ide_projects.workspace_actions")}
                 aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
                 tabIndex={pending && !spaceMenuOpen ? -1 : undefined}
                 onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
@@ -707,7 +710,7 @@ export function IdeProjectTree() {
             )}
           </div>;
         })}
-        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground">Create workspace</button>}
+        {project.workspaces.length === 0 && <button type="button" onClick={() => newWorkspace(project.id)} className="px-2 py-1.5 text-left text-[13px] text-muted-foreground hover:text-foreground">{t("ide_projects.create_workspace")}</button>}
       </div>}
     </div>;
   };
@@ -721,33 +724,33 @@ export function IdeProjectTree() {
     const items: TreeMenuItem[] = found.editors.map((editor) => {
       const installed = editor.installed !== false;
       return {
-        id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, image: EDITOR_LOGOS[editor.id],
-        testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : "Not installed",
+        id: `editor-${editor.id}`, label: fill(t("ide_projects.open_in"), { editor: editor.label }), icon: SquareCode, image: EDITOR_LOGOS[editor.id],
+        testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : t("ide_projects.not_installed"),
         onSelect: run(() => void openIn(project.id, editor.id, editor.label)),
       };
     });
     if (scope === "project" && found.file_manager) {
-      items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
+      items.push({ id: "reveal", label: t(FILE_MANAGER_LABEL), icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
     }
     if (scope === "project" && found.remote_url) {
-      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote", found.remote_label ?? "the web page")) });
+      items.push({ id: "remote", label: fill(t("ide_projects.open_on"), { target: found.remote_label ?? t("ide_projects.the_web") }), icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote", found.remote_label ?? t("ide_projects.the_web_page"))) });
     }
     return items;
   };
 
   const projectMenuSections = (project: IdeProject): TreeMenuItem[][] => [
     [
-      { id: "new", label: "New workspace", icon: FolderPlus, testId: "ide-project-menu-new", onSelect: run(() => newWorkspace(project.id)) },
-      { id: "new-worktree", label: "New workspace in a worktree", icon: FolderGit2, testId: "ide-project-menu-new-worktree",
-        hint: "Own folder and branch for its agents", onSelect: run(() => newWorkspace(project.id, { worktree: true })) },
+      { id: "new", label: t("ide_projects.new_workspace"), icon: FolderPlus, testId: "ide-project-menu-new", onSelect: run(() => newWorkspace(project.id)) },
+      { id: "new-worktree", label: t("ide_projects.new_worktree"), icon: FolderGit2, testId: "ide-project-menu-new-worktree",
+        hint: t("ide_projects.new_worktree_hint"), onSelect: run(() => newWorkspace(project.id, { worktree: true })) },
       ...launcherItems(project, "project"),
     ],
     [
-      { id: "rename", label: "Rename project", icon: Pencil, testId: "ide-project-menu-rename", onSelect: run(() => { setDraftName(project.name); setRenamingId(project.id); }) },
-      { id: "pin", label: project.pinned ? "Unpin project" : "Pin project", icon: project.pinned ? PinOff : Pin, testId: "ide-project-menu-pin", onSelect: run(() => void mutate(project, { pinned: !project.pinned })) },
+      { id: "rename", label: t("ide_projects.rename_project"), icon: Pencil, testId: "ide-project-menu-rename", onSelect: run(() => { setDraftName(project.name); setRenamingId(project.id); }) },
+      { id: "pin", label: project.pinned ? t("ide_projects.unpin_project") : t("ide_projects.pin_project"), icon: project.pinned ? PinOff : Pin, testId: "ide-project-menu-pin", onSelect: run(() => void mutate(project, { pinned: !project.pinned })) },
     ],
     [
-      { id: "delete", label: "Delete project", icon: Trash2, testId: "ide-project-menu-delete", destructive: true, onSelect: run(() => setConfirmProject(project.id)) },
+      { id: "delete", label: t("ide_projects.delete_project"), icon: Trash2, testId: "ide-project-menu-delete", destructive: true, onSelect: run(() => setConfirmProject(project.id)) },
     ],
   ];
 
@@ -756,41 +759,41 @@ export function IdeProjectTree() {
     const panes = menuPanes ?? [];
     const busy = panes.filter((pane) => pane.activity === "working" || pane.activity === "asking");
     const agentActions: TreeMenuItem[] = isOpen ? [
-      { id: "add", label: "Add another agent", icon: Plus, testId: "ide-workspace-menu-add", onSelect: run(() => void addAgent(workspace)) },
-      { id: "duplicate", label: "Duplicate workspace", icon: CopyPlus, testId: "ide-workspace-menu-duplicate", disabled: panes.length === 0,
-        hint: panes.length ? `Starts ${panes.length} fresh ${panes.length === 1 ? "agent" : "agents"}` : undefined,
+      { id: "add", label: t("ide_projects.add_agent"), icon: Plus, testId: "ide-workspace-menu-add", onSelect: run(() => void addAgent(workspace)) },
+      { id: "duplicate", label: t("ide_projects.duplicate"), icon: CopyPlus, testId: "ide-workspace-menu-duplicate", disabled: panes.length === 0,
+        hint: panes.length ? fill(t(panes.length === 1 ? "ide_projects.duplicate_hint_one" : "ide_projects.duplicate_hint_other"), { count: panes.length }) : undefined,
         onSelect: run(() => void duplicateWorkspace(project, workspace, panes)) },
-      ...(busy.length ? [{ id: "interrupt", label: `Interrupt ${busy.length} working ${busy.length === 1 ? "agent" : "agents"}`, icon: OctagonPause,
-        testId: "ide-workspace-menu-interrupt", hint: "Stops the current task, keeps the chat", onSelect: run(() => void interruptAgents(workspace, busy)) }] : []),
+      ...(busy.length ? [{ id: "interrupt", label: fill(t(busy.length === 1 ? "ide_projects.interrupt_one" : "ide_projects.interrupt_other"), { count: busy.length }), icon: OctagonPause,
+        testId: "ide-workspace-menu-interrupt", hint: t("ide_projects.interrupt_hint"), onSelect: run(() => void interruptAgents(workspace, busy)) }] : []),
     ] : [
-      { id: "reopen", label: "Reopen workspace", icon: ArrowUpRight, testId: "ide-workspace-menu-open", disabled: !workspace.restorable,
-        hint: workspace.restorable ? undefined : "Its folder is not reachable",
+      { id: "reopen", label: t("ide_projects.reopen"), icon: ArrowUpRight, testId: "ide-workspace-menu-open", disabled: !workspace.restorable,
+        hint: workspace.restorable ? undefined : t("ide_projects.reopen_unreachable"),
         onSelect: run(() => { activateWorkspace(workspace.id); setProjectOpen(project.id, true); }) },
     ];
     return [
       agentActions,
       [
         ...launcherItems(project, "workspace"),
-        { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
+        { id: "copy", label: t("ide_projects.copy_path"), icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) },
       ],
       isOpen ? [
         ...computers.filter((computer) => computer.health.status !== "provisioning").map((computer) => ({
-          id: `place-${computer.id}`, label: `Move workspace to ${computer.name}`, icon: Server,
-          testId: `ide-workspace-menu-place-${computer.id}`, hint: "Keeps running while this PC is off",
+          id: `place-${computer.id}`, label: fill(t("ide_projects.move_to"), { computer: computer.name }), icon: Server,
+          testId: `ide-workspace-menu-place-${computer.id}`, hint: t("ide_projects.move_hint"),
           onSelect: run(() => void placeWorkspaceOn(workspace, computer.id)) })),
-        ...(computers.length ? [{ id: "place-home", label: "Bring workspace back here", icon: ArrowUpRight,
+        ...(computers.length ? [{ id: "place-home", label: t("ide_projects.bring_back"), icon: ArrowUpRight,
           testId: "ide-workspace-menu-place-home", onSelect: run(() => void placeWorkspaceOn(workspace, null)) }] : []),
       ] : [],
       isOpen ? [
-        { id: "git", label: "Git", icon: GitBranch, testId: "ide-workspace-menu-git", hint: "Commit, push, pull request, worktrees",
+        { id: "git", label: "Git", icon: GitBranch, testId: "ide-workspace-menu-git", hint: t("ide_projects.git_hint"),
           onSelect: run(() => openGitPanel(workspace.id)) },
       ] : [],
       isOpen ? [
-        { id: "rename", label: "Rename workspace", icon: Pencil, testId: "ide-workspace-menu-rename",
+        { id: "rename", label: t("ide_projects.rename_workspace"), icon: Pencil, testId: "ide-workspace-menu-rename",
           onSelect: run(() => { setDraftWorkspaceName(workspace.name); setRenamingWorkspaceId(workspace.id); setProjectOpen(project.id, true); }) },
       ] : [],
       [
-        { id: "remove", label: "Remove workspace", icon: Trash2, testId: "ide-workspace-menu-close", destructive: true,
+        { id: "remove", label: t("ide_projects.remove_workspace"), icon: Trash2, testId: "ide-workspace-menu-close", destructive: true,
           onSelect: run(() => setConfirmWorkspace({ projectId: project.id, workspaceId: workspace.id })) },
       ],
     ];
@@ -805,7 +808,7 @@ export function IdeProjectTree() {
     const [projectCreate, projectMeta, projectDelete] = projectMenuSections(project);
     return [
       agentActions,
-      [...projectCreate, { id: "copy", label: "Copy folder path", icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) }],
+      [...projectCreate, { id: "copy", label: t("ide_projects.copy_path"), icon: Copy, testId: "ide-workspace-menu-copy", onSelect: run(() => void copyPath(workspace.folder || project.path)) }],
       place,
       git,
       projectMeta,
@@ -827,21 +830,21 @@ export function IdeProjectTree() {
 
   return <div data-testid="ide-project-tree" className="flex-1 px-2 pb-3 pt-2">
     <div className="flex h-8 items-center justify-between pl-2 pr-1 text-[15px] font-semibold text-foreground">
-      <span>Workspaces</span>
+      <span>{t("ide_projects.workspaces")}</span>
       <div className="flex items-center gap-0.5">
         <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-3.5 w-3.5" /></button>
-        <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}
+        <button type="button" aria-label={t("ide_projects.connect_title")} title={t("ide_projects.connect_folder_title")} onClick={connectProject}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-3.5 w-3.5" /></button>
       </div>
     </div>
     {visible.some((project) => project.pinned) && <>
-      <div className="px-2 pb-1 pt-3 text-[13px] font-medium text-muted-foreground/80">Pinned</div>
+      <div className="px-2 pb-1 pt-3 text-[13px] font-medium text-muted-foreground/80">{t("ide_projects.pinned")}</div>
       {visible.filter((project) => project.pinned).map(projectRow)}
-      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-4 text-[13px] font-medium text-muted-foreground/80">Other projects</div>}
+      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-4 text-[13px] font-medium text-muted-foreground/80">{t("ide_projects.other_projects")}</div>}
     </>}
     {visible.filter((project) => !project.pinned).map(projectRow)}
-    {visible.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">Connect a folder to start a project.</p>}
+    {visible.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">{t("ide_projects.empty")}</p>}
     {contextMenu && menuProject && (
       <TreeContextMenu
         x={contextMenu.x}
@@ -859,11 +862,11 @@ export function IdeProjectTree() {
     )}
     {confirmWorkspaceTarget && (
       <ConfirmTreeAction
-        title={`Remove ${confirmWorkspaceTarget.workspace.name}?`}
+        title={fill(t("ide_projects.remove_title"), { workspace: confirmWorkspaceTarget.workspace.name })}
         body={confirmWorkspaceTarget.workspace.status === "open"
-          ? `Its ${confirmWorkspaceTarget.workspace.terminals} coding ${confirmWorkspaceTarget.workspace.terminals === 1 ? "agent" : "agents"} will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.`
-          : "The workspace leaves the sidebar. The folder on disk and its chats stay untouched."}
-        confirmLabel={confirmBusy ? "Removing…" : `Remove ${confirmWorkspaceTarget.workspace.name}`}
+          ? fill(t(confirmWorkspaceTarget.workspace.terminals === 1 ? "ide_projects.remove_body_one" : "ide_projects.remove_body_other"), { count: confirmWorkspaceTarget.workspace.terminals })
+          : t("ide_projects.remove_body_closed")}
+        confirmLabel={confirmBusy ? t("ide_projects.removing") : fill(t("ide_projects.remove_named"), { workspace: confirmWorkspaceTarget.workspace.name })}
         busy={confirmBusy}
         testId="ide-workspace-confirm-close"
         onCancel={() => {
@@ -874,16 +877,19 @@ export function IdeProjectTree() {
     )}
     {confirmProjectTarget && (
       <ConfirmTreeAction
-        title={`Delete ${confirmProjectTarget.name}?`}
+        title={fill(t("ide_projects.delete_title"), { project: confirmProjectTarget.name })}
         body={(() => {
           const openSpaces = confirmProjectTarget.workspaces.filter((workspace) => workspace.status === "open");
           if (openSpaces.length === 0) {
-            return `This forgets the project and its chats. The folders on disk stay untouched.`;
+            return t("ide_projects.delete_body_idle");
           }
           const agents = openSpaces.reduce((total, workspace) => total + workspace.terminals, 0);
-          return `This stops ${agents} running ${agents === 1 ? "agent" : "agents"} in ${openSpaces.length} open ${openSpaces.length === 1 ? "workspace" : "workspaces"} and forgets the project and its chats. The folders on disk stay untouched.`;
+          return fill(t("ide_projects.delete_body"), {
+            agents: fill(t(agents === 1 ? "ide_projects.running_agents_one" : "ide_projects.running_agents_other"), { count: agents }),
+            workspaces: fill(t(openSpaces.length === 1 ? "ide_projects.open_workspaces_one" : "ide_projects.open_workspaces_other"), { count: openSpaces.length }),
+          });
         })()}
-        confirmLabel={confirmBusy ? "Deleting…" : `Delete ${confirmProjectTarget.name}`}
+        confirmLabel={confirmBusy ? t("ide_projects.deleting") : fill(t("ide_projects.delete_named"), { project: confirmProjectTarget.name })}
         busy={confirmBusy}
         testId="ide-project-confirm-delete"
         onCancel={() => {
@@ -897,12 +903,12 @@ export function IdeProjectTree() {
 
 const TREE_MENU_WIDTH = 240;
 
-/** What the OS calls its file manager, for the "show the folder" item. */
+/** What the OS calls its file manager, for the "show the folder" item (a locale key). */
 const FILE_MANAGER_LABEL = (() => {
   const platform = typeof navigator === "undefined" ? "" : navigator.userAgent;
-  if (/Windows/i.test(platform)) return "Show in Explorer";
-  if (/Mac OS X|Macintosh/i.test(platform)) return "Show in Finder";
-  return "Show in file manager";
+  if (/Windows/i.test(platform)) return "ide_projects.show_in_explorer";
+  if (/Mac OS X|Macintosh/i.test(platform)) return "ide_projects.show_in_finder";
+  return "ide_projects.show_in_file_manager";
 })();
 const TREE_MENU_MARGIN = 8;
 /** Each featured editor's own app icon, in its real colours. */
@@ -945,6 +951,7 @@ function TreeContextMenu({
   busy: boolean;
   sections: TreeMenuItem[][];
 }) {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -1007,7 +1014,7 @@ function TreeContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label={`${kind === "workspace" ? "Workspace" : "Project"} actions for ${label}`}
+      aria-label={fill(t(kind === "workspace" ? "ide_projects.workspace_actions_for" : "ide_projects.project_actions_for"), { target: label })}
       data-testid={kind === "workspace" ? "ide-workspace-menu" : "ide-project-menu"}
       onKeyDown={onMenuKeyDown}
       style={{ width: TREE_MENU_WIDTH, visibility: "hidden" }}
@@ -1070,6 +1077,7 @@ function ConfirmTreeAction({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   return createPortal(
     <div
       role="dialog"
@@ -1095,7 +1103,7 @@ function ConfirmTreeAction({
             disabled={busy}
             onClick={onCancel}
           >
-            Keep
+            {t("ide_projects.keep")}
           </button>
           <button
             type="button"

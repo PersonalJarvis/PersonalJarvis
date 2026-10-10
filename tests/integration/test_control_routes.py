@@ -114,6 +114,16 @@ def test_language_verb_sets_reply_and_ui_language(client) -> None:
     assert loaded.ui.language == "es"
 
 
+def test_language_verb_sets_portuguese_reply_and_ui_language(client) -> None:
+    tc, _, _ = client
+    res = tc.put("/api/control/language", json={"reply_language": "pt"}, headers=AUTH)
+    assert res.status_code == 200 and res.json()["applied"] is True
+    assert res.json()["ui_language"]["value"] == "pt"
+    loaded = cfg_mod.load_config()
+    assert loaded.brain.reply_language == "pt"
+    assert loaded.ui.language == "pt"
+
+
 def test_language_verb_auto_leaves_ui_untouched(client) -> None:
     # "auto" only mirrors the reply language; it must not force an interface code.
     tc, _, _ = client

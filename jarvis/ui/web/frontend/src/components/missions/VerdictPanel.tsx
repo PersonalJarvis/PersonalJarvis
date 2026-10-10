@@ -19,7 +19,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import type {
   CriticAxisResult,
   CriticVerdictReady,
@@ -29,18 +29,19 @@ import { useMissionsStore } from "./store";
 
 const KNOWN_AXES = ["correctness", "completeness", "side_effects", "security"];
 
+/** `label` is an i18n key. */
 const VERDICT_STYLE: Record<CriticVerdict, { className: string; label: string }> = {
   approve: {
     className: "border-muted-foreground/40 bg-muted-foreground/10 text-muted-foreground",
-    label: "approve",
+    label: "verdict_panel.verdict_approve",
   },
   revise: {
     className: "border-foreground/40 bg-foreground/10 text-foreground",
-    label: "revise",
+    label: "verdict_panel.verdict_revise",
   },
   reject: {
     className: "border-destructive/50 bg-destructive/15 text-destructive",
-    label: "reject",
+    label: "verdict_panel.verdict_reject",
   },
 };
 
@@ -77,6 +78,7 @@ export function VerdictPanel() {
 }
 
 function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
+  const t = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const style = VERDICT_STYLE[verdict.verdict];
   const axes = mergeAxes(verdict.axes);
@@ -92,10 +94,10 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
                 style.className,
               )}
             >
-              {style.label}
+              {t(style.label)}
             </span>
             <span className="text-micro uppercase tracking-wider text-muted-foreground">
-              iter #{verdict.iteration}
+              {fill(t("verdict_panel.iteration"), { n: verdict.iteration })}
             </span>
             <span className="font-mono text-micro text-muted-foreground">
               w{verdict.worker_id.slice(0, 8)}
@@ -142,12 +144,14 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
                   <span className="w-3" />
                 )}
                 <Icon className={cn("h-3.5 w-3.5", tone)} />
-                <span className="flex-1 font-mono text-xs">{name}</span>
+                <span className="flex-1 font-mono text-xs">
+                  {KNOWN_AXES.includes(name) ? t(`verdict_panel.axis_${name}`) : name}
+                </span>
                 <span className={cn("text-micro uppercase tracking-wider", tone)}>
                   {axis.pass === true
-                    ? "pass"
+                    ? t("verdict_panel.axis_pass")
                     : axis.pass === false
-                    ? "fail"
+                    ? t("verdict_panel.axis_fail")
                     : "—"}
                 </span>
               </button>
@@ -177,11 +181,12 @@ function VerdictCard({ verdict }: { verdict: CriticVerdictReady }) {
 }
 
 function ConfidenceBar({ value }: { value: number }) {
+  const t = useT();
   const pct = Math.max(0, Math.min(1, value)) * 100;
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-micro uppercase tracking-wider text-muted-foreground">
-        <span>Confidence</span>
+        <span>{t("verdict_panel.confidence")}</span>
         <span className="font-mono">{pct.toFixed(0)}%</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-background/60">

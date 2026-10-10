@@ -76,6 +76,11 @@ class TestVerbsFromDescriptionMultilingual:
         verbs = _verbs_from_description(_LIST_DESCRIPTION)
         assert "listar" in verbs
 
+    def test_portuguese_forms_included(self) -> None:
+        verbs = _verbs_from_description(_LIST_DESCRIPTION)
+        assert "listar" in verbs
+        assert "mostra" in verbs  # i18n-allow: speech-input vocabulary under test
+
     def test_fallback_stays_use(self) -> None:
         assert _verbs_from_description("Frobnicate the widget.") == ("use",)
 
@@ -123,3 +128,10 @@ class TestGermanUtteranceResolvesToMcpCapability:
         cap = self._registry().resolve_intent("Can you list all my notebooks?")
         assert cap is not None
         assert cap.id == "mcp.notebooklm-mcp/notebook_list"
+
+    def test_portuguese_list_phrasing_resolves(self) -> None:
+        cap = self._registry().resolve_intent(
+            "Mostra-me todos os meus notebooks"  # i18n-allow: speech-input phrasing under test
+        )
+        assert cap is not None
+        assert cap.source == "mcp"

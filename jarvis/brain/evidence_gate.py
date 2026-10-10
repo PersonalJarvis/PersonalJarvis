@@ -232,12 +232,26 @@ _REFUSAL_ES: dict[str, str] = {
 }
 _REFUSAL_ES_FALLBACK = "Ahora mismo no tengo acceso a esos datos."  # i18n-allow
 
+# Spoken European Portuguese voice replies (TTS-safe, deterministic), same
+# contract as the Spanish table above.
+_REFUSAL_PT: dict[str, str] = {
+    "calendar": "Neste momento não tenho acesso ao teu calendário.",  # i18n-allow
+    "email": "Neste momento não tenho acesso ao teu e-mail.",  # i18n-allow
+    "tasks": "Neste momento não tenho acesso às tuas tarefas.",  # i18n-allow
+    "repos": "Neste momento não tenho acesso aos teus repositórios.",  # i18n-allow
+    "deployments": "Neste momento não tenho acesso às tuas implementações.",  # i18n-allow
+    "cloud": "Neste momento não tenho acesso à tua faturação na nuvem.",  # i18n-allow
+    "activity": "Não guardo um histórico da tua atividade.",  # i18n-allow
+}
+_REFUSAL_PT_FALLBACK = "Neste momento não tenho acesso a esses dados."  # i18n-allow
+
 #: One table per supported locale, so adding a language is a table, not a
 #: branch. Keys must stay in step with ``jarvis.core.turn_language``'s pins.
 _REFUSALS: dict[str, tuple[dict[str, str], str]] = {
     "de": (_REFUSAL_DE, _REFUSAL_DE_FALLBACK),
     "en": (_REFUSAL_EN, _REFUSAL_EN_FALLBACK),
     "es": (_REFUSAL_ES, _REFUSAL_ES_FALLBACK),
+    "pt": (_REFUSAL_PT, _REFUSAL_PT_FALLBACK),
 }
 
 
@@ -283,7 +297,7 @@ def check_evidence_domain(
     :func:`live_surface_covers`). Defaulting to ``()`` keeps every existing
     caller on the registry-only behaviour.
 
-    ``language`` is THIS turn's resolved output language (de/en/es), produced
+    ``language`` is THIS turn's resolved output language (de/en/es/pt), produced
     by ``jarvis.core.turn_language.resolve_output_language`` and passed down by
     the caller. The honest refusal is user-facing speech, so it must be spoken
     in the same language as every other layer of the turn. Callers that omit it

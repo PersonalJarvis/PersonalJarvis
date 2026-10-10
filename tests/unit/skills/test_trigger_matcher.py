@@ -100,6 +100,28 @@ def test_match_voice_no_match(registry: SkillRegistry):
     assert m.match_voice("komplett anderes zeug", lang="de") is None
 
 
+VOICE_PT_ANCHORED = """---
+schema_version: "1"
+name: voice_pt
+triggers:
+  - type: voice
+    pattern: "^abre a reuni[aã]o$"
+    language: ["pt"]
+---
+body
+"""
+
+
+def test_portuguese_courtesy_glue_is_stripped(tmp_path: Path):
+    _write_skill(tmp_path, "voice_pt", VOICE_PT_ANCHORED)
+    reg = SkillRegistry(tmp_path)
+    reg.reload_sync()
+    m = TriggerMatcher(reg)
+    sk = m.match_voice("Olá, abre a reunião por favor", lang="pt")  # i18n-allow
+    assert sk is not None
+    assert sk.name == "voice_pt"
+
+
 def test_match_voice_auto_lang(registry: SkillRegistry):
     m = TriggerMatcher(registry)
     sk = m.match_voice("starte meeting", lang="auto")

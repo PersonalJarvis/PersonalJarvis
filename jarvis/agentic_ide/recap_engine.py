@@ -260,6 +260,7 @@ _LANGUAGE_NAMES = {
     "de": "German",
     "es": "Spanish",
     "zh": "Simplified Chinese",
+    "pt": "European Portuguese",
 }
 
 # What the summarizer is asked for. Written for the reader it actually has:

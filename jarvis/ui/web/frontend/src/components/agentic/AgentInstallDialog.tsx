@@ -25,6 +25,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { fill, useT } from "@/i18n";
 import { Check, Loader2, X } from "lucide-react";
 
 import { WorkspaceTerminal } from "../workspace/WorkspaceTerminal";
@@ -67,6 +68,7 @@ export function AgentInstallDialog({
   logoUrl,
   onClose,
 }: AgentInstallDialogProps) {
+  const t = useT();
   const [installed, setInstalled] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   /*
@@ -130,7 +132,7 @@ export function AgentInstallDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`Install ${displayName}`}
+        aria-label={fill(t("ide_panes.install.title"), { agent: displayName })}
         data-testid={`agent-install-dialog-${agent}`}
         // A dialog floats: the floating ground plus the cast edge, not a card
         // fill with a hairline drawn around it.
@@ -146,7 +148,7 @@ export function AgentInstallDialog({
           />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-foreground">
-              Install {displayName}
+              {fill(t("ide_panes.install.title"), { agent: displayName })}
             </p>
             {/* The command, before and while it runs. A user who would rather
                 run it in their own shell can read it here and close this. */}
@@ -158,7 +160,7 @@ export function AgentInstallDialog({
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("common.close")}
             data-testid={`agent-install-close-${agent}`}
             onClick={close}
             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
@@ -174,7 +176,7 @@ export function AgentInstallDialog({
           <WorkspaceTerminal
             paneKey={`install-${agent}`}
             installName={agent}
-            title={`Installing ${displayName}`}
+            title={fill(t("ide_panes.install.installing"), { agent: displayName })}
             /* The pane must never be an empty black rectangle. A package
                manager can take several seconds to say its first word, and in
                that gap the only honest thing on screen is what is about to
@@ -182,7 +184,7 @@ export function AgentInstallDialog({
             banner={
               command
                 ? `\x1b[2m$ ${command}\x1b[0m`
-                : `\x1b[2mStarting the installer for ${displayName}…\x1b[0m`
+                : `\x1b[2m${fill(t("ide_panes.install.starting"), { agent: displayName })}\x1b[0m`
             }
           />
         </div>
@@ -197,7 +199,7 @@ export function AgentInstallDialog({
             >
               <Check className="h-4 w-4" />
               <span>
-                {displayName} is installed
+                {fill(t("ide_panes.install.installed"), { agent: displayName })}
                 {version ? ` — ${version}` : ""}
               </span>
             </p>
@@ -207,7 +209,7 @@ export function AgentInstallDialog({
               {/* Not "installing…": what is true is that this app is watching.
                   The installer's own progress is the terminal above, and
                   claiming to know its state would be inventing one. */}
-              <span>Watching for {displayName} to appear…</span>
+              <span>{fill(t("ide_panes.install.watching"), { agent: displayName })}</span>
             </p>
           )}
           <button
@@ -220,7 +222,7 @@ export function AgentInstallDialog({
                 : "shrink-0 rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-primary/10"
             }
           >
-            {installed ? "Done" : "Close"}
+            {installed ? t("ide_panes.common.done") : t("common.close")}
           </button>
         </footer>
       </div>

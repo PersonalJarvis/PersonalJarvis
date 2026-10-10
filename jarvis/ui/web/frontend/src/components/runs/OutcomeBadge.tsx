@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -16,12 +17,13 @@ import { cn } from "@/lib/utils";
 
 type BadgeTone = "success" | "warning" | "destructive" | "outline";
 
+/** `label` is an i18n key (or a literal glyph for the fallback). */
 type OutcomeStyle = { label: string; dot: string; tone: BadgeTone };
 
 const OUTCOME_STYLE: Record<string, OutcomeStyle> = {
-  success: { label: "Success", dot: "bg-success", tone: "success" },
-  partial: { label: "Partial", dot: "bg-warning", tone: "warning" },
-  failed: { label: "Failed", dot: "bg-destructive", tone: "destructive" },
+  success: { label: "run_inspector.outcome.success", dot: "bg-success", tone: "success" },
+  partial: { label: "run_inspector.outcome.partial", dot: "bg-warning", tone: "warning" },
+  failed: { label: "run_inspector.outcome.failed", dot: "bg-destructive", tone: "destructive" },
 };
 
 const FALLBACK: OutcomeStyle = {
@@ -56,10 +58,11 @@ export function OutcomeDot({
 
 export function OutcomeBadge({ outcome }: { outcome: string }) {
   const s = outcomeStyle(outcome);
+  const t = useT();
   return (
     <Badge variant={s.tone} data-outcome={outcome}>
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", s.dot)} aria-hidden />
-      {s.label}
+      {s.label === FALLBACK.label ? s.label : t(s.label)}
     </Badge>
   );
 }

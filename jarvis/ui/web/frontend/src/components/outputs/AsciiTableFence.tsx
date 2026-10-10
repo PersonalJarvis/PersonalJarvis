@@ -59,7 +59,7 @@ export function AsciiTableFence({ grid, code }: { grid: AsciiGrid; code: string 
       data-mode={mode}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border/40 bg-muted/20 px-3 py-1">
-        <span className="text-micro uppercase tracking-wider text-muted-foreground">table</span>
+        <span className="text-micro uppercase tracking-wider text-muted-foreground">{t("outputs_view.fence_table")}</span>
         <div className="flex items-center gap-1.5">
           <div role="group" className="inline-flex rounded border border-border/60 bg-muted/40 p-0.5">
             {segment("rendered", t("outputs_view.fence_rendered"))}

@@ -402,6 +402,8 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                     "ChatGPT subscription access could not complete this request. "
                     "No API key was used."
                 ),
+                # Stable code the desktop UI translates; ``error`` stays.
+                "message_code": "subscription_request_failed",
             }
         )
         if terminal:

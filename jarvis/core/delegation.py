@@ -69,6 +69,11 @@ def result_announcement(
             "needs_input": "necesita tu respuesta", "blocked": "está bloqueado",
             "failed": "ha fallado", "exited": "ha terminado",
         },
+        "pt": {
+            "done": "informa", "completed": "terminou", "stopped": "foi interrompido",
+            "needs_input": "precisa da tua resposta", "blocked": "está bloqueado",
+            "failed": "falhou", "exited": "saiu",
+        },
     }
     table = labels.get(lang, labels["en"])
     label = table.get(status, table["done"])

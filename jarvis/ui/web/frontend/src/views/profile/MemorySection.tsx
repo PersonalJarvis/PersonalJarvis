@@ -16,7 +16,8 @@ import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useAgentInstructions } from "@/hooks/useAgentInstructions";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { ProfileGroup, SettingRow } from "@/views/profile/ProfileGroup";
 import { parseDoNotRecord, shortenCategory } from "@/views/profile/provenance";
@@ -123,7 +124,7 @@ export function MemorySection({
       : t("profile_view.wiki_needs_name");
 
   const fileDate = fileUpdatedMs
-    ? new Date(fileUpdatedMs).toLocaleDateString(undefined, {
+    ? new Date(fileUpdatedMs).toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), {
         day: "numeric",
         month: "short",
         year: "numeric",

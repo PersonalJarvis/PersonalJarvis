@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Lock, X } from "lucide-react";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import type { SocietyEnvelope } from "@/lib/societyApi";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
@@ -110,7 +111,7 @@ export function PairConversation({ pair, onClose }: { pair: Pair; onClose: () =>
             {messages.map((message) => <article key={message.event_id} className={cn("max-w-[90%]", message.from_agent === first ? "self-start" : "self-end")} data-message-id={message.event_id}>
               <div className={cn("mb-1 flex flex-wrap items-baseline gap-2 text-xs", message.from_agent !== first && "justify-end")}>
                 <span className="font-medium text-foreground">{pair.find((person) => person.id === message.from_agent)?.name ?? message.from_agent}</span>
-                <time className="text-muted-foreground" dateTime={new Date(message.ts_ms).toISOString()}>{new Date(message.ts_ms).toLocaleString()}</time>
+                <time className="text-muted-foreground" dateTime={new Date(message.ts_ms).toISOString()}>{new Date(message.ts_ms).toLocaleString(localeForUiLanguage(useI18nStore.getState().ui))}</time>
               </div>
               <div className="rounded-2xl border border-border bg-card px-3.5 py-2.5 text-foreground">
                 <div className="prose prose-sm prose-neutral max-w-none dark:prose-invert prose-p:my-1 prose-pre:overflow-x-auto [overflow-wrap:anywhere]">

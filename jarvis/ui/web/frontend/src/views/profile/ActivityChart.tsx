@@ -14,7 +14,8 @@
 import { useMemo, useState } from "react";
 
 import { useBoardInsights } from "@/hooks/useBoardInsights";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { SERIES_IDS, summarize, type SeriesId, type WeekBar } from "@/views/profile/activity";
 
@@ -34,7 +35,7 @@ const UNIT_KEY: Record<SeriesId, string> = {
 
 export function ActivityChart() {
   const t = useT();
-  const ui = useUiLanguage();
+  const ui = useRunLocale();
   const insights = useBoardInsights();
   const [series, setSeries] = useState<SeriesId>("all");
   const [hovered, setHovered] = useState<number | null>(null);

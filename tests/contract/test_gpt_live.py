@@ -235,7 +235,7 @@ async def _pending_approval(runtime):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", ["Ja.", "Sí", "Yes"])
+@pytest.mark.parametrize("answer", ["Ja.", "Sí", "Yes", "Sim", "Força, avança"])
 async def test_approval_in_any_locale_survives_an_auto_session_language(ledger, answer):
     # Live 2026-10-01: an "auto" session resolves to English, which rejected "Ja".
     gateway = _ApprovalGateway()
@@ -263,6 +263,7 @@ async def test_veto_still_wins_over_a_listed_affirmation(ledger):
         ". Ja, send ihn",  # i18n-allow: live 2026-10-01 transcript
         "Ja. Ja, schick ihn los",  # i18n-allow: spoken confirmation vocabulary
         "okay, do it",
+        "Sim, faz isso",
     ],
 )
 async def test_a_short_spoken_go_ahead_approves(ledger, answer):
@@ -283,6 +284,8 @@ async def test_a_short_spoken_go_ahead_approves(ledger, answer):
         "Ja, aber warte noch",  # i18n-allow: spoken hedge vocabulary
         "yes but change the target",
         "Wieso nicht gepromptet hast",  # i18n-allow: live 2026-10-01 transcript
+        "não, espera",
+        "sim, mas muda o destinatário",
     ],
 )
 async def test_a_hedge_veto_or_new_instruction_does_not_approve(ledger, answer):

@@ -22,11 +22,12 @@ from .task_recovery import ToolRecovery
 log = logging.getLogger(__name__)
 
 _REQUEST = re.compile(
-    r"^\s*(?:(?:hello|hi|hallo|hola)[,! ]+)?"  # i18n-allow
+    r"^\s*(?:(?:hello|hi|hallo|hola|ol[aá])[,! ]+)?"  # i18n-allow
     r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
     r"(?:can you|could you|i want you to|create|write|build|make|fix|save|send|"
     r"kannst du|k[oö]nntest du|ich m[oö]chte|erstelle|schreib\w*|baue?|mach\w*|"  # i18n-allow
-    r"reparier\w*|speicher\w*|sende|por favor|puedes|crea|escribe|haz|guarda)\b",  # i18n-allow
+    r"reparier\w*|speicher\w*|sende|por favor|puedes|crea|escribe|haz|guarda|"  # i18n-allow
+    r"podes|consegues|quero que|cria|escreve|faz|corrige|envia)\b",  # i18n-allow
     re.I,
 )
 _ADVICE = re.compile(
@@ -36,14 +37,18 @@ _ADVICE = re.compile(
     r"ideen|vorschl[aä]g\w*|empfiehl\w*|erkl[aä]r\w*|"  # i18n-allow
     r"wie kann|wie geht|hast du|warum|wieso|"  # i18n-allow
     r"[uü]bersetz\w*|zitiere|beispiel|gedicht|geschichte|entwurf|plan|planning|"  # i18n-allow
-    r"explica|traduce|ejemplo|sugerencias)\b",  # i18n-allow
+    r"explica|traduce|ejemplo|sugerencias|"  # i18n-allow
+    r"traduz\w*|exemplo|sugest[oõ]es|ideias|recomenda\w*|porqu[eê]|"  # i18n-allow
+    r"como posso|como fa[cç]o)\b",  # i18n-allow
     re.I,
 )
 _OFFER = re.compile(
-    r"^(?:(?:sure|yes|okay|ok|gerne|klar|nat[uü]rlich|ja|s[ií])[.!,: —-]*\s*)?"  # i18n-allow
+    r"^(?:(?:sure|yes|okay|ok|gerne|klar|nat[uü]rlich|ja|s[ií]|"  # i18n-allow
+    r"sim|claro)[.!,: —-]*\s*)?"  # i18n-allow
     r"(?:i (?:can|could|would|suggest)|if you (?:want|like)|would you like me|shall i|"
     r"ich (?:kann|k[oö]nnte|w[uü]rde|schlage)|wenn du (?:m[oö]chtest|willst)|"  # i18n-allow
-    r"soll ich|m[oö]chtest du|vorschlag|puedo|podr[ií]a|si quieres|te propongo)\b",  # i18n-allow
+    r"soll ich|m[oö]chtest du|vorschlag|puedo|podr[ií]a|si quieres|te propongo|"  # i18n-allow
+    r"posso|poderia|se quiseres|proponho|queres que)\b",  # i18n-allow
     re.I,
 )
 _READS = frozenset(
@@ -69,7 +74,7 @@ def offer_instead_of_action(request: str, response: str) -> bool:
         return False
     answer = response.strip().lstrip("* ")
     if re.match(
-        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar)\b",  # i18n-allow
+        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar|Posso confirmar)\b",  # i18n-allow
         answer, re.I,
     ):  # i18n-allow
         return False
@@ -80,7 +85,8 @@ def offer_instead_of_action(request: str, response: str) -> bool:
         and bool(
             re.match(
                 r"(?:which|what|where|when|who|"
-                r"welch\w*|was|wo|wann|wer|qu[eé]|cu[aá]l)\b",  # i18n-allow
+                r"welch\w*|was|wo|wann|wer|qu[eé]|cu[aá]l|"  # i18n-allow
+                r"qual|quais|onde|quando|quem)\b",  # i18n-allow
                 answer,
                 re.I,
             )

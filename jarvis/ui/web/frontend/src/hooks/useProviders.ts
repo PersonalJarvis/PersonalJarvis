@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { translate } from "@/i18n";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "claude_cli" | "grok_build" | "none";
 // Mirror of provider_spec.Tier. "dictation" is the odd one out and deliberately
@@ -230,6 +231,10 @@ export interface CodexStatus {
   binaryPath?: string | null;
   binary_path?: string | null;
   error?: string | null;
+  // Stable code + fill-ins for `message` (jarvis/codex_auth.py
+  // CODEX_STATUS_MESSAGE_CODES); the UI translates it, else shows `message`.
+  message_code?: string;
+  message_params?: Record<string, string>;
 }
 
 /**
@@ -248,6 +253,10 @@ export interface AntigravityStatus {
   user_email: string | null;
   binary_path: string;
   error: string | null;
+  // Stable code + fill-ins for `message` (GOOGLE_CLI_STATUS_MESSAGE_CODES);
+  // the UI translates it and falls back to `message`.
+  message_code?: string;
+  message_params?: Record<string, string>;
 }
 
 /**
@@ -1715,7 +1724,7 @@ export async function testProvider(providerId: string): Promise<ProviderTestResu
       return {
         provider: providerId,
         status: "unreachable",
-        detail: "No answer from the app after 80s — the backend may be busy or stuck.",
+        detail: translate("apikeys_test.client_timeout"),
         latency_ms: PROVIDER_TEST_CLIENT_TIMEOUT_MS,
         integration_ok: false,
       };
@@ -1883,7 +1892,7 @@ export async function saveTtsVoice(
 export async function fetchTtsPreview(opts: {
   model: string;
   voice: string;
-  language: "de" | "en" | "es";
+  language: "de" | "en" | "es" | "pt";
   provider?: string;
 }): Promise<Blob> {
   const res = await fetch("/api/tts/preview", {
@@ -2039,7 +2048,7 @@ export async function saveRealtimeOptions(
 export async function fetchRealtimeVoicePreview(opts: {
   providerId: string;
   voice: string;
-  language: "de" | "en" | "es";
+  language: "de" | "en" | "es" | "pt";
   model?: string;
 }): Promise<Blob> {
   const res = await fetch(

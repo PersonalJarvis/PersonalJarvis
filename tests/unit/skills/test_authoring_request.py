@@ -81,6 +81,13 @@ LIVE_UTTERANCE = (
         "erstell mir einen workflow der abends die tickets zusammenfasst",  # i18n-allow: test input
         "create a routine that reads my calendar",
         "crea una rutina que lea mi correo",  # i18n-allow: test input
+        "cria-me um skill que leia o meu correio",  # i18n-allow: test input
+        "cria uma rotina que resuma o slack às segundas",  # i18n-allow: test input
+        "quero que construas uma nova automatização para os emails",  # i18n-allow: test input
+        "cria uma skill que leia o meu calendário",  # i18n-allow: test input
+        "cria um skill que leia o meu correio",  # i18n-allow: test input
+        "cria um workflow para os relatórios",  # i18n-allow: test input
+        "faz-me um workflow que resuma as tarefas",  # i18n-allow: test input
     ],
 )
 def test_authoring_requests_are_detected(utterance: str) -> None:
@@ -119,6 +126,13 @@ def test_authoring_requests_are_detected(utterance: str) -> None:
         "starte die morgenroutine",  # i18n-allow: test input
         "was steht heute in meiner routine",  # i18n-allow: test input
         "erinnere mich an meine routine",  # i18n-allow: test input
+        "como crio um skill",  # i18n-allow: test input
+        "cria uma lista dos meus skills",  # i18n-allow: test input
+        "kümmere dich um die skills",  # i18n-allow: test input
+        # German "um" is a preposition, never the Portuguese article
+        "Schreib mir, was ich tun muss, um Skills zu aktivieren",  # i18n-allow: test input
+        "Mach das, um Workflows zu starten",  # i18n-allow: test input
+        "erklär mir, wie ich vorgehe, um Routinen zu nutzen",  # i18n-allow: test input
         "",
     ],
 )
@@ -142,6 +156,8 @@ def test_non_authoring_requests_are_ignored(utterance: str) -> None:
         "disable the youtube music skill",
         "remove the skill I created yesterday",
         "desactiva el skill de spotify",  # i18n-allow: test input
+        "desativa o skill do spotify",  # i18n-allow: test input
+        "mostra-me os meus skills",  # i18n-allow: test input
     ],
 )
 def test_lifecycle_requests_are_detected(utterance: str) -> None:

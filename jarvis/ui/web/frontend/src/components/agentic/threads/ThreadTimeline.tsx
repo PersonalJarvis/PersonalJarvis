@@ -7,7 +7,8 @@ import { waitsOnCard, type TextBlock, type TimelineItem, type ToolBlock, type Tu
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
 import { plural, readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
-import { fill, useT } from "@/i18n";
+import { fill, useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
@@ -383,7 +384,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 function clock(ms: number): string {
-  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "2-digit", minute: "2-digit" });
 }
 
 function UserBubble({ item }: { item: UserItem }) {
@@ -405,7 +406,7 @@ function UserBubble({ item }: { item: UserItem }) {
     </div>
     <div className="flex items-center gap-1 pr-1 text-xs text-muted-foreground opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
       <span className="tabular-nums">{clock(item.tsMs)}</span>
-      {item.text && <CopyButton text={item.text} label="Copy message" />}
+      {item.text && <CopyButton text={item.text} label={t("ide_threads.copy_message")} />}
     </div>
   </div>;
 }
@@ -762,6 +763,7 @@ export function ThreadTimeline({ items, sessionId, bottomInset, folder = "", lea
   /** What reads above the conversation — an opened sub-agent's header and task. */
   lead?: ReactNode;
 }) {
+  const t = useT();
   const scroller = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const [away, setAway] = useState(false);
@@ -803,7 +805,7 @@ export function ThreadTimeline({ items, sessionId, bottomInset, folder = "", lea
         {items.map((item) => <ItemView key={item.id} item={item} />)}
       </div>
     </div>
-    {away && <button type="button" aria-label="Scroll to the newest message"
+    {away && <button type="button" aria-label={t("ide_threads.scroll_newest")}
       onClick={() => { const box = scroller.current; if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" }); }}
       style={{ bottom: bottomInset + 12 }}
       className="absolute left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-float hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

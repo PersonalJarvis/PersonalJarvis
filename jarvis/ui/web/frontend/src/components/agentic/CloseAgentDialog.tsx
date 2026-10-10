@@ -1,5 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2, Power } from "lucide-react";
+import { fill, useT } from "@/i18n";
 import { AgentMark } from "./AgentMark";
 
 /** What is about to close: one pane, or a whole workspace with its panes. */
@@ -20,15 +21,22 @@ interface Props {
  * ("127.0.0.1:47821 says") in the OS language, and it blocks the event loop.
  */
 export function CloseAgentDialog({ target, busy, onCancel, onConfirm }: Props) {
+  const t = useT();
   const terminal = target?.kind === "terminal" ? target : null;
   const workspace = target?.kind === "workspace" ? target : null;
   const count = workspace?.agents.length ?? 1;
-  const title = terminal ? `Close ${terminal.name}?` : `Close ${workspace?.name ?? "workspace"}?`;
+  const title = terminal
+    ? fill(t("agentic_grid.close_pane.title"), { pane: terminal.name })
+    : workspace?.name
+      ? fill(t("ide_panes.close_dialog.workspace_title"), { workspace: workspace.name })
+      : t("ide_panes.close_dialog.workspace_title_unnamed");
   const body = terminal
-    ? `The coding agent in this pane stops right away, including any task it is still working on.`
+    ? t("ide_panes.close_dialog.pane_body")
     : count === 0
-      ? "The workspace closes. You can restore it from Projects at any time."
-      : `${count === 1 ? "Its coding agent stops" : `All ${count} coding agents stop`} right away. You can restore the workspace from Projects at any time.`;
+      ? t("ide_panes.close_dialog.workspace_body_empty")
+      : count === 1
+        ? t("ide_panes.close_dialog.workspace_body_one")
+        : fill(t("ide_panes.close_dialog.workspace_body_other"), { count });
 
   return <Dialog.Root open={target !== null} onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
     <Dialog.Portal>
@@ -61,11 +69,11 @@ export function CloseAgentDialog({ target, busy, onCancel, onConfirm }: Props) {
         <div className="mt-6 flex justify-end gap-2">
           <button type="button" data-close-cancel disabled={busy} onClick={onCancel}
             className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
-            Keep running</button>
+            {t("ide_panes.close_dialog.keep")}</button>
           <button type="button" disabled={busy} onClick={onConfirm}
             className="flex items-center gap-1.5 rounded-lg bg-destructive px-3.5 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-2 focus-visible:ring-offset-popover disabled:opacity-60">
             {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-            {terminal ? "Close agent" : "Close workspace"}</button>
+            {terminal ? t("ide_panes.close_dialog.close_agent") : t("agentic_grid.close_workspace.confirm")}</button>
         </div>
       </Dialog.Content>
     </Dialog.Portal>

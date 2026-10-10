@@ -53,6 +53,7 @@ from jarvis.core.events import (
     NavigateSidebar,
 )
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.missions.events import coerce_mission_language
 from jarvis.voice.action_phrases import action_phrase, resolve_ambient_language
 
 log = logging.getLogger(__name__)
@@ -169,7 +170,7 @@ class CreateArtifactTool:
             },
             "language": {
                 "type": "string",
-                "enum": ["de", "en", "es"],
+                "enum": ["de", "en", "es", "pt"],
                 "description": "Language the user is speaking (fallback only).",
             },
             "spoken_ack": {
@@ -303,9 +304,10 @@ class CreateArtifactTool:
             if wants_sample_data(f"{utterance}\n{request}")
             else plan_source_data(f"{utterance}\n{request}")
         )
-        # The mission dispatch contract is de/en; an "es" turn keeps the German
-        # mission readback (the same cap spawn_worker applies).
-        mission_language = language if language in ("de", "en") else "de"
+        # Every supported reply language is a mission language, so the
+        # mission readback speaks the turn's language (the same rule
+        # spawn_worker applies).
+        mission_language = coerce_mission_language(language)
         background = _called_in_background(ctx)
 
         # UI/telemetry announce — the agent strip shows "builds the artifact".

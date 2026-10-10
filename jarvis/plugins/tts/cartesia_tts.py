@@ -40,6 +40,12 @@ DEFAULT_MODEL_ID = "sonic-3.5"
 DEFAULT_VOICE_ID_DE = "b7187e84-fe22-4344-ba4a-bc013fcb533e"  # Sebastian — Orator (DE)
 DEFAULT_VOICE_ID_EN = "47c38ca4-5f35-497b-b1a3-415245fb35e1"  # Daniel — Modern Assistant (EN)
 DEFAULT_VOICE_ID_ES = "15d0c2e2-8d29-44c3-be23-d585d5f154a1"  # Pedro — Formal Speaker (ES)
+# Portuguese: a Brazilian voice is the FALLBACK, not the preference. Cartesia's
+# library lists European Portuguese voices, but none has a publicly documented
+# UUID we could verify, and a guessed UUID fails every request. The ``language``
+# field still carries "pt" so Sonic speaks Portuguese; a user with a pt-PT voice
+# sets [tts.cartesia].voice_id_pt to its UUID.
+DEFAULT_VOICE_ID_PT = "6a16c1f4-462b-44de-998d-ccdaa4125a0a"  # Friendly Brazilian Man (pt-BR)
 
 # Generic fallback when no language is known. Defaults to the English voice
 # so a missing language hint behaves like the previous single-voice plugin.
@@ -72,6 +78,7 @@ class CartesiaTTS:
         voice_id_de: str | None = None,
         voice_id_en: str | None = None,
         voice_id_es: str | None = None,
+        voice_id_pt: str | None = None,
         language: str = "auto",
         chunk_by_sentence: bool = True,
         speed: float = 1.0,
@@ -90,6 +97,7 @@ class CartesiaTTS:
             "de": voice_id_de or DEFAULT_VOICE_ID_DE,
             "en": voice_id_en or DEFAULT_VOICE_ID_EN,
             "es": voice_id_es or DEFAULT_VOICE_ID_ES,
+            "pt": voice_id_pt or DEFAULT_VOICE_ID_PT,
         }
         self._language = language
         # Voice used when neither a per-call language_code nor the text sniff
@@ -284,6 +292,7 @@ class CartesiaTTS:
             self._voice_by_lang.get("de"),
             self._voice_by_lang.get("en"),
             self._voice_by_lang.get("es"),
+            self._voice_by_lang.get("pt"),
             self._voice_id,
         ):
             if v and v not in seen:

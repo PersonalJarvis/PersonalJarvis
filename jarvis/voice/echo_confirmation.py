@@ -141,6 +141,54 @@ _AMBIGUOUS_PATTERNS_ES: tuple[str, ...] = (
     r"\bni idea\b",
 )
 
+# European Portuguese (Runtime Output Language doctrine: every supported
+# language gets its own patterns). As in Spanish, "para" is NOT a veto keyword:
+# it is the common preposition ("para enviar" = "to send"). "não sei" needs no
+# ambiguous entry — the veto pass sees "não" first (safety bias, Plan-§AP-12).
+_CONFIRM_PATTERNS_PT: tuple[str, ...] = (
+    r"\bsim\b",
+    r"\bclaro\b",
+    r"\bpode ser\b",
+    r"\bpodes\b",
+    r"\bfor(ç|c)a\b",
+    r"\bfaz\b",
+    r"\bavan(ç|c)a\b",
+    r"\bok\b",
+    r"\bokay\b",
+    r"\bcerto\b",
+    r"\bcorreto\b",
+    r"\bexato\b",
+    r"\bperfeito\b",
+    r"\bde acordo\b",
+    r"\bconfirm(o|ar|ado)?\b",
+    r"\bv(á|a) l(á|a)\b",
+)
+
+_VETO_PATTERNS_PT: tuple[str, ...] = (
+    r"\bn(ã|a)o\b",
+    r"\bcancela(r)?\b",
+    r"\baborta(r)?\b",
+    r"\bp(á|a)ra com isso\b",
+    r"\bdeixa estar\b",
+    r"\bdeixa l(á|a)\b",
+    r"\besquece\b",
+    r"\bnem pensar\b",
+    r"\balto\b",
+    r"\bbasta\b",
+    r"\berrado\b",
+    r"\bincorreto\b",
+    r"\bnegativo\b",
+)
+
+_AMBIGUOUS_PATTERNS_PT: tuple[str, ...] = (
+    r"\btalvez\b",
+    r"\bse calhar\b",
+    r"\bespera\b",
+    r"\bmomento\b",
+    r"\bsei l(á|a)\b",
+    r"\b(hum|hmm|hm|eh)\b",
+)
+
 ResponseVerdict = Literal["confirm", "veto", "ambiguous", "unknown"]
 
 
@@ -165,6 +213,10 @@ def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdi
         veto_pats = _VETO_PATTERNS_ES
         confirm_pats = _CONFIRM_PATTERNS_ES
         ambig_pats = _AMBIGUOUS_PATTERNS_ES
+    elif language == "pt":
+        veto_pats = _VETO_PATTERNS_PT
+        confirm_pats = _CONFIRM_PATTERNS_PT
+        ambig_pats = _AMBIGUOUS_PATTERNS_PT
     else:
         veto_pats = _VETO_PATTERNS_DE
         confirm_pats = _CONFIRM_PATTERNS_DE
@@ -245,17 +297,33 @@ def _voice_label(description: str) -> str:
     return head.rstrip(",;:.!?")
 
 
-def _format_value_for_speech(value: Any) -> str:
+# Spoken words for primitive values, per supported reply language. An
+# unknown language code speaks English (AP-21), never German.
+_VALUE_WORDS: dict[str, dict[str, str]] = {
+    "de": {"on": "an", "off": "aus", "empty": "leer"},  # i18n-allow
+    "en": {"on": "on", "off": "off", "empty": "empty"},
+    "es": {"on": "activado", "off": "desactivado", "empty": "vacío"},  # i18n-allow
+    "pt": {"on": "ligado", "off": "desligado", "empty": "vazio"},  # i18n-allow
+}
+
+
+def _lang_key(language: str, table: dict[str, Any]) -> str:
+    """*language* when the table carries it, else English."""
+    return language if language in table else "en"
+
+
+def _format_value_for_speech(value: Any, language: str = "de") -> str:
     """Voice-friendly string from a primitive value.
 
     Phase 7.4 keeps this simple — number verbalization ("one point three")
     is Phase 7.6 (ideally TTS handles that itself). Here: stringify.
     """
+    words = _VALUE_WORDS[_lang_key(language, _VALUE_WORDS)]
     if isinstance(value, bool):
         # bool must be checked BEFORE int (bool is an int subtype).
-        return "an" if value else "aus"
+        return words["on"] if value else words["off"]
     if value is None:
-        return "leer"
+        return words["empty"]
     return str(value)
 
 
@@ -264,18 +332,18 @@ def _format_value_for_speech(value: Any) -> str:
 # ----------------------------------------------------------------------
 
 
-_ECHO_TEMPLATE_DE = (
-    "Verstanden — {label} wechselt von {old} zu {new}. Bestätigen?"  # i18n-allow
-)
-_ECHO_TEMPLATE_EN = (
-    "Got it — {label} switches from {old} to {new}. Confirm?"
-)
-_ECHO_TEMPLATE_SENSITIVE_DE = (
-    "Verstanden — {label} auf einen neuen Wert. Bestätigen?"  # i18n-allow
-)
-_ECHO_TEMPLATE_SENSITIVE_EN = (
-    "Got it — {label} to a new value. Confirm?"
-)
+_ECHO_TEMPLATES: dict[str, str] = {
+    "de": "Verstanden — {label} wechselt von {old} zu {new}. Bestätigen?",  # i18n-allow
+    "en": "Got it — {label} switches from {old} to {new}. Confirm?",
+    "es": "Entendido — {label} cambia de {old} a {new}. ¿Confirmas?",  # i18n-allow
+    "pt": "Entendido — {label} muda de {old} para {new}. Confirmas?",  # i18n-allow
+}
+_ECHO_TEMPLATES_SENSITIVE: dict[str, str] = {
+    "de": "Verstanden — {label} auf einen neuen Wert. Bestätigen?",  # i18n-allow
+    "en": "Got it — {label} to a new value. Confirm?",
+    "es": "Entendido — {label} a un valor nuevo. ¿Confirmas?",  # i18n-allow
+    "pt": "Entendido — {label} para um valor novo. Confirmas?",  # i18n-allow
+}
 
 
 def format_confirmation(
@@ -288,14 +356,13 @@ def format_confirmation(
     value is omitted entirely — defense-in-depth against a TTS secret leak.
     """
     label = _voice_label(pending.description)
+    lang = _lang_key(language, _ECHO_TEMPLATES)
     if is_sensitive_path(pending.path):
-        tmpl = _ECHO_TEMPLATE_SENSITIVE_DE if language == "de" else _ECHO_TEMPLATE_SENSITIVE_EN
-        return tmpl.format(label=label)
-    tmpl = _ECHO_TEMPLATE_DE if language == "de" else _ECHO_TEMPLATE_EN
-    return tmpl.format(
+        return _ECHO_TEMPLATES_SENSITIVE[lang].format(label=label)
+    return _ECHO_TEMPLATES[lang].format(
         label=label,
-        old=_format_value_for_speech(pending.old_value),
-        new=_format_value_for_speech(pending.new_value),
+        old=_format_value_for_speech(pending.old_value, lang),
+        new=_format_value_for_speech(pending.new_value, lang),
     )
 
 
@@ -314,6 +381,99 @@ OutcomeKind = Literal[
     "timeout",       # TIMEOUT
 ]
 
+# Generic stand-ins for sensitive values / errors (no plaintext leak).
+_OUTCOME_WORDS: dict[str, dict[str, str]] = {
+    "de": {
+        "new_value": "der neue Wert",  # i18n-allow
+        "old_value": "der vorherige Wert",  # i18n-allow
+        "validation_failed": "Validierung schlug fehl",  # i18n-allow
+        "unknown_error": "unbekannter Fehler",  # i18n-allow
+    },
+    "en": {
+        "new_value": "the new value",
+        "old_value": "the previous value",
+        "validation_failed": "validation failed",
+        "unknown_error": "unknown error",
+    },
+    "es": {
+        "new_value": "el valor nuevo",  # i18n-allow
+        "old_value": "el valor anterior",  # i18n-allow
+        "validation_failed": "la validación falló",  # i18n-allow
+        "unknown_error": "error desconocido",  # i18n-allow
+    },
+    "pt": {
+        "new_value": "o valor novo",  # i18n-allow
+        "old_value": "o valor anterior",  # i18n-allow
+        "validation_failed": "a validação falhou",  # i18n-allow
+        "unknown_error": "erro desconhecido",  # i18n-allow
+    },
+}
+
+# Outcome sentences; placeholders {label}, {new}, {old}, {err}.
+_OUTCOME_TEMPLATES: dict[str, dict[str, str]] = {
+    "de": {
+        "safe_applied": "Geht klar — {label} jetzt {new}.",  # i18n-allow
+        "applied": "Erledigt — {label} ist jetzt {new}.",  # i18n-allow
+        "applied_restart": (
+            "Erledigt — {label} ist jetzt {new}. "  # i18n-allow
+            "Bitte einmal Jarvis neustarten, damit's wirkt."  # i18n-allow
+        ),
+        "validate_failed": "Geht nicht — {err}. Setting bleibt {old}.",  # i18n-allow
+        "rollback": (
+            "Konnte nicht gespeichert werden, hab den vorherigen "  # i18n-allow
+            "Zustand wiederhergestellt. {err}"  # i18n-allow
+        ),
+        "vetoed": "Okay, lass ich.",  # i18n-allow
+        "timeout": (
+            "Hab keine Antwort gehört, brech ich ab. Setting bleibt {old}."  # i18n-allow
+        ),
+    },
+    "en": {
+        "safe_applied": "Got it — {label} is now {new}.",
+        "applied": "Done — {label} is now {new}.",
+        "applied_restart": (
+            "Done — {label} is now {new}. "
+            "Please restart Jarvis for the change to take effect."
+        ),
+        "validate_failed": "Can't do that — {err}. Setting stays {old}.",
+        "rollback": "Couldn't save it, reverted to the previous state. {err}",
+        "vetoed": "Okay, leaving it.",
+        "timeout": "No answer heard, aborting. Setting stays {old}.",
+    },
+    "es": {
+        "safe_applied": "Hecho — {label} ahora es {new}.",  # i18n-allow
+        "applied": "Listo — {label} ahora es {new}.",  # i18n-allow
+        "applied_restart": (
+            "Listo — {label} ahora es {new}. "  # i18n-allow
+            "Reinicia Jarvis para que el cambio surta efecto."  # i18n-allow
+        ),
+        "validate_failed": "No se puede — {err}. El ajuste sigue en {old}.",  # i18n-allow
+        "rollback": (
+            "No se pudo guardar, he restaurado el estado anterior. {err}"  # i18n-allow
+        ),
+        "vetoed": "Vale, lo dejo.",  # i18n-allow
+        "timeout": (
+            "No he oído respuesta, lo cancelo. El ajuste sigue en {old}."  # i18n-allow
+        ),
+    },
+    "pt": {
+        "safe_applied": "Feito — {label} agora é {new}.",  # i18n-allow
+        "applied": "Pronto — {label} agora é {new}.",  # i18n-allow
+        "applied_restart": (
+            "Pronto — {label} agora é {new}. "  # i18n-allow
+            "Reinicia o Jarvis para a alteração ter efeito."  # i18n-allow
+        ),
+        "validate_failed": "Não dá — {err}. A definição fica em {old}.",  # i18n-allow
+        "rollback": (
+            "Não consegui guardar, repus o estado anterior. {err}"  # i18n-allow
+        ),
+        "vetoed": "Está bem, deixo estar.",  # i18n-allow
+        "timeout": (
+            "Não ouvi resposta, vou cancelar. A definição fica em {old}."  # i18n-allow
+        ),
+    },
+}
+
 
 def format_outcome(
     kind: OutcomeKind,
@@ -330,74 +490,21 @@ def format_outcome(
     message can contain the plaintext value via `repr()` and would
     otherwise leak it (Plan-§AP-2).
     """
+    lang = _lang_key(language, _OUTCOME_TEMPLATES)
+    words = _OUTCOME_WORDS[lang]
     label = _voice_label(pending.description)
     is_sens = is_sensitive_path(pending.path)
-    new_str = (
-        "der neue Wert" if (is_sens and language == "de")
-        else "the new value" if (is_sens and language == "en")
-        else _format_value_for_speech(pending.new_value)
-    )
-    old_str = (
-        "der vorherige Wert" if (is_sens and language == "de")
-        else "the previous value" if (is_sens and language == "en")
-        else _format_value_for_speech(pending.old_value)
-    )
     if is_sens:
+        new_str = words["new_value"]
+        old_str = words["old_value"]
         # Generic phrase — no plaintext leak via the exception message.
-        err = (
-            "Validierung schlug fehl"
-            if language == "de"
-            else "validation failed"
-        )
+        err = words["validation_failed"]
     else:
-        err = short_error or (
-            "unbekannter Fehler" if language == "de" else "unknown error"  # i18n-allow
-        )
-
-    if language == "de":
-        if kind == "safe_applied":
-            return f"Geht klar — {label} jetzt {new_str}."
-        if kind == "applied":
-            return f"Erledigt — {label} ist jetzt {new_str}."
-        if kind == "applied_restart":
-            return (
-                f"Erledigt — {label} ist jetzt {new_str}. "
-                "Bitte einmal Jarvis neustarten, damit's wirkt."
-            )
-        if kind == "validate_failed":
-            return f"Geht nicht — {err}. Setting bleibt {old_str}."  # i18n-allow
-        if kind == "rollback":
-            return (
-                "Konnte nicht gespeichert werden, hab den vorherigen "  # i18n-allow
-                f"Zustand wiederhergestellt. {err}"  # i18n-allow
-            )
-        if kind == "vetoed":
-            return "Okay, lass ich."
-        if kind == "timeout":
-            return f"Hab keine Antwort gehört, brech ich ab. Setting bleibt {old_str}."  # i18n-allow
-        return ""
-
-    # English
-    if kind == "safe_applied":
-        return f"Got it — {label} is now {new_str}."
-    if kind == "applied":
-        return f"Done — {label} is now {new_str}."
-    if kind == "applied_restart":
-        return (
-            f"Done — {label} is now {new_str}. "
-            "Please restart Jarvis for the change to take effect."
-        )
-    if kind == "validate_failed":
-        return f"Can't do that — {err}. Setting stays {old_str}."
-    if kind == "rollback":
-        return (
-            "Couldn't save it, reverted to the previous state. " + err
-        )
-    if kind == "vetoed":
-        return "Okay, leaving it."
-    if kind == "timeout":
-        return f"No answer heard, aborting. Setting stays {old_str}."
-    return ""
+        new_str = _format_value_for_speech(pending.new_value, lang)
+        old_str = _format_value_for_speech(pending.old_value, lang)
+        err = short_error or words["unknown_error"]
+    template = _OUTCOME_TEMPLATES[lang].get(kind, "")
+    return template.format(label=label, new=new_str, old=old_str, err=err)
 
 
 def short_error_from_exception(exc: BaseException) -> str:

@@ -100,6 +100,7 @@ _LANGUAGE_NAMES: Final[dict[str, str]] = {
     "de": "German",
     "en": "English",
     "es": "Spanish",
+    "pt": "European Portuguese",
 }
 
 

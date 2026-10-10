@@ -217,3 +217,36 @@ def test_version_and_thousands_spanish():
     out = spell_out_numbers("Cuesta 1.500 euros.", "es")
     assert not any(c.isdigit() for c in out)
     assert "mil quinientos" in out
+
+
+@requires_num2words
+def test_portuguese_integer_and_decimal():
+    assert spell_out_numbers("Há 4 projetos.", "pt-PT") == "Há quatro projetos."
+    assert "três vírgula oito" in spell_out_numbers("Mede 3,8 cm.", "pt")
+
+
+@requires_num2words
+def test_portuguese_time_inflects_the_hour_noun():
+    assert spell_out_numbers("São 20:30.", "pt") == "São vinte horas e trinta."
+    assert spell_out_numbers("À 01:00.", "pt") == "À uma hora."
+    assert "vinte e uma horas" in spell_out_numbers("Às 21:00", "pt")
+
+
+@requires_num2words
+def test_full_date_portuguese():
+    out = spell_out_numbers("A reunião é a 17.08.2026.", "pt")
+    assert not any(c.isdigit() for c in out)
+    assert "dezassete de agosto de dois mil e vinte e seis" in out
+
+
+@requires_num2words
+def test_short_date_portuguese_needs_a_cue():
+    assert spell_out_numbers("No dia 5.3. chega.", "pt") == "No dia cinco de março chega."
+
+
+@requires_num2words
+def test_version_and_thousands_portuguese():
+    assert "um ponto dois ponto três" in spell_out_numbers("versão 1.2.3", "pt")
+    out = spell_out_numbers("Custa 1.500 euros.", "pt")
+    assert not any(c.isdigit() for c in out)
+    assert "mil e quinhentos" in out

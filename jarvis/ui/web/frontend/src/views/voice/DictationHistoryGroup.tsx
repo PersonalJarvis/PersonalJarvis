@@ -9,7 +9,8 @@ import {
   STT_FAILURE_REASONS,
   type DictationEntry,
 } from "@/hooks/useDictation";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 
 /**
@@ -374,7 +375,7 @@ function RowAction({
 function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "numeric", minute: "2-digit" });
 }
 
 const KNOWN_OUTCOMES: ReadonlySet<string> = new Set(DICTATION_OUTCOMES);

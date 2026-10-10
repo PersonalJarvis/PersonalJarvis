@@ -7,6 +7,8 @@
  * fallback chain in {@link shareToX}.
  */
 import { toBlob } from "html-to-image";
+import { fill, translate } from "@/i18n";
+import { uiLocale } from "@/lib/boardInsights";
 import {
   OFFICIAL_REPO_LABEL,
   OFFICIAL_REPO_URL,
@@ -91,12 +93,17 @@ export async function copyImageToClipboard(
 
 /** Factual, link-free tweet body. The repo URL travels in the intent ``url``. */
 export function buildShareText(stats: ShareStats): string {
-  const nf = (n: number) => n.toLocaleString("en-US");
-  return (
-    `I've spoken ${nf(stats.userWords)} words to my ${PRODUCT_NAME} across ` +
-    `${nf(stats.sessionCount)} conversations — ${stats.conversationHours.toFixed(1)} h of voice. ` +
-    `Build your own:`
-  );
+  const locale = uiLocale();
+  const nf = (n: number) => n.toLocaleString(locale);
+  return fill(translate("board_view.share.tweet_text"), {
+    words: nf(stats.userWords),
+    product: PRODUCT_NAME,
+    sessions: nf(stats.sessionCount),
+    hours: stats.conversationHours.toLocaleString(locale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }),
+  });
 }
 
 export type ShareToXResult =

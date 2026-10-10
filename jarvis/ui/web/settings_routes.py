@@ -537,7 +537,7 @@ def put_team_proxy(body: TeamProxyBody, request: Request) -> dict[str, object]:
 # over /ws). Key-free same-origin route, like reply-language.
 # ----------------------------------------------------------------------
 
-_UI_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "zh")
+_UI_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "pt", "zh")
 
 
 class UiLanguageBody(BaseModel):
@@ -1014,7 +1014,7 @@ def _live_apply_wake_plan(request: Request, *, log_tag: str) -> bool:
 # [trigger.wake_word] language and resolved by resolve_wake_language.
 # ----------------------------------------------------------------------
 
-_WAKE_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+_WAKE_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es", "pt")
 
 
 class WakeLanguageBody(BaseModel):
@@ -1151,6 +1151,30 @@ def _local_microphone_capture_ready(request: Request) -> bool:
 
 
 # state -> the reason vocabulary of the permission layer (PERMISSION_NEEDED_REASONS)
+#: Stable codes the wake-word routes return next to their English sentences.
+#: The desktop UI translates each one (``settings_view.wake_word.msg.<code>`` /
+#: ``settings_view.wake_word.hint.<code>``); the parity test
+#: ``tests/unit/ui/test_backend_message_codes.py`` keeps both sides in step.
+WAKE_MESSAGE_CODES: tuple[str, ...] = (
+    "no_phrase",
+    "not_in_vocab",
+    "no_microphone",
+    "mic_quiet",
+    "ready",
+    "activation_not_persisted",
+    "model_ready",
+    "model_download_failed",
+)
+WAKE_HINT_CODES: tuple[str, ...] = (
+    "type_phrase",
+    "download_or_hotkey",
+    "pick_real_word",
+    "connect_mic",
+    "speak_louder",
+    "allow_mic_dialog",
+    "allow_mic_settings",
+)
+
 _MIC_STATE_REASON = {
     "denied": "denied",
     "restricted": "restricted",
@@ -1183,19 +1207,25 @@ def _microphone_block_fields(
     if not message:
         message = user_detail_for(PermissionId.MICROPHONE, reason)
     if reason in ("restricted", "unavailable"):
-        hint = ""
+        hint, hint_code = "", ""
     elif reason == "not_determined":
         # An app that has never asked is not listed in that pane yet: the test
         # button is what makes macOS show its dialog, so point there first.
         hint = "Press the test button and choose Allow in the macOS dialog."
+        hint_code = "allow_mic_dialog"
     else:
         hint = f"Allow Microphone access in {path}, then retry."
+        hint_code = "allow_mic_settings"
     return {
         "permission_required": True,
         "permission": "microphone",
         "can_open_settings": can_open,
         "message": message,
         "hint": hint,
+        # Translatable hint (``WAKE_HINT_CODES``); ``path`` fills the settings
+        # pane name. ``message`` is the permission layer's own sentence.
+        "hint_code": hint_code,
+        "message_params": {"path": str(path)},
     }
 
 
@@ -1550,6 +1580,10 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         # for it, so the UI should say so instead of leaving the user guessing.
         "phrase_in_vocab": phrase_in_vocab,
         "message": plan.message,
+        # Stable code + fill-in values for ``message`` so the UI can show it in
+        # the user's language (``WAKE_PLAN_MESSAGE_CODES``); ``message`` stays.
+        "message_code": plan.message_code,
+        "message_params": dict(plan.message_params),
         "persisted": persisted,
         # When live-applied, the running pipeline already swapped the detector;
         # no restart needed. Otherwise it takes effect on the next voice start.
@@ -1662,6 +1696,7 @@ def set_wake_activation(body: WakeActivationBody, request: Request) -> dict[str,
             if persisted
             else f"The setting could not be saved to jarvis.toml. {LOG_HINT}"
         ),
+        "message_code": "" if persisted else "activation_not_persisted",
         "permission": permission,
     }
 
@@ -1689,6 +1724,7 @@ async def download_wake_model(request: Request) -> dict[str, object]:
             else "Could not download the wake model right now; it will retry "
                  "automatically. The wake word uses the fallback path until then."
         ),
+        "message_code": "model_ready" if present else "model_download_failed",
     }
 
 
@@ -1781,23 +1817,36 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
 
     # Human-readable verdict + the single most useful next step.
     ok = bool(plan.wake_available) and phrase_in_vocab is not False and mic_ok
+    # ``message_code`` / ``hint_code`` (+ ``message_params``) are the stable
+    # keys the desktop UI translates (``WAKE_SELF_TEST_CODES``); the English
+    # ``message`` / ``hint`` stay for the CLI and API callers.
+    message_params: dict[str, str] = {
+        "phrase": phrase, "engine": str(plan.engine), "language": str(language)
+    }
     if not phrase:
         message, hint = "No wake word set.", "Type a wake phrase first."
+        message_code, hint_code = "no_phrase", "type_phrase"
     elif not plan.wake_available:
         message, hint = plan.message, "Download the local model or use the hotkey."
+        message_code, hint_code = plan.message_code, "download_or_hotkey"
+        message_params = {**message_params, **dict(plan.message_params)}
     elif phrase_in_vocab is False:
         message = f"'{phrase}' is not in the {language} model's vocabulary."
         hint = "Pick a real word of your language, or use a different phrase."
+        message_code, hint_code = "not_in_vocab", "pick_real_word"
     elif no_device:
         message, hint = "No microphone detected.", "Connect/enable a mic."
+        message_code, hint_code = "no_microphone", "connect_mic"
     elif not mic_ok:
         message, hint = "Mic signal is very quiet.", "Speak louder or raise input gain."
+        message_code, hint_code = "mic_quiet", "speak_louder"
     else:
         message = (
             f"Ready: '{phrase}' on engine '{plan.engine}' "
             f"(language '{language}'). Say it to wake."
         )
         hint = ""
+        message_code, hint_code = "ready", ""
 
     return {
         "ok": ok,
@@ -1813,6 +1862,9 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
         "permission_required": False,
         "message": message,
         "hint": hint,
+        "message_code": message_code,
+        "message_params": message_params,
+        "hint_code": hint_code,
     }
 
 
@@ -1925,7 +1977,7 @@ class KeybindBody(BaseModel):
 def get_keybinds(request: Request) -> dict[str, object]:
     from jarvis.core.config import TriggerConfig
     from jarvis.core.config_writer import KEYBIND_TOML_KEY
-    from jarvis.trigger.hotkey import mouse_hotkeys_available
+    from jarvis.trigger.hotkey import mouse_hotkeys_available, mouse_hotkeys_reason_code
 
     cfg = _config(request)
     trig = getattr(cfg, "trigger", None) if cfg is not None else None
@@ -1952,7 +2004,13 @@ def get_keybinds(request: Request) -> dict[str, object]:
             action: str(getattr(d, field, "")) for action, field in KEYBIND_TOML_KEY.items()
         },
         "suggestions": _available_suggestions(current),
-        "mouse_buttons": {"supported": mouse_ok, "reason": mouse_reason},
+        "mouse_buttons": {
+            "supported": mouse_ok,
+            "reason": mouse_reason,
+            # Stable code for ``reason`` (``MOUSE_HOTKEY_REASONS``) so the UI
+            # shows it in the user's language; ``reason`` stays English.
+            "reason_code": mouse_hotkeys_reason_code(mouse_reason),
+        },
         "restart_required": restart_required,
     }
 

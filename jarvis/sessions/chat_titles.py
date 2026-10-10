@@ -90,10 +90,11 @@ _ANNOTATION_RE = re.compile(
 )
 #: Hesitation sounds anywhere in an utterance.
 _FILLER_RE = re.compile(
-    r"(?i)(?<!\w)(?:ähm+|äh+|öhm+|öh+|ehm+|hmm*|mhm*|mh+|mm+|uh+m*|um+|erm+)(?!\w)[,.…]*"
+    r"(?i)(?<!\w)(?:ähm+|äh+|öhm+|öh+|ehm+|hmm*|mhm*|mh+|mm+|uh+m*|um+|erm+|hum+|ãh+)(?!\w)[,.…]*"
 )
 _GREETING = (
-    r"(?:hey|hi|hallo|hello|moin|servus|na|yo|huhu|hej|hola|buenas|"
+    r"(?:hey|hi|hallo|hello|moin|servus|na|yo|huhu|hej|hola|buenas|ol[aá]|viva|"
+    r"bom\s+dia|boa\s+(?:tarde|noite)|"
     r"guten\s+(?:morgen|tag|abend)|good\s+(?:morning|afternoon|evening))"
 )
 #: A greeting, optionally followed by a name it addresses ("Hey George,").
@@ -106,6 +107,7 @@ _SMALL_TALK_RE = re.compile(
     r"was\s+geht(?:\s+ab)?|wie\s+geht(?:'?s|\s+es)(?:\s+dir)?|alles\s+(?:klar|gut|fit)|"
     r"what'?s\s+(?:up|good)(?:\s+up)?|how\s+are\s+you(?:\s+doing)?|how'?s\s+it\s+going|"
     r"qu[eé]\s+tal|c[oó]mo\s+est[aá]s|"
+    r"tudo\s+bem|tenho\s+uma\s+pergunta|desculpa|obrigad[oa]|espera(?:\s+a[ií])?|sim|"
     r"nicht\s+(?:so\s+)?viel|weiß\s+ich\s+(?:nicht|nich)(?:\s+genau)?|"
     r"ich\s+hab(?:e)?\s+(?:ne|eine)\s+frage|i\s+have\s+a\s+question|"
     r"ich\s+verspre\w*(?:\s+mich)?|sorry|entschuldigung|moment|warte\s+mal|warte|"
@@ -123,6 +125,7 @@ _LEAD_IN_RE = re.compile(
     r",?\s+dass\s+du(?:\s+(?:mir|für\s+mich|bitte|mal|kurz|einfach))*|"
     r"(?:can|could|would|will)\s+you(?:\s+(?:please|just|quickly|maybe))*|"
     r"(?:puedes|podrías)(?:\s+por\s+favor)?|"
+    r"(?:podes|poderias|consegues)(?:\s+por\s+favor)?|ajuda-me|por\s+favor|"
     r"hilf\s+mir(?:\s+(?:bitte|mal|dabei))*|help\s+me|"
     r"please|bitte(?:\s+mal)?|mal|auch|ganz"
     r")(?![\w-])"
@@ -130,7 +133,9 @@ _LEAD_IN_RE = re.compile(
 _LEAD_PUNCT_RE = re.compile(r"^[\s,.;:!?…\-–—'\"]+")
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?…])\s+|(?<=[.!?…])$")
 #: Where a long clause can be cut without losing its head.
-_CLAUSE_CUT_RE = re.compile(r"(?i),\s+|\s+(?:und|and|aber|but|weil|because|y|pero)\s+")
+_CLAUSE_CUT_RE = re.compile(
+    r"(?i),\s+|\s+(?:und|and|aber|but|weil|because|y|pero|e|mas|porque)\s+"
+)
 _WORD_RE = re.compile(r"[^\W\d_][\w'-]*", re.UNICODE)
 
 #: Words that never make a topic on their own.

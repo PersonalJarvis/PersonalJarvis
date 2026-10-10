@@ -12,6 +12,7 @@ import { fetchAgentChatSession } from "@/lib/agentChatApi";
 import { createAgentChatStore } from "@/store/agentChat";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { legacyRoutineEvents, routineTask, type RoutineChatTarget } from "../chat/routineExecution";
 
 function displayItems(items: TimelineItem[]): TimelineItem[] {
@@ -24,11 +25,12 @@ export default function RoutineChat({ target, onClose, face }: {
   face?: ReactNode;
 }) {
   const t = useT();
+  const locale = useRunLocale();
   return <section className="flex h-full min-h-0 flex-1 flex-col bg-background p-4 text-foreground sm:p-6" data-testid="routine-chat" data-session-id={target.sessionId}>
     <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-3">
       <button type="button" className="flex items-center gap-1 text-[12px] text-muted-foreground hover:text-foreground" onClick={onClose}><ArrowLeft size={14} />{t("society.routine_detail.back_to_agent")}</button>
       <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-medium">{target.title}</h3>
-        <time className="text-[11px] text-muted-foreground" dateTime={new Date(target.timestamp).toISOString()}>{new Date(target.timestamp).toLocaleString()}</time>
+        <time className="text-[11px] text-muted-foreground" dateTime={new Date(target.timestamp).toISOString()}>{new Date(target.timestamp).toLocaleString(locale)}</time>
       </div>
       <span className="text-[11px] text-muted-foreground">{t(target.kind === "conversation" ? "society.conversations.badge" : "society.routine_detail.background_chat")}</span>
     </header>

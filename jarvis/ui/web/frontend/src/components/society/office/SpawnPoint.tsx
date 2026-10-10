@@ -16,6 +16,7 @@
  */
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useT } from "@/i18n";
 import {
   AdditiveBlending, CylinderGeometry, DoubleSide, MeshBasicMaterial, MeshStandardMaterial, RingGeometry, TorusGeometry,
   type BufferGeometry, type Group, type Mesh,
@@ -125,7 +126,10 @@ const FONT = "Inter, 'Segoe UI', system-ui, sans-serif";
 const MONO = "'JetBrains Mono', 'Cascadia Code', Consolas, monospace";
 
 /** The screen's header: the floor's mark, SPAWN and a "ready" light on the right. */
-function screenHeader(ctx: Ctx, w: number, look: SpawnLook, mark: (x: number, y: number) => void): void {
+/** The screen's words, translated by the terminal that shows them. */
+interface ScreenLabels { title: string; ready: string; caption: string }
+
+function screenHeader(ctx: Ctx, w: number, look: SpawnLook, labels: ScreenLabels, mark: (x: number, y: number) => void): void {
   ctx.fillStyle = "rgba(255,255,255,0.05)";
   ctx.fillRect(0, 0, w, 96);
   ctx.fillStyle = look.accent;
@@ -136,12 +140,12 @@ function screenHeader(ctx: Ctx, w: number, look: SpawnLook, mark: (x: number, y:
   ctx.fillStyle = look.text;
   spaced(ctx, 12);
   ctx.font = `800 44px ${FONT}`;
-  ctx.fillText("SPAWN", 112, 50);
+  ctx.fillText(labels.title, 112, 50, w - 112 - 200);
   spaced(ctx, 3);
   ctx.font = `700 22px ${FONT}`;
   ctx.textAlign = "right";
   ctx.fillStyle = "rgba(255,255,255,0.72)";
-  ctx.fillText("READY", w - 44, 50);
+  ctx.fillText(labels.ready, w - 44, 50, 80);
   ctx.fillStyle = "#4ade80";
   ctx.beginPath(); ctx.arc(w - 146, 49, 9, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "rgba(74,222,128,0.25)";
@@ -174,13 +178,13 @@ function spawnButton(ctx: Ctx, look: SpawnLook, caption: string, round: boolean)
   ctx.textAlign = "center";
   spaced(ctx, 5);
   ctx.font = `800 30px ${FONT}`;
-  ctx.fillText(caption, cx, 520);
+  ctx.fillText(caption, cx, 520, 470);
   spaced(ctx, 0);
   ctx.textAlign = "left";
 }
 
 /** The coding floor's screen: SPAWN, a new-agent button, the terminal windows of the running agents and a prompt. */
-function drawLaunchScreen(ctx: Ctx, w: number, h: number): void {
+function drawLaunchScreen(ctx: Ctx, w: number, h: number, labels: ScreenLabels): void {
   const look = SPAWN_LOOKS.coding;
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, look.screenTop);
@@ -194,14 +198,14 @@ function drawLaunchScreen(ctx: Ctx, w: number, h: number): void {
   for (let x = 0; x <= w; x += 32) { ctx.moveTo(x + 0.5, 100); ctx.lineTo(x + 0.5, h); }
   for (let y = 100; y <= h; y += 32) { ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); }
   ctx.stroke();
-  screenHeader(ctx, w, look, (x, y) => {
+  screenHeader(ctx, w, look, labels, (x, y) => {
     ctx.fillStyle = look.accent;
     ctx.font = `800 46px ${MONO}`;
     ctx.textBaseline = "middle";
     ctx.textAlign = "center";
     ctx.fillText(">_", x + 10, y + 2);
   });
-  spawnButton(ctx, look, "NEW CODING AGENT", false);
+  spawnButton(ctx, look, labels.caption, false);
   // Three terminal windows fanning down the right: two running agents and the one about to spawn.
   const states = ["#4ade80", "#fbbf24", null] as const;
   states.forEach((dot, i) => {
@@ -252,15 +256,15 @@ function drawLaunchScreen(ctx: Ctx, w: number, h: number): void {
 }
 
 /** The agents floor's screen: the ghost and SPAWN, a new-agent button, the team with a place for the next one. */
-function drawSpawnScreen(ctx: Ctx, w: number, h: number): void {
+function drawSpawnScreen(ctx: Ctx, w: number, h: number, labels: ScreenLabels): void {
   const look = SPAWN_LOOKS.agents;
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, look.screenTop);
   bg.addColorStop(1, look.screenBottom);
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
-  screenHeader(ctx, w, look, (x, y) => drawGhost(ctx, x + 12, y - 30, 60, look.text, look.screenTop));
-  spawnButton(ctx, look, "NEW AGENT", true);
+  screenHeader(ctx, w, look, labels, (x, y) => drawGhost(ctx, x + 12, y - 30, 60, look.text, look.screenTop));
+  spawnButton(ctx, look, labels.caption, true);
   // The team: two toy figures and, dashed, the one about to spawn.
   const figures = [{ x: 620, colour: "#c4775a", shirt: "#e9dcc4" }, { x: 780, colour: "#7c8fa8", shirt: "#d9a441" }, { x: 940, colour: null, shirt: null }];
   const floorY = 480;
@@ -384,7 +388,8 @@ function drawPad(floor: OfficeFloor) {
 const padCache = new Map<string, MeshStandardMaterial>();
 
 const faces = {
-  screen: (floor: OfficeFloor) => canvasMaterial(`spawn:screen:${floor}`, 1024, 690, floor === "coding" ? drawLaunchScreen : drawSpawnScreen,
+  screen: (floor: OfficeFloor, labels: ScreenLabels) => canvasMaterial(`spawn:screen:${floor}:${labels.title}|${labels.ready}|${labels.caption}`, 1024, 690,
+    (ctx, w, h) => (floor === "coding" ? drawLaunchScreen : drawSpawnScreen)(ctx, w, h, labels),
     { glow: 0.9, fallback: SPAWN_LOOKS[floor].screenTop, roughness: 0.3 }),
   pad: (floor: OfficeFloor) => {
     const key = `spawn:pad:${floor}`;
@@ -464,7 +469,12 @@ function Crest({ floor, metal }: { floor: OfficeFloor; metal: MeshStandardMateri
 export function SpawnTerminal() {
   const floor = useOfficeStore((s) => s.floor);
   const m = spawnMaterials(floor);
-  const screen = faces.screen(floor);
+  const t = useT();
+  const screen = faces.screen(floor, {
+    title: t("society.office.spawn_screen_title"),
+    ready: t("society.office.spawn_screen_ready"),
+    caption: floor === "coding" ? t("society.office.spawn_screen_new_coding") : t("society.office.spawn_screen_new"),
+  });
   return (
     <group>
       {/* Plinth with a light line along both long faces. */}

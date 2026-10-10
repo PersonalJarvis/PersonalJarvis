@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   useSkillSearch,
   useSkillInstall,
@@ -27,7 +28,7 @@ import {
 } from "@/hooks/useSkills";
 
 // ----------------------------------------------------------------------
-// Dialog-Root
+// Dialog root
 // ----------------------------------------------------------------------
 
 interface SkillFinderDialogProps {
@@ -42,6 +43,7 @@ interface SkillFinderDialogProps {
  */
 export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
   const t = useT();
+  const locale = useRunLocale();
   const [query, setQuery] = useState("");
   const [trust, setTrust] = useState<TrustFilter>("any");
   const [minStars, setMinStars] = useState<number | null>(null);
@@ -60,7 +62,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Fokus-Management + Escape-to-Close
+  // Focus management + Escape to close
   useEffect(() => {
     if (!open) return;
     const t = setTimeout(() => inputRef.current?.focus(), 80);
@@ -131,7 +133,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               </p>
             </div>
           </div>
-          <Button size="icon" variant="ghost" onClick={onClose}>
+          <Button size="icon" variant="ghost" onClick={onClose} aria-label={t("common.close")}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -144,7 +146,7 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               ref={inputRef}
               type="text"
               value={query}
-              placeholder='z.B. "PDFs zusammenfassen", "Git-Workflow automatisieren", "Meeting-Notizen"...'
+              placeholder={t("skill_finder_dialog.query_placeholder")}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void runSearch();
@@ -160,12 +162,12 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               {search.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <>Suchen</>
+                <>{t("skill_finder_dialog.search")}</>
               )}
             </Button>
           </div>
 
-          {/* Dropdowns — interaktive Fragen */}
+          {/* Dropdowns — interactive questions */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <DropdownPicker
               label={t("skill_finder_dialog.filter_trust")}
@@ -206,10 +208,10 @@ export function SkillFinderDialog({ open, onClose }: SkillFinderDialogProps) {
               }
               options={[
                 { value: "any", label: t("skill_finder_dialog.opt_any") },
-                { value: "500", label: "500+" },
-                { value: "1000", label: "1.000+" },
-                { value: "3000", label: "3.000+" },
-                { value: "10000", label: "10.000+" },
+                ...[500, 1000, 3000, 10000].map((n) => ({
+                  value: String(n),
+                  label: `${n.toLocaleString(locale)}+`,
+                })),
               ]}
             />
 
@@ -390,7 +392,7 @@ function DropdownPicker({
 }
 
 // ----------------------------------------------------------------------
-// Kandidaten-Karte
+// Candidate card
 // ----------------------------------------------------------------------
 
 const TRUST_COLORS: Record<string, string> = {
@@ -400,11 +402,12 @@ const TRUST_COLORS: Record<string, string> = {
   experimental: "bg-rose-500/15 text-rose-400 border-rose-500/30",
 };
 
+/** Translation keys for the catalog's trust levels. */
 const TRUST_LABEL: Record<string, string> = {
-  official: "offiziell",
-  verified: "verifiziert",
-  community: "community",
-  experimental: "experimentell",
+  official: "skill_finder_dialog.trust_official",
+  verified: "skill_finder_dialog.trust_verified",
+  community: "skill_finder_dialog.trust_community",
+  experimental: "skill_finder_dialog.trust_experimental",
 };
 
 function CandidateCard({
@@ -433,7 +436,7 @@ function CandidateCard({
                 TRUST_COLORS[candidate.trust],
               )}
             >
-              {TRUST_LABEL[candidate.trust] ?? candidate.trust}
+              {TRUST_LABEL[candidate.trust] ? t(TRUST_LABEL[candidate.trust]) : candidate.trust}
             </Badge>
             {candidate.stars !== null && candidate.stars > 0 && (
               <span className="flex-shrink-0 text-micro text-muted-foreground">
@@ -465,7 +468,7 @@ function CandidateCard({
           </div>
           {candidate.reason && (
             <div className="mt-2 text-micro italic text-muted-foreground">
-              {candidate.reason} · Score {candidate.score.toFixed(2)}
+              {candidate.reason} · {t("skill_finder_dialog.score")} {candidate.score.toFixed(2)}
             </div>
           )}
         </div>

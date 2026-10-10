@@ -10,7 +10,7 @@
  * It used to be mislabeled "Talk time" / "{0} h talked" / "Conversation hours",
  * which over-claimed real speech (e.g. 27 h "talk time" implied an impossible
  * ~18 words/minute). These assertions lock the user-facing labels to an honest
- * "active" framing across all three locales so the false speech wording cannot
+ * "active" framing across every locale so the false speech wording cannot
  * silently regress.
  */
 import { describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Board = {
   hero: { talk_time: string };
@@ -42,13 +43,14 @@ function sessionTimeLabels(board: Board): string[] {
 }
 
 // Per-locale wording that would (falsely) claim the metric measures speech.
-// Note: the bare count nouns "conversations" / "Gespräche" / "conversaciones"
-// are intentionally NOT flagged — counting chats is honest; only the
+// Note: the bare count nouns "conversations" / "Gespräche" / "conversaciones" /
+// "conversas" are intentionally NOT flagged — counting chats is honest; only the
 // talk/spoke/"conversation hours" phrasing over-claims.
 const SPEECH_CLAIM: Record<string, RegExp> = {
   en: /\b(talk|talked|talking|spoke|spoken|speaking)\b|conversation hours/i,
   de: /gesprochen|gesprächszeit|gesprächsstunden|gesprächstag|h gespräch\b/i,
   es: /hablando|tiempo de conversación|horas de conversación|más conversación/i,
+  pt: /\bfalad|\ba falar\b|tempo de conversa\b|horas de conversa\b|mais conversa\b/i,
 };
 
 describe("Board active-time metric stays honestly labeled", () => {
@@ -62,6 +64,7 @@ describe("Board active-time metric stays honestly labeled", () => {
     ["en", en],
     ["de", de],
     ["es", es],
+    ["pt", pt],
   ])("%s session-time labels make no speech claim", (lang, locale) => {
     const board = (locale as { board_view: Board }).board_view;
     for (const label of sessionTimeLabels(board)) {
@@ -82,6 +85,7 @@ const SAVINGS_CLAIM: Record<string, RegExp> = {
   en: /\bsaved\b|time-saver/i,
   de: /gespart|zeit-spar/i,
   es: /ahorrad|ahorro/i,
+  pt: /poupad|poupança|economizad/i,
 };
 
 function workHoursLabels(board: Board): string[] {
@@ -93,6 +97,7 @@ describe("Board work-hours metric does not claim unprovable savings", () => {
     ["en", en],
     ["de", de],
     ["es", es],
+    ["pt", pt],
   ])("%s work-hours labels make no time-saved claim", (lang, locale) => {
     const board = (locale as { board_view: Board }).board_view;
     for (const label of workHoursLabels(board)) {

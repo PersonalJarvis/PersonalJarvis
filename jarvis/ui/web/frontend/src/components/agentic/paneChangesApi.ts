@@ -16,6 +16,7 @@
  * before its next restart loads new routes) gets the older reading: the
  * uncommitted files, filtered here.
  */
+import { fill, translate } from "@/i18n";
 import {
   fetchFileDiff,
   fetchWorkspaceChanges,
@@ -74,7 +75,7 @@ class HttpError extends Error {
 async function read<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
-    let message = `Request failed (${res.status}).`;
+    let message = fill(translate("ide_panes.request_failed"), { status: res.status });
     try {
       const body = (await res.json()) as { detail?: unknown };
       if (typeof body.detail === "string") message = body.detail;

@@ -30,7 +30,8 @@ _PRIOR_CONTEXT_RE = re.compile(
 _CLAUSE_RE = re.compile(r"([^.!?;,\n:\u2013\u2014]+)([.!?;,\n:\u2013\u2014]|\Z)")
 
 # Candidate-output vocabulary.  English is the normal structured-output
-# language; German and Spanish forms keep the guard equal across supported
+# language; German, Spanish and (accent-folded) European Portuguese forms keep
+# the guard equal across supported
 # spoken languages when a provider mirrors the transcript language.
 _CANDIDATE_INTEREST_RE = re.compile(
     r"\b(?:"
@@ -39,7 +40,8 @@ _CANDIDATE_INTEREST_RE = re.compile(
     r"enthusias\w*|fascinat\w*|dislikes?|hates?|avoids?|"
     r"interess(?:e|iert\w*)|mag|liebt|"  # i18n-allow: input vocabulary
     r"bevorzugt|begeistert|fasziniert|"  # i18n-allow: input vocabulary
-    r"interesad[oa]s?|interes|le\s+gusta|prefiere|aficionad[oa]s?|fascina"
+    r"interesad[oa]s?|interes|le\s+gusta|prefiere|aficionad[oa]s?|fascina|"
+    r"interessad[oa]s?|interesse|gosta|adora|fa\s+de"  # i18n-allow: input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -48,7 +50,8 @@ _GENERIC_USER_REF_RE = re.compile(
     r"\b(?:the\s+user|user|speaker|"
     r"der\s+benutzer|die\s+benutzerin|"  # i18n-allow: input vocabulary
     r"sprecher|sprecherin|"  # i18n-allow: input vocabulary
-    r"el\s+usuario|la\s+usuaria|hablante)\b",
+    r"el\s+usuario|la\s+usuaria|hablante|"
+    r"o\s+utilizador|a\s+utilizadora|falante)\b",  # i18n-allow: input vocabulary
     re.IGNORECASE,
 )
 _SUBJECTLESS_INTEREST_RE = re.compile(
@@ -66,7 +69,9 @@ _QUESTION_PREFIX_RE = re.compile(
     r"bin|bist|ist|sind|kann|koennte|wuerde|soll|"  # i18n-allow: input vocabulary
     r"erzaehl\w*|sag\s+mir|erklaer\w*|"  # i18n-allow: input vocabulary
     r"que|quien|como|donde|cuando|cual|puedo|puedes|podria|"
-    r"deberia|dime|cuentame|explica"
+    r"deberia|dime|cuentame|explica|"
+    r"o\s+que|quem|onde|quando|qual|quais|posso|podes|"  # i18n-allow: input vocabulary
+    r"diz-me|conta-me"  # i18n-allow: input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -84,7 +89,11 @@ _POSITIVE_INTEREST_ASSERTION_RE = re.compile(
     r"mein\w*\s+(?:interesse|hobby|liebling\w*)|"  # i18n-allow: input vocabulary
     r"fasziniert\s+mich|"  # i18n-allow: input vocabulary
     r"me\s+(?:interesa|gusta|encanta|fascina)|prefiero|sigo|"
-    r"mi\s+(?:interes|aficion|favorit\w*)"
+    r"mi\s+(?:interes|aficion|favorit\w*)|"
+    # European Portuguese, accent-folded like everything matched here
+    r"interesso-me|interessa-me|gosto\s+(?:de|muito)|adoro|prefiro|"  # i18n-allow
+    r"(?:o\s+)?meu\s+(?:interesse|hobby|passatempo|favorit\w*)|"  # i18n-allow
+    r"fascina-me|sou\s+fa"  # i18n-allow: input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -100,7 +109,9 @@ _NEGATIVE_INTEREST_ASSERTION_RE = re.compile(
     r"ich\s+mag\b[^.!?;,]{0,80}\bnicht|"  # i18n-allow: input vocabulary
     r"ich\s+(?:hasse|meide)|"  # i18n-allow: input vocabulary
     r"no\s+me\s+(?:interesa|gusta|encanta|fascina)|"
-    r"no\s+prefiero|odio|evito"
+    r"no\s+prefiero|odio|evito|"
+    r"nao\s+me\s+interessa|nao\s+(?:gosto|adoro|prefiro)|"  # i18n-allow: input vocabulary
+    r"detesto|odeio"  # i18n-allow: input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -125,7 +136,8 @@ _CESSATION_ASSERTION_RE = re.compile(
     r"\bi\s+no\s+longer\b|"
     r"\bich\s+[^.!?;,\n]{0,60}\bnicht\s+mehr\b|"  # i18n-allow: input vocab
     r"\bich\s+habe\s+[^.!?;,\n]{0,50}\baufgeh(?:oe|o)rt\b|"  # i18n-allow: input vocab
-    r"\bya\s+no\s+\w+|\bdej[eo]\s+de\b"
+    r"\bya\s+no\s+\w+|\bdej[eo]\s+de\b|"
+    r"\bja\s+nao\s+\w+|\b(?:deixei|parei)\s+de\b"  # i18n-allow: input vocabulary
     r")",
     re.IGNORECASE,
 )
@@ -138,7 +150,8 @@ _CANDIDATE_HABIT_RE = re.compile(
     r"plays?|practi[cs]es?|trains?|"
     r"regularly|routinely|habitually|frequently|actively|"
     r"spielt|trainiert|regelmaessig|regelmassig|"  # i18n-allow: input vocabulary
-    r"juega|entrena|practica|regularmente"
+    r"juega|entrena|practica|regularmente|"
+    r"joga|treina"  # i18n-allow: input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -170,6 +183,11 @@ _FIRST_PERSON_EXPERIENCE_RE = re.compile(
     r"asisto|visito|estuve|estaba)\b|"
     r"\bcada\s+\w+|\bsiempre\b|\bsuelo\b|"
     r"\b(?:una\s+vez|dos\s+veces)\s+(?:a|por)\s+(?:la\s+)?\w+|"
+    # pt folded: "jogo/vou/treino...", "todos os sabados", "costumo"
+    r"\b(?:eu\s+)?(?:jogo|treino|cozinho|fico|caminho|pinto|ando|"  # i18n-allow
+    r"estive)\b|"  # i18n-allow: input vocabulary
+    r"\b(?:todos\s+os|todas\s+as)\s+\w+|\bcostumo\b|"  # i18n-allow: input vocabulary
+    r"\b(?:uma\s+vez|duas\s+vezes)\s+por\s+\w+|"  # i18n-allow: input vocabulary
     # frequency phrases: "once/twice a week", "einmal pro Woche"
     r"\b(?:once|twice)\s+a\s+(?:day|week|month|year)\b|"
     r"\b(?:einmal|zweimal|mehrmals)\s+(?:pro|die|im)\s+\w+"  # i18n-allow: input vocab

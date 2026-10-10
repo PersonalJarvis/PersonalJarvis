@@ -11,7 +11,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 from urllib.parse import quote_plus
 
 #: Entry-point name of the screenshot-based computer-use harness (see
@@ -731,6 +731,30 @@ def _matches_orb_reset(text: str) -> bool:
     return any(pattern.match(text) for pattern in _ORB_RESET_PATTERNS)
 
 
+_UNSUPPORTED_RESPONSE: dict[str, str] = {
+    "de": (
+        "Das kann ich noch nicht. "  # i18n-allow: German TTS
+        "Mir fehlt dafür ein Werkzeug — wenn du mir verrätst welches MCP "  # i18n-allow
+        "oder welche Integration zuständig wäre, kann ich's lernen."  # i18n-allow
+    ),
+    "en": (
+        "I can't do that yet. "
+        "I don't have a registered tool for it. "
+        "Tell me which MCP or integration should handle it and I can learn."
+    ),
+    "es": (
+        "Eso todavía no lo sé hacer. "  # i18n-allow: Spanish TTS
+        "No tengo ninguna herramienta registrada para ello. "  # i18n-allow: Spanish TTS
+        "Dime qué MCP o integración debería encargarse y puedo aprenderlo."  # i18n-allow
+    ),
+    "pt": (
+        "Ainda não consigo fazer isso. "  # i18n-allow: PT TTS
+        "Não tenho nenhuma ferramenta registada para isso. "  # i18n-allow: PT TTS
+        "Diz-me que MCP ou integração deve tratar disso e posso aprender."  # i18n-allow
+    ),
+}
+
+
 def _unsupported_response(text: str, lang: str) -> str:
     """Return a deterministic, no-LLM rejection message.
 
@@ -744,19 +768,10 @@ def _unsupported_response(text: str, lang: str) -> str:
         The normalised utterance (used only for potential future interpolation;
         currently unused in the message body).
     lang:
-        ``"de"`` (default) or ``"en"``.
+        The turn's output language (de/en/es/pt); an unknown code speaks
+        English.
     """
-    if lang == "en":
-        return (
-            "I can't do that yet. "
-            "I don't have a registered tool for it. "
-            "Tell me which MCP or integration should handle it and I can learn."
-        )
-    return (
-        "Das kann ich noch nicht. "
-        "Mir fehlt dafür ein Werkzeug — wenn du mir verrätst welches MCP "
-        "oder welche Integration zuständig wäre, kann ich's lernen."
-    )
+    return _UNSUPPORTED_RESPONSE.get(lang, _UNSUPPORTED_RESPONSE["en"])
 
 
 # A DISPATCH verb: the user wants to drive a real external system (send, play,
@@ -889,7 +904,7 @@ def _get_capability_registry() -> _CapabilityRegistryLike | None:
 
 def match_local_action(
     text: str,
-    lang: Literal["de", "en"] = "de",
+    lang: str = "de",
     *,
     _registry: _CapabilityRegistryLike | None = _SENTINEL,  # type: ignore[assignment]
     live_tool_names: Sequence[str] = (),
@@ -901,7 +916,7 @@ def match_local_action(
     text:
         Raw utterance from the voice pipeline.
     lang:
-        Language hint (``"de"`` or ``"en"``) used to select the
+        The turn's output language (de/en/es/pt) used to select the
         ``UNSUPPORTED`` response copy.
     _registry:
         Capability registry override — **for tests only**.  Pass a fake

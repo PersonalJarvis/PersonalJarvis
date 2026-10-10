@@ -176,6 +176,7 @@ def test_proof_language_directive_names_each_language() -> None:
     assert "german" in _proof_language_directive("de").lower()
     assert "english" in _proof_language_directive("en").lower()
     assert "spanish" in _proof_language_directive("es").lower()
+    assert "european portuguese" in _proof_language_directive("pt").lower()
 
 
 def test_proof_language_directive_mentions_proof_field() -> None:

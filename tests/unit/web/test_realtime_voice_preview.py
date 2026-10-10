@@ -187,6 +187,37 @@ def test_unknown_sample_language_falls_back_to_english(
     assert seen == [provider_routes._TTS_PREVIEW_SAMPLES["en"]]
 
 
+def test_portuguese_sample_is_pinned_to_european_portuguese(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _pid: "sk-test")
+    seen: list[tuple[str, str]] = []
+
+    async def sampler(
+        api_key: str, *, model: str, voice: str, text: str, language: str
+    ) -> tuple[bytes, int]:
+        seen.append((text, language))
+        return b"\x00\x01", 24_000
+
+    monkeypatch.setitem(
+        provider_routes._REALTIME_PREVIEW_SAMPLERS, "gemini-live", sampler
+    )
+
+    response = _preview(
+        TestClient(_app()), "gemini-live", voice="Puck", language="pt-PT"
+    )
+
+    assert response.status_code == 200
+    assert seen == [(provider_routes._TTS_PREVIEW_SAMPLES["pt"], "pt")]
+    assert provider_routes._REALTIME_PREVIEW_LANG_CODES["pt"] == "pt-PT"
+
+
+def test_every_sample_language_has_a_pronunciation_pin() -> None:
+    assert set(provider_routes._TTS_PREVIEW_SAMPLES) == set(
+        provider_routes._REALTIME_PREVIEW_LANG_CODES
+    )
+
+
 def test_sampler_failure_is_clean_502(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _pid: "sk-test")
 

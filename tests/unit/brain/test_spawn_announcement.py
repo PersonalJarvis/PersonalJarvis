@@ -165,20 +165,54 @@ async def test_already_running_kind_uses_its_own_pool() -> None:
     assert out_de in _rendered(_FALLBACK_ALREADY_RUNNING["de"])
     assert out_en in _rendered(_FALLBACK_ALREADY_RUNNING["en"])
     assert out_es in _rendered(_FALLBACK_ALREADY_RUNNING["es"])
+    out_pt = await composer.compose(
+        utterance="Vê o meu correio, por favor.",
+        language="pt",
+        kind="already_running",
+    )
+    assert out_pt in _rendered(_FALLBACK_ALREADY_RUNNING["pt"])
 
 
 @pytest.mark.asyncio
-async def test_spanish_turn_uses_pool_and_skips_llm() -> None:
-    """An 'es' turn has no native persona — it must serve the curated Spanish
-    pool directly and never spend an LLM round-trip that would only reject."""
-    provider = _FakeProvider(reply="LLM must not run for an es turn.")
+async def test_spanish_turn_uses_llm_with_spanish_directive() -> None:
+    """An 'es' turn runs the flash LLM with the Spanish output directive."""
+    reply = "Un Nova-Agent está revisando tu correo en segundo plano."  # i18n-allow
+    provider = _FakeProvider(reply=reply)
     composer = _composer(provider)
     out = await composer.compose(
-        utterance="Por favor, revisa mi correo en busca de facturas.",
+        utterance="Por favor, revisa mi correo en busca de facturas.",  # i18n-allow
         language="es",
     )
-    assert out in _rendered(_FALLBACK_SPAWN["es"])
-    assert provider.calls == [], "es turn must skip the de/en-persona LLM path"
+    assert out == reply
+    assert len(provider.calls) == 1
+    assert "Spanish" in provider.calls[0]["persona_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_portuguese_turn_uses_llm_with_pt_pt_directive() -> None:
+    """A 'pt' turn runs the flash LLM with the European Portuguese directive."""
+    reply = "Um Nova-Agent está a ver o teu correio em segundo plano."  # i18n-allow
+    provider = _FakeProvider(reply=reply)
+    composer = _composer(provider)
+    out = await composer.compose(
+        utterance="Por favor, vê o meu correio à procura de faturas.",  # i18n-allow
+        language="pt",
+    )
+    assert out == reply
+    assert len(provider.calls) == 1
+    assert "European Portuguese" in provider.calls[0]["persona_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_portuguese_completion_claim_falls_back_to_pt_pool() -> None:
+    """A pt completion claim is a lie at spawn time: the pt pool speaks."""
+    provider = _FakeProvider(reply="O Nova-Agent já está feito com o teu correio.")  # i18n-allow
+    composer = _composer(provider)
+    out = await composer.compose(
+        utterance="Por favor, vê o meu correio à procura de faturas.",  # i18n-allow
+        language="pt",
+    )
+    assert out in _rendered(_FALLBACK_SPAWN["pt"])
 
 
 def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
@@ -190,6 +224,10 @@ def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
         ("en", _FALLBACK_SPAWN["en"]),
         ("de", _FALLBACK_ALREADY_RUNNING["de"]),
         ("en", _FALLBACK_ALREADY_RUNNING["en"]),
+        ("es", _FALLBACK_SPAWN["es"]),
+        ("pt", _FALLBACK_SPAWN["pt"]),
+        ("es", _FALLBACK_ALREADY_RUNNING["es"]),
+        ("pt", _FALLBACK_ALREADY_RUNNING["pt"]),
     ):
         for phrase in pool:
             spoken = phrase.replace("{agent}", BRAND)
@@ -238,12 +276,31 @@ def test_es_pools_survive_voice_scrubbing() -> None:
             )
 
 
+def test_pt_pools_survive_voice_scrubbing() -> None:
+    """The European Portuguese pools, like the Spanish ones, bypass
+    ``_validate``; every pt phrase must survive ``scrub_for_voice`` intact."""
+    from jarvis.brain.output_filter import scrub_for_voice
+
+    for pool in (
+        _FALLBACK_SPAWN["pt"],
+        _FALLBACK_ALREADY_RUNNING["pt"],
+        STILL_RUNNING_PHRASES["pt"],
+    ):
+        for phrase in pool:
+            cleaned = scrub_for_voice(
+                phrase, language="pt", ack_mode=True
+            ).cleaned.strip()
+            assert sum(c.isalnum() for c in cleaned) >= 3, (
+                f"pt phrase gutted by scrub_for_voice: {phrase!r} -> {cleaned!r}"
+            )
+
+
 def test_pools_have_enough_distinct_variants() -> None:
-    for lang in ("de", "en", "es"):
+    for lang in ("de", "en", "es", "pt"):
         pool = _FALLBACK_SPAWN[lang]
         assert len(pool) >= 6
         assert len(set(pool)) == len(pool)
-    for lang in ("de", "en", "es"):
+    for lang in ("de", "en", "es", "pt"):
         pool = _FALLBACK_ALREADY_RUNNING[lang]
         assert len(pool) >= 3
         assert len(set(pool)) == len(pool)
@@ -265,6 +322,10 @@ _SUBSTANCE_CUES: dict[str, tuple[str, ...]] = {
         "más grande", "momento", "chicha", "más de trabajo", "poco de tiempo",
         "a fondo", "algo más", "más amplio", "momentito", "buen vistazo", "sólido",
     ),
+    "pt": (
+        "maior", "momento", "a fundo", "algum tempo", "sólido", "mais por trás",
+        "bocadinho",
+    ),
 }
 
 
@@ -280,15 +341,15 @@ def test_spawn_pools_convey_substance() -> None:
 
 
 def test_still_running_phrases_cover_all_languages() -> None:
-    """The heartbeat pool covers de/en/es with several distinct variants and
+    """The heartbeat pool covers de/en/es/pt with several distinct variants and
     never claims completion (the mission is still in flight)."""
-    assert set(STILL_RUNNING_PHRASES) == {"de", "en", "es"}
+    assert set(STILL_RUNNING_PHRASES) == {"de", "en", "es", "pt"}
     for lang, pool in STILL_RUNNING_PHRASES.items():
         assert len(pool) >= 4, f"too few heartbeat variants for {lang}"
         assert len(set(pool)) == len(pool)
         for phrase in pool:
             low = phrase.lower()
-            assert not low.startswith(("erledigt", "fertig", "done", "listo")), (
+            assert not low.startswith(("erledigt", "fertig", "done", "listo", "feito")), (
                 f"heartbeat must not open with a completion claim: {phrase!r}"
             )
 

@@ -1,9 +1,10 @@
 import type { PaneMovePosition, TerminalState } from "@/lib/agenticIdeApi";
 import { isSplit, treeLayout, treeLeaves, type LayoutNode, type PaneBox } from "./treeLayout";
 
+/** i18n keys of the drop-target labels; translate where rendered. */
 export const DOCK_LABELS: Record<PaneMovePosition, string> = {
-  swap: "Swap positions", left: "Place on the left", right: "Place on the right",
-  above: "Place above", below: "Place below",
+  swap: "ide_panes.dock.swap", left: "ide_panes.dock.left", right: "ide_panes.dock.right",
+  above: "ide_panes.dock.above", below: "ide_panes.dock.below",
 };
 
 /**

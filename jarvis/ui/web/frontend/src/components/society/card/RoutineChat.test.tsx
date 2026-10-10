@@ -4,7 +4,7 @@ import type { TimelineItem } from "@/components/agentchat/reduce";
 import RoutineChat from "./RoutineChat";
 import type { RoutineChatTarget } from "../chat/routineExecution";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useUiLanguage: () => "en" }));
 vi.mock("@/components/agentchat/ChatMarkdown", () => ({ ChatMarkdown: ({ text }: { text: string }) => <p>{text}</p> }));
 vi.mock("@/components/agentchat/AgentTimeline", () => ({ AgentTimeline: ({ items }: { items: TimelineItem[] }) => <pre data-testid="selected-transcript">{JSON.stringify(items)}</pre> }));
 

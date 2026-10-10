@@ -369,7 +369,7 @@ function ModelOption({
 /**
  * Voice row: current pick, expanding into the full selectable voice list.
  * When the backend advertises a sampler, every voice can be auditioned without
- * saving and the sample language follows the same DE/EN/ES control as TTS.
+ * saving and the sample language follows the same DE/EN/ES/PT control as TTS.
  */
 function RealtimeVoiceRow({
   providerId,
@@ -395,8 +395,8 @@ function RealtimeVoiceRow({
   const pushToast = useEventStore((s) => s.pushToast);
 
   const [open, setOpen] = useState(false);
-  const [previewLang, setPreviewLang] = useState<"de" | "en" | "es">(
-    uiLang === "de" ? "de" : uiLang === "es" ? "es" : "en",
+  const [previewLang, setPreviewLang] = useState<"de" | "en" | "es" | "pt">(
+    uiLang === "de" ? "de" : uiLang === "es" ? "es" : uiLang === "pt" ? "pt" : "en",
   );
   // The voice currently PLAYING vs. the voice whose audio is being FETCHED —
   // the preview button shows a spinner while loading, a stop icon while
@@ -557,7 +557,7 @@ function RealtimeVoiceRow({
               <span className="text-xs text-muted-foreground">
                 {t("apikeys_voice.preview_in")}
               </span>
-              {(["de", "en", "es"] as const).map((lng) => (
+              {(["de", "en", "es", "pt"] as const).map((lng) => (
                 <button
                   key={lng}
                   type="button"

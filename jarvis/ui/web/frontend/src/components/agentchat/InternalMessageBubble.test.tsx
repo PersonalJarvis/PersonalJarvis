@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
+import pt from "@/i18n/locales/pt.json";
 import { InternalMessageBubble, internalNeedsFold, internalPreview } from "./InternalMessageBubble";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents } from "./reduce";
 import type { AgentChatEvent } from "@/lib/agentChatApi";
@@ -25,7 +26,7 @@ const delivered: AgentChatEvent = {
 
 afterEach(cleanup);
 
-it.each([en, de, es])("shows the trusted sender and live delivery status in each locale", (resource) => {
+it.each([en, de, es, pt])("shows the trusted sender and live delivery status in each locale", (resource) => {
   locale.strings = resource.agent_chat;
   let timeline = reduceEvent(EMPTY_TIMELINE, incoming);
   const item = timeline.items[0];

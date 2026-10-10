@@ -207,7 +207,13 @@ _FUNCTION_WORDS: frozenset[str] = frozenset(
         "del son era eran ser estar tengo tienes tiene tener hacer solo "  # i18n-allow
         "tambien ahora quien donde cuando como mas mucho poco todo nada "  # i18n-allow
         "bien que sus esta este estos estas ese esa hay han desde hasta "  # i18n-allow
-        "entre sobre sin"  # i18n-allow
+        "entre sobre sin "  # i18n-allow
+        # -- European Portuguese (accent-folded) ----------------------
+        "uma umas uns com sem pelo pela pelos pelas aos das dos num numa "  # i18n-allow
+        "ele ela eles elas voce voces meu minha meus minhas teu tua seu sua "  # i18n-allow
+        "isto isso aquilo esse essa este aquele aquela nao sim mais muito "  # i18n-allow
+        "pouco tudo agora ainda onde quando porque tambem qual quais quem "  # i18n-allow
+        "sao estou estao foi tem temos ter fazer pode posso deve desde"  # i18n-allow
     ).split()
 )
 

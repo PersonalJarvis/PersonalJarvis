@@ -9,6 +9,7 @@
  * raced against a timeout so a promise that never settles cannot hang the
  * button.
  */
+import { translate } from "@/i18n";
 
 export const BROWSER_COPY_TIMEOUT_MS = 5_000;
 
@@ -44,7 +45,7 @@ export async function copyAppshotPng(blob: Blob, options: CopyOptions): Promise<
   const clipboard =
     options.clipboard !== undefined ? options.clipboard : typeof navigator !== "undefined" ? navigator.clipboard : null;
   if (!clipboard || typeof ClipboardItem === "undefined") {
-    throw new Error(nativeReason || "no clipboard is available here");
+    throw new Error(nativeReason || translate("shell_errors.no_clipboard"));
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

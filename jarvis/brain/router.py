@@ -236,39 +236,12 @@ class RouterBrain:
     # Perceived-latency acknowledgment hook
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _detect_utterance_language(utterance: str) -> str:
-        """Quick-and-dirty bilingual classifier for picking the ack language.
-
-        German is the project default — anything ambiguous falls back to ``de``.
-        We only flip to ``en`` when the utterance shows clear English structure
-        (function words like ``the/what/how``) AND lacks German diacritics or
-        common particles. Pure heuristic, regex-free, no dependencies.
-        """
-        if not utterance:
-            return "de"
-        text = utterance.lower()
-        # Umlauts or sharp-s are an unambiguous German signal.
-        if any(c in text for c in "äöüß"):
-            return "de"
-        de_markers = (" der ", " die ", " das ", " und ", " ich ", " du ",
-                      " ist ", " auf ", " mit ", " nicht ", " für ", " wie ")
-        en_markers = (" the ", " what ", " how ", " is ", " are ", " you ",
-                      " can ", " could ", " would ", " please ", " do ")
-        padded = " " + text + " "
-        de_hits = sum(1 for m in de_markers if m in padded)
-        en_hits = sum(1 for m in en_markers if m in padded)
-        if en_hits >= 2 and de_hits == 0:
-            return "en"
-        return "de"
-
     def _output_locale(self, utterance: str) -> str:
         """The turn's output language, via the ONE resolver (AGENTS.md §1.3).
 
-        Deliberately NOT ``_detect_utterance_language`` above: that helper is a
-        de/en-only ack heuristic with a German default, so a Spanish user would
-        be asked a clarifying question in German. Anything Jarvis actually says
-        to the user resolves through ``resolve_output_language``, which honours
+        Anything Jarvis says to the user (clarifying questions, the tool ack,
+        the completion marker) resolves through ``resolve_output_language``,
+        never a local de/en heuristic, which honours
         the ``brain.reply_language`` pin, conversation stickiness, and every
         supported locale equally.
         """
@@ -312,7 +285,7 @@ class RouterBrain:
         if is_voice_control_utterance(utterance):
             return None
         bus = self._bus
-        language = self._detect_utterance_language(utterance)
+        language = self._output_locale(utterance)
 
         async def emit(tool_name: str, tool_args: dict) -> None:
             text = generate_ack(tool_name, tool_args, language=language)
@@ -550,7 +523,7 @@ class RouterBrain:
             final_text = agg.text or ""
             if agg.tool_calls and not is_voice_control_utterance(utterance):
                 from .ack_generator import final_summary_marker
-                lang = self._detect_utterance_language(utterance)
+                lang = self._output_locale(utterance)
                 marker = final_summary_marker(language=lang)
                 if final_text.strip():
                     final_text = final_text.rstrip().rstrip(".") + ". " + marker

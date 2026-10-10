@@ -22,7 +22,7 @@ docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md). Two public pieces:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -296,6 +296,12 @@ class WakeWordPlan:
     # and the single language-matched model eats genuine wakes it cannot
     # spell. Empty tuple = fall back to the single vosk_model_path.
     vosk_model_paths: tuple[str, ...] = ()
+    # Stable machine code for ``message`` (one of ``WAKE_PLAN_MESSAGE_CODES``)
+    # plus its fill-in values, so the desktop UI renders the status in the
+    # user's language; ``message`` stays the English sentence for logs, the CLI
+    # and API callers. Empty = no translatable status (renders ``message``).
+    message_code: str = ""
+    message_params: dict[str, str] = field(default_factory=dict)
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -364,6 +370,8 @@ def resolve_wake_plan(
                 needs_local_whisper=False,
                 degraded=False,
                 message=f"Custom ONNX wake model: {custom_path}",
+                message_code="custom_onnx",
+                message_params={"path": str(custom_path)},
                 # ALWAYS verify custom-model hits with the STT prefix gate.
                 # Live forensic 2026-07-01: trusting the trained model alone
                 # ("it IS its own discriminator") caused a false-positive storm
@@ -449,6 +457,8 @@ def resolve_wake_plan(
                     f"Any-word Vosk keyword spotting for '{phrase}' "
                     f"(model: {vosk_model})."
                 ),
+                message_code="vosk_kws",
+                message_params={"phrase": phrase, "model": str(vosk_model)},
                 verify_prefix=False,  # the provider's sound confirm is built in
                 vosk_model_path=vosk_model,
                 # Every installed model, primary first: the provider listens
@@ -478,6 +488,8 @@ def resolve_wake_plan(
                 f"Custom ONNX not found ({custom_path}); "
                 "using local-Whisper transcript match instead."
             )
+            message_code = "custom_onnx_missing"
+            message_params = {"path": str(custom_path)}
         elif custom_stale:
             # A STALE custom model (belongs to another phrase) is NOT a
             # degrade: the transcript match IS the regular path for the new
@@ -489,6 +501,8 @@ def resolve_wake_plan(
                 f"different phrase; '{phrase}' uses the local-Whisper "
                 "transcript match."
             )
+            message_code = "custom_onnx_other_phrase"
+            message_params = {"model_file": Path(custom_path).name, "phrase": phrase}
         else:
             # A custom word served ONLY by the transcribe-and-match path is
             # UNRELIABLE for hard proper nouns (AP-27): the base model garbles
@@ -502,6 +516,10 @@ def resolve_wake_plan(
                 f"model for {_lang} to make it reliable (Settings -> Wake word -> "
                 "'Download wake model')."
             )
+            message_code = (
+                "stt_match_unreliable" if language else "stt_match_unreliable_any_language"
+            )
+            message_params = {"phrase": phrase, "language": str(language or "")}
             log.warning(
                 "Wake word '%s' resolved to stt_match only (no Vosk model, no "
                 "custom ONNX) — recognition will be unreliable for a hard name. "
@@ -519,6 +537,8 @@ def resolve_wake_plan(
             needs_local_whisper=True,
             degraded=degraded,
             message=message,
+            message_code=message_code,
+            message_params=message_params,
             # The rolling-whisper path already matches the phrase itself; no
             # second-stage prefix verification (that gate exists for weak
             # custom_onnx models — see WakeWordPlan.verify_prefix).
@@ -548,13 +568,31 @@ def resolve_wake_plan(
             "it. Until then the wake word is off — use the Call shortcut "
             "to start a voice turn."
         ),
+        message_code="needs_local_model" if phrase else "needs_local_model_no_phrase",
+        message_params={"phrase": phrase},
         verify_prefix=False,
         wake_available=False,
     )
 
 
+#: Every ``WakeWordPlan.message_code`` the resolver emits. The desktop UI holds
+#: one translation per code (``settings_view.wake_word.msg.<code>``); the parity
+#: test ``tests/unit/ui/test_backend_message_codes.py`` keeps both sides in step.
+WAKE_PLAN_MESSAGE_CODES: tuple[str, ...] = (
+    "custom_onnx",
+    "vosk_kws",
+    "custom_onnx_missing",
+    "custom_onnx_other_phrase",
+    "stt_match_unreliable",
+    "stt_match_unreliable_any_language",
+    "needs_local_model",
+    "needs_local_model_no_phrase",
+)
+
+
 __all__ = [
     "CUSTOM_ONNX_THRESHOLD",
+    "WAKE_PLAN_MESSAGE_CODES",
     "WAKE_POLL_INTERVAL_S",
     "WakeMatcher",
     "WakeWordPlan",

@@ -81,6 +81,25 @@ log = logging.getLogger("jarvis.telephony.session")
 # product imposes no fixed name here (jarvis/brain/assistant_name.py).
 DEFAULT_GREETING_DE = "Guten Tag, wie kann ich helfen?"  # i18n-allow
 DEFAULT_GREETING_EN = "Hello, how can I help?"
+_DEFAULT_GREETINGS: dict[str, str] = {
+    "de": DEFAULT_GREETING_DE,
+    "en": DEFAULT_GREETING_EN,
+    "es": "Hola, ¿en qué puedo ayudarte?",  # i18n-allow: Spanish TTS
+    "pt": "Olá, em que posso ajudar?",  # i18n-allow: PT TTS
+}
+# Greeting when an assistant name is set; placeholder {name}.
+_NAMED_GREETINGS: dict[str, str] = {
+    "de": "Hier ist {name}. Wie kann ich helfen?",  # i18n-allow: German TTS greeting
+    "en": "{name} here. How can I help?",
+    "es": "Soy {name}. ¿En qué puedo ayudarte?",  # i18n-allow: Spanish TTS
+    "pt": "Olá, sou {name}. Em que posso ajudar?",  # i18n-allow: PT TTS
+}
+_FALLBACK_PHRASES: dict[str, str] = {
+    "de": "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es.",  # i18n-allow
+    "en": "Sorry, I did not catch that. Could you say it again?",
+    "es": "Perdona, no te he entendido. ¿Puedes repetirlo?",  # i18n-allow: Spanish TTS
+    "pt": "Desculpa, não percebi. Podes repetir?",  # i18n-allow: PT TTS
+}
 
 # Send callback signature: an awaitable that ships one JSON-serialisable dict
 # to Twilio over the WS.
@@ -609,7 +628,9 @@ class TelephonyCallSession:
     # -- helpers -----------------------------------------------------------
 
     def _lang_short(self) -> str:
-        return "en" if self.language_code.lower().startswith("en") else "de"
+        """Short language code of the call (de/en/es/pt); German for others."""
+        short = self.language_code.lower().split("-")[0]
+        return short if short in _DEFAULT_GREETINGS else "de"
 
     def _default_greeting(self) -> str:
         """Greeting spoken when no custom ``greeting`` was configured.
@@ -623,15 +644,11 @@ class TelephonyCallSession:
         from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME
 
         if name and name != DEFAULT_ASSISTANT_NAME:
-            if lang == "en":
-                return f"{name} here. How can I help?"
-            return f"Hier ist {name}. Wie kann ich helfen?"  # i18n-allow: German TTS greeting
-        return DEFAULT_GREETING_EN if lang == "en" else DEFAULT_GREETING_DE
+            return _NAMED_GREETINGS[lang].format(name=name)
+        return _DEFAULT_GREETINGS[lang]
 
     def _fallback_phrase(self) -> str:
-        if self._lang_short() == "en":
-            return "Sorry, I did not catch that. Could you say it again?"
-        return "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es."  # i18n-allow
+        return _FALLBACK_PHRASES[self._lang_short()]
 
     # -- bus events --------------------------------------------------------
 

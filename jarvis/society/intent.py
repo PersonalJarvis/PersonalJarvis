@@ -21,6 +21,10 @@ _INVENTORY = re.compile(
     r"|(?:list|show|tell me) (?:all |me )?(?:(?:my|your|our|the) )?agents"
     r"|(?:zeig(?:e)?|nenn(?:e)?) (?:mir )?(?:(?:alle|meine|deine|unsere|die) )?agenten"
     r"|(?:qué|que|cuántos|cuantos|cuáles|cuales) agentes (?:tienes|tengo|tenemos|hay)"
+    # European Portuguese ("que agentes tens", "quantos agentes temos")
+    r"|(?:que|quais|quantos) agentes (?:tens|tenho|temos|h[áa]|existem)"  # i18n-allow
+    r"|(?:mostra|lista|diz)(?:-me)? (?:todos )?(?:os )?"  # i18n-allow
+    r"(?:(?:meus|teus|nossos) )?agentes"  # i18n-allow
     r")",
     re.IGNORECASE,
 )
@@ -31,7 +35,7 @@ def is_inventory_question(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", str(text or "")).strip(" .?!¿¡")
     normalized = re.sub(
         r"\b(?:eigentlich|denn|bitte|actually|currently|please"  # i18n-allow
-        r"|right now|por favor)\b",
+        r"|right now|por favor|agora|afinal)\b",  # i18n-allow
         "",
         normalized,
         flags=re.IGNORECASE,
@@ -72,7 +76,8 @@ def is_team_management_request(text: str) -> bool:
     return (
         re.search(
             r"\b(?:creat\w*|add|updat\w*|reconfigur\w*|renam\w*|"
-            r"erstell\w*|konfigurier\w*|aender\w*|änder\w*|crea\w*|actualiza\w*)\b"  # i18n-allow
+            r"erstell\w*|konfigurier\w*|aender\w*|änder\w*|crea\w*|actualiza\w*|"  # i18n-allow
+            r"cria\w*|atualiza\w*|configura\w*|altera\w*|renomeia\w*)\b"  # i18n-allow
             r"[^.?!]{0,70}\bagent(?:en|s|e|es)?\b",
             text,
             re.IGNORECASE,
@@ -86,8 +91,9 @@ def explicitly_requests_worker(text: str) -> bool:
     # i18n-allow: multilingual spoken-input vocabulary
     return (
         re.search(
-            r"\b(?:spawn\w*|start\w*|creat\w*|erstell\w*|crea\w*)\b"
-            r"[^.?!]{0,45}\b(?:sub-?agent\w*|worker\w*|background agent|mission\w*)\b",
+            r"\b(?:spawn\w*|start\w*|creat\w*|erstell\w*|crea\w*|cria\w*|lan[cç]a\w*)\b"
+            r"[^.?!]{0,45}\b(?:sub-?agent\w*|worker\w*|background agent|mission\w*|"
+            r"miss[aã]o|miss[oõ]es|agente em segundo plano)\b",  # i18n-allow
             text,
             re.IGNORECASE,
         )

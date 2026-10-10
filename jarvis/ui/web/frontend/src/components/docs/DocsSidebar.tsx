@@ -3,7 +3,7 @@ import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { buildDocSections, useDocsGrouped } from "@/hooks/useDocs";
+import { buildDocSections, docSectionLabel, useDocsGrouped } from "@/hooks/useDocs";
 import { useT } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
 import { ONLINE_DOCS_URL, SearchTrigger } from "./docsShared";
@@ -105,7 +105,7 @@ export function DocsSidebar({
                   aria-controls={groupId}
                   className="group flex w-full items-center justify-between gap-2 rounded-sm px-3 py-1 text-left text-sm font-semibold text-foreground-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <span>{section.name}</span>
+                  <span>{docSectionLabel(section.name)}</span>
                   <ChevronDown
                     className={cn(
                       "h-3.5 w-3.5 shrink-0 text-foreground-faint opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100",

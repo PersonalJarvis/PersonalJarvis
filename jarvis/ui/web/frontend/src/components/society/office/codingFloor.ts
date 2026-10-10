@@ -14,6 +14,7 @@
  * its own.
  */
 import { useMemo, useRef } from "react";
+import { translate } from "@/i18n";
 
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useWorkspacePanes, useWorkspacePanesStore } from "@/store/workspacePanes";
@@ -74,7 +75,7 @@ export function shortAgentName(pane: Pick<WorkspacePaneRow, "display_name" | "ag
   const first = pane.display_name.trim().split(/\s+/)[0] ?? "";
   if (first) return first;
   const agent = pane.agent.trim();
-  return agent ? agent.charAt(0).toUpperCase() + agent.slice(1) : "Agent";
+  return agent ? agent.charAt(0).toUpperCase() + agent.slice(1) : translate("society.floor.agent_fallback");
 }
 
 /** The CLI and the pane's call-sign, "Claude · T2". */
@@ -125,7 +126,7 @@ function workspaceLabel(pane: WorkspacePaneRow): string {
   const name = pane.workspace_name.trim();
   if (name) return name;
   const folder = pane.folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
-  return folder || "Workspace";
+  return folder || translate("society.floor.workspace_fallback");
 }
 
 const BASE_RECIPE: FigureRecipe = { contract: 1, archetype: "biped", base: "rogue", parts: {}, palette: {} };

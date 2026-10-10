@@ -34,9 +34,10 @@ Enter credentials only in **API Keys & Providers**, never in chat or speech.
 | **Translation target** | **Voice → Language** | The fixed language in which translated dictation is delivered |
 | **Speaking voice** | **API Keys & Providers** | The sound of the audio, not its words |
 
-Interface Language supports English, German, Spanish, and Simplified Chinese.
-The first-run setup window offers the same four choices in its top corner.
-Reply Language supports English, German, and Spanish equally.
+Interface Language supports English, German, Spanish, Simplified Chinese, and
+European Portuguese. The first-run setup window offers the same five choices in
+its top corner. Reply Language supports English, German, Spanish, and European
+Portuguese equally.
 Recognition and Dictation offer Automatic plus a much wider language list. A
 provider may support fewer languages than the app lists.
 
@@ -47,8 +48,8 @@ See [Audio Devices and Wake Word](audio-and-wake-word).
 
 1. Open **Settings → Languages**.
 2. Choose an **Interface Language**. The open app changes immediately.
-3. Under **Reply Language**, choose **Automatic** or pin English, German, or
-   Spanish.
+3. Under **Reply Language**, choose **Automatic** or pin English, German,
+   Spanish, or European Portuguese.
 
 A reply pin wins for every new turn and keeps acknowledgements, errors, action
 readbacks, and speech aligned with the answer.
@@ -108,8 +109,9 @@ default** clears an explicit voice pin and cannot be previewed.
 ### Use Local Piper Voices
 
 **Piper (on this machine)** is keyless Pipeline output. Its in-app install
-downloads about 200 MB: one voice each for English, German, and Spanish. Piper
-selects the voice matching each reply; text and speech stay on-device.
+downloads about 270 MB: one voice each for English, German, Spanish, and
+European Portuguese. Piper selects the voice matching each reply; text and
+speech stay on-device.
 
 Piper runs on CPU, may sound less natural than cloud speech, and is not a
 Realtime voice. A missing language voice can cause the wrong accent; complete

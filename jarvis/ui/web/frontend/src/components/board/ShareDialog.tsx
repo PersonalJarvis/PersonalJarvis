@@ -199,7 +199,7 @@ export function ShareDialog({ open, onOpenChange, stats }: Props) {
             </div>
             <Dialog.Close
               className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-sheen/[0.06] hover:text-foreground"
-              aria-label="Close"
+              aria-label={t("common.close")}
             >
               <X className="h-4 w-4" />
             </Dialog.Close>

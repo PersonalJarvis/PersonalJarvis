@@ -13,6 +13,7 @@ import { CODEX_STATUS_KEY_BY_REASON } from "@/components/providers/ProviderTierS
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Loc = Record<string, unknown>;
 
@@ -47,6 +48,7 @@ const NAMESPACES: readonly (readonly [string, number])[] = [
 const LOCALES = [
   ["de", de],
   ["es", es],
+  ["pt", pt],
 ] as const;
 
 describe("voice section i18n parity", () => {

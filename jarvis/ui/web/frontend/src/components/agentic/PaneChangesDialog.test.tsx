@@ -6,6 +6,7 @@ import { useCodeEditorStore } from "@/store/codeEditor";
 import en from "@/i18n/locales/pane_review/en.json";
 import de from "@/i18n/locales/pane_review/de.json";
 import es from "@/i18n/locales/pane_review/es.json";
+import pt from "@/i18n/locales/pane_review/pt.json";
 
 const author = (pane: string) => ({ pane, history_id: `h-${pane}`, agent: "claude", display_name: "Claude", last_edit_ms: 1 });
 
@@ -222,7 +223,7 @@ describe("pane review i18n parity", () => {
       ? keys(nested as Record<string, unknown>, `${prefix}${key}.`)
       : [`${prefix}${key}`]).sort();
 
-  for (const [language, locale] of Object.entries({ de, es })) {
+  for (const [language, locale] of Object.entries({ de, es, pt })) {
     it(`${language} has the same keys as en`, () => {
       expect(keys(locale)).toEqual(keys(en));
     });

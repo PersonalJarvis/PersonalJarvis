@@ -23,8 +23,8 @@ import {
   settingsSelectCls,
 } from "@/views/settings/SettingsLayout";
 
-const UI_OPTIONS: UiLanguage[] = ["en", "de", "es", "zh"];
-const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
+const UI_OPTIONS: UiLanguage[] = ["en", "de", "es", "zh", "pt"];
+const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es", "pt"];
 
 /**
  * "Languages" section of the General settings page: interface language,

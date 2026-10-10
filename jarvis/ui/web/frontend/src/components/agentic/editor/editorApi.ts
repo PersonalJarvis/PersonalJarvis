@@ -1,5 +1,7 @@
 /** The code editor's file reads and writes against an open workspace. */
 
+import { fill, translate } from "@/i18n";
+
 /** A Python codec name: utf-8, utf-8-sig, utf-16-le, cp1252, … (see encodings.ts). */
 export type TextEncoding = string;
 export type LineEnding = "\n" | "\r\n";
@@ -56,7 +58,7 @@ async function failure(res: Response): Promise<{ message: string; detail: unknow
       ? detail
       : detail && typeof detail === "object" && typeof (detail as { message?: unknown }).message === "string"
         ? (detail as { message: string }).message
-        : `Request failed (${res.status}).`;
+        : fill(translate("ide_panes.request_failed"), { status: res.status });
   return { message, detail };
 }
 

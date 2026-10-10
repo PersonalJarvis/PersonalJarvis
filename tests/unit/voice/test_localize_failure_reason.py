@@ -38,6 +38,7 @@ CALENDAR_EXPIRED = (
         ("de", "Gmail ist nicht verbunden"),  # i18n-allow: asserts the German product surface
         ("en", "Gmail is not connected"),
         ("es", "Gmail no está conectado"),  # i18n-allow: asserts the Spanish product surface
+        ("pt", "Gmail não está ligado"),
     ],
 )
 def test_not_connected_speaks_the_turn_language(language, must_contain) -> None:

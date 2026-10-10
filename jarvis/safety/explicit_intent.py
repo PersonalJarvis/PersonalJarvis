@@ -18,8 +18,9 @@ _OPERAND = (
 )
 _REQUEST = re.compile(
     r"(?:(?:please|bitte|por favor)\s+)?"
-    r"(?:delete|remove|erase|lösch|lösche|entferne|borra|elimina)\s+"
-    r"(?:(?:the file|the folder|the directory|die Datei|den Ordner|el archivo|la carpeta)\s+)?"
+    r"(?:delete|remove|erase|lösch|lösche|entferne|borra|elimina|apaga)\s+"
+    r"(?:(?:the file|the folder|the directory|die Datei|den Ordner|el archivo|la carpeta|"
+    r"o ficheiro|a pasta|o diret[oó]rio)\s+)?"  # i18n-allow: pt input vocabulary
     + _OPERAND,
     re.IGNORECASE,
 )

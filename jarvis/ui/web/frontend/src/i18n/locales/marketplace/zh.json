@@ -141,7 +141,16 @@
     "studio_done_waited_out": "几分钟后仍未出现在列表中。请打开上方的拉取请求，查看检查结果。",
     "studio_done_watching": "正在监视实时列表，直到你的包出现，通常需要几分钟。",
     "studio_done_share_heading": "分享",
-    "studio_done_share_note": "现在任何人都可以运行它：它会从公共注册表中找到你的条目。"
+    "studio_done_share_note": "现在任何人都可以运行它：它会从公共注册表中找到你的条目。",
+    "studio_layout_plugin_json": "必填：name、description、version",
+    "studio_layout_mcp_json": "插件所对接的服务器（可选）",
+    "studio_layout_skills": "随插件一起提供的指令（可选）",
+    "studio_layout_usage_card": "助手何时应使用它（可选）",
+    "studio_layout_skill_md": "独立技能：单个文件，YAML frontmatter 在最前",
+    "studio_f_title_placeholder": "我的技能",
+    "studio_f_categories_placeholder": "写作, 研究",
+    "studio_preview_category": "社区",
+    "studio_done_live_package": "已上线：{package} v{version} 现在已在市场中。"
   },
   "custom_connector": {
     "dialog_title": "添加插件",

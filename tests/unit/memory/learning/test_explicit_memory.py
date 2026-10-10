@@ -83,6 +83,16 @@ def _memory(book: JarvisNotebook) -> list[Any]:
         ("Merk dir das nicht.", None),  # i18n-allow
         ("Can you tell me what you remember about me?", None),
         ("What time is it? Thanks.", None),
+        # European Portuguese
+        (
+            "Lembra-te de que bebo o café sem açúcar.",  # i18n-allow
+            "bebo o café sem açúcar.",  # i18n-allow
+        ),
+        (
+            "Quero relatórios curtos. Lembra-te disso.",  # i18n-allow
+            "Quero relatórios curtos",  # i18n-allow
+        ),
+        ("Lembra-te isso não.", None),  # i18n-allow
     ],
 )
 def test_a_remember_request_is_found_where_people_put_it(said: str, wanted: str | None) -> None:

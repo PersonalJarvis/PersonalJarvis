@@ -90,29 +90,42 @@ _FAREWELL = (
 # "Ich heisse Ruben", "ich heiße ruben", "mein Name ist Ruben Lütke",  # i18n-allow
 # "ich bin Harald". Case-insensitive. Capture group = name remainder.
 _NAME_INTRO_RE = re.compile(
-    r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|my\s+name\s+is|i\s+am|i'm)\s+(.+)",  # i18n-allow
+    r"(?:ich\s+heisse|ich\s+heiße|mein\s+name\s+ist|ich\s+bin|"  # i18n-allow
+    r"my\s+name\s+is|i\s+am|i'm|"
+    r"chamo-me|eu\s+chamo-me|(?:o\s+)?meu\s+nome\s+[eé]|eu\s+sou)\s+(.+)",  # i18n-allow
     re.IGNORECASE,
 )
 
 # "Nenn mich Ruben", "ruf mich X", "call me X" — explicit form-of-address preference
 _ADDRESS_RE = re.compile(
-    r"(?:nenn(?:e)?\s+mich|ruf(?:e)?\s+mich|call\s+me|sag(?:e)?\s+(?:einfach\s+)?)\s+(.+)",
+    r"(?:nenn(?:e)?\s+mich|ruf(?:e)?\s+mich|call\s+me|sag(?:e)?\s+(?:einfach\s+)?|"
+    r"chama-me|trata-me\s+por)\s+(.+)",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
 # Strip trailing junk after the actual name (e.g. "Ruben, aber nenn
 # mich gerne Rube" → we want "Ruben"). Cut at first comma / " aber ".
-_NAME_TRAIL_RE = re.compile(r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+", re.IGNORECASE)  # i18n-allow
+_NAME_TRAIL_RE = re.compile(
+    r"[,;.!?]|\s+aber\s+|\s+und\s+|\s+but\s+|\s+mas\s+", re.IGNORECASE  # i18n-allow
+)
 
 # Language keywords → ISO-639-1. Key match is case-insensitive substring.
 _LANGUAGE_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("deutsch", "german", "allemand", " de ", " de,", " de."), "de"),
-    (("englisch", "english", "anglais", " en ", " en,", " en."), "en"),
-    (("spanisch", "spanish", "espanol", "español", " es ", " es,"), "es"),
+    (
+        ("deutsch", "german", "allemand", "alemão", " alemao",  # i18n-allow
+         " de ", " de,", " de."),
+        "de",
+    ),
+    (
+        ("englisch", "english", "anglais", "inglês", " ingles",  # i18n-allow
+         " en ", " en,", " en."),
+        "en",
+    ),
+    (("spanisch", "spanish", "espanol", "español", "espanhol", " es ", " es,"), "es"),  # i18n-allow
     (("franzoesisch", "französisch", "french", "francais", "français", " fr "), "fr"),  # i18n-allow
     (("italienisch", "italian", "italiano", " it ", " it,"), "it"),
     (("niederlaendisch", "niederländisch", "dutch", "nederlands", " nl "), "nl"),  # i18n-allow
-    (("portugiesisch", "portuguese", " pt ", " pt,"), "pt"),
+    (("portugiesisch", "portuguese", "português", "portugues", " pt ", " pt,"), "pt"),  # i18n-allow
     (("polnisch", "polish", "polski", " pl "), "pl"),
     (("tuerkisch", "türkisch", "turkish", "türkçe", " tr "), "tr"),  # i18n-allow
 )
@@ -121,18 +134,23 @@ _LANGUAGE_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
 _DIRECT_KEYWORDS = (
     "direkt", "kurz", "knapp", "tldr", "no fluff", "auf den punkt",  # i18n-allow
     "to the point", "brief", "short", "concise",
+    "direto", "curto", "conciso", "breve",  # i18n-allow: pt input vocabulary
 )
 _VERBOSE_KEYWORDS = (
     "ausfuehrlich", "ausführlich", "detailliert", "erklaer", "erklär",  # i18n-allow
     "verbose", "deep dive", "deep-dive", "tief", "genau", "mit details",
+    "detalhad", "com detalhe", "explicaç", "explicac",  # i18n-allow: pt input vocabulary
 )
 
 # Pet-peeves splitter: ",", " und ", " sowie ", " plus ", " & "
-_PEEVE_SPLIT_RE = re.compile(r"\s*(?:,|;|\bund\b|\bsowie\b|\bplus\b|\band\b|&)\s*", re.IGNORECASE)
+_PEEVE_SPLIT_RE = re.compile(
+    r"\s*(?:,|;|\bund\b|\bsowie\b|\bplus\b|\band\b|\be(?=\s)|&)\s*", re.IGNORECASE  # i18n-allow
+)
 
 # Extract "Emojis" from "Keine Emojis". Analogous to English "no X".  # i18n-allow
 _NEGATIVE_PREFIX_RE = re.compile(
-    r"^\s*(?:keine?|kein|no|nicht|never|please\s+no|bitte\s+kein(?:e)?)\s+",  # i18n-allow
+    r"^\s*(?:keine?|kein|no|nicht|never|please\s+no|bitte\s+kein(?:e)?|"  # i18n-allow
+    r"sem|nada\s+de|n[aã]o|nunca)\s+",  # i18n-allow: pt input vocabulary
     re.IGNORECASE,
 )
 
@@ -141,6 +159,7 @@ _SKIP_KEYWORDS = (
     "weiss nicht", "weiß nicht", "keine ahnung", "egal", "ist mir egal",  # i18n-allow
     "dont know", "don't know", "pass", "skip", "ueberspring",
     "überspring", "weiter",  # i18n-allow
+    "não sei", "nao sei", "tanto faz", "salta",  # i18n-allow: pt input vocabulary
 )
 
 
@@ -496,7 +515,7 @@ def _clean_peeve(fragment: str) -> str:
     # "keine X" → "X"  # i18n-allow
     s = _NEGATIVE_PREFIX_RE.sub("", s).strip()
     # Drop overly generic fragments
-    if s.lower() in {"", "nichts", "nix", "keine", "kein", "nothing", "none"}:  # i18n-allow
+    if s.lower() in {"", "nichts", "nix", "keine", "kein", "nothing", "none", "nada"}:  # i18n-allow
         return ""
     return s
 
@@ -508,7 +527,13 @@ def _has_negation_near(text: str, keyword: str) -> bool:
         return False
     window_start = max(0, idx - 15)
     window = text[window_start:idx]
-    return bool(re.search(r"\b(kein(?:e)?|no|not|nicht|ohne|without)\b", window, re.IGNORECASE))  # i18n-allow
+    return bool(
+        re.search(
+            r"\b(kein(?:e)?|no|not|nicht|ohne|without|sem|n[aã]o|nada\s+de)\b",  # i18n-allow
+            window,
+            re.IGNORECASE,
+        )
+    )
 
 
 def _truncate(s: str, n: int) -> str:

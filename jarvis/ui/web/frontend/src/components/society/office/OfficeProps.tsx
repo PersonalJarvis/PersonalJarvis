@@ -9,6 +9,7 @@
  * canvas textures are module-level singletons shared by every copy.
  */
 import { memo } from "react";
+import { useT } from "@/i18n";
 import { CylinderGeometry, MeshStandardMaterial, SphereGeometry } from "three";
 import { canvasMaterial } from "./canvasMaterials";
 import { LEAD_RENDERERS } from "./LeadSuite";
@@ -227,14 +228,14 @@ function drawMirror(ctx: CanvasRenderingContext2D, w: number, h: number): void {
 }
 
 /** Coffee menu chalkboard. */
-function drawMenu(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+function drawMenu(ctx: CanvasRenderingContext2D, w: number, h: number, title: string): void {
   ctx.fillStyle = P.chalkboard;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = "#f8fafc";
   ctx.font = "700 36px system-ui, -apple-system, 'Segoe UI', sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("MENU", w / 2, 34);
+  ctx.fillText(title, w / 2, 34, w - 24);
   for (let i = 0; i < 4; i += 1) {
     const y = 78 + i * 28;
     ctx.fillStyle = "rgba(248,250,252,0.8)";
@@ -278,7 +279,7 @@ const lazy = {
   arcade: () => canvasMaterial("prop:arcade", 256, 200, drawArcade, { glow: 1, fallback: "#07060f", roughness: 0.4 }),
   indicator: () => canvasMaterial("prop:indicator", 128, 48, drawIndicator, { glow: 0.9, fallback: "#111318", roughness: 0.4 }),
   mirror: () => canvasMaterial("prop:mirror", 128, 256, drawMirror, { glow: 0.25, fallback: P.mirror, roughness: 0.1 }),
-  menu: () => canvasMaterial("prop:menu", 256, 192, drawMenu, { glow: 0.15, fallback: P.chalkboard, roughness: 0.9 }),
+  menu: (title: string) => canvasMaterial(`prop:menu:${title}`, 256, 192, (ctx, w, h) => drawMenu(ctx, w, h, title), { glow: 0.15, fallback: P.chalkboard, roughness: 0.9 }),
 };
 
 const PGEO = {
@@ -425,6 +426,7 @@ function Mirror() {
 
 /** Coffee counter with an espresso machine, cups and a small menu board; service side faces +z. */
 function CoffeeBar() {
+  const t = useT();
   return (
     <group>
       <Rounded size={[2.4, 0.68, 0.62]} radius={0.04} position={[0, 0.34, 0.03]} material={MAT.deskBody} />
@@ -447,7 +449,7 @@ function CoffeeBar() {
       {/* Menu board leaning back on the counter. */}
       <group position={[0.92, 0.72, -0.18]} rotation={[-0.18, 0, 0]}>
         <Box size={[0.44, 0.33, 0.02]} position={[0, 0.165, -0.005]} material={MAT.wood} />
-        <Panel size={[0.38, 0.28]} position={[0, 0.165, 0.0055]} material={lazy.menu()} />
+        <Panel size={[0.38, 0.28]} position={[0, 0.165, 0.0055]} material={lazy.menu(t("society.office.coffee_menu"))} />
       </group>
     </group>
   );

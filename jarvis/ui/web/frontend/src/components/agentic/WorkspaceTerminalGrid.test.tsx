@@ -4,7 +4,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import type { SessionState } from "@/lib/agenticIdeApi";
 const api = vi.hoisted(() => ({ move: vi.fn(), rename: vi.fn(), toast: vi.fn(), weights: vi.fn() }));
 vi.mock("@/lib/agenticIdeApi", () => ({ moveTerminal: api.move, renameTerminal: api.rename, saveLayoutWeights: api.weights }));
-vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => unknown) => select({ pushToast: api.toast }) }));
+vi.mock("@/store/events", () => ({ useEventStore: Object.assign(
+  (select: (state: unknown) => unknown) => select({ pushToast: api.toast }),
+  { getState: () => ({ pushToast: api.toast, assistantName: "Jarvis" }) },
+) }));
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string; onToggleMaximize: () => void; onRestart: () => void; restartToken: number;
   onFocus: () => void;

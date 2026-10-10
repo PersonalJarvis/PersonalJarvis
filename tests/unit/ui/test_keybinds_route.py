@@ -304,7 +304,7 @@ def test_get_reports_mouse_button_support_from_the_capability_probe(monkeypatch)
     only do that if the route SERVES the probe's verdict."""
     _patch_mouse_probe(monkeypatch, True)
     body = _client().get("/api/settings/keybinds").json()
-    assert body["mouse_buttons"] == {"supported": True, "reason": ""}
+    assert body["mouse_buttons"] == {"supported": True, "reason": "", "reason_code": ""}
 
 
 def test_get_reports_an_honest_english_reason_when_mouse_is_unsupported(
@@ -318,6 +318,16 @@ def test_get_reports_an_honest_english_reason_when_mouse_is_unsupported(
     body = _client().get("/api/settings/keybinds").json()
     assert body["mouse_buttons"]["supported"] is False
     assert "Wayland" in body["mouse_buttons"]["reason"]
+
+
+def test_get_names_a_known_mouse_reason_with_its_code(monkeypatch) -> None:
+    """A probe sentence the UI can translate travels with its stable code."""
+    from jarvis.trigger.hotkey import MOUSE_HOTKEY_REASONS
+
+    _patch_mouse_probe(monkeypatch, False, MOUSE_HOTKEY_REASONS["wayland"])
+    body = _client().get("/api/settings/keybinds").json()
+    assert body["mouse_buttons"]["reason_code"] == "wayland"
+    assert body["mouse_buttons"]["reason"] == MOUSE_HOTKEY_REASONS["wayland"]
 
 
 def test_put_refuses_a_mouse_shortcut_the_host_can_never_fire(monkeypatch) -> None:

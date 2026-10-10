@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useBoardSummary } from "@/hooks/useBoard";
 import { fill, useT, useUiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { AvatarButton } from "@/views/profile/AvatarButton";
 import { clusterDataOf, useFieldEdit, type ProfileResponse } from "@/views/profile/api";
@@ -32,7 +33,7 @@ function shortDate(value: unknown, ui: string): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString(ui, { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(localeForUiLanguage(ui), { day: "numeric", month: "short", year: "numeric" });
 }
 
 function NameForm({ onDone }: { onDone?: () => void }) {

@@ -31,6 +31,7 @@ import type { AgentChatCatalog, ProviderHealth } from "@/lib/agentChatApi";
 import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
 import es from "@/i18n/locales/es.json";
+import pt from "@/i18n/locales/pt.json";
 
 function lookup(dict: Record<string, unknown>) {
   return (key: string): string => {
@@ -67,7 +68,7 @@ describe("provider health reasons", () => {
   });
 
   it("is translated in every shipped locale", () => {
-    for (const dict of [de, en, es]) {
+    for (const dict of [de, en, es, pt]) {
       const t = lookup(dict as Record<string, unknown>);
       for (const reason of ["bad_key", "no_credits", "unreachable", "timeout", "nonsense"]) {
         expect(healthReasonLabel(reason, t).length).toBeGreaterThan(0);
@@ -76,12 +77,12 @@ describe("provider health reasons", () => {
     }
   });
 
-  it("keeps the three locales in step on every health key", () => {
+  it("keeps every locale in step on every health key", () => {
     const keys = Object.keys((de as Record<string, Record<string, unknown>>).agent_chat).filter((k) =>
       k.startsWith("provider_health_"),
     );
     expect(keys.length).toBeGreaterThan(0);
-    for (const dict of [en, es]) {
+    for (const dict of [en, es, pt]) {
       const other = (dict as Record<string, Record<string, unknown>>).agent_chat;
       for (const key of keys) expect(typeof other[key]).toBe("string");
     }

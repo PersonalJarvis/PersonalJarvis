@@ -12,7 +12,7 @@ import {
 import { keyFormatConfirmed, keyMatchesSecret } from "@/lib/keyFormat";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 
 interface ApiKeyFormProps {
   secretKey: string;
@@ -322,7 +322,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             variant="ghost"
             onClick={handleDelete}
             disabled={pending}
-            aria-label={`Delete ${secretKey}`}
+            aria-label={fill(t("apikeys_view.delete_key_named"), { key: secretKey })}
             title={t("apikeys_view.delete_key_tooltip")}
             className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
           >
@@ -362,7 +362,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
         <div className="relative flex-1">
           <input
             type={reveal ? "text" : "password"}
-            aria-label={`Enter ${secretKey}`}
+            aria-label={fill(t("apikeys_view.enter_key_named"), { key: secretKey })}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             // Human words, not the internal slot name: `Enter openai_api_key…`

@@ -1,5 +1,6 @@
 // === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
 import { Activity } from "lucide-react";
+import { uiLocale } from "@/lib/boardInsights";
 
 /**
  * Display component for a SINGLE outgoing StatusUpdate.
@@ -27,7 +28,7 @@ function formatTimestamp(ns: number): string {
   if (!ns) return "-";
   const ms = Math.floor(ns / 1_000_000);
   const date = new Date(ms);
-  return date.toLocaleTimeString();
+  return date.toLocaleTimeString(uiLocale());
 }
 
 export function LiveStatusCard({ update }: { update: StatusUpdateView }) {

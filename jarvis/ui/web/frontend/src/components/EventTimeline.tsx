@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useEventStore, type EventItem } from "@/store/events";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 
 /*
  * There is no colour key here any more.
@@ -13,13 +15,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
  * columns to the right. The dot was a legend for a legend.
  */
 
-function fmtTime(ts: number): string {
+function fmtTime(ts: number, locale: string): string {
   const d = new Date(ts);
-  return d.toLocaleTimeString(undefined, { hour12: false }) + "." +
+  return d.toLocaleTimeString(locale, { hour12: false }) + "." +
     String(d.getMilliseconds()).padStart(3, "0");
 }
 
 export function EventTimeline() {
+  const t = useT();
   const events = useEventStore((s) => s.events);
   const visible = events.slice(0, 100);
 
@@ -28,7 +31,7 @@ export function EventTimeline() {
       <ul className="divide-y divide-border">
         {visible.length === 0 && (
           <li className="p-4 text-body text-muted-foreground">
-            No events yet. Emit a test event from the Debug tab.
+            {t("shell_events.empty")}
           </li>
         )}
         {visible.map((e) => (
@@ -40,13 +43,15 @@ export function EventTimeline() {
 }
 
 function EventRow({ event }: { event: EventItem }) {
+  const t = useT();
+  const locale = useRunLocale();
   const [open, setOpen] = useState(false);
   const hasPayload = event.payload !== undefined && event.payload !== null;
   return (
     <li className="px-4 py-2">
       <div className="flex items-center gap-stack">
         <span className="font-mono text-meta tabular-nums text-muted-foreground">
-          {fmtTime(event.ts)}
+          {fmtTime(event.ts, locale)}
         </span>
         <span className="min-w-0 flex-1 truncate text-body text-foreground">{event.name}</span>
         {event.layer && (
@@ -59,7 +64,7 @@ function EventRow({ event }: { event: EventItem }) {
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
           >
-            {open ? "hide" : "payload"}
+            {open ? t("shell_events.hide_payload") : t("shell_events.show_payload")}
           </button>
         )}
       </div>

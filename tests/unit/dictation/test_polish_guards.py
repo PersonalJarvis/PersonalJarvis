@@ -310,6 +310,18 @@ def test_a_counted_enumeration_may_become_a_numbered_list() -> None:
     )
     assert verdict(raw_es, polished_es, language="es") == ""
 
+    # The European Portuguese source below is the content UNDER TEST (§1 list #4).
+    raw_pt = (
+        "primeiro revemos a proposta segundo enviamos a fatura terceiro "  # i18n-allow
+        "confirmamos a reunião"  # i18n-allow
+    )
+    polished_pt = (
+        "1. Revemos a proposta.\n"  # i18n-allow
+        "2. Enviamos a fatura.\n"  # i18n-allow
+        "3. Confirmamos a reunião."  # i18n-allow
+    )
+    assert verdict(raw_pt, polished_pt, language="pt") == ""
+
 
 def test_an_uncounted_enumeration_may_become_a_bulleted_list() -> None:
     """A plain spoken listing may come back one item per line with "-" bullets;
@@ -610,6 +622,27 @@ def test_precision_mode_does_not_trade_the_verb_check_away() -> None:
     )
     assert "lost_verb" in PRECISION_DRIFT_REASONS
     assert "lost_verb" in DRIFT_REASONS
+
+
+def test_portuguese_ordinary_words_are_not_rare() -> None:
+    """The pt frequency table keeps everyday words out of the rare set."""
+    rare = rare_tokens(
+        "então acho que também podemos enviar isso amanhã ao Ricardo",  # i18n-allow
+        language="pt",
+    )
+    assert "também" not in rare  # i18n-allow: pt token under test
+    assert "amanhã" not in rare  # i18n-allow: pt token under test
+    assert "ricardo" in rare
+
+
+def test_a_portuguese_negation_cut_is_a_lost_verb() -> None:
+    from jarvis.dictation.polish_guards import _lost_essential_word
+
+    assert _lost_essential_word(
+        "amanhã não envio o relatório",  # i18n-allow: pt fixture under test
+        "Amanhã envio o relatório.",  # i18n-allow: pt fixture under test
+        language="pt",
+    )
 
 
 def test_a_language_with_no_verb_table_has_no_opinion() -> None:

@@ -2,7 +2,8 @@ import { Loader2, Mic, MicOff } from "lucide-react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { translate, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
+import { translate, useI18nStore, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import type { SessionListItem } from "./types";
@@ -115,7 +116,10 @@ function formatRelative(ms: number): string {
   if (diff < 86_400_000)
     return ago(`${Math.floor(diff / 3_600_000)} ${translate("session_list.unit_hour")}`);
   const d = new Date(ms);
-  return d.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  return d.toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), {
+    day: "2-digit",
+    month: "short",
+  });
 }
 
 function formatDuration(secs: number | null): string {

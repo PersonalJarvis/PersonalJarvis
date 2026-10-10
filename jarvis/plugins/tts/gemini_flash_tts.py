@@ -847,6 +847,25 @@ def _split_sentences(text: str) -> list[str]:
 # SAPI5 emergency fallback (Windows native, no quota)
 # ----------------------------------------------------------------------
 
+def _sapi5_voice_preferences(language_code: str | None) -> tuple[str, ...]:
+    """Description substrings to look for, best match first, for a language.
+
+    Portuguese prefers an installed European voice (description mentions
+    "Portugal") and only then any Portuguese voice, which on most systems is
+    Brazilian. The region is matched without punctuation because Windows
+    spells it both "Portuguese (Portugal)" and "Portuguese(Portugal)".
+    English is the last resort for every language.
+    """
+    short = (language_code or "").lower().split("-", 1)[0]
+    if short == "de":
+        return ("German", "English")
+    if short == "es":
+        return ("Spain", "Spanish", "English")
+    if short == "pt":
+        return ("Portugal", "Portuguese", "English")
+    return ("English",)
+
+
 def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
     """Blocking SAPI5 call, returns raw PCM (22050Hz 16-bit mono).
 
@@ -871,13 +890,16 @@ def _sapi5_synthesize(text: str, language_code: str = "de-DE") -> bytes:
     try:
         voice = win32com.client.Dispatch("SAPI.SpVoice")
         voices = voice.GetVoices()
-        # Pick a voice per language
-        pick_substring = "German" if language_code.lower().startswith("de") else "English"
+        # Pick a voice per language. Windows voice descriptions name the
+        # language in English, e.g. "Microsoft Helia - Portuguese (Portugal)".
         picked = None
-        for i in range(voices.Count):
-            desc = voices.Item(i).GetDescription()
-            if pick_substring in desc:
-                picked = voices.Item(i)
+        for pick_substring in _sapi5_voice_preferences(language_code):
+            for i in range(voices.Count):
+                desc = voices.Item(i).GetDescription()
+                if pick_substring in desc:
+                    picked = voices.Item(i)
+                    break
+            if picked is not None:
                 break
         if picked is None and voices.Count > 0:
             picked = voices.Item(0)

@@ -181,6 +181,8 @@ def test_action_not_started_phrase_supports_every_runtime_language() -> None:
     assert action_not_started_phrase("de")
     assert action_not_started_phrase("en")
     assert action_not_started_phrase("es")
+    assert action_not_started_phrase("pt")
+    assert action_not_started_phrase("pt") != action_not_started_phrase("en")
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,7 @@ def test_questions_and_hobby_talk_are_not_false_completions(text: str) -> None:
     assert has_false_completion_claim(text) is False
 
 
-@pytest.mark.parametrize("language", ["de", "en", "es"])
+@pytest.mark.parametrize("language", ["de", "en", "es", "pt"])
 def test_honesty_fallback_is_not_itself_a_false_completion(language: str) -> None:
     phrase = action_not_started_phrase(language)
     assert has_false_completion_claim(phrase) is False

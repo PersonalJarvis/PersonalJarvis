@@ -7,7 +7,7 @@
  * what the run RECORDED, never from the host's current config — a run inspected
  * tomorrow must show the setup it actually ran under.
  */
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 
 import type { RunEnvironment } from "./types";
 
@@ -34,7 +34,10 @@ export function EnvironmentPanel({ env }: { env: RunEnvironment }) {
   if (env.input_sample_rate || env.output_sample_rate) {
     push(
       t("run_inspector.env.audio"),
-      `${env.input_sample_rate ?? "?"} Hz in · ${env.output_sample_rate ?? "?"} Hz out`,
+      fill(t("run_inspector.env.audio_rates"), {
+        input: env.input_sample_rate ?? "?",
+        output: env.output_sample_rate ?? "?",
+      }),
     );
   }
 

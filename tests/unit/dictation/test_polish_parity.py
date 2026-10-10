@@ -60,7 +60,7 @@ _HISTORY_GROUP_TSX = _FRONTEND / "views" / "voice" / "DictationHistoryGroup.tsx"
 _TIER_SECTION_TSX = _FRONTEND / "components" / "providers" / "ProviderTierSection.tsx"
 _LOCALES = _FRONTEND / "i18n" / "locales"
 
-SUPPORTED_LOCALES = ("de", "en", "es")
+SUPPORTED_LOCALES = ("de", "en", "es", "pt")
 
 # The tiers the TypeScript union carries that ``provider_spec.Tier`` does not.
 # ``computer-use`` is an OVERLAY selection, not a provider tier: the Computer-Use

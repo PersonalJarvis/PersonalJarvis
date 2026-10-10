@@ -14,6 +14,7 @@
  * one geometry per material, and canvas faces are drawn once and shared.
  */
 import { memo } from "react";
+import { useT } from "@/i18n";
 import {
   BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Euler, ExtrudeGeometry, Matrix4,
   MeshStandardMaterial, Path, Quaternion, Shape, SphereGeometry, TorusGeometry, Vector3,
@@ -229,7 +230,7 @@ function drawGhostHalo(ctx: Ctx, w: number, h: number, colour: string, blur: num
  * by the cove light, a warm halo where the ghost stands off it, and the
  * wordmark and strapline in ink between brass rules.
  */
-function drawBrandFace(ctx: Ctx, w: number, h: number): void {
+function drawBrandFace(ctx: Ctx, w: number, h: number, strapline: string): void {
   const wash = ctx.createLinearGradient(0, 0, 0, h);
   wash.addColorStop(0, "#b7c4ad");
   wash.addColorStop(0.45, "#a9b89e");
@@ -269,8 +270,8 @@ function drawBrandFace(ctx: Ctx, w: number, h: number): void {
   spaced(ctx, w * 0.011);
   ctx.font = BRAND_FONTS[1];
   ctx.fillStyle = "rgba(27,33,30,0.82)";
-  ctx.fillText("AGENT HEADQUARTERS", w / 2 + w * 0.008, strap);
-  const half = ctx.measureText("AGENT HEADQUARTERS").width / 2;
+  ctx.fillText(strapline, w / 2 + w * 0.008, strap);
+  const half = ctx.measureText(strapline).width / 2;
   const rule = w * 0.07, gap = w * 0.03;
   ctx.fillStyle = "#9c7a43";
   ctx.fillRect(w / 2 - half - gap - rule, strap - 1.5, rule, 3);
@@ -286,7 +287,9 @@ function drawBrandGlow(ctx: Ctx, w: number, h: number): void {
 }
 
 /** The Agent board totem's portrait screen: the ghost header, team counts, agent cards and the add button. */
-function drawTotem(ctx: Ctx, w: number, h: number): void {
+interface TotemLabels { title: string; hint: string; add: string }
+
+function drawTotem(ctx: Ctx, w: number, h: number, labels: TotemLabels): void {
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, "#1f2925");
   bg.addColorStop(1, "#121816");
@@ -297,10 +300,10 @@ function drawTotem(ctx: Ctx, w: number, h: number): void {
   ctx.fillStyle = "#f1ebe1";
   ctx.textBaseline = "middle";
   ctx.font = `700 44px ${FONT}`;
-  ctx.fillText("Agent board", 138, 72);
+  ctx.fillText(labels.title, 138, 72);
   ctx.fillStyle = "rgba(241,235,225,0.55)";
   ctx.font = `500 24px ${FONT}`;
-  ctx.fillText("Tap to manage your team", 138, 110);
+  ctx.fillText(labels.hint, 138, 110);
   ctx.fillStyle = C.sage;
   ctx.fillRect(40, 148, w - 80, 3);
   // Three counts: working, waiting, idle.
@@ -340,7 +343,7 @@ function drawTotem(ctx: Ctx, w: number, h: number): void {
   ctx.fillStyle = "#16201b";
   ctx.font = `700 32px ${FONT}`;
   ctx.textAlign = "center";
-  ctx.fillText("+  New agent", w / 2, h - 73);
+  ctx.fillText(`+  ${labels.add}`, w / 2, h - 73);
   ctx.textAlign = "left";
 }
 
@@ -412,19 +415,24 @@ const OBLIQUE_ANISOTROPY = 16;
  * the halo as its emissive map so the light behind the ghost glows in any
  * scene lighting. Sage where no canvas exists.
  */
-let brandFace: MeshStandardMaterial | null = null;
-function brandFaceMaterial(): MeshStandardMaterial {
-  if (brandFace) return brandFace;
+/** One face per strapline, so a language switch paints a new one. */
+const brandFaces = new Map<string, MeshStandardMaterial>();
+function brandFaceMaterial(strapline: string): MeshStandardMaterial {
+  const cached = brandFaces.get(strapline);
+  if (cached) return cached;
   const w = BRAND_FACE.px, h = Math.round((BRAND_FACE.px * BRAND_FACE.h) / BRAND_FACE.w);
-  const map = cachedCanvasTexture("lobby:brand-face", w, h, drawBrandFace);
+  const key = `lobby:brand-face:${strapline}`;
+  const draw = (ctx: Ctx, cw: number, ch: number) => drawBrandFace(ctx, cw, ch, strapline);
+  const map = cachedCanvasTexture(key, w, h, draw);
   const glow = cachedCanvasTexture("lobby:brand-glow", w / 4, h / 4, drawBrandGlow);
   if (map) map.anisotropy = OBLIQUE_ANISOTROPY;
-  redrawWhenFontsLoad("lobby:brand-face", map, BRAND_FONTS, drawBrandFace);
-  brandFace = new MeshStandardMaterial({
+  redrawWhenFontsLoad(key, map, BRAND_FONTS, draw);
+  const material = new MeshStandardMaterial({
     color: map ? "#ffffff" : C.sage, map, roughness: 0.92,
     emissive: glow ? "#ffffff" : "#000000", emissiveMap: glow, emissiveIntensity: 0.7,
   });
-  return brandFace;
+  brandFaces.set(strapline, material);
+  return material;
 }
 
 /** A canvas material whose text waits for the interface face (see `FONT`). */
@@ -444,7 +452,8 @@ function matMaterial(): MeshStandardMaterial {
 
 const faces = {
   brand: brandFaceMaterial,
-  totem: () => typedCanvasMaterial("lobby:totem", 512, 1024, drawTotem, [`700 44px ${FONT}`, `500 24px ${FONT}`],
+  totem: (labels: TotemLabels) => typedCanvasMaterial(`lobby:totem:${labels.title}|${labels.hint}|${labels.add}`, 512, 1024,
+    (ctx, w, h) => drawTotem(ctx, w, h, labels), [`700 44px ${FONT}`, `500 24px ${FONT}`],
     { glow: 0.9, fallback: "#1a2320", roughness: 0.3 }),
   mat: matMaterial,
   rug: () => canvasMaterial("lobby:rug", 512, 320, drawLobbyRug, { fallback: "#e8dfcf", roughness: 1 }),
@@ -530,6 +539,7 @@ const OLIVE_GEOMETRIES: BufferGeometry[] = (() => {
  * over the wordmark and strapline printed on the plaster face.
  */
 function BrandWall() {
+  const t = useT();
   const w = BRAND.w;
   const ghost = { y: BRAND_GHOST.hem, size: BRAND_GHOST.size, z: BRAND_GHOST.z };
   const front = BRAND_PANEL.z + BRAND_PANEL.d / 2;
@@ -542,7 +552,7 @@ function BrandWall() {
       <Box size={[w - 0.1, 0.008, 0.02]} position={[0, 2.836, 0.12]} material={LM.led} cast={false} />
       {/* The sage panel, its plaster face with the type, and its brass fins. */}
       <Rounded size={[BRAND_PANEL.w, BRAND_PANEL.h, BRAND_PANEL.d]} radius={0.02} position={[0, BRAND_PANEL.y, BRAND_PANEL.z]} material={LM.sage} />
-      <mesh position={[0, BRAND_PANEL.y, front + 0.0006]} material={faces.brand()} receiveShadow>
+      <mesh position={[0, BRAND_PANEL.y, front + 0.0006]} material={faces.brand(t("society.office.lobby_strapline"))} receiveShadow>
         <planeGeometry args={[BRAND_FACE.w, BRAND_FACE.h]} />
       </mesh>
       {[-0.99, 0.99].map((x) => <Box key={x} size={[0.025, 2.36, 0.07]} position={[x, BRAND_PANEL.y, 0.055]} material={LM.fin} />)}
@@ -575,6 +585,8 @@ function BrandWall() {
  * in brass on top and an oak plinth.
  */
 function AgentTotem() {
+  const t = useT();
+  const labels: TotemLabels = { title: t("society.office.cp_manage"), hint: t("society.office.lobby_board_hint"), add: t("society.office.lobby_new_agent") };
   return (
     <group>
       <Rounded size={[0.88, 0.06, 0.48]} radius={0.02} position={[0, 0.03, 0]} material={LM.oakDark} />
@@ -585,7 +597,7 @@ function AgentTotem() {
           <Box size={[0.008, 1.7, 0.006]} position={[x, 1.1, 0.072]} material={LM.led} cast={false} />
         </group>
       ))}
-      <Panel size={[0.66, 1.32]} position={[0, 1.2, 0.0405]} material={faces.totem()} />
+      <Panel size={[0.66, 1.32]} position={[0, 1.2, 0.0405]} material={faces.totem(labels)} />
       <Box size={[0.66, 0.01, 0.01]} position={[0, 1.9, 0.045]} material={LM.brass} cast={false} />
       <Box size={[0.4, 0.035, 0.004]} position={[0, 0.34, 0.041]} material={LM.bronze} cast={false} />
       <mesh geometry={GHOST_GEOMETRY} material={LM.brass} position={[0, 1.92, -0.03]} scale={[0.1, 0.1, 0.6]} castShadow />

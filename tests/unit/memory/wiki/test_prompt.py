@@ -468,7 +468,7 @@ def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     system, user = build_consolidator_prompt([candidate], {})
 
     assert "Explicit persistence requests are binding" in system
-    assert "English, German, and Spanish" in system
+    assert "English, German, Spanish, and European Portuguese" in system
     assert 'MUST be "add" or "update"' in system
     assert "exact fact already" in system
     assert "unsupported by user evidence" in system

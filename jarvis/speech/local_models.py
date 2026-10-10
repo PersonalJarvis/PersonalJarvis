@@ -535,8 +535,9 @@ def _piper_bundle(name: str, *, label: str, language: str, gender: str) -> Sherp
 #: Every model bundle the local providers can use, keyed by id.
 #:
 #: The voices are picked for CONSISTENCY across languages rather than one at a
-#: time: the same perceived speaker in German, English and Spanish, so switching
-#: language mid-conversation does not switch who is talking (BUG-086). A second,
+#: time: the same perceived speaker in German, English, Spanish and Portuguese,
+#: so switching language mid-conversation does not switch who is talking
+#: (BUG-086). A second,
 #: feminine set is listed so a user can change voice without losing that
 #: property — it is downloadable, not downloaded by default.
 SHERPA_BUNDLES: dict[str, SherpaBundle] = {
@@ -569,6 +570,15 @@ SHERPA_BUNDLES: dict[str, SherpaBundle] = {
         language="es",
         gender="masculine",
     ),
+    # The only European Portuguese Piper voice (pt_PT, CC0 dataset). There is
+    # no feminine pt_PT voice upstream, so the feminine set falls back to this
+    # one for Portuguese rather than to a Brazilian accent.
+    "vits-piper-pt_PT-tugao-medium": _piper_bundle(
+        "vits-piper-pt_PT-tugao-medium",
+        label="Tugão (European Portuguese)",
+        language="pt",
+        gender="masculine",
+    ),
     "vits-piper-de_DE-ramona-low": _piper_bundle(
         "vits-piper-de_DE-ramona-low",
         label="Ramona (German)",
@@ -596,7 +606,13 @@ PIPER_DEFAULT_VOICES: tuple[str, ...] = (
     "vits-piper-de_DE-thorsten-medium",
     "vits-piper-en_US-ryan-medium",
     "vits-piper-es_ES-davefx-medium",
+    "vits-piper-pt_PT-tugao-medium",
 )
+
+#: One medium Piper archive, voice plus its ``espeak-ng-data`` copy: each of the
+#: default voices measures 67.2 MB upstream. The provider card's download size
+#: is derived from it, so adding a default voice cannot leave the label stale.
+_PIPER_VOICE_DOWNLOAD_MB = 67
 
 LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
     LocalProvider(
@@ -624,7 +640,7 @@ LOCAL_PROVIDERS: tuple[LocalProvider, ...] = (
         runtime="sherpa-onnx",
         model_id=PIPER_DEFAULT_VOICES[0],
         model_label="Piper voices",
-        download_size="about 200 MB",
+        download_size=f"about {round(len(PIPER_DEFAULT_VOICES) * _PIPER_VOICE_DOWNLOAD_MB, -1)} MB",
         pip_package=SHERPA_ONNX_PACKAGE,
         bundles=PIPER_DEFAULT_VOICES,
     ),

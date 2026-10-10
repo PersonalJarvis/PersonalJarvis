@@ -105,7 +105,9 @@ _DIGITS_RE = re.compile(r"\d+")
 # defense-in-depth check). Lowercased before comparison.
 _CONTENT_WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German", "en": "English", "es": "Spanish", "pt": "European Portuguese",
+}
 
 
 def build_readback_persona(language: str, *, instruction: str, facts_block: str) -> str:

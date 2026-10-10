@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import type { BoardInsights, InsightsAgent } from "@/hooks/useBoardInsights";
-import { agentLabel, chatProviderLabel, compactNumber, formatDay, plural } from "@/lib/boardInsights";
+import { agentLabel, chatProviderLabel, compactNumber, formatDay, plural, uiLocale } from "@/lib/boardInsights";
 import {
   BOARD_CATEGORY_KEYS,
   CATEGORY_META,
@@ -16,25 +16,26 @@ import {
   Eyebrow,
   InsightCard,
 } from "@/components/board/insights/primitives";
-import { useT, useUiLanguage } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 type Range = "30d" | "all";
 
 export function AgentsTab({ data }: { data: BoardInsights }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const best = data.records.best_agent_day;
   const sessions30 = data.agents.items.reduce((s, a) => s + a.sessions_30d, 0);
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label={t("board_insights.agents.stat_sessions")} value={data.agents.sessions.toLocaleString()} />
-        <StatCard label={t("board_insights.agents.stat_sessions_30d")} value={sessions30.toLocaleString()} />
+        <StatCard label={t("board_insights.agents.stat_sessions")} value={data.agents.sessions.toLocaleString(uiLocale())} />
+        <StatCard label={t("board_insights.agents.stat_sessions_30d")} value={sessions30.toLocaleString(uiLocale())} />
         <StatCard label={t("board_insights.agents.stat_tokens")} value={compactNumber(data.agents.tokens)} />
         <StatCard
           label={t("board_insights.agents.stat_busiest")}
-          value={best ? best.value.toLocaleString() : "—"}
+          value={best ? best.value.toLocaleString(uiLocale()) : "—"}
           sub={best ? formatDay(best.date, lang) : undefined}
         />
       </div>
@@ -63,7 +64,7 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 
 function CodingAgentsCard({ data }: { data: BoardInsights }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const [range, setRange] = useState<Range>("30d");
   const sessionsOf = (a: InsightsAgent) => (range === "30d" ? a.sessions_30d : a.sessions);
   const turnsOf = (a: InsightsAgent) => (range === "30d" ? a.turns_30d : a.turns);
@@ -127,7 +128,7 @@ function CodingAgentsCard({ data }: { data: BoardInsights }) {
                       <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">{pct}%</span>
                     </div>
                   </td>
-                  <td className="py-2.5 text-right tabular-nums text-foreground-strong">{sessions.toLocaleString()}</td>
+                  <td className="py-2.5 text-right tabular-nums text-foreground-strong">{sessions.toLocaleString(uiLocale())}</td>
                   <td className="py-2.5 text-right tabular-nums text-muted-foreground">
                     {compactNumber(turnsOf(agent))}
                   </td>
@@ -168,7 +169,7 @@ function ChatsCard({ data }: { data: BoardInsights }) {
                   style={{ width: row.messages > 0 ? `${Math.max((row.messages / max) * 100, 3)}%` : "0%" }}
                 />
               </div>
-              <span className="w-10 text-right tabular-nums text-foreground-strong">{row.messages.toLocaleString()}</span>
+              <span className="w-10 text-right tabular-nums text-foreground-strong">{row.messages.toLocaleString(uiLocale())}</span>
             </li>
           ))}
         </ul>
@@ -200,7 +201,7 @@ function CategoriesCard({ data }: { data: BoardInsights }) {
               <li key={key} className="flex items-center gap-2.5 text-sm">
                 <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                 <span className="flex-1 truncate text-foreground">{t(categoryLabelKey(key))}</span>
-                <span className="tabular-nums text-muted-foreground">{count.toLocaleString()}</span>
+                <span className="tabular-nums text-muted-foreground">{count.toLocaleString(uiLocale())}</span>
                 <span className="w-10 text-right text-xs tabular-nums text-foreground-strong">{pct}%</span>
               </li>
             );

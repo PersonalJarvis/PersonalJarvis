@@ -7,6 +7,7 @@ import {
   deriveOutcome,
   groupStory,
   missionIdFromTraceId,
+  pickApprovedSummary,
   splitReason,
 } from "./outcome";
 
@@ -129,6 +130,50 @@ describe("deriveOutcome", () => {
     expect(deriveOutcome(events, "de").summary).toBe("Fertig."); // i18n-allow
     expect(deriveOutcome(events, "en").summary).toBe("Done.");
     expect(deriveOutcome(events, "en").cost_usd).toBe(0.02);
+  });
+
+  it("reads summary_local for es/pt missions and falls back to en, then de", () => {
+    const approved = (summary_local?: string, summary_en = "Done."): EventEnvelope[] => [
+      env({
+        event_type: "MissionApproved",
+        result_uri: "file:///out",
+        tokens_used: 10,
+        cost_usd: 0.02,
+        wall_ms: 5000,
+        summary_de: "Fertig.", // i18n-allow: German runtime-output fixture
+        summary_en,
+        ...(summary_local !== undefined ? { summary_local } : {}),
+      }),
+    ];
+    expect(deriveOutcome(approved("Concluído."), "pt").summary).toBe("Concluído."); // i18n-allow
+    expect(deriveOutcome(approved("Hecho."), "es").summary).toBe("Hecho."); // i18n-allow
+    expect(deriveOutcome(approved("Concluído."), "de").summary).toBe("Fertig."); // i18n-allow
+    expect(deriveOutcome(approved("Concluído."), "en").summary).toBe("Done."); // i18n-allow
+    expect(deriveOutcome(approved(undefined), "pt").summary).toBe("Done.");
+    expect(deriveOutcome(approved("", ""), "pt").summary).toBe("Fertig."); // i18n-allow
+  });
+
+  it("picks the approval summary by language, defaulting to en", () => {
+    const p = { summary_de: "Fertig.", summary_en: "Done.", summary_local: "Concluído." }; // i18n-allow
+    expect(pickApprovedSummary(p, "pt-PT")).toBe("Concluído."); // i18n-allow
+    expect(pickApprovedSummary(p, null)).toBe("Done.");
+  });
+
+  it("shows the approval line in the mission's dispatch language", () => {
+    const story = buildStory([
+      env({ event_type: "MissionDispatched", prompt: "x", parent_mission_id: null, priority: 0, language: "pt" }),
+      env({
+        event_type: "MissionApproved",
+        result_uri: "file:///out",
+        tokens_used: 1,
+        cost_usd: 0,
+        wall_ms: 1,
+        summary_de: "Fertig.", // i18n-allow: German runtime-output fixture
+        summary_en: "Done.",
+        summary_local: "Concluído.", // i18n-allow: Portuguese runtime-output fixture
+      }),
+    ]);
+    expect(story.find((s) => s.kind === "approved")?.text).toBe("Concluído."); // i18n-allow
   });
 
   it("has no terminal for a run still in flight", () => {

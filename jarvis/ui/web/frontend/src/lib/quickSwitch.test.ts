@@ -8,6 +8,7 @@ import { SECTION_IDS } from "@/store/events";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
+import pt from "@/i18n/locales/pt.json";
 import {
   QUICK_SWITCH_ENTRIES,
   ambiguousEntryKeys,
@@ -158,7 +159,7 @@ describe("typing a row's own name lands on that row", () => {
   // The bug this guards: "API Keys" is both a page and a voice tab, and the
   // switcher sent someone to the tab. A page must win its own name in every UI
   // language; a tab must at least be reachable by its name.
-  for (const [language, tree] of [["en", en], ["de", de], ["es", es]] as const) {
+  for (const [language, tree] of [["en", en], ["de", de], ["es", es], ["pt", pt]] as const) {
     const labelFor = labelIn(tree);
     it(`in ${language}`, () => {
       for (const item of QUICK_SWITCH_ENTRIES) {

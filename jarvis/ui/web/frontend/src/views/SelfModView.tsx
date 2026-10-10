@@ -74,6 +74,7 @@ function isSensitivePath(path: string): boolean {
 }
 
 function RedactedBadge() {
+  const t = useT();
   return (
     <span
       style={{
@@ -85,7 +86,7 @@ function RedactedBadge() {
         fontSize: 11,
         fontWeight: 600,
       }}
-      title="Wert maskiert (Plan-§AP-2 Defense-in-Depth)"
+      title={t("self_mod_view.value_redacted")}
     >
       ***
     </span>
@@ -128,8 +129,8 @@ function AuditFilters({
           { value: "", label: t("self_mod_view.all_actors") },
           { value: "hauptjarvis", label: t("self_mod_view.actor_main") },
           { value: "openclaw", label: "OpenClaw" },
-          { value: "user", label: "User" },
-          { value: "system", label: "System" },
+          { value: "user", label: t("self_mod_view.actor_user") },
+          { value: "system", label: t("self_mod_view.actor_system") },
         ]}
       />
       <label>
@@ -147,6 +148,7 @@ function AuditFilters({
 }
 
 function AuditLogTable() {
+  const t = useT();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [filter, setFilter] = useState<{
     actor?: string;
@@ -172,15 +174,15 @@ function AuditLogTable() {
   return (
     <div>
       <AuditFilters filter={filter} onChange={setFilter} />
-      {loading && <p>Lade …</p>}
+      {loading && <p>{t("common.loading")}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: "1px solid #444" }}>
-            <th style={{ textAlign: "left", padding: 4 }}>Timestamp</th>
-            <th style={{ textAlign: "left", padding: 4 }}>Actor</th>
-            <th style={{ textAlign: "left", padding: 4 }}>Path</th>
-            <th style={{ textAlign: "left", padding: 4 }}>Old → New</th>
-            <th style={{ textAlign: "left", padding: 4 }}>Outcome</th>
+            <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_timestamp")}</th>
+            <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_actor")}</th>
+            <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_path")}</th>
+            <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_old_new")}</th>
+            <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_outcome")}</th>
           </tr>
         </thead>
         <tbody>
@@ -200,11 +202,11 @@ function AuditLogTable() {
               </td>
               <td style={{ padding: 4, fontSize: 12 }}>
                 {e.ok ? (
-                  <span style={{ color: "#4f4" }}>OK</span>
+                  <span style={{ color: "#4f4" }}>{t("self_mod_view.outcome_ok")}</span>
                 ) : e.rolled_back ? (
-                  <span style={{ color: "#f80" }}>ROLLED BACK</span>
+                  <span style={{ color: "#f80" }}>{t("self_mod_view.outcome_rolled_back")}</span>
                 ) : (
-                  <span style={{ color: "#f44" }}>{e.error ?? "FAIL"}</span>
+                  <span style={{ color: "#f44" }}>{e.error ?? t("self_mod_view.outcome_fail")}</span>
                 )}
               </td>
             </tr>
@@ -253,7 +255,7 @@ function AuditEventDetail({
       <button onClick={onClose} style={{ marginBottom: 12 }}>
         × {t("common.close")}
       </button>
-      <h3>Audit-Event</h3>
+      <h3>{t("self_mod_view.audit_event")}</h3>
       {sensitive && (
         <p style={{ color: "#fa0" }}>
           ⚠ {t("self_mod_view.sensitive_path_notice")}
@@ -271,6 +273,7 @@ function AuditEventDetail({
 // ----------------------------------------------------------------------
 
 function MutableSpecsList() {
+  const t = useT();
   const [specs, setSpecs] = useState<MutableSpec[]>([]);
   useEffect(() => {
     fetch("/api/self-mod/mutable")
@@ -296,11 +299,14 @@ function MutableSpecsList() {
                 fontSize: 11,
               }}
             >
-              {s.risk_tier.toUpperCase()}
+              {(s.risk_tier === "safe" || s.risk_tier === "ask"
+                ? t(`self_mod_view.risk_${s.risk_tier}`)
+                : String(s.risk_tier)
+              ).toUpperCase()}
             </span>
             {s.needs_restart && (
               <span style={{ fontSize: 11, color: "#f80" }}>
-                ↻ Restart
+                ↻ {t("self_mod_view.needs_restart")}
               </span>
             )}
           </div>
@@ -318,6 +324,7 @@ function MutableSpecsList() {
 // ----------------------------------------------------------------------
 
 function BackupsList() {
+  const t = useT();
   const [backups, setBackups] = useState<BackupRef[]>([]);
   useEffect(() => {
     fetch("/api/self-mod/backups")
@@ -329,10 +336,10 @@ function BackupsList() {
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
       <thead>
         <tr style={{ borderBottom: "1px solid #444" }}>
-          <th style={{ textAlign: "left", padding: 4 }}>Filename</th>
-          <th style={{ textAlign: "left", padding: 4 }}>Timestamp</th>
-          <th style={{ textAlign: "left", padding: 4 }}>Size</th>
-          <th style={{ textAlign: "left", padding: 4 }}>Age</th>
+          <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_filename")}</th>
+          <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_timestamp")}</th>
+          <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_size")}</th>
+          <th style={{ textAlign: "left", padding: 4 }}>{t("self_mod_view.col_age")}</th>
         </tr>
       </thead>
       <tbody>
@@ -365,7 +372,7 @@ export default function SelfModView() {
   const [tab, setTab] = useState<Tab>("history");
   return (
     <div style={{ padding: 16 }}>
-      <h2>Self-Modification</h2>
+      <h2>{t("self_mod_view.title")}</h2>
       <p style={{ fontSize: 13, color: "#aaa" }}>
         {t("self_mod_view.intro_a")} {t("self_mod_view.intro_b")}{" "}
         {assistantName} {t("self_mod_view.intro_c")}
@@ -384,7 +391,7 @@ export default function SelfModView() {
               cursor: "pointer",
             }}
           >
-            {tabId === "history" ? "History" : tabId === "mutable" ? "Settings" : "Backups"}
+            {t(`self_mod_view.tab_${tabId}`)}
           </button>
         ))}
       </nav>

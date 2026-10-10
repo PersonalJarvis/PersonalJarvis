@@ -478,7 +478,8 @@
     "hidden": "已隐藏",
     "visible": "可见",
     "links": "链接",
-    "back": "返回"
+    "back": "返回",
+    "website_other": "网站 / 其他"
   },
   "contacts": {
     "subtitle": "你的个人通讯录——姓名、联系方式，以及每个人的简短备注。",
@@ -552,7 +553,8 @@
       "partner": "伴侣",
       "acquaintance": "熟人",
       "other": "其他"
-    }
+    },
+    "remove": "移除"
   },
   "dictionary": {
     "title": "词典",
@@ -740,7 +742,8 @@
       "testing": "正在测试…",
       "test_hint": "用示例测试当前模式。使用所选的服务商，不会保存任何内容。",
       "sample_before": "之前",
-      "sample_after": "之后"
+      "sample_after": "之后",
+      "ollama_local": "Ollama（本地）"
     },
     "prompt_mode": {
       "title": "提示词模式",
@@ -763,6 +766,15 @@
     "api_keys": {
       "title": "语音输入",
       "description": "用于把你的语音转换为文字的密钥和服务商。"
+    },
+    "call_not_ended": "语音通话尚未结束，请重试。",
+    "not_running_here": "此电脑上未运行语音功能。",
+    "request_failed": "语音请求失败（{status}）。",
+    "startup_audio_lost": "无法保留语音启动时的音频，请重新开始。",
+    "reconnect_failed": "语音重新连接失败。",
+    "backend_error": {
+      "voice_connection_lost": "语音连接已断开。待处理的操作未被重新执行。",
+      "subscription_request_failed": "ChatGPT 订阅访问无法完成此请求。未使用任何 API 密钥。"
     }
   },
   "voice_state": {
@@ -842,7 +854,11 @@
     "realtime_webrtc_degraded": "无法建立 WebRTC 传输，音频将继续通过音频套接字传输。",
     "realtime_transport_capability_missing": "此窗口未获得打开订阅传输所需的桌面权限。请重启应用。",
     "realtime_transport_offer_unsupported": "此窗口无法创建订阅传输所需的 WebRTC 连接。请改用 API 实时语音服务商。",
-    "realtime_transport_socket_unreachable": "无法连接订阅传输通道。请重启应用，然后重试。"
+    "realtime_transport_socket_unreachable": "无法连接订阅传输通道。请重启应用，然后重试。",
+    "resize_hint": "拖动以调整侧边栏大小——双击恢复默认",
+    "ide_navigation": "IDE 导航",
+    "workspace_options": "工作区选项",
+    "open_conversation_failed": "无法打开对话"
   },
   "provider_billing": {
     "api": "API，按用量计费",
@@ -1038,7 +1054,8 @@
     "tokens_out": "输出 token",
     "tool_running": "仍在运行…",
     "interrupt_hint": "按 esc 中断",
-    "status_words": "思考中…, 处理中…, 深挖中…, 推理中…, 琢磨中…, 整理中…, 解谜中…, 酝酿中…, 组装中…, 理顺中…, 烹制中…, 进入状态…"
+    "status_words": "思考中…, 处理中…, 深挖中…, 推理中…, 琢磨中…, 整理中…, 解谜中…, 酝酿中…, 组装中…, 理顺中…, 烹制中…, 进入状态…",
+    "drop_nothing_usable": "拖入的内容中没有此聊天可用的东西。"
   },
   "chats_view": {
     "title": "对话",
@@ -1321,7 +1338,14 @@
       "renamed": "已重命名",
       "delivered": "已交付",
       "binary": "二进制"
-    }
+    },
+    "tool_screenshot": "截图",
+    "tool_web_search": "网页搜索",
+    "tool_open_app": "打开应用",
+    "tool_type_text": "输入文本",
+    "tool_remember": "记住",
+    "tool_admin_op": "管理操作",
+    "tool_multi_spawn": "批量启动"
   },
   "tasks_view": {
     "title": "自动化",
@@ -1472,7 +1496,165 @@
     "oauth_client_own": "你自己的 {family} 客户端",
     "oauth_client_placeholder": "占位 {family} 客户端——连接时请添加你自己的",
     "fact_publisher": "发布者",
-    "fact_source": "来源"
+    "fact_source": "来源",
+    "reauth_provider_rejected": "提供方不再接受此授权",
+    "reauth_client_rejected": "提供方不再接受此应用的 OAuth 客户端",
+    "reauth_client_missing": "在 Jarvis 保存 OAuth 客户端之前就已连接",
+    "reauth_rotation_lost": "续期后的令牌无法保存，因此已作废",
+    "reauth_refresh_missing": "访问令牌已过期，无法自动续期",
+    "reauth_unknown": "授权已失效",
+    "reauth_retrying": "{headline}。Jarvis 每天会重试一次；重新连接可立即修复。",
+    "reauth_no_retry": "{headline}。此问题无法自动重试——请重新连接以修复。",
+    "ago_today": "今天",
+    "ago_yesterday": "昨天",
+    "ago_days": "{count} 天前",
+    "longevity_permanent": "保持连接",
+    "longevity_self_renewing": "自动续期",
+    "longevity_provider_limited": "需定期重新登录",
+    "auth_browser_login": "浏览器登录",
+    "auth_local": "本地设备",
+    "auth_device_flow": "设备码登录",
+    "auth_access_token": "访问令牌",
+    "auth_one_click": "一键",
+    "auth_allowlist": "许可名单",
+    "auth_no_signin": "无需登录",
+    "client_id_hint_spotify": "应用设置中的 32 位 ID",
+    "client_id_hint_github": "OAuth 应用设置中的 Iv1.…",
+    "client_id_hint_gitlab": "64 位应用 ID",
+    "client_id_hint_figma": "应用设置中的客户端 ID",
+    "client_id_hint_hubspot": "应用 Auth 设置中的 UUID",
+    "secret_not_needed_public": "公共/原生应用无需填写",
+    "secret_not_needed_native": "Native App 无需填写",
+    "secret_not_needed_empty": "无需填写——留空即可",
+    "secret_usually_not_needed": "通常无需填写",
+    "err_session_failed": "无法创建登录会话。请重试。",
+    "err_signin_page_unavailable": "登录页面不可用。请重试。",
+    "err_denied": "登录被拒绝。准备好后可以重试。",
+    "err_timeout": "登录超时。请重试。",
+    "err_provider_unreachable": "无法连接到提供方。请稍后重试。",
+    "err_port_in_use": "登录回调正被占用。请关闭另一个登录尝试后重试。",
+    "err_misconfigured": "浏览器登录正等待发布方完成设置。你无需进行任何开发设置。",
+    "fallback_notice": "浏览器登录需要发布方的客户端，但它尚未就绪——在此期间你可以用令牌连接。",
+    "err_pending_publisher": "此连接正等待发布方完成设置。浏览器登录可用后请重试。",
+    "connection_unavailable": "连接不可用",
+    "unsupported_device": "此设备不支持",
+    "installed_count": "已安装 {count} 个",
+    "attention_one": "{plugin} 需要重新连接",
+    "attention_many": "{count} 个连接需要重新连接",
+    "attention_one_detail": "{reason}——请重新连接以继续使用。",
+    "attention_many_detail": "请重新连接以继续使用：{plugins}",
+    "jump_to_it": "前往",
+    "jump_to_first": "前往第一个",
+    "disconnect_plugin": "断开插件连接",
+    "reconnect_plugin": "重新连接插件",
+    "connect_plugin": "连接插件",
+    "authorization_link": "授权链接",
+    "copy_link": "复制链接",
+    "copied": "已复制",
+    "copy": "复制",
+    "copied_bang": "已复制！",
+    "unknown_error": "未知错误",
+    "connecting_plugin": "正在连接 {plugin}",
+    "browser_login": "浏览器登录",
+    "authorize_in_browser": "在浏览器中授权 {product}",
+    "continue_in_browser": "请在 {plugin} 的浏览器标签页中继续——如有提示请登录，点击“授权”，然后回到这里。看不到标签页？请重新打开或复制下方链接。在你完成之前，插件会保持“未连接”。",
+    "waiting_callback": "正在等待 {plugin} 回调至",
+    "redirect_hint": "如果提供方显示错误而不是请求批准，请在提供方应用的重定向设置中准确允许此地址，然后重新打开登录。",
+    "open_plugin_again": "重新打开 {plugin}",
+    "copy_link_hint_paste": "或复制此链接并粘贴到浏览器的地址栏中。",
+    "plugin_connected": "{plugin} 已连接",
+    "connect_named": "连接 {plugin}",
+    "device_flow": "设备码登录",
+    "device_step1": "第 1 步——复制此代码",
+    "device_step2": "第 2 步——在 {plugin} 中粘贴",
+    "open_plugin": "打开 {plugin}",
+    "copy_link_hint_code": "或复制此链接，在浏览器中打开并输入上面的代码。",
+    "waiting_authorization": "正在等待授权…",
+    "err_save_settings": "无法保存连接设置。请重试。",
+    "pkce_browser_unavailable": "浏览器登录暂不可用。",
+    "pkce_signin_with": "你将在浏览器中使用你的 {family} 账号登录。",
+    "provider_fallback": "提供方",
+    "pkce_pending_intro": "浏览器登录正等待发布方完成设置。今天就可以用你自己的免费 {family} 应用连接——只需几分钟，无需写代码。填好下方客户端后，“继续”会在浏览器中打开真正的 {plugin} 登录页。",
+    "pkce_step1": "第 1 步——打开 {family} 应用控制台",
+    "pkce_your_client": "你的 OAuth 客户端",
+    "pkce_own_client_advanced": "使用你自己的 OAuth 客户端（高级）",
+    "pkce_step2": "第 2 步——粘贴你刚创建的应用的客户端。",
+    "pkce_step2_google": "第 2 步——粘贴你刚创建的应用的客户端。一个客户端即可覆盖 Gmail、Drive、Calendar 和 YouTube Music。",
+    "pkce_override": "可选的高级覆盖。粘贴你自己的 {family} {console}中的客户端。",
+    "pkce_console": "控制台",
+    "pkce_google_one_client": "一个客户端即可覆盖 Gmail、Drive、Calendar 和 YouTube Music。",
+    "pkce_redirect_step3": "第 3 步——创建应用时，将此逐字符注册为其{term}：",
+    "pkce_redirect": "创建应用时，将此逐字符注册为其{term}：",
+    "pkce_redirect_term": "重定向 URI",
+    "pkce_redirect_numeric": "必须是数字地址，而不是 {localhost}，且末尾不能有斜杠。",
+    "client_id": "客户端 ID",
+    "client_id_from": "来自 {family} 的客户端 ID",
+    "client_secret": "客户端密钥",
+    "secret_optional_some": "部分提供方可选",
+    "expert_token_alt": "高级令牌替代方案",
+    "expert_token_alt_body": "共享浏览器登录尚未就绪。在此期间你可以使用提供方令牌连接——浏览器流程仍是默认方式，就绪后会自动接管。",
+    "paste_token_instead": "改为粘贴令牌",
+    "continue": "继续",
+    "remove_named": "移除 {plugin}？",
+    "disconnect_body": "这会断开 {plugin} 并删除其已保存的凭据。在你重新连接之前，{assistant} 将无法访问它。",
+    "removing": "正在移除…",
+    "remove": "移除",
+    "plugin_added": "已添加 {plugin}",
+    "plugin_removed": "已移除 {plugin}",
+    "instance_intro": "输入你的实例地址，然后在浏览器中登录并批准访问。",
+    "instance_address": "实例地址",
+    "opening_browser": "正在打开浏览器…",
+    "continue_in_browser_btn": "在浏览器中继续",
+    "err_discord_id": "无法读取你的 Discord ID。",
+    "err_discord_no_id": "Discord 未返回用户 ID。",
+    "err_discord_invite": "无法生成邀请链接。",
+    "err_discord_no_invite": "Discord 未返回邀请链接。",
+    "access_token": "访问令牌",
+    "pat_generate": "在 {plugin} 生成令牌",
+    "pat_open_tokens": "打开 {plugin} 令牌页面",
+    "copy_link_hint_open": "或复制此链接，自行在浏览器中打开。",
+    "pat_get_key": "获取 {plugin} 的密钥",
+    "pat_paste_below": "在下方粘贴令牌",
+    "or_separator": " 或 ",
+    "token": "令牌",
+    "pat_should_start": "应以 {prefix} 开头",
+    "owner_lock_title": "将机器人锁定给你（推荐）",
+    "owner_lock_aria": "你的数字用户 ID",
+    "owner_lock_hint": "只有此用户 ID 可以命令机器人。留空则由第一个给它发消息的人获得访问权限。",
+    "looking_up": "正在查找…",
+    "discord_fill_id": "填入我的 Discord ID",
+    "opening": "正在打开…",
+    "discord_add_bot": "将机器人添加到我的服务器",
+    "owner_lock_digits": "用户 ID 只能包含数字。",
+    "validating": "正在验证…",
+    "longevity_note": {
+      "github": "浏览器登录会自动续期。粘贴的令牌按创建时的设置过期。",
+      "discord": "OAuth 令牌会自动刷新。粘贴的机器人令牌在你于 Discord 开发者门户中重置之前一直有效。",
+      "telegram": "机器人令牌在你于 BotFather 中撤销之前一直有效。",
+      "clickup": "ClickUp 声明其访问令牌不会过期，因此此连接无需续期。这只是一项政策而非保证，所以如果它被拒绝，Jarvis 仍会请你重新连接。",
+      "airtable": "Airtable 会在连接 60 天未使用后将其终止。Jarvis 每 12 小时在后台续期一次，只要这台电脑不时运行，连接就会保持。",
+      "cal_com": "Cal.com 未公布令牌有效期，因此尚未确认连接能保持多久。Jarvis 会在后台续期，如果续期失败会请你重新连接。",
+      "home_assistant": "浏览器授权会自动续期，直到在 Home Assistant 中撤销访问权限。",
+      "spotify": "Spotify 将刷新令牌的有效期限制为六个月，因此该连接每年需要续期两次。这一限制无法延长。",
+      "higgsfield": "Higgsfield 会签发刷新令牌。访问令牌的有效期未公布；Jarvis 会在后台续期，如果续期失败会请你重新连接。",
+      "aws": "AWS 访问有效期为一小时，刷新最多限于 12 小时的会话；之后需要重新登录。",
+      "google_cloud": "处于测试模式的 Google OAuth 应用可能在七天后失去刷新权限；正式发布的应用遵循账户政策。",
+      "gitlab": "浏览器登录会自动续期。粘贴的令牌会在创建时选择的日期过期。",
+      "linkedin": "LinkedIn 的标准访问令牌会过期；刷新令牌仅限获批准的合作伙伴使用。收到提示时请重新连接。",
+      "meta": "长期用户令牌通常在约 60 天后过期；请在过期前重新连接。",
+      "youtube_studio": "处于测试模式的 Google OAuth 应用可能在七天后需要重新授权。",
+      "figma": "浏览器登录会自动续期。粘贴的令牌会在你创建时选择的日期过期。",
+      "google_drive": "当你自己的 OAuth 应用处于测试模式时，Google 会在 7 天后使授权失效。发布该应用即可让连接一直保持。",
+      "gmail": "当你自己的 OAuth 应用处于测试模式时，Google 会在 7 天后使授权失效。发布该应用即可让连接一直保持。",
+      "google_calendar": "当你自己的 OAuth 应用处于测试模式时，Google 会在 7 天后使授权失效。发布该应用即可让连接一直保持。",
+      "youtube_music": "当你自己的 OAuth 应用处于测试模式时，Google 会在 7 天后使授权失效。发布该应用即可让连接一直保持。"
+    },
+    "unavailable_reason": {
+      "amd_unverifiable": "无法从 Linux 设备信息中确认 AMD GPU 是否可用。请检查硬件访问权限和许可，包括容器的设备访问权限。",
+      "amd_no_gpu": "此连接器看不到任何 AMD GPU。连接前必须将兼容的 AMD GPU 提供给此 Linux 环境。",
+      "amd_unsupported_os": "此操作系统上无法获取 AMD GPU 遥测数据。此连接器需要装有 AMD SMI 的兼容 Linux AMD 主机。",
+      "amd_smi_missing": "AMD SMI 不可用。请在兼容的 AMD 主机上安装 AMD 支持的 SMI/ROCm 工具。缺失的指标绝不会报告为零。"
+    }
   },
   "skills_view": {
     "count": "{n} 个技能",
@@ -1559,7 +1741,19 @@
     "empty_list_body_a": "首次启动时，",
     "empty_list_body_b": "会把内置技能复制到",
     "empty_list_body_c": "如果没有发生，请查看后端日志。",
-    "search_no_hits": "没有匹配项。换个关键词试试，或移除筛选条件。"
+    "search_no_hits": "没有匹配项。换个关键词试试，或移除筛选条件。",
+    "resource_references": "参考资料",
+    "resource_scripts": "脚本",
+    "resource_assets": "资源文件",
+    "resource_agents": "智能体",
+    "password_placeholder": "密码",
+    "link_homepage": "主页",
+    "link_source": "源码",
+    "link_docs": "文档",
+    "link_not_checked": "未检查",
+    "link_no_network": "无网络",
+    "select_hint": "内置技能受保护，无法选择。",
+    "selected_count": "已选择 {count} 个"
   },
   "run_inspector": {
     "title": "运行检查器",
@@ -1633,7 +1827,10 @@
       "empty": "此轮次没有运行工具。",
       "command": "命令",
       "output": "结果",
-      "error": "错误"
+      "error": "错误",
+      "exit_code": "退出码 {code}",
+      "ok": "成功",
+      "fail": "失败"
     },
     "facts": {
       "endpoint": "端点",
@@ -1643,7 +1840,8 @@
       "interrupted": "已打断",
       "context": "上下文",
       "turns": "轮次",
-      "tokens": "Token"
+      "tokens": "Token",
+      "yes": "是"
     },
     "env": {
       "mode": "模式",
@@ -1656,7 +1854,31 @@
       "tiers": "层级",
       "voices": "音色",
       "audio": "音频",
-      "empty": "没有记录环境信息。"
+      "empty": "没有记录环境信息。",
+      "audio_rates": "输入 {input} Hz · 输出 {output} Hz"
+    },
+    "feature_computer_use": "电脑操控",
+    "feature_skill": "技能",
+    "outcome": {
+      "success": "成功",
+      "partial": "部分成功",
+      "failed": "失败"
+    },
+    "turn": "轮次",
+    "user": "用户",
+    "thinking": "思考",
+    "speaking": "说话",
+    "slow": "慢",
+    "errors_count": "个错误",
+    "role": {
+      "spoken": "已朗读",
+      "system": "系统",
+      "tool": "工具",
+      "error": "错误"
+    },
+    "slo": {
+      "breach": "超标",
+      "warn": "警告"
     }
   },
   "voice_mode": {
@@ -1808,6 +2030,16 @@
       "connected": "已连接",
       "disconnected": "未连接",
       "error": "错误"
+    },
+    "json_syntax": "JSON 语法",
+    "import_note": {
+      "appdata_missing": "未设置 APPDATA 变量。",
+      "config_not_found": "在 {path} 未找到 Claude Desktop 配置。",
+      "invalid_json": "配置不是有效的 JSON（第 {line} 行，第 {column} 列）。",
+      "not_readable": "无法读取配置。详情见 Jarvis 日志。",
+      "no_servers": "Claude Desktop 配置中未找到 mcpServers。",
+      "imported": "已导入 {added} 个新服务器。",
+      "imported_with_skipped": "已导入 {added} 个新服务器，跳过 {skipped} 个（已存在）。"
     }
   },
   "shortcuts_view": {
@@ -2034,7 +2266,8 @@
         "jarvis_suffix": "由 {name} 说出",
         "talk_line": "活跃 {0} 小时 · {1} 次对话",
         "streak": "最佳连续 {0} 天"
-      }
+      },
+      "tweet_text": "我已在 {sessions} 次对话中对我的 {product} 说了 {words} 个词——共 {hours} 小时语音。打造你自己的："
     },
     "export": {
       "button": "导出 CSV",
@@ -2361,7 +2594,8 @@
         "autonomy": "自主",
         "impact": "影响力"
       }
-    }
+    },
+    "system_not_ready": "个人资料系统尚未就绪。"
   },
   "apikeys_view": {
     "title": "API 密钥与服务商",
@@ -2650,7 +2884,19 @@
     "experimental_note": "Beta：此服务商尚未完成，使用的是不稳定的协议，可能随时变更。如果无法启动，通话会停止。",
     "experimental_consent": "开启前请注意：此服务商仍是 Beta 版，使用的是实验性、不稳定的路线，可能随时变更。如果它失效，通话会停止，而不会自行切换到其他服务商。要继续吗？",
     "key_verified_toast": "{0} 已响应，密钥有效。",
-    "key_check_failed_toast": "{0} 没有响应：{1}"
+    "key_check_failed_toast": "{0} 没有响应：{1}",
+    "delete_key_named": "删除 {key}",
+    "enter_key_named": "输入 {key}",
+    "install_failed_fallback": "安装失败",
+    "model_download_failed_fallback": "模型下载失败",
+    "key_format_api_key": "{provider} API 密钥",
+    "key_format_vertex_sa": "Vertex AI 服务账号",
+    "key_format_vertex_sa_note": "这是 Vertex AI 服务账号文件，不是 AI Studio 密钥——它按另一个 Google Cloud 项目计费。",
+    "key_format_aistudio": "Google AI Studio 密钥",
+    "key_format_aistudio_note": "此格式适用于 Google AI Studio。Vertex AI 会拒绝它——Vertex 只接受快速模式密钥（AQ.）或通过 [google].vertex_project 指定的 Cloud 项目。",
+    "key_format_google_express": "Google API 密钥（AI Studio 或 Vertex 快速模式）",
+    "key_format_google_express_note": "AI Studio 和 Vertex AI 快速模式密钥共用此格式——保存到哪张卡片决定了使用哪个端点；对于 Gemini 卡片，Jarvis 会自动识别。",
+    "key_format_unknown": "无法识别的密钥格式"
   },
   "apikeys_test": {
     "button": "测试",
@@ -2665,7 +2911,8 @@
     "status_error": "集成错误",
     "integration_ok_note": "已成功连接服务商，问题只出在密钥、账户或模型上。",
     "integration_bad_note": "无法连接服务商。",
-    "failed": "测试失败"
+    "failed": "测试失败",
+    "client_timeout": "80 秒内应用没有响应——后端可能正忙或已卡住。"
   },
   "apikeys_base_url": {
     "label": "服务器 URL",
@@ -3031,7 +3278,38 @@
       "download_model_downloading": "正在下载唤醒模型…",
       "download_model_done": "唤醒模型已下载，正在重新保存你的唤醒词…",
       "download_model_error": "无法下载唤醒模型。请检查网络连接后重试。",
-      "download_model_retry": "重试"
+      "download_model_retry": "重试",
+      "diag_engine": "引擎：{engine}",
+      "diag_language": "语言：{language}",
+      "diag_not_in_vocab": "不在词汇表中",
+      "diag_mic_quiet": "麦克风音量过低",
+      "msg": {
+        "custom_onnx": "自定义 ONNX 唤醒模型：{path}",
+        "vosk_kws": "Vosk 任意词关键词识别：“{phrase}”（模型：{model}）。",
+        "custom_onnx_missing": "未找到自定义 ONNX（{path}）；改用本地 Whisper 转写匹配。",
+        "custom_onnx_other_phrase": "自定义唤醒模型“{model_file}”属于另一个短语；“{phrase}”使用本地 Whisper 转写匹配。",
+        "stt_match_unreliable": "自定义短语“{phrase}”使用本地 Whisper 转写匹配——对于难读的名字这并不可靠。下载 {language} 的 Vosk 模型即可变得可靠（设置 -> 唤醒词 ->“下载唤醒模型”）。",
+        "stt_match_unreliable_any_language": "自定义短语“{phrase}”使用本地 Whisper 转写匹配——对于难读的名字这并不可靠。下载所配置语言的 Vosk 模型即可变得可靠（设置 -> 唤醒词 ->“下载唤醒模型”）。",
+        "needs_local_model": "唤醒词“{phrase}”需要本地模型。安装本地语音包（适用于任何词）或提供自定义 .onnx 即可启用。在此之前唤醒词保持关闭——请用“通话”快捷键开始语音对话。",
+        "needs_local_model_no_phrase": "你的唤醒词需要本地模型。安装本地语音包（适用于任何词）或提供自定义 .onnx 即可启用。在此之前唤醒词保持关闭——请用“通话”快捷键开始语音对话。",
+        "no_phrase": "尚未设置唤醒词。",
+        "not_in_vocab": "“{phrase}”不在 {language} 模型的词汇表中。",
+        "no_microphone": "未检测到麦克风。",
+        "mic_quiet": "麦克风信号非常弱。",
+        "ready": "已就绪：“{phrase}”，引擎“{engine}”（语言“{language}”）。说出它即可唤醒。",
+        "activation_not_persisted": "无法将设置保存到 jarvis.toml。详情见 Jarvis 日志。",
+        "model_ready": "唤醒模型已就绪。",
+        "model_download_failed": "暂时无法下载唤醒模型，系统会自动重试。在此之前唤醒词使用备用方式。"
+      },
+      "hint": {
+        "type_phrase": "请先输入唤醒短语。",
+        "download_or_hotkey": "下载本地模型，或使用快捷键。",
+        "pick_real_word": "请选择你所用语言中的真实词语，或换一个短语。",
+        "connect_mic": "请连接或启用麦克风。",
+        "speak_louder": "请大声一点，或提高输入增益。",
+        "allow_mic_dialog": "按下测试按钮，并在 macOS 对话框中选择“允许”。",
+        "allow_mic_settings": "请在 {path} 中允许麦克风访问，然后重试。"
+      }
     },
     "onboarding": {
       "wake_word": {
@@ -3174,7 +3452,21 @@
         "reserved": "由系统保留"
       },
       "dictate_toggle_label": "免提听写",
-      "caution_overlap": "它包含在另一个快捷键中，所以按下较长的那个会同时触发两者。如果这不是你想要的，请清除其中一个。"
+      "caution_overlap": "它包含在另一个快捷键中，所以按下较长的那个会同时触发两者。如果这不是你想要的，请清除其中一个。",
+      "mouse": {
+        "middle_click": "鼠标中键",
+        "back_combo": "鼠标后退键",
+        "forward_combo": "鼠标前进键",
+        "middle": "中键",
+        "back": "后退",
+        "forward": "前进"
+      },
+      "mouse_reason": {
+        "macos_needs_quartz": "鼠标按键快捷键需要 pyobjc Quartz 包，但它尚未安装——请安装 [full] 配置。组合键仍然可用。",
+        "wayland": "Wayland 不允许应用全局监听鼠标按键，因此鼠标按键快捷键在这里无法使用。请使用组合键，或将合成器快捷键绑定到 Jarvis CLI。",
+        "linux_needs_pynput": "鼠标按键快捷键需要 pynput 包，但它尚未安装——请安装 [desktop-linux] 扩展。组合键仍然可用。",
+        "unsupported_host": "此系统无法全局监听鼠标按键——请改用组合键。"
+      }
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "用于解决 Windows PATH 问题的手动路径。留空则使用 PATH 中的“codex”。",
@@ -3188,7 +3480,8 @@
       "system": "跟随系统",
       "system_now_dark": "正在跟随系统，当前为深色。",
       "system_now_light": "正在跟随系统，当前为浅色。"
-    }
+    },
+    "invalid_setting": "设置无效"
   },
   "telephony_view": {
     "title": "电话（实验性）",
@@ -3262,7 +3555,8 @@
       "completed": "已完成",
       "failed": "失败",
       "no_audio": "无音频"
-    }
+    },
+    "copy_command": "复制命令"
   },
   "telephony_setup": {
     "title": "电话设置",
@@ -3340,7 +3634,8 @@
     "exit_fullscreen": "关闭阅读器",
     "csv_empty": "此表格为空。",
     "csv_more_rows": "文件中还有 {n} 行。",
-    "reveal_in_folder": "在文件夹中显示"
+    "reveal_in_folder": "在文件夹中显示",
+    "fence_table": "表格"
   },
   "common": {
     "see_more": "展开",
@@ -3365,7 +3660,11 @@
     "running": "运行中",
     "saving": "正在保存…",
     "error": "错误",
-    "status": "状态"
+    "status": "状态",
+    "repeated_times": "重复 {count} 次",
+    "dismiss": "关闭",
+    "apply": "应用",
+    "request_failed": "请求失败（{status}）"
   },
   "docs": {
     "search_placeholder": "按标题/标签筛选…",
@@ -3381,7 +3680,9 @@
     "could_not_load": "无法加载文档。",
     "recent": "最近",
     "search_button": "搜索文档",
-    "search_hero": "搜索文档"
+    "search_hero": "搜索文档",
+    "section_other": "其他",
+    "breadcrumb": "导航路径"
   },
   "sessions": {
     "select_one": "请在左侧选择一个会话。",
@@ -3391,7 +3692,12 @@
   "provider_switcher": {
     "loading_hint": "正在加载服务商列表；如果一直为空，请检查后端。",
     "no_credential": "无凭据",
-    "active": "当前使用"
+    "active": "当前使用",
+    "switched_toast": "大脑 → {provider}",
+    "active_brain": "当前大脑",
+    "switching": "正在切换…",
+    "name_local_realtime": "自托管实时语音",
+    "name_local_voice": "本地语音"
   },
   "wiki_provider": {
     "tier_label": "知识库（长期记忆）",
@@ -3483,7 +3789,14 @@
     "needs_key_full": "{0}：请先保存 API 密钥，然后再启用。",
     "runs_as_subagent_hint": "Codex 会作为{name}-Agent（后台工作者）使用你的 ChatGPT 登录运行。连接后，请在下方的{name}-Agent 列表中启用它。用作思考大脑则需要单独的 OpenAI API 密钥服务商。",
     "brain_needs_openai_key": "把 Codex 用作大脑需要 OpenAI API 密钥，ChatGPT 登录只能驱动 Codex 工作者。请添加一个 OpenAI 密钥（例如在 OpenAI 服务商中），然后在这里选择 Codex。",
-    "brain_key_hint": "如果也想把 Codex 用作大脑，请添加 OpenAI API 密钥（付费，与只驱动工作者的 ChatGPT 登录分开）。保存后即可解锁上方的大脑开关。"
+    "brain_key_hint": "如果也想把 Codex 用作大脑，请添加 OpenAI API 密钥（付费，与只驱动工作者的 ChatGPT 登录分开）。保存后即可解锁上方的大脑开关。",
+    "status_msg": {
+      "not_installed": "未安装 Codex CLI（运行：{command}）。",
+      "not_logged_in": "Codex 已安装但尚未登录——请运行“codex login”。",
+      "connected_chatgpt": "已通过 ChatGPT 连接。",
+      "connected_chatgpt_email": "已通过 ChatGPT 连接（{email}）。",
+      "connected_api_key": "已通过 OpenAI API 密钥连接。"
+    }
   },
   "apikeys_antigravity": {
     "login_started": "已在终端中开始 Google 登录",
@@ -3491,10 +3804,21 @@
     "status_loading": "正在加载 Google 登录状态",
     "connected": "已通过你的 Google 订阅连接。",
     "connected_as": "已通过 Google 连接（{0}）。",
-    "needs_login_full": "{0}：请先使用 Google 登录，然后再启用。"
+    "needs_login_full": "{0}：请先使用 Google 登录，然后再启用。",
+    "connect_google": "使用 Google 连接",
+    "install_antigravity": "安装 Antigravity",
+    "status_msg": {
+      "not_installed": "未找到 Google CLI。请使用以下命令安装 Antigravity：{command}（Gemini CLI 替代方案：npm i -g @google/gemini-cli）。",
+      "not_logged_in": "{cli} 已安装但尚未登录——请进行 Google 登录。",
+      "connected_subscription": "已通过 Google 订阅连接。",
+      "connected_subscription_email": "已通过 Google 订阅连接（{email}）。",
+      "connected_api_key": "已通过 Google API 密钥连接。"
+    }
   },
   "mcps_toast": {
-    "connected": "{0} 已连接"
+    "connected": "{0} 已连接",
+    "disconnected": "{0} 已断开",
+    "removed": "已移除 {server}"
   },
   "profile_toast": {
     "fact_applied": "已应用 {0} 条事实"
@@ -3544,13 +3868,18 @@
       "zh": {
         "label": "中文",
         "description": "所有标签和按钮都使用简体中文。"
+      },
+      "pt": {
+        "label": "Português (Portugal)",
+        "description": "所有标签和按钮都使用欧洲葡萄牙语。"
       }
     },
     "reply_options": {
       "auto": "{name}会使用你说或输入的语言。",
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "pt": "{name} responde em português."
     },
     "stt_options": {
       "auto": "自动检测你说的语言。",
@@ -3614,7 +3943,9 @@
     "last_pull": "上次拉取",
     "pull_every": "拉取间隔",
     "time_just_now": "刚刚",
-    "time_ago_prefix": ""
+    "time_ago_prefix": "",
+    "no_source": "无来源",
+    "jarvis_federation": "Jarvis 联邦"
   },
   "pair_dialog": {
     "title": "配对好友",
@@ -3673,7 +4004,8 @@
     "opened_in_editor": "已在编辑器中打开",
     "open_failed": "无法在编辑器中打开",
     "back_to_sessions": "返回会话",
-    "you": "你"
+    "you": "你",
+    "format_text": "文本"
   },
   "turn_card": {
     "turn": "轮次",
@@ -3685,7 +4017,29 @@
     "copy": "复制",
     "download_turn": "将此轮下载为文件",
     "thought": "思考：",
-    "spoke": "说出："
+    "spoke": "说出：",
+    "kind_reply": "回复",
+    "kind_clarify": "澄清问题",
+    "kind_timeout": "超时提示",
+    "kind_unavailable": "Brain 不可用",
+    "kind_stt_unavailable": "没听清你说的话",
+    "kind_privacy": "隐私",
+    "kind_completion": "后台结果",
+    "kind_subagent": "{agent} / 输出",
+    "kind_action_done": "操作已确认",
+    "kind_backchannel": "附和回应",
+    "kind_announcement": "通知",
+    "kind_preamble": "开场白",
+    "kind_progress": "进度更新",
+    "kind_withheld": "回答已保留（安全）",
+    "kind_other": "已朗读",
+    "tools_label": "工具：",
+    "voice_requested_title": "请求的语音（原生音频不是经过验证的说话人）：{voice}",
+    "voice_title": "语音：{voice}",
+    "voice_requested": "已请求",
+    "awaiting_confirmation": "等待确认",
+    "awaiting_confirmation_prefix": "（等待确认）",
+    "spoken_output": "语音输出"
   },
   "wiki_search": {
     "dialog_label": "知识库搜索",
@@ -3734,7 +4088,14 @@
   },
   "page_header": {
     "placeholder_title": "由 Agent D 提供",
-    "open_in_obsidian": "在 Obsidian 中打开"
+    "open_in_obsidian": "在 Obsidian 中打开",
+    "field_type": "类型",
+    "field_kind": "种类",
+    "field_status": "状态",
+    "field_created": "创建于",
+    "field_updated": "更新于",
+    "field_started": "开始于",
+    "field_last_activity": "最近活动"
   },
   "obsidian_button": {
     "trigger_failed": "无法触发 Obsidian 链接",
@@ -3871,23 +4232,40 @@
     "cancel_all_body": "个运行中的行动将被强制停止。工作子进程会通过 Job Object 终止；已写入的差异会保留在工作树中。",
     "error_prefix": "错误",
     "stopping": "正在停止…",
-    "confirm_stop_all": "是，全部停止"
+    "confirm_stop_all": "是，全部停止",
+    "kill_all": "全部终止（{count}）"
   },
   "mission_tree": {
     "no_prompt": "（无提示词）",
-    "empty": "还没有行动。主助手很快就会派发一个…"
+    "empty": "还没有行动。主助手很快就会派发一个…",
+    "unknown_prompt": "（未知）"
   },
   "pty_terminal": {
     "stream_unreachable": "无法访问 PTY 流。",
     "stream_disconnected": "流已断开",
     "connect_failed": "PTY 连接失败",
-    "connecting": "正在连接…"
+    "connecting": "正在连接…",
+    "worker_label": "worker {id}",
+    "status_offline": "离线",
+    "status_live": "在线",
+    "close_code": "（代码 {code}）"
   },
   "event_timeline": {
     "empty": "此行动还没有事件。"
   },
   "verdict_panel": {
-    "empty": "此行动还没有评审结论。"
+    "empty": "此行动还没有评审结论。",
+    "verdict_approve": "批准",
+    "verdict_revise": "修改",
+    "verdict_reject": "拒绝",
+    "iteration": "第 {n} 轮",
+    "axis_correctness": "正确性",
+    "axis_completeness": "完整性",
+    "axis_side_effects": "副作用",
+    "axis_security": "安全性",
+    "axis_pass": "通过",
+    "axis_fail": "未通过",
+    "confidence": "置信度"
   },
   "jarvis_agent_panel": {
     "select_mission": "选择一个行动以查看{name}-Agent 工作者。",
@@ -3895,7 +4273,11 @@
     "not_available": "（不可用）",
     "copy_path": "复制路径",
     "file_link_copies_path": "file:// 链接（会复制路径）",
-    "ended_label": "已结束"
+    "ended_label": "已结束",
+    "unknown_model": "（未知模型）",
+    "cost": "费用",
+    "state_dir": "状态目录",
+    "log_file": "日志文件"
   },
   "clis_view": {
     "status_connected": "已连接",
@@ -4038,7 +4420,13 @@
     "clear": "清除",
     "search_command": "搜索命令…",
     "success_only": "仅显示成功",
-    "usage_stats": "{total} 次调用 · {rate}% 成功 · ⌀ {avg} ms"
+    "usage_stats": "{total} 次调用 · {rate}% 成功 · ⌀ {avg} ms",
+    "col_version": "版本",
+    "fact_binary": "可执行文件",
+    "cmd_check": "检查",
+    "cmd_login": "登录",
+    "cmd_logout": "退出登录",
+    "category_placeholder": "cloud / git / 支付 / 其他"
   },
   "cli_test_hub_view": {
     "subtitle_tell": "用日常语言告诉",
@@ -4100,7 +4488,10 @@
       "twilio": "列出我的 Twilio 电话号码",
       "vercel": "列出我最近的 Vercel 部署",
       "wrangler": "列出我的 Cloudflare Workers"
-    }
+    },
+    "meta_tool": "工具",
+    "exit_label": "退出码",
+    "step_exit": "退出码 {code}"
   },
   "workflows_view": {
     "subtitle": "你托管的 AI 智能体流水线：按 cron 定时触发，或一键运行。",
@@ -4142,7 +4533,23 @@
     "now": "现在",
     "ago_suffix": "前",
     "run_missed": "已错过",
-    "run_missed_hint": "计划时间应用未在运行，已跳到下一次。"
+    "run_missed_hint": "计划时间应用未在运行，已跳到下一次。",
+    "title": "工作流",
+    "step_tool": "工具",
+    "seed_badge": "示例",
+    "step_count_one": "{count} 个步骤",
+    "step_count_other": "{count} 个步骤",
+    "steps_heading": "步骤（{count}）",
+    "trigger_manual": "手动",
+    "next_in": "{delta} 后运行",
+    "run_state_completed": "已完成",
+    "run_state_failed": "失败",
+    "run_state_running": "运行中",
+    "run_state_pending": "等待中",
+    "trigger_cron": "定时",
+    "trigger_event": "事件",
+    "trigger_interval": "间隔",
+    "trigger_webhook": "Webhook"
   },
   "conductor_view": {
     "new_job": "新建作业",
@@ -4158,7 +4565,19 @@
     "empty_jobs_hint": "首次启动时会预置 3 个演示作业。",
     "empty_timeline": "还没有运行记录，点击某个作业上的播放按钮。",
     "json_syntax_error": "JSON 语法错误",
-    "now": "现在"
+    "now": "现在",
+    "title": "Conductor",
+    "subtitle": "计划任务 + 智能体工作流——开源、自托管、代码优先。",
+    "jobs": "任务",
+    "timeline": "时间线",
+    "type_shell": "Shell",
+    "type_http": "HTTP",
+    "type_agent": "智能体",
+    "exit_code": "退出码 {code}",
+    "output": "输出",
+    "metrics": "指标",
+    "schedule_label": "计划：",
+    "example_description": "每 5 分钟 ping 一次 API 端点。"
   },
   "chat_tab": {
     "loading_friends": "正在加载好友…",
@@ -4182,7 +4601,8 @@
     "profile_standard_subline": "+ 行动标题",
     "profile_standard_desc": "好友还可见：当前正在运行的行动/任务、是否成功、时长。",
     "profile_detailed_subline": "+ {name}-Agent 摘要",
-    "profile_detailed_desc": "好友还可见：已签名的 {name}-Agent 摘要（不含话语）。"
+    "profile_detailed_desc": "好友还可见：已签名的 {name}-Agent 摘要（不含话语）。",
+    "default_badge": "默认"
   },
   "tools_canvas": {
     "back_tooltip": "返回智能体总览",
@@ -4191,7 +4611,9 @@
     "duration": "时长",
     "empty": "（空）",
     "no_tools_yet": "尚未调用任何工具。",
-    "no_tools_explainer": "一旦 {name}-Agent 工作者触发工具（例如 dispatch_to_harness、run_shell、screenshot），它就会以图标节点的形式出现在这里。"
+    "no_tools_explainer": "一旦 {name}-Agent 工作者触发工具（例如 dispatch_to_harness、run_shell、screenshot），它就会以图标节点的形式出现在这里。",
+    "arguments": "参数",
+    "output": "输出"
   },
   "use_web_socket": {
     "jarvis_opened": "{name} 已打开",
@@ -4199,7 +4621,20 @@
     "prompt_not_submitted": "提示词在输入框中，尚未发送",
     "prompt_unconfirmed": "提示词已输入，但窗格未显示已收到——请检查该窗格",
     "dictation_nowhere": "没有文本框处于焦点，因此听写内容未插入。它保存在听写历史中。",
-    "realtime_provider_issue": "实时服务商报告了一个问题。"
+    "realtime_provider_issue": "实时服务商报告了一个问题。",
+    "achievement_toast": "成就：{title}",
+    "achievement_title": {
+      "first_mcp": "首次 MCP 连接",
+      "openclaw_summoner": "智能体召唤师",
+      "tool_dabbler": "工具新手",
+      "tool_journeyman": "工具熟手",
+      "tool_master": "工具大师",
+      "triple_combo": "三连击",
+      "ten_x_engineer": "10 倍工程师",
+      "centennial": "百次达成",
+      "kilo_club": "千次俱乐部",
+      "one_year_with_jarvis": "与 Jarvis 相伴一年"
+    }
   },
   "chat_thread": {
     "message_to": "发消息给",
@@ -4222,13 +4657,19 @@
     "label_pubkey": "Jarvis 公钥（十六进制）",
     "telegram_id_placeholder": "例如 123456789",
     "pubkey_placeholder": "例如 4f3c2b…",
-    "submit": "添加"
+    "submit": "添加",
+    "mode_pair_link": "配对链接",
+    "label_display_name": "显示名称"
   },
   "permission_matrix": {
     "subline_minimal": "仅在线/离线",
     "subline_standard": "+ 行动标题",
     "subline_detailed": "+ {name}-Agent 摘要",
-    "aria_label": "共享配置"
+    "aria_label": "共享配置",
+    "profile_minimal": "最少",
+    "profile_standard": "标准",
+    "profile_detailed": "详细",
+    "subline_detailed_agent": "+ {agent} 摘要"
   },
   "self_mod_view": {
     "all_actors": "所有执行者",
@@ -4237,7 +4678,29 @@
     "sensitive_path_notice": "敏感路径——值已在服务器端隐去（Plan §AP-2）。",
     "intro_a": "审计记录、可修改设置和备份的只读视图。",
     "intro_b": "修改只能通过语音/对话进行——此视图只显示",
-    "intro_c": "对自身做了哪些更改。"
+    "intro_c": "对自身做了哪些更改。",
+    "value_redacted": "值已隐藏（计划 §AP-2 纵深防御）",
+    "actor_user": "用户",
+    "actor_system": "系统",
+    "col_timestamp": "时间戳",
+    "col_actor": "执行者",
+    "col_path": "路径",
+    "col_old_new": "旧 → 新",
+    "col_outcome": "结果",
+    "outcome_ok": "成功",
+    "outcome_rolled_back": "已回滚",
+    "outcome_fail": "失败",
+    "audit_event": "审计事件",
+    "risk_safe": "安全",
+    "risk_ask": "需询问",
+    "needs_restart": "需重启",
+    "col_filename": "文件名",
+    "col_size": "大小",
+    "col_age": "时长",
+    "title": "自我修改",
+    "tab_history": "历史",
+    "tab_mutable": "设置",
+    "tab_backups": "备份"
   },
   "wiki_view": {
     "page_not_found": "未找到页面",
@@ -4410,7 +4873,12 @@
       "paid_cap_reached": "已达到为 {provider} 批准的费用上限。",
       "paid_daily_cap_reached": "{provider} 的自动付费使用已达到每日上限。",
       "paid_consent_revoked": "{provider} 的自动付费使用已关闭。"
-    }
+    },
+    "total_count": "共 {count} 个",
+    "tab_verdicts": "评审结论",
+    "tab_reasoning": "推理",
+    "tab_plan": "计划",
+    "step_n": "第 {n} 步"
   },
   "mission_tool_approvals": {
     "tab_label": "审批",
@@ -4487,7 +4955,8 @@
     "empty_prompt": "描述你的需求——搜索会用 AI 排序。",
     "example_1": "“做一个帮我给邮件排优先级的技能”",
     "example_2": "“简化 Git 工作流”",
-    "example_3": "“PDF 转结构化 Markdown”"
+    "example_3": "“PDF 转结构化 Markdown”",
+    "score": "得分"
   },
   "missions": {
     "state_critiquing": "评审中",
@@ -4507,7 +4976,57 @@
   "mascot_gigi": {
     "aria_label": "{name} 吉祥物 Gigi",
     "back_online": "重新上线了！",
-    "connection_lost": "连接已断开…"
+    "connection_lost": "连接已断开…",
+    "idle": {
+      "hm": "嗯 …",
+      "all_quiet": "一切安静。",
+      "still_there": "还在吗？",
+      "whats_up": "在忙什么？",
+      "watching": "我在看着你哦。",
+      "focused": "很专注嘛？",
+      "take_break": "休息一下吧。",
+      "cool_work": "今天在做什么酷的东西吗？",
+      "bit_boring": "现在有点无聊。",
+      "good_ears": "我耳朵很灵，需要什么尽管说。"
+    },
+    "section": {
+      "chats_ready": "你准备好我就准备好了。",
+      "chats_listening": "我在听。",
+      "chats_say_something": "说点什么吧。",
+      "chats_type_or_talk": "打字或说话都行。",
+      "agents_colleagues": "这些智能体都是我的同事。",
+      "agents_favourite": "你最喜欢哪个？",
+      "skills_favourite": "技能是我最喜欢的功能。",
+      "skills_learn": "我们学点什么？",
+      "mcps_power": "更多 MCP = 更强大。",
+      "mcps_add": "我们加点什么？",
+      "languages_speak": "我会说你的语言。",
+      "languages_switch": "想换语言？说一声就行。",
+      "apikeys_careful": "保管好你的密钥。",
+      "apikeys_no_git": "别提交到 git！",
+      "settings_bother": "哪里不顺心？",
+      "settings_tweak": "要调整点什么吗？"
+    },
+    "voice": {
+      "listening_1": "我在听！",
+      "listening_2": "说吧。",
+      "listening_3": "嗯？",
+      "thinking_1": "让我想想 …",
+      "thinking_2": "稍等。",
+      "thinking_3": "嗯 …",
+      "speaking_1": "轮到我说了。",
+      "speaking_2": "听我说一下。",
+      "error_1": "哎呀。",
+      "error_2": "糟糕。",
+      "error_3": "不是我干的！"
+    },
+    "time": {
+      "morning_1": "早上好！",
+      "morning_2": "起床啦。",
+      "night_1": "还没睡？",
+      "night_2": "很晚了。",
+      "night_3": "睡够了吗？"
+    }
   },
   "agents_view": {
     "subtitle": "正在运行的 {name}-Agent——角色、状态、输出。",
@@ -4517,7 +5036,10 @@
     "phase4_notice": "随第 4 阶段（Harness 集成）启用。"
   },
   "friends_view": {
-    "subtitle": "Telegram 机器人 + 本地好友名册。好友能看到什么由你决定。"
+    "subtitle": "Telegram 机器人 + 本地好友名册。好友能看到什么由你决定。",
+    "title": "好友",
+    "tab_chat": "聊天",
+    "tab_status": "状态"
   },
   "feedback": {
     "subtitle": "报告 bug 或提出功能建议——都会直接发到 GitHub。",
@@ -4574,7 +5096,22 @@
     "open_workspaces": "打开的工作区",
     "workspace_summary_one": "{workspace}，工作区 {index}，1 个终端",
     "workspace_summary_many": "{workspace}，工作区 {index}，{count} 个终端",
-    "new_workspace": "新建工作区"
+    "new_workspace": "新建工作区",
+    "drop_title": "{folder}——将截图或文档拖到这里即可发送到此工作区",
+    "reorder_title": "{folder}——拖动以重新排序",
+    "rename": "重命名 {workspace}",
+    "rename_save": "保存 {workspace} 的名称",
+    "rename_cancel": "取消重命名",
+    "close_confirm_aria": "确认关闭 {workspace}",
+    "close_stop": "关闭并停止 {count} 个",
+    "keep_aria": "保持此工作区打开",
+    "keep": "保留",
+    "close": "关闭 {workspace}",
+    "close_title": "关闭 {workspace} 并停止其智能体",
+    "full": "已打开 {count} 个工作区——请先关闭一个。",
+    "add_title": "在单独的工作区中打开另一个文件夹",
+    "terminals_open_one": "{count} 个终端已打开",
+    "terminals_open_other": "{count} 个终端已打开"
   },
   "custom_cli": {
     "title_add": "添加你自己的 CLI",
@@ -4606,11 +5143,7 @@
     "gone": "该 CLI 已不在列表中。",
     "add_title": "你自己的 CLI",
     "add_hint": "列表里没有？用启动命令添加任意终端 CLI。",
-    "add_button": "添加 CLI",
-    "logo_label": "图标",
-    "optional": "可选",
-    "remove_logo_short": "移除",
-    "save_add": "添加 CLI"
+    "add_button": "添加 CLI"
   },
   "workspace_launcher": {
     "wizard": {
@@ -4770,6 +5303,52 @@
       "count_for": "{0} 的终端数量",
       "increase": "增加一个 {0} 终端",
       "auto_names": "终端名称会自动分配。打开后，你可以在每个终端的标题栏中重命名。"
+    },
+    "agent_setup": {
+      "agents_aria": "编程智能体",
+      "agent": "智能体",
+      "choose_all": "为所有会话选择",
+      "editing": "正在编辑会话 {number}",
+      "all_sessions": "所有会话",
+      "none": "没有可用的编程智能体。请在 CLIs 中连接一个编程智能体后继续。",
+      "count_aria": "会话数量",
+      "how_many": "多少个会话？",
+      "sessions_one": "{count} 个会话",
+      "sessions_other": "{count} 个会话",
+      "more": "更多",
+      "add_more": "随时可以添加更多",
+      "opens_as": "以 {columns} × {rows} 打开",
+      "lineup_aria": "会话阵容",
+      "will_launch": "将启动",
+      "click_hint": "点击会话以选择其他智能体",
+      "choose_agent": "选择智能体",
+      "edit_session": "编辑会话 {number}：{agent}"
+    },
+    "run_on": {
+      "online": "此电脑关机时仍继续运行",
+      "unknown": "尚未检查",
+      "offline": "当前无法访问",
+      "auto": "自动",
+      "auto_detail": "按份额选择此电脑或某台计算机",
+      "local": "此计算机",
+      "local_detail": "此电脑睡眠或关机时停止",
+      "label": "运行于",
+      "copy_note": "文件夹会先复制到 {computer}，包括未提交的更改。.env 和私钥等文件会留在此电脑上。编程 CLI 必须已安装在那里。",
+      "none_hint": "想让智能体在此电脑关机时继续工作吗？",
+      "connect_server": "连接服务器"
+    },
+    "shape": {
+      "exact_count": "精确数量 · 输入数字",
+      "one_fewer": "少用一个终端",
+      "one_more": "多用一个终端",
+      "count_aria": "终端数量",
+      "use_n": "使用 {count} 个终端",
+      "all_on_screen": "全部在一个屏幕上。",
+      "columns_narrow": "全部在一个屏幕上，每个约 {columns} 列——对智能体输出来说偏窄。在文字大小 {size} 下，此窗口可舒适地横排 {affordable} 个；最大化窗格即可全尺寸阅读。",
+      "columns_each": "全部在一个屏幕上，每个约 {columns} 列。",
+      "px_each": "全部在一个屏幕上，每个约 {px} px。",
+      "px_narrow": "全部在一个屏幕上，每个约 {px} px——对智能体输出来说偏窄。最大化窗格即可全尺寸阅读。",
+      "across": "横排 {columns} 个"
     }
   },
   "agent_accounts": {
@@ -4826,6 +5405,17 @@
       "fallback": "改用终端窗口",
       "cancel": "取消登录",
       "show_cli": "显示 CLI 输出的内容"
+    },
+    "workspace": {
+      "toast_switched": "新的 {agent} 终端将使用 {account}。",
+      "chip_title": "新的 {agent} 终端将以 {account} 打开。已在运行的窗格保持不变。点击切换。",
+      "chip_aria": "切换新终端使用的 {agent} 订阅",
+      "open_title": "工作区设置——选择新终端使用的订阅",
+      "title": "工作区设置",
+      "description": "连接同一编程 CLI 的多个订阅，并选择由哪个订阅驱动新的智能体终端。",
+      "close": "关闭设置",
+      "new_terminals": "新终端",
+      "note": "切换会应用于此后打开的每个终端，包括拆分出的终端——现有窗格保留启动时的账号，因此运行中的智能体不会丢失对话。只有在工作区向导中特意选择了订阅的窗格，拆分时才会沿用该选择。"
     }
   },
   "ide_chats": {
@@ -5068,6 +5658,73 @@
       "no_target": "附加文件前，请先打开或选择一个智能体终端。",
       "choose": "选择文件",
       "remove": "移除这条待用上下文"
+    },
+    "view_buttons": {
+      "grid_title": "终端网格——所有窗格同时显示在屏幕上。",
+      "chat_title": "对话视图——一次阅读一个智能体，就像一段对话。"
+    },
+    "focus_mode": {
+      "on_title": "专注编程模式已开启——Jarvis 在此工作区内回答。点击退出。",
+      "off_title": "开启专注编程模式——在你切换回来之前，Jarvis 都在此工作区内回答。"
+    },
+    "close_workspace": {
+      "aria": "关闭工作区",
+      "title": "关闭工作区并停止其中的所有智能体",
+      "confirm_title": "关闭此工作区？",
+      "confirm_body_one": "这会停止这 {count} 个编程智能体并关闭所有终端会话。已写入磁盘的内容会保留。",
+      "confirm_body_other": "这会停止全部 {count} 个编程智能体并关闭所有终端会话。已写入磁盘的内容会保留。",
+      "keep": "保持工作区打开",
+      "confirm": "关闭工作区"
+    },
+    "empty_workspace": {
+      "all_closed": "此工作区中的所有终端都已关闭。",
+      "open_terminal": "打开终端",
+      "picker_title": "打开终端——运行什么？",
+      "picker_aria": "新终端中应运行什么？"
+    },
+    "close_pane": {
+      "aria": "关闭 {pane}",
+      "title": "关闭 {pane}？",
+      "body": "此终端中运行的编程智能体会被停止，其会话也会消失。它已写入磁盘的内容会保留。",
+      "keep": "保持打开",
+      "confirm": "关闭 {pane}"
+    },
+    "pane": {
+      "copy_unavailable": "无法在此电脑上复制终端选区。",
+      "paste_unavailable": "无法在此电脑上读取剪贴板。",
+      "ready_reattached": "仍在运行——从你离开的地方继续",
+      "ready_resumed": "已继续之前的对话",
+      "ready_fresh": "已开始新的对话",
+      "drop_empty": "拖放的内容中没有此窗格可用的文件。",
+      "starting": "正在启动 {agent}…",
+      "attaching": "正在附加到 {pane}…",
+      "drop_hint_before": "放下即可交给 ",
+      "drop_hint_after": "",
+      "tip_drag": "拖动此栏即可移动 {pane}。",
+      "tip_restore": "双击可还原。",
+      "tip_fill": "双击可填满工作区。",
+      "tip_restore_named": "双击可将 {pane} 放回网格。",
+      "tip_fill_named": "双击可让 {pane} 填满工作区。",
+      "move": "移动 {pane}",
+      "rename": "重命名 {pane}",
+      "rename_save": "保存 {pane} 的名称",
+      "rename_cancel": "取消重命名 {pane}",
+      "running_on_account": "正在使用 {account} 运行",
+      "review_changes": "查看 {pane} 的更改",
+      "restore": "还原 {pane}",
+      "maximize": "最大化 {pane}",
+      "split_right": "在 {pane} 旁边再打开一个终端",
+      "split_down": "拆分 {pane} 并在下方打开一个终端",
+      "split_right_picker": "在旁边打开——运行什么？",
+      "split_down_picker": "在下方拆分——运行什么？",
+      "split_right_picker_aria": "{pane} 旁边应运行什么？",
+      "split_down_picker_aria": "{pane} 下方应运行什么？",
+      "unreachable": "无法连接到 {pane}。",
+      "exited_detail": "{agent} {detail}",
+      "exited": "{agent} 已不在 {pane} 中运行。",
+      "restart_aria": "重启 {pane}",
+      "restart_title": "在 {pane} 中重新启动一个 {agent}",
+      "restart": "重启"
     }
   },
   "prompt_writer": {
@@ -5219,7 +5876,8 @@
     "delete_failed": "无法删除。",
     "delete_running": "此运行仍在进行。请先停止，再删除。",
     "open_from_agent": "成果",
-    "open_from_agent_hint": "显示最近的运行产出的页面和图片。"
+    "open_from_agent_hint": "显示最近的运行产出的页面和图片。",
+    "summary": "摘要"
   },
   "marketplace_origin": {
     "badge": "市场",
@@ -5487,7 +6145,13 @@
     "agent_asks_default": "在你更改之前，它在行动前都会先问你。",
     "agent_instructions": "它的常驻指令",
     "import_agent": "导入智能体文件",
-    "import_failed": "无法导入该文件：{error}"
+    "import_failed": "无法导入该文件：{error}",
+    "request_failed": "市场请求失败（{status}）",
+    "refresh_failed": "刷新失败（{status}）",
+    "install_failed": "安装失败（{status}）",
+    "contents_failed": "无法读取该条目（{status}）",
+    "err_identity_start": "无法开始登录（{status}）",
+    "err_identity_failed": "登录失败"
   },
   "costs_view": {
     "title": "费用与 Token",
@@ -5645,7 +6309,8 @@
       "free": "免费",
       "unknown": "未定价",
       "subscription": "订阅"
-    }
+    },
+    "tokens_in_out": "输入 {input} / 输出 {output}"
   },
   "all_chats": {
     "title": "所有对话",
@@ -5787,7 +6452,9 @@
       "history_chats": "对话",
       "history_voice": "语音",
       "history_empty": "这里还没有内容",
-      "history_delete": "删除"
+      "history_delete": "删除",
+      "proposal_ask_first": "先询问：{tools}",
+      "proposal_always_allow": "始终允许：{tools}"
     },
     "world": {
       "minimap_label": "岛屿地图",
@@ -6236,6 +6903,35 @@
       "message": "你发给群组的消息",
       "stop": "停止本轮",
       "send": "询问群组"
+    },
+    "floor": {
+      "department_other": "其他",
+      "agent_fallback": "智能体",
+      "workspace_fallback": "工作区"
+    },
+    "provider_label": {
+      "ollama": "Ollama（本地）",
+      "local_server": "本地服务器"
+    },
+    "sample": {
+      "daily_at": "每天 {time}",
+      "lead": {
+        "title": "首席执行官——领导并调度整个团队",
+        "description": "你是这个智能体团队的负责人：它的首席执行官。你负责目标，而不是具体任务。每个到达你这里的请求都会被分诊，整理成清晰的工作任务，并交给职位相符的编排者或专家；你从不亲自做专家的工作。你让团队保持精简，交接都以书面形式记录（完成了什么、证据、还剩什么、下一步由谁负责），并让支出保持在每日预算之内。“询问”级别的操作始终等待用户确认；你从不绕过审批。你用用户的语言代表团队发言，汇报结果而不是过程。",
+        "routine": "晨会摘要"
+      },
+      "scout": {
+        "name": "侦察员",
+        "title": "研究编排者",
+        "description": "你负责研究。你把问题拆解成信息来源，广泛阅读，保留证据链接，并交回一份注明尚待解决问题的简报。",
+        "routine": "晨间研究简报"
+      },
+      "archivist": {
+        "name": "档案员",
+        "title": "知识管理员",
+        "description": "你负责共享记忆。你把完成的工作整理成简短、注明来源的 wiki 笔记，存放在你的命名空间下，并提议哪些内容值得提升为共享知识。",
+        "routine": "夜间整理"
+      }
     }
   },
   "chat_tools": {
@@ -6514,7 +7210,8 @@
     "expand": "放大 {file}",
     "open_file": "打开文件",
     "download": "下载",
-    "retry": "重试"
+    "retry": "重试",
+    "image_fallback": "图片"
   },
   "slash": {
     "locale": "en",
@@ -6631,6 +7328,23 @@
       "title": "转到文件",
       "placeholder": "输入文件名；加上 :42 可跳转到第 42 行",
       "no_match": "没有匹配的文件。"
+    },
+    "errors": {
+      "not_editable": "磁盘上的文件已无法在此编辑。",
+      "reopen_dirty": "请先保存或放弃更改，再以其他编码重新打开文件。"
+    },
+    "encoding_scripts": {
+      "labelled": "{script}（{encoding}）",
+      "utf8_bom": "UTF-8（带 BOM）",
+      "western": "西欧",
+      "central_european": "中欧",
+      "cyrillic": "西里尔文",
+      "greek": "希腊文",
+      "turkish": "土耳其文",
+      "japanese": "日文",
+      "chinese_simplified": "简体中文",
+      "chinese_traditional": "繁体中文",
+      "korean": "韩文"
     }
   },
   "ide_side_panel": {
@@ -7057,6 +7771,12 @@
         "data": "数据",
         "perf": "性能",
         "rocket": "发布"
+      },
+      "import_errors": {
+        "unreadable": "{file}：无法读取。",
+        "not_markdown": "{file}：不是 Markdown 或文本文件。",
+        "too_large": "{file}：大于 {size} KB。",
+        "not_text": "{file}：不是文本文件。"
       }
     },
     "office": {
@@ -7233,7 +7953,8 @@
       "close": "关闭",
       "gone": "这张截图已不再保留，无法编辑。",
       "text_placeholder": "输入…"
-    }
+    },
+    "editor_title": "Appshot 编辑器"
   },
   "jarvisx": {
     "title": "Jarvis X",
@@ -7502,5 +8223,967 @@
     "logged_offer": "{provider} / {model}，预估 {cost}，上限 {cap}。",
     "paid_usage": "在 {provider} / {model} 上的付费运行：实际 {cost}（预估 {estimate}，上限 {cap}）。",
     "paid_usage_automatic": "在 {provider} / {model} 上的自动付费运行：实际 {cost}（预估 {estimate}，上限 {cap}）。"
+  },
+  "ide_projects": {
+    "connect_failed": "无法连接此文件夹，请重试。",
+    "choose_folder_error": "请选择一个文件夹以继续。",
+    "back_to_project": "返回项目",
+    "choose_folder_title": "选择文件夹",
+    "connect_title": "连接项目",
+    "connect_description": "选择一个源文件夹，并可选填项目名称。",
+    "choose_folder_hint": "请选择一个文件夹以继续",
+    "use_folder": "使用此文件夹",
+    "project_name": "项目名称",
+    "project_name_optional": "项目名称（可选）",
+    "source_folder": "源文件夹",
+    "change": "更改",
+    "add_folder_hint": "从这台电脑添加一个文件夹",
+    "choose_folder": "选择文件夹",
+    "connecting": "正在连接…",
+    "reorder_needs_restart": "此视图比后端更新 — 请重启应用后重试。",
+    "reveal_desktop_only": "只有桌面应用才能打开文件夹。",
+    "sessions_one": "{count} 个智能体会话",
+    "sessions_other": "{count} 个智能体会话",
+    "path_copied": "已复制文件夹路径",
+    "path_copy_failed": "无法复制文件夹路径",
+    "opening": "正在打开 {label}…",
+    "open_failed": "无法启动 {label}",
+    "workspace_copy": "{workspace} 副本",
+    "interrupt_failed": "{total} 个智能体中有 {failed} 个无法中断。",
+    "interrupted_one": "已中断 {count} 个智能体。",
+    "interrupted_other": "已中断 {count} 个智能体。",
+    "the_computer": "该电脑",
+    "this_computer": "这台电脑",
+    "moving": "正在将 {workspace} 移至 {target}，可能需要一分钟。",
+    "moved": "{workspace} 现在运行在 {target} 上。",
+    "rename_named": "重命名 {target}",
+    "save_named": "保存 {target}",
+    "cancel_rename_named": "取消重命名 {target}",
+    "open_named": "打开 {target}",
+    "collapse_named": "折叠 {target}",
+    "expand_named": "展开 {target}",
+    "not_restorable": "此工作区无法在这台电脑上恢复",
+    "drag_hint": "{target} — 拖动以重新排序，或按 Alt 加方向键移动",
+    "switching": "正在切换工作区",
+    "project_actions_for": "{target} 的项目操作",
+    "project_actions": "项目操作",
+    "new_workspace_in": "在 {project} 中新建工作区",
+    "new_workspace": "新建工作区",
+    "workspace_actions_for": "{target} 的工作区操作",
+    "workspace_actions": "工作区操作",
+    "create_workspace": "创建工作区",
+    "open_in": "在 {editor} 中打开",
+    "not_installed": "未安装",
+    "open_on": "在 {target} 上打开",
+    "the_web": "网页",
+    "the_web_page": "网页",
+    "new_worktree": "在 worktree 中新建工作区",
+    "new_worktree_hint": "为其智能体提供独立的文件夹和分支",
+    "rename_project": "重命名项目",
+    "unpin_project": "取消固定项目",
+    "pin_project": "固定项目",
+    "delete_project": "删除项目",
+    "add_agent": "再添加一个智能体",
+    "duplicate": "复制工作区",
+    "duplicate_hint_one": "启动 {count} 个新智能体",
+    "duplicate_hint_other": "启动 {count} 个新智能体",
+    "interrupt_one": "中断 {count} 个工作中的智能体",
+    "interrupt_other": "中断 {count} 个工作中的智能体",
+    "interrupt_hint": "停止当前任务，保留聊天",
+    "reopen": "重新打开工作区",
+    "reopen_unreachable": "无法访问其文件夹",
+    "copy_path": "复制文件夹路径",
+    "move_to": "将工作区移至 {computer}",
+    "move_hint": "此电脑关机时仍保持运行",
+    "bring_back": "将工作区移回本机",
+    "git_hint": "提交、推送、拉取请求、worktree",
+    "rename_workspace": "重命名工作区",
+    "remove_workspace": "移除工作区",
+    "workspaces": "工作区",
+    "connect_folder_title": "连接项目文件夹",
+    "pinned": "已固定",
+    "other_projects": "其他项目",
+    "empty": "连接一个文件夹以开始项目。",
+    "remove_title": "移除 {workspace}？",
+    "remove_body_one": "其 {count} 个编程智能体将停止，工作区会从侧边栏移除。磁盘上的文件夹及其聊天保持不变。",
+    "remove_body_other": "其 {count} 个编程智能体将停止，工作区会从侧边栏移除。磁盘上的文件夹及其聊天保持不变。",
+    "remove_body_closed": "工作区会从侧边栏移除。磁盘上的文件夹及其聊天保持不变。",
+    "removing": "正在移除…",
+    "remove_named": "移除 {workspace}",
+    "delete_title": "删除 {project}？",
+    "delete_body_idle": "这会忘记该项目及其聊天。磁盘上的文件夹保持不变。",
+    "delete_body": "这会停止 {workspaces}中的 {agents}，并忘记该项目及其聊天。磁盘上的文件夹保持不变。",
+    "running_agents_one": "{count} 个运行中的智能体",
+    "running_agents_other": "{count} 个运行中的智能体",
+    "open_workspaces_one": "{count} 个打开的工作区",
+    "open_workspaces_other": "{count} 个打开的工作区",
+    "deleting": "正在删除…",
+    "delete_named": "删除 {project}",
+    "show_in_explorer": "在资源管理器中显示",
+    "show_in_finder": "在访达中显示",
+    "show_in_file_manager": "在文件管理器中显示",
+    "keep": "保留"
+  },
+  "ide_folder_picker": {
+    "create_failed": "无法创建该文件夹。",
+    "drop_not_folder": "这不是文件夹。请将文件夹拖放到这里，或从列表中选择一个。",
+    "drop_finding": "正在查找你拖放的文件夹…",
+    "drop_not_found": "找不到该文件夹。",
+    "this_machine": "本机",
+    "starting_with": "以“{leaf}”开头的文件夹",
+    "folders_in": "{folder} 中的文件夹",
+    "places": "位置",
+    "drop_overlay": "松开以选择此文件夹",
+    "search_placeholder": "按名称搜索或粘贴路径",
+    "search_aria": "按名称搜索文件夹，或粘贴路径",
+    "clear_search": "清除搜索",
+    "browse_title": "在这台电脑自带的文件夹窗口中选择文件夹",
+    "window_open": "窗口已打开…",
+    "browse": "浏览…",
+    "new_folder_title": "在 {path} 中新建文件夹",
+    "your_home_folder": "你的主文件夹",
+    "new_folder": "新建文件夹",
+    "native_open_note": "文件夹窗口已打开，请在其中选择文件夹。如果看不到，它可能在此窗口后面或在任务栏中。",
+    "go_up": "上移一级文件夹",
+    "nothing_called": "{machine} 上没有名为“{query}”的内容",
+    "called_anywhere": "{machine} 上所有名为“{query}”的文件夹",
+    "folder_path": "文件夹路径",
+    "start_title": "开始：{machine} 上的最近文件夹和位置",
+    "click_to_edit_path": "点击查看并编辑完整路径",
+    "show_whole_path": "显示完整路径",
+    "type_path": "输入路径",
+    "type_path_title": "输入或粘贴路径 — 按 Tab 补全文件夹名",
+    "hide_hidden": "隐藏隐藏文件夹",
+    "show_hidden": "显示隐藏文件夹",
+    "hidden_shown_title": "正在显示隐藏文件夹（名称以点开头）",
+    "hidden_list_title": "同时列出隐藏文件夹 — 名称以点开头",
+    "reload": "重新加载此文件夹",
+    "new_folder_name": "新文件夹的名称",
+    "create": "创建",
+    "cancel_new_folder": "取消新建文件夹",
+    "created_in": "创建位置",
+    "recent_folders": "最近的文件夹",
+    "terminals_one": "{count} 个终端",
+    "terminals_other": "{count} 个终端",
+    "forget": "忘记 {folder}",
+    "forget_title": "从此列表中移除（文件夹本身保留）",
+    "create_folder_named": "创建文件夹“{folder}”",
+    "in_parent": "位于 {path}",
+    "empty_search": "未找到该名称的文件夹。",
+    "empty_search_hint": "要按位置打开，请输入完整路径，例如 {example}。",
+    "empty_leaf": "这里没有以“{leaf}”开头的文件夹。",
+    "empty_needle": "这里没有匹配“{query}”的文件夹。继续输入以搜索整台电脑。",
+    "empty_folder": "此文件夹中没有子文件夹。你可以直接选择它，或在其中新建文件夹。",
+    "empty_start": "这里没有可列出的内容 — 在上方搜索、拖放文件夹或输入其路径。",
+    "path_example_before": "本机上的完整路径形如",
+    "path_example_after": "。",
+    "tip_drag": "提示：你也可以从文件管理器把文件夹拖到这里。",
+    "chosen_folder": "已选文件夹：",
+    "no_folder_chosen": "尚未选择文件夹。在列表中打开一个文件夹即可选择它。",
+    "today": "今天",
+    "yesterday": "昨天",
+    "days_ago": "{count} 天前",
+    "last_week": "上周",
+    "weeks_ago": "{count} 周前",
+    "path_input_placeholder": "输入路径 — 按 Tab 补全文件夹名",
+    "go_to_path": "转到此路径"
+  },
+  "shell_events": {
+    "empty": "还没有事件。可从“调试”标签页发送一个测试事件。",
+    "hide_payload": "隐藏",
+    "show_payload": "负载"
+  },
+  "ide_panes": {
+    "exit": {
+      "stopped": "已停止",
+      "ctrl_c": "已被 Ctrl-C 停止（0xC000013A）",
+      "access_violation": "已崩溃——内存访问冲突（0xC0000005）",
+      "stack_overrun": "已崩溃——栈缓冲区溢出（0xC0000409）",
+      "heap_corruption": "已崩溃——堆损坏（0xC0000374）",
+      "unhandled_exception": "已崩溃——未处理的异常（0xC000041D）",
+      "dll_missing": "无法启动——缺少必需的 DLL（0xC0000142）",
+      "unexpected": "意外停止——使用“重启”恢复",
+      "unexpected_code": "意外停止（退出代码 {code}）——使用“重启”恢复"
+    },
+    "socket": {
+      "authorizing": "正在授权终端…",
+      "auth_failed": "终端授权失败——正在重试。",
+      "workspace_closed": "此工作区已关闭——正在重新加载…",
+      "start_failed_this": "无法启动此终端。",
+      "start_failed": "无法启动终端。",
+      "no_such_pane": "此终端已不属于当前打开的工作区。",
+      "waiting_workspace": "正在等待工作区恢复…",
+      "unreachable": "无法连接到终端——正在重试。",
+      "connection_lost": "终端连接已断开（代码 {code}）——正在重新连接。"
+    },
+    "common": {
+      "done": "完成"
+    },
+    "install": {
+      "title": "安装 {agent}",
+      "installing": "正在安装 {agent}",
+      "starting": "正在启动 {agent} 的安装程序…",
+      "installed": "{agent} 已安装",
+      "watching": "正在等待 {agent} 出现…"
+    },
+    "picker": {
+      "no_shell": "此处没有 shell",
+      "not_installed": "未安装",
+      "install": "安装"
+    },
+    "close_dialog": {
+      "workspace_title": "关闭 {workspace}？",
+      "workspace_title_unnamed": "关闭工作区？",
+      "pane_body": "此窗格中的编程智能体会立即停止，包括它仍在处理的任务。",
+      "workspace_body_empty": "工作区将关闭。你可以随时从“项目”中恢复它。",
+      "workspace_body_one": "其编程智能体会立即停止。你可以随时从“项目”中恢复该工作区。",
+      "workspace_body_other": "全部 {count} 个编程智能体会立即停止。你可以随时从“项目”中恢复该工作区。",
+      "keep": "保持运行",
+      "close_agent": "关闭智能体"
+    },
+    "fork": {
+      "title": "分叉 {pane}",
+      "description": "从这个智能体当前的位置启动第二个智能体。原来的智能体会继续运行，不受影响。",
+      "chat_title": "分叉对话",
+      "chat_body": "一个新智能体会在这个旁边打开，并在同一文件夹中继续对话的副本。",
+      "worktree_title": "分叉到 worktree",
+      "worktree_needs_repo": "需要一个 git 仓库——此文件夹不是。",
+      "worktree_body": "同样的对话副本，但位于自己的 git worktree 和分支中，两个智能体修改文件时互不干扰。",
+      "how": "分叉方式",
+      "branch_label": "worktree 和分支名称",
+      "finding_name": "正在查找名称…",
+      "branch_hint": "基于最新提交创建。尚未提交的更改会留在当前文件夹中。",
+      "cannot_copy": "{agent} 无法复制其对话，因此分叉会从新的对话开始。",
+      "confirm_worktree": "分叉到 worktree"
+    },
+    "move": {
+      "no_room": "没有空间",
+      "summary_empty": "{workspace} 是空的，因此 {pane} 会填满它。",
+      "summary_even": "{pane} 加入 {workspace}，每个窗格平分空间。",
+      "summary_left": "{anchor} 左侧：{pane} 占用其一半空间。",
+      "summary_right": "{anchor} 右侧：{pane} 占用其一半空间。",
+      "summary_above": "{anchor} 上方：{pane} 占用其一半空间。",
+      "summary_below": "{anchor} 下方：{pane} 占用其一半空间。",
+      "place_left": "将 {pane} 放在 {anchor} 左侧",
+      "place_right": "将 {pane} 放在 {anchor} 右侧",
+      "place_above": "将 {pane} 放在 {anchor} 上方",
+      "place_below": "将 {pane} 放在 {anchor} 下方",
+      "title": "将 {pane} 移到 {workspace}",
+      "description": "指向一个窗格，然后点击它应放置的一侧。智能体会继续运行。",
+      "loading": "正在加载 {workspace}…",
+      "fills_empty": "填满空工作区",
+      "tile_aria": "{anchor}。用方向键选择 {pane} 放置的一侧。",
+      "confirm": "移到 {workspace}"
+    },
+    "activity": {
+      "label": {
+        "stopped": "已停止",
+        "status_unknown": "状态未知",
+        "working": "工作中",
+        "starting": "启动中",
+        "needs_you": "需要你",
+        "exited": "已退出",
+        "failed": "失败",
+        "done": "已完成",
+        "idle": "空闲",
+        "error": "错误",
+        "live": "已连接"
+      },
+      "hint": {
+        "interrupted": "任务已中断。",
+        "unknown": "没有可用的已验证任务状态。",
+        "working": "工作中——任务仍在进行。",
+        "starting": "正在启动。其智能体尚未接管此窗格。",
+        "asking": "因屏幕上的问题而暂停，正在等待你的回答。",
+        "exited": "其进程已结束。",
+        "failed": "无法启动其智能体。",
+        "done": "已完成，正在提示符处等待。这只表示它停下了，不代表工作是正确的。",
+        "idle": "正在提示符处等待，尚未向它发送任何内容。",
+        "connecting": "正在连接到窗格。",
+        "error": "无法连接到此窗格。",
+        "connected": "已连接。"
+      },
+      "duration_seconds": "{count} 秒",
+      "duration_minutes": "{count} 分钟",
+      "duration_hour_one": "1 小时",
+      "duration_hours_other": "{count} 小时",
+      "for_elapsed": "已持续 {elapsed}。"
+    },
+    "recap": {
+      "why": {
+        "pinned": "这是你写的，在你重置之前会一直保留。",
+        "cli_title": "此窗格中的智能体自行命名了它的会话。",
+        "disabled": "模型摘要已关闭，因此这是从窗格自身的输出中读取的。",
+        "not_started": "此窗格中尚未运行任何内容，因此没有可总结的。",
+        "warming": "目前输出太少，无法总结——这一行是从窗格自身的输出中读取的。",
+        "working": "正在撰写摘要。这一行是从窗格自身的输出中读取的。",
+        "queued": "正在排队等待总结。这一行是从窗格自身的输出中读取的。",
+        "unavailable": "没有模型能够总结此窗格，因此这一行是从它自身的输出中读取的。"
+      },
+      "credit": {
+        "user": "由你撰写",
+        "cli_named": "由 {writer} 命名",
+        "cli": "由智能体命名",
+        "model_named": "由 {writer} 总结",
+        "model": "由模型总结",
+        "heuristic": "从输出中读取"
+      },
+      "ago_seconds": "{count} 秒前",
+      "ago_minutes": "{count} 分钟前",
+      "ago_hours": "{count} 小时前",
+      "what_doing": "{pane} 正在做什么",
+      "write_yourself": "自己写",
+      "back_to_auto": "恢复自动摘要",
+      "summarize_again": "重新总结此窗格",
+      "header_line": "标题行",
+      "header_placeholder": "此窗格的用途",
+      "longer": "详细版本",
+      "optional": "——可选",
+      "detail_placeholder": "工作进展到哪里，还有哪些未完成…",
+      "save_hint": "⌘/Ctrl + Enter 保存",
+      "save_empty_hint": "保存空行即可恢复自动摘要"
+    },
+    "receipt": {
+      "just_now": "刚刚",
+      "ago_hour_one": "1 小时前",
+      "ago_hours_other": "{count} 小时前",
+      "load_failed": "无法读取完整的提示词。",
+      "sent": "提示词已发送",
+      "sent_note": "智能体已接收并开始执行",
+      "typed": "提示词已输入，未开始",
+      "typed_note": "它还在此窗格的输入框中——在这里按 Enter 运行它",
+      "unconfirmed": "提示词已发送——无法确认已开始",
+      "unconfirmed_note": "它已发送到窗格；无法确认智能体已开始",
+      "read_title": "查看发送给 {pane} 的确切内容",
+      "dismiss": "关闭 {pane} 的送达回执",
+      "click_to_read": "点击查看发送的内容",
+      "loading_rest": "{count} 个字符的开头——正在读取其余部分…",
+      "opening_only": "仅显示开头——{error}",
+      "delivered": "{count} 个字符，已送达 {pane}。",
+      "delivered_at": "{count} 个字符，于 {clock} 送达 {pane}。"
+    },
+    "options": {
+      "title": "工作区选项",
+      "close": "关闭工作区选项",
+      "arrangement": "终端排列",
+      "balance": "均衡布局",
+      "arrangement_hint": "将终端标题拖到边缘，可将其放在另一个终端的旁边、上方或下方。拖到中间可交换位置。",
+      "style": "终端样式",
+      "style_minimal": "极简",
+      "style_minimal_hint": "方形边框，细标题行",
+      "style_classic": "经典",
+      "style_classic_hint": "圆角卡片，较高的标题栏",
+      "appearance": "终端外观",
+      "appearance_auto_aria": "跟随应用外观",
+      "appearance_dark_aria": "深色终端",
+      "appearance_light_aria": "浅色终端",
+      "appearance_auto": "跟随应用",
+      "appearance_dark": "深色",
+      "appearance_light": "浅色",
+      "add_agent": "添加编程智能体",
+      "git": "Git：分支、提交、worktree"
+    },
+    "github": {
+      "state_branch": "已发布的分支",
+      "state_draft": "草稿拉取请求",
+      "state_open": "打开的拉取请求",
+      "state_queued": "在合并队列中",
+      "state_merged": "拉取请求已合并",
+      "state_closed": "未合并即关闭",
+      "unavailable": "GitHub 状态不可用",
+      "branch_generic": "GitHub 分支",
+      "dest_pr": "拉取请求 #{number}",
+      "dest_branch": "分支",
+      "open_aria": "打开 GitHub {destination}：{identity}",
+      "open_title": "打开{destination}",
+      "refresh_failed": "无法刷新 GitHub 状态。",
+      "refreshing": "正在刷新 GitHub 状态…"
+    },
+    "dock": {
+      "swap": "交换位置",
+      "left": "放在左侧",
+      "right": "放在右侧",
+      "above": "放在上方",
+      "below": "放在下方"
+    },
+    "grid": {
+      "placed_swap": "{pane} 和 {target} 已交换。",
+      "placed_left": "{pane} 已放在 {target} 左侧。",
+      "placed_right": "{pane} 已放在 {target} 右侧。",
+      "placed_above": "{pane} 已放在 {target} 上方。",
+      "placed_below": "{pane} 已放在 {target} 下方。",
+      "arrange_failed": "无法保存排列，已恢复之前的顺序。",
+      "moved_toast": "{pane} 已移到 {workspace}。其智能体继续运行。",
+      "moved_renamed_toast": "{pane} 已作为 {renamed} 移到 {workspace}。其智能体继续运行。",
+      "moved": "{pane} 已移到 {workspace}。",
+      "moved_renamed": "{pane} 已作为 {renamed} 移到 {workspace}。",
+      "forked_branch": "{pane} 已分叉为 {fork}，位于分支 {branch}。",
+      "forked": "{pane} 已分叉为 {fork}。",
+      "the_computer": "该计算机",
+      "this_computer": "此计算机",
+      "placing": "正在将 {pane} 移到 {computer}。文件夹和对话会一起迁移。",
+      "placed_on": "{pane} 现在在 {computer} 上运行。",
+      "bring_back": "移回此计算机",
+      "run_on": "在 {computer} 上运行",
+      "another_computer": "另一台计算机",
+      "no_pane_up": "{pane} 上方没有窗格。",
+      "no_pane_down": "{pane} 下方没有窗格。",
+      "no_pane_left": "{pane} 左侧没有窗格。",
+      "no_pane_right": "{pane} 右侧没有窗格。",
+      "tile_aria": "{pane}。拖到边缘可停靠，拖到中间可交换。Alt+方向键与相邻窗格交换。",
+      "move_to_menu": "移到 {workspace}…",
+      "not_into": "不能移到 {workspace}：不同的文件夹",
+      "that_workspace": "该工作区"
+    },
+    "header": {
+      "split_right": "向右拆分",
+      "split_down": "向下拆分",
+      "split_left": "向左拆分",
+      "split_up": "向上拆分",
+      "rename_failed": "无法保存名称。",
+      "name_for": "{pane} 的名称",
+      "save_name": "保存名称",
+      "actions_for": "{pane} 的操作",
+      "swap_focused": "与聚焦的窗格交换",
+      "fork_menu": "分叉…",
+      "unzoom": "取消缩放",
+      "zoom": "缩放",
+      "conversation_history": "对话历史",
+      "open_as_chat": "以对话形式打开",
+      "review_changes": "查看更改",
+      "restart_agent": "重启智能体",
+      "right_click_title": "启用转发时，Shift+右键单击可打开窗格菜单。",
+      "right_click": "将右键单击发送到窗格",
+      "right_click_hint": "Shift + 右键单击：窗格菜单",
+      "more_actions": "{pane} 的更多操作",
+      "status_connecting": "连接中",
+      "status_live": "已连接",
+      "status_exited": "已退出",
+      "status_error": "错误",
+      "runs_on": "在 {computer} 上运行。此应用关闭时它仍会继续工作。",
+      "worktree_branch": "在独立的 git worktree 中运行，分支 {branch}",
+      "drag_hint": "拖动以重新排序，或聚焦此标题后按 Alt 加方向键。",
+      "add_beside": "在 {pane} 旁边添加智能体"
+    },
+    "request_failed": "请求失败（{status}）。",
+    "seam": {
+      "resize_pair": "拖动以调整 {before} 和 {after} 的大小",
+      "resize_columns": "拖动以调整这两列终端的大小",
+      "pane_before": "前一个窗格",
+      "pane_after": "后一个窗格"
+    }
+  },
+  "ide_git": {
+    "detached_at": "游离于 {head}",
+    "current_branch": "当前分支",
+    "worktree_badge": "worktree",
+    "uncommitted": "{count} 项未提交",
+    "nothing_uncommitted": "没有未提交的内容",
+    "changes_one": "{count} 处更改",
+    "changes_other": "{count} 处更改",
+    "clean": "干净",
+    "compared_with": "与 {upstream} 比较",
+    "ahead": "领先",
+    "behind": "落后",
+    "not_pushed_title": "此分支尚未推送",
+    "not_pushed": "未推送",
+    "without_git": "不使用 git",
+    "without_git_hint": "按原样打开文件夹",
+    "init": "初始化 git",
+    "init_hint": "在 main 上新建仓库，可直接创建分支",
+    "share_checkout": "共享此检出",
+    "share_checkout_hint": "与其他智能体使用同一文件夹",
+    "current_checkout": "当前检出",
+    "work_on_branch": "在项目文件夹中基于 {branch} 工作",
+    "work_in_folder": "在项目文件夹中工作",
+    "new_worktree": "新建 worktree",
+    "new_worktree_hint_agent": "独立的文件夹和分支，在单独的标签页中打开",
+    "new_worktree_hint": "独立的文件夹和分支，智能体互不冲突",
+    "new_branch": "新建分支",
+    "new_branch_hint": "在项目文件夹中从此处创建分支",
+    "existing_branch": "现有分支",
+    "existing_branch_hint": "在此检出另一个分支",
+    "existing_worktree": "现有 worktree",
+    "existing_worktree_hint": "打开已存在的 worktree",
+    "works_on": "基于 {branch} 工作",
+    "works_in_folder": "在项目文件夹中工作",
+    "opens_as_is": "按原样打开文件夹",
+    "opens_as_is_hint": "这里没有 git。你可以按需设置。",
+    "summary_agent_hint": "与你的其他智能体使用同一文件夹，无需设置。",
+    "summary_workspace_hint": "在项目文件夹中，保持现状，无需设置。",
+    "reading_repo": "正在读取仓库…",
+    "git_options": "Git 选项",
+    "hide_options": "隐藏选项",
+    "not_installed": "这台电脑上未安装 Git。请从 git-scm.com 安装以使用分支和 worktree。",
+    "checkout_aria": "Git 检出",
+    "recommended": "推荐",
+    "branch_name": "分支名称",
+    "suggest_name": "建议另一个名称",
+    "based_on": "基于",
+    "base_branch": "基础分支",
+    "hint_current": "当前",
+    "hint_default": "默认",
+    "unborn": "此仓库还没有提交 — 请先进行首次提交再创建分支。",
+    "creates_worktree": "将创建 {path}。只复制已提交的内容；现有分支会被复用。",
+    "dirty_moves": "你未提交的更改会随之转到新分支。",
+    "folder_switches": "项目文件夹会为其中的每个智能体切换到新分支。",
+    "branch": "分支",
+    "worktree": "Worktree",
+    "detached": "游离",
+    "init_note": "在 {branch} 上创建一个带空的首次提交的仓库。你的文件不会被提交 — 由你决定提交什么。",
+    "tag_modified": "已修改",
+    "tag_added": "已添加",
+    "tag_deleted": "已删除",
+    "tag_renamed": "已重命名",
+    "tag_copied": "已复制",
+    "tag_conflict": "冲突",
+    "tag_new": "新",
+    "committed": "已提交 {sha}。",
+    "pushed_to": "已推送到 {upstream}。",
+    "fetched": "已获取所有远程仓库。",
+    "draft_pr_opened": "已创建草稿拉取请求。",
+    "pr_opened": "已创建拉取请求。",
+    "merged": "已将 {branch} 合并到 {target}（{sha}）。",
+    "pruned": "已忘记文件夹已不存在的 worktree。",
+    "initialized": "已在 main 上初始化仓库。",
+    "refresh": "刷新",
+    "close_panel": "关闭 Git 面板",
+    "open_link": "打开链接",
+    "open": "打开",
+    "not_installed_refresh": "这台电脑上未安装 Git。请从 git-scm.com 安装，然后刷新。",
+    "not_a_repo": "此文件夹还不是 git 仓库。初始化一个即可为智能体提供分支和 worktree。",
+    "worktree_of": "{folder} 的一个 worktree。其智能体在自己的分支上工作，不会触碰主文件夹。",
+    "changes": "更改",
+    "nothing_uncommitted_full": "没有未提交的内容。",
+    "commit_message": "提交信息",
+    "commit_placeholder": "提交信息，例如 feat: add login form",
+    "no_changes": "没有可提交的更改",
+    "commit_all": "全部提交",
+    "share": "共享",
+    "no_remote": "此仓库没有远程仓库",
+    "push": "推送",
+    "publish_branch": "发布分支",
+    "fetch": "获取",
+    "install_gh": "安装 GitHub CLI (gh) 以创建拉取请求",
+    "switch_feature_branch": "请先切换到功能分支",
+    "pull_request": "拉取请求",
+    "drafts": "以草稿形式创建拉取请求",
+    "commit_first": "请先提交更改",
+    "merge_into": "将 {branch} 合并到 {target}",
+    "worktrees": "Worktree",
+    "pruning": "正在清理…",
+    "prune_missing": "清理缺失项",
+    "no_worktrees": "还没有 worktree。worktree 为智能体提供独立的文件夹和分支，让多个智能体可以同时修改代码。",
+    "detached_head": "游离 {head}",
+    "this_workspace": "此工作区",
+    "folder_missing": "文件夹缺失",
+    "locked": "已锁定",
+    "remove_named": "移除 {folder}",
+    "confirm_removal": "确认移除",
+    "remove_note": "文件夹将被删除。已提交的内容保留在其分支上。",
+    "also_delete_branch": "如果分支 {branch} 已合并，也将其删除",
+    "removing": "正在移除…",
+    "remove_anyway": "仍然移除",
+    "remove_worktree": "移除 worktree"
+  },
+  "ide_hotkeys": {
+    "menu": {
+      "aria": "IDE 快捷键",
+      "all_keys": "所有按键",
+      "cancel": "取消",
+      "exit": "退出"
+    },
+    "badge": {
+      "rename": "重命名",
+      "workspace": "工作区",
+      "keys": "按键",
+      "prefix": "前缀"
+    },
+    "bar": {
+      "right": "右侧",
+      "left": "左侧",
+      "above": "上方",
+      "below": "下方",
+      "even_grid": "均匀网格",
+      "back": "返回",
+      "new": "新建",
+      "worktree": "worktree",
+      "rename": "重命名",
+      "close": "关闭",
+      "git": "git",
+      "options": "选项",
+      "connect_folder": "连接文件夹",
+      "switch": "切换",
+      "any_key": "任意键",
+      "split": "拆分",
+      "move": "移动",
+      "zoom": "缩放",
+      "workspaces": "工作区",
+      "all_keys": "所有按键",
+      "send_leader": "发送 {keys}"
+    },
+    "help": {
+      "open_agent": "打开 {agent}",
+      "to_right": "向右",
+      "to_left": "向左",
+      "above": "上方",
+      "below": "下方",
+      "even_grid": "均匀网格",
+      "group_workspace": "工作区",
+      "new_workspace": "新建工作区",
+      "new_worktree_workspace": "新建 worktree 工作区",
+      "rename_workspace": "重命名工作区",
+      "close_workspace": "关闭工作区",
+      "git_panel": "Git 面板",
+      "workspace_options": "工作区选项",
+      "connect_folder": "连接项目文件夹",
+      "prev_next_workspace": "上一个 / 下一个工作区",
+      "go_to_workspace_n": "转到工作区 1–9",
+      "group_new_pane": "新建窗格",
+      "agent_then_arrow": "{agent}，然后按方向键",
+      "split_right_same": "向右拆分，同一智能体",
+      "split_below_same": "向下拆分，同一智能体",
+      "choose_agent": "选择智能体…",
+      "group_panes": "窗格",
+      "focus_neighbor": "聚焦相邻窗格",
+      "swap_neighbor": "与相邻窗格交换",
+      "maximize_restore": "最大化 / 还原",
+      "rename_pane": "重命名窗格",
+      "fork_pane": "分叉窗格",
+      "close_pane": "关闭窗格",
+      "even_layout": "均分布局",
+      "group_workspaces": "工作区",
+      "workspace_menu": "工作区菜单…",
+      "go_to_workspace": "转到工作区",
+      "next_prev_workspace": "下一个 / 上一个工作区",
+      "send_leader": "将 {keys} 发送到窗格"
+    }
+  },
+  "workspace_terminal": {
+    "connection_failed": "连接终端失败。",
+    "process_exited": "进程已退出：{code}",
+    "terminal_error": "终端错误",
+    "auth_failed": "终端授权失败——请重新打开以重试。",
+    "connection_closed": "终端连接已关闭（代码 {code}）。",
+    "status_live": "在线",
+    "status_error": "错误",
+    "status_exited": "已退出",
+    "status_connecting": "正在连接…"
+  },
+  "shell_sections": {
+    "telephony_setup": "电话设置",
+    "agent_instructions": "助手",
+    "voice_shortcuts": "语音快捷键",
+    "voice_language": "听写语言",
+    "voice_api_keys": "语音输入密钥",
+    "visualization": "可视化"
+  },
+  "shell_errors": {
+    "open_terminal_path_failed": "无法打开该终端路径。",
+    "git_after_restart": "Git 选项将在下次重启应用后加载。",
+    "git_request_failed": "Git 请求失败（{status}）",
+    "no_clipboard": "此处没有可用的剪贴板",
+    "open_path_failed": "无法在此电脑上打开该文件或文件夹。",
+    "workspace_closed_adding": "添加终端时工作区已关闭。",
+    "workspace_closed_sizes": "保存窗格大小时工作区已关闭。",
+    "workspace_closed_moving": "移动终端时工作区已关闭。",
+    "view_newer_than_backend": "此视图比后端更新——请重启应用后重试。",
+    "workspace_closed_renaming": "重命名终端时工作区已关闭。",
+    "workspace_closed_forking": "分叉终端时工作区已关闭。",
+    "workspace_not_open": "工作区已不再打开。",
+    "request_failed_status": "请求失败：{status}"
+  },
+  "shell_labels": {
+    "mission": "任务"
+  },
+  "plugins_category": {
+    "home_devices": "家居与设备",
+    "lists_tasks": "列表与任务",
+    "calendar_mail": "日历与邮件",
+    "messaging": "消息",
+    "knowledge_reading": "知识与阅读",
+    "media_creativity": "媒体与创意",
+    "files_photos": "文件与照片",
+    "developer": "开发",
+    "custom": "自定义"
+  },
+  "plugins_community": {
+    "portable_note_agents": "可移植技能 · 也能在 {agents} 中运行",
+    "portable_note_other": "可移植技能 · 也能在其他智能体中运行",
+    "auth_pat": "个人访问令牌",
+    "auth_device": "设备码登录",
+    "auth_oauth": "OAuth 登录",
+    "auth_allowlist": "账号许可名单",
+    "install_failed": "安装失败（{status}）",
+    "title": "社区市场",
+    "intro": "任何人都可以发布的插件和技能。这里的内容均未经 {product} 团队审核——安装前请先看清卡片会连接到哪里。",
+    "marketplace_section_hint": "完整市场（插件和技能）位于独立的版块中",
+    "marketplace_section": "市场版块",
+    "publish_hint": "在市场网站上发布你自己的插件或技能",
+    "publish": "发布你自己的",
+    "refresh": "重新获取社区索引",
+    "search_placeholder": "搜索社区插件和技能…",
+    "plugins": "插件",
+    "skills": "技能",
+    "loading": "正在加载社区索引…",
+    "error": "无法加载社区索引。请检查网络连接后点击刷新重试。",
+    "disabled": "社区市场已在配置中关闭（marketplace.community_index_url 为空）。",
+    "unavailable": "无法访问社区索引，且尚无已保存的副本。请联网一次以加载它。",
+    "stale": "正在显示已保存的副本——索引暂时无法刷新。",
+    "files_loading": "正在读取已发布的文件…",
+    "files_error": "暂时无法读取已发布的文件。下方的安装不受影响——但你将安装一个你没看过的内容。",
+    "whats_inside": "包含内容",
+    "files_one": "1 个文件",
+    "files_other": "{count} 个文件",
+    "file_truncated": "仅显示前 256 kB——已发布的文件更长。打开源码可阅读其余部分。",
+    "files_exact": "与发布内容完全一致。这就是 {product} 安装时下载的字节——中间不会添加或改写任何内容。",
+    "not_installable": "无法安装：{error}",
+    "read_contents": "查看 {entry} 包含的内容",
+    "badge_unreviewed": "社区 · 未审核",
+    "installed": "已安装",
+    "installed_lower": "已安装",
+    "by": "作者 {publisher}",
+    "unknown_publisher": "未知发布者",
+    "view_source": "查看已发布的源码",
+    "view_source_of": "查看 {entry} 的源码",
+    "remove_hint": "移除此插件及其已保存的访问权限",
+    "name_taken_hint": "已有内置插件使用此名称",
+    "name_taken": "名称已占用",
+    "install": "安装",
+    "read_skill": "查看 {entry} 会告诉助手什么",
+    "portable": "可移植",
+    "manual_hint": "无直接下载——请打开源码并按其步骤操作",
+    "manual": "手动",
+    "install_named": "安装 {entry}？",
+    "skill_unreviewed": "社区技能 · 未审核",
+    "plugin_unreviewed": "社区插件 · 未审核",
+    "published_by": "发布者",
+    "unknown_author": "未知作者",
+    "version": "版本 {version}",
+    "portable_follow": "{note}。{product} 会遵循其指令，并忽略面向其他智能体的设置。",
+    "skill_download_from": "指令下载自：",
+    "terminal_comment": "# 同样的安装，在终端中执行。",
+    "skill_explainer": "技能是助手遵循的一组指令——上面的文本正是它会被告知要做的事。",
+    "sends_to": "连接后，请求和你的 {entry} 访问令牌会发送到：",
+    "runs_command": "连接后，此命令会在你的电脑上运行：",
+    "metadata_only": "此条目仅包含元数据——不会添加服务器，也不会运行任何命令。",
+    "signin_method": "登录方式：",
+    "signin_not_yet": "——安装后尚不会连接任何内容。"
+  },
+  "ide_threads": {
+    "layout_aria": "IDE 布局",
+    "layout_grid": "终端网格",
+    "layout_threads": "线程",
+    "layout_verse": "Jarvis Verse",
+    "terminal_needs_folder": "终端需要一个项目文件夹",
+    "hide_terminal": "隐藏终端",
+    "show_terminal": "显示终端",
+    "terminal": "终端",
+    "resize_terminal": "调整终端大小",
+    "terminals": "终端",
+    "terminal_n": "终端 {number}",
+    "close_named": "关闭 {target}",
+    "close_terminal": "关闭终端",
+    "new_terminal": "新建终端",
+    "where_agent_works": "智能体的工作位置",
+    "not_a_repo": "不是 git 仓库",
+    "worktree_base_title": "新 worktree 的起始分支",
+    "agent_on_branch": "智能体正在此分支上工作",
+    "switch_branch": "切换分支",
+    "from_branch": "基于 {branch}",
+    "uncommitted_changes": "未提交的更改",
+    "own_branch": "独立分支",
+    "branches": "分支",
+    "start_worktree_from": "worktree 起始于",
+    "switch_to": "切换到",
+    "in_a_worktree": "在 worktree 中",
+    "no_local_branches": "还没有本地分支。",
+    "hint_new_thread": "新线程",
+    "hint_connect_first": "请先连接",
+    "agent_model_aria": "编程智能体和模型",
+    "choose_agent": "选择智能体",
+    "loading_agents": "正在加载智能体…",
+    "search_agents_models": "搜索智能体和模型",
+    "access_aria": "智能体无需询问即可执行的操作",
+    "sub_status_running": "工作中",
+    "sub_status_done": "完成",
+    "sub_status_failed": "失败",
+    "sub_status_stopped": "已停止",
+    "tools_one": "{count} 个工具",
+    "tools_other": "{count} 个工具",
+    "tokens": "{count} 个 token",
+    "waiting_approval": "等待你的批准",
+    "using_tool": "正在使用 {tool}",
+    "stopped_before_answer": "在回答前已停止",
+    "finished": "已完成",
+    "open_subagent": "打开子智能体 {title}，{status}",
+    "subagents_one": "{count} 个子智能体",
+    "subagents_other": "{count} 个子智能体",
+    "count_working": "{count} 个工作中",
+    "count_waiting": "{count} 个等待中",
+    "count_failed": "{count} 个失败",
+    "subagents_aria": "子智能体",
+    "main_thread": "主线程",
+    "in_background": "在后台",
+    "task": "任务",
+    "task_from": "来自 {parent} 的任务",
+    "the_main_agent": "主智能体",
+    "show_less": "收起",
+    "show_whole_task": "显示完整任务",
+    "unstreamed_running": "此智能体的 CLI 不会流式传输子智能体的步骤。完成后其回答会显示在这里。",
+    "unstreamed_done": "此智能体的 CLI 只报告了任务和回答，没有报告子智能体的步骤。",
+    "new_thread": "新线程",
+    "age_now": "刚刚",
+    "age_minutes": "{count} 分钟",
+    "age_hours": "{count} 小时",
+    "age_days": "{count} 天",
+    "age_weeks": "{count} 周",
+    "connect_folder_first": "请先连接一个项目文件夹。",
+    "connect_a_project": "连接项目",
+    "empty_body": "线程会在项目文件夹中运行编程智能体。连接一个即可开始。",
+    "connect_folder": "连接文件夹",
+    "build_in": "我们要在 {project} 中构建什么？",
+    "projects": "项目",
+    "connect_another": "连接另一个文件夹",
+    "new_activity": "新动态",
+    "new_thread_in": "在 {project} 中新建线程",
+    "save_name": "保存名称",
+    "cancel_renaming": "取消重命名",
+    "thread_actions_for": "{target} 的线程操作",
+    "thread_actions": "线程操作",
+    "show_more": "再显示 {count} 个",
+    "start_thread": "开始一个线程",
+    "archived_count": "已归档（{count}）",
+    "restore_named": "恢复 {target}",
+    "restore": "恢复",
+    "delete_confirm": "删除此线程？",
+    "delete_body": "其对话会从列表中移除。编程智能体自己的历史记录保留在磁盘上。",
+    "rename": "重命名",
+    "new_thread_here": "在此项目中新建线程",
+    "archive": "归档",
+    "plan_ready": "计划已就绪",
+    "approval_needed": "需要批准",
+    "one_of": "第 1 个，共 {count} 个",
+    "plan_hint": "开始构建，或继续规划并说明要改什么。",
+    "keep_planning": "继续规划",
+    "decline": "拒绝",
+    "always_allow_title": "批准，并在此线程中不再询问此项",
+    "always_allow": "始终允许",
+    "build_it": "开始构建",
+    "approve": "批准",
+    "build_switches": "“开始构建”会将访问权限切换为 {mode} 并开始构建。",
+    "build_starts": "“开始构建”会立即开始构建。",
+    "or_keep_planning": "或继续规划并输入要修改的内容。",
+    "asks": "{asker} 提问",
+    "the_agent": "智能体",
+    "n_of": "第 {index} 个，共 {count} 个",
+    "own_answer": "或输入你自己的回答",
+    "skip": "跳过",
+    "choose_connected_agent": "请先选择一个已连接的编程智能体。",
+    "queue_paused": "智能体停止后，队列已暂停。",
+    "send_next": "发送下一条",
+    "queued": "已排队",
+    "files_one": "{count} 个文件",
+    "files_other": "{count} 个文件",
+    "remove_queued": "移除排队的消息",
+    "message_agent": "给编程智能体发消息",
+    "queue_placeholder": "排队一条后续消息，待智能体完成后发送",
+    "composer_placeholder": "提出修改、发送后续消息或附加图片",
+    "stop_agent": "停止智能体",
+    "stop": "停止",
+    "queue_message": "排队消息",
+    "send_message": "发送消息",
+    "queue_title": "排队，待智能体完成后发送",
+    "copy_message": "复制消息",
+    "scroll_newest": "滚动到最新消息"
+  },
+  "ide_view": {
+    "split_right": "右侧",
+    "split_down": "下方",
+    "split_left": "左侧",
+    "split_up": "上方",
+    "split_right_aria": "向右拆分",
+    "split_down_aria": "向下拆分",
+    "split_left_aria": "向左拆分",
+    "split_up_aria": "向上拆分",
+    "split_right_hint": "在窗格右侧打开新智能体",
+    "split_down_hint": "在窗格下方打开新智能体",
+    "split_left_hint": "在窗格左侧打开新智能体",
+    "split_up_hint": "在窗格上方打开新智能体",
+    "choose_folder": "请为此项目选择一个文件夹。",
+    "choose_agent_every": "请为每个会话选择一个已安装的编程智能体。",
+    "connect_agent_clis": "请在 CLI 中连接一个编程智能体以继续。",
+    "no_project": "此工作区不属于任何已连接的项目。",
+    "no_workspace_n": "没有工作区 {number}。",
+    "workspace_fallback": "工作区",
+    "loading_projects": "正在加载项目…",
+    "choose_workspace": "选择工作区",
+    "select_workspace_hint": "从“项目”中选择一个工作区，或点击项目旁的 + 创建一个。",
+    "connect_folder_hint": "连接一个文件夹，将其编程智能体和 Jarvis 汇集到一个工作区。",
+    "add_agent": "添加编程智能体",
+    "agents_one": "{count} 个智能体",
+    "agents_other": "{count} 个智能体",
+    "sessions_one": "{count} 个会话",
+    "sessions_other": "{count} 个会话",
+    "where_open": "在哪里打开？",
+    "next_to": "旁边",
+    "split_next_to": "在旁边拆分",
+    "auto_grid": "自动均分网格",
+    "split_direction": "拆分方向",
+    "joins_grid": "新智能体会加入网格，每个窗格平分空间。",
+    "copying_starting": "正在复制文件夹并在那里启动智能体。大文件夹需要一分钟左右。",
+    "name_optional": "名称（可选）",
+    "workspace_placeholder": "工作区",
+    "copying_folder": "正在复制文件夹…",
+    "starting": "正在启动…",
+    "workspace_name": "工作区名称"
+  },
+  "install_standard": {
+    "method": "安装方式",
+    "copy_command": "复制安装命令",
+    "copy_named": "复制 {method} 安装命令",
+    "copied": "已复制",
+    "copy": "复制",
+    "heading": "安装",
+    "tab_cli": "CLI",
+    "tab_runner": "uvx",
+    "tab_prompt": "提示词",
+    "hint_cli": "应用运行时可在任意终端中执行。",
+    "hint_runner": "无需安装——uv 会获取 CLI 并运行同一命令。",
+    "hint_prompt": "把这段话粘贴给你的助手——它会替你完成安装。",
+    "note_jarvis": "{product} 运行时可在任意终端中执行。",
+    "note_skills_sh": "将同一技能安装到 Claude Code、Cursor、Codex 及其他智能体中。"
+  },
+  "plugins_package": {
+    "plugin_json_invalid": "plugin.json 不是有效的 JSON——请在发布前修正。",
+    "no_mcp_json": "未找到 mcp.json——如果 auth 块指向托管的 MCP 服务器，或该包只包含技能，这没有问题。",
+    "missing_type_one": "mcp.json 服务器 {servers} 缺少 \"type\"——商店要求每个服务器都有 \"type\": \"streamable-http\" | \"stdio\" | \"sse\"。",
+    "missing_type_other": "mcp.json 服务器 {servers} 缺少 \"type\"——商店要求每个服务器都有 \"type\": \"streamable-http\" | \"stdio\" | \"sse\"。",
+    "too_many_skills": "附带的技能超过 10 个——商店最多接受 10 个。",
+    "nothing_found": "未找到 plugin.json 或 SKILL.md——包文件夹的顶层需要其中之一。单个文件也可以，只要它名为 SKILL.md 或以 YAML frontmatter（---）开头。",
+    "no_frontmatter": "SKILL.md 未以 YAML frontmatter（---）开头——商店要求必须如此。"
+  },
+  "debug_view": {
+    "title": "调试",
+    "subtitle": "实时事件总线与诊断",
+    "event_count": "{count} 个事件",
+    "event_timeline": "事件时间线",
+    "emit": "发送",
+    "clear": "清空",
+    "switch_brain_provider": "切换 Brain 提供商",
+    "flight_recorder": "飞行记录器",
+    "traces_from": "JSONL 跟踪记录来自",
+    "replay_coming": "回放播放器即将推出。",
+    "metrics": "指标",
+    "metrics_coming": "各提供商的延迟 / token / 费用——实时图表将于第 2 阶段推出。"
+  },
+  "install_terminal": {
+    "pane_title": "安装 {package}",
+    "starting": "正在启动 {package} 的安装程序…"
+  },
+  "install_agents": {
+    "decrease": "减少",
+    "increase": "增加",
+    "recheck": "重新检查"
   }
 }

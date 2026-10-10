@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { translate, useT } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
 import { useEventStore, type VoiceState, type SectionId } from "@/store/events";
 
 export type MascotAction =
@@ -302,41 +302,47 @@ function GigiBubble({
   );
 }
 
+// The comment pools below are i18n keys for mascot chat-bubble text spoken to
+// the user. They are translated when shown, never at import time, so a UI
+// language switch takes effect on the next bubble.
 const IDLE_COMMENTS = [
-  "hm …",
-  "alles ruhig.",
-  "noch da?",
-  "was geht so?",
-  "ich beobachte dich.",
-  "konzentriert, was?",
-  "mach doch mal Pause.",
-  "arbeitest du heute was Cooles?",
-  "bisschen langweilig grad.",
-  "ich hab gute Ohren. falls du was brauchst.",
+  "mascot_gigi.idle.hm",
+  "mascot_gigi.idle.all_quiet",
+  "mascot_gigi.idle.still_there",
+  "mascot_gigi.idle.whats_up",
+  "mascot_gigi.idle.watching",
+  "mascot_gigi.idle.focused",
+  "mascot_gigi.idle.take_break",
+  "mascot_gigi.idle.cool_work",
+  "mascot_gigi.idle.bit_boring",
+  "mascot_gigi.idle.good_ears",
 ];
 
-// The comment pools below are mascot chat-bubble text spoken to the user —
-// runtime product-surface output, not developer-facing strings.
 const SECTION_COMMENTS: Partial<Record<SectionId, string[]>> = {
-  chats: ["bereit wenn du bist.", "ich höre.", "sag mal was.", "schreib oder rede — egal."],  // i18n-allow: mascot chat-bubble output shown to the user
-  agents: ["die Agents sind meine Kollegen.", "wer ist dein Liebling?"],  // i18n-allow: mascot chat-bubble output shown to the user
-  skills: ["Skills sind mein Lieblings-Feature.", "was sollen wir lernen?"],  // i18n-allow: mascot chat-bubble output shown to the user
-  mcps: ["mehr MCPs = mehr Power.", "was sollen wir dazuholen?"],  // i18n-allow: mascot chat-bubble output shown to the user
-  languages: ["ich spreche DE und EN.", "Sprachwechsel? Einfach sagen."],  // i18n-allow: mascot chat-bubble output shown to the user
-  apikeys: ["pass auf die Keys auf.", "nicht in Git committen!"],  // i18n-allow: mascot chat-bubble output shown to the user
-  settings: ["was stört dich?", "tweaken wir was?"],  // i18n-allow: mascot chat-bubble output shown to the user
+  chats: [
+    "mascot_gigi.section.chats_ready",
+    "mascot_gigi.section.chats_listening",
+    "mascot_gigi.section.chats_say_something",
+    "mascot_gigi.section.chats_type_or_talk",
+  ],
+  agents: ["mascot_gigi.section.agents_colleagues", "mascot_gigi.section.agents_favourite"],
+  skills: ["mascot_gigi.section.skills_favourite", "mascot_gigi.section.skills_learn"],
+  mcps: ["mascot_gigi.section.mcps_power", "mascot_gigi.section.mcps_add"],
+  languages: ["mascot_gigi.section.languages_speak", "mascot_gigi.section.languages_switch"],
+  apikeys: ["mascot_gigi.section.apikeys_careful", "mascot_gigi.section.apikeys_no_git"],
+  settings: ["mascot_gigi.section.settings_bother", "mascot_gigi.section.settings_tweak"],
 };
 
 const VOICE_COMMENTS: Partial<Record<VoiceState, string[]>> = {
-  listening: ["ich höre!", "raus damit.", "ja?"],  // i18n-allow: mascot chat-bubble output shown to the user
-  thinking: ["mal schauen …", "Moment.", "hmm …"],
-  speaking: ["jetzt rede ich.", "kurz mal zuhören."],  // i18n-allow: mascot chat-bubble output shown to the user
-  error: ["oha.", "ups.", "das war nicht ich!"],  // i18n-allow: mascot chat-bubble output shown to the user
+  listening: ["mascot_gigi.voice.listening_1", "mascot_gigi.voice.listening_2", "mascot_gigi.voice.listening_3"],
+  thinking: ["mascot_gigi.voice.thinking_1", "mascot_gigi.voice.thinking_2", "mascot_gigi.voice.thinking_3"],
+  speaking: ["mascot_gigi.voice.speaking_1", "mascot_gigi.voice.speaking_2"],
+  error: ["mascot_gigi.voice.error_1", "mascot_gigi.voice.error_2", "mascot_gigi.voice.error_3"],
 };
 
 const TIME_COMMENTS = {
-  morning: ["guten Morgen!", "auf, auf."],  // i18n-allow: mascot chat-bubble output shown to the user
-  night: ["noch wach?", "es ist spät.", "schlaf genug gekriegt?"],  // i18n-allow: mascot chat-bubble output shown to the user
+  morning: ["mascot_gigi.time.morning_1", "mascot_gigi.time.morning_2"],
+  night: ["mascot_gigi.time.night_1", "mascot_gigi.time.night_2", "mascot_gigi.time.night_3"],
 };
 
 function pickRandom<T>(arr: readonly T[]): T {
@@ -345,8 +351,8 @@ function pickRandom<T>(arr: readonly T[]): T {
 
 function greetByHour(): string | null {
   const h = new Date().getHours();
-  if (h >= 5 && h < 11) return pickRandom(TIME_COMMENTS.morning);
-  if (h >= 22 || h < 5) return pickRandom(TIME_COMMENTS.night);
+  if (h >= 5 && h < 11) return translate(pickRandom(TIME_COMMENTS.morning));
+  if (h >= 22 || h < 5) return translate(pickRandom(TIME_COMMENTS.night));
   return null;
 }
 
@@ -366,7 +372,7 @@ function useMascotComments(enabled: boolean): string | null {
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Show a comment with auto-dismiss. Jeder neue show() ersetzt den alten.
+  // Show a comment with auto-dismiss. Every new show() replaces the previous one.
   const show = useCallback((text: string, duration = 4200) => {
     if (!enabled) return;
     setComment(text);
@@ -380,7 +386,7 @@ function useMascotComments(enabled: boolean): string | null {
     if (activeSection === lastSectionRef.current) return;
     lastSectionRef.current = activeSection;
     const pool = SECTION_COMMENTS[activeSection];
-    if (pool) show(pickRandom(pool));
+    if (pool) show(translate(pickRandom(pool)));
   }, [activeSection, show]);
 
   // A voice-state change triggers a comment.
@@ -389,17 +395,17 @@ function useMascotComments(enabled: boolean): string | null {
     if (voiceState === lastVoiceRef.current) return;
     lastVoiceRef.current = voiceState;
     const pool = VOICE_COMMENTS[voiceState];
-    if (pool) show(pickRandom(pool), 2800);
+    if (pool) show(translate(pickRandom(pool)), 2800);
   }, [voiceState, show]);
 
-  // Provider-Wechsel.
+  // Provider switch.
   useEffect(() => {
     if (!mountedRef.current) return;
     if (brainProvider === lastProviderRef.current) return;
     const prev = lastProviderRef.current;
     lastProviderRef.current = brainProvider;
     if (prev && brainProvider) {
-      show(`wechsel auf ${brainProvider}. ok!`);
+      show(fill(translate("mascot.brain_switched"), { "0": brainProvider }));
     }
   }, [brainProvider, show]);
 
@@ -444,7 +450,7 @@ function useMascotComments(enabled: boolean): string | null {
       const delay = 25000 + Math.random() * 35000;
       idleTimerRef.current = setTimeout(() => {
         if (cancelled) return;
-        if (Math.random() < 0.6) show(pickRandom(IDLE_COMMENTS));
+        if (Math.random() < 0.6) show(translate(pickRandom(IDLE_COMMENTS)));
         scheduleNext();
       }, delay);
     };

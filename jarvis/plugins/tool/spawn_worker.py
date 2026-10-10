@@ -41,6 +41,7 @@ from jarvis.brain.ack_brain.spawn_announcement import SpawnAnnouncementComposer
 from jarvis.core.bus import EventBus
 from jarvis.core.events import JarvisAgentAnnouncement, JarvisAgentBackgroundCompleted
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.missions.events import coerce_mission_language
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.stream_evidence import (
     FORCE_SPAWN_DIRECTIVE,
@@ -563,13 +564,13 @@ class SpawnWorkerTool:
             or None
         )
         ack_language = turn_language
-        # MissionManager.dispatch + the mission voice readback (announcer /
-        # readback) are de/en only — an "es" turn keeps the pre-existing German
-        # readback (bringing the mission voice layer to "es" is the tracked
-        # follow-up). Cap here so we never thread an unsupported value into the
-        # ``Literal["de","en"]`` dispatch contract; the spoken ACK itself stays
-        # fully de/en/es via the composer above.
-        mission_language = turn_language if turn_language in ("de", "en") else "de"
+        # MissionManager.dispatch + the mission voice readback speak every
+        # supported reply language. Coerce so an unsupported value never
+        # reaches the ``MissionLanguage`` dispatch contract; a turn without a
+        # language follows the ambient answer language (reply pin → locale).
+        mission_language = coerce_mission_language(
+            turn_language or resolve_ambient_language()
+        )
 
         # Spawn cooldown — suppress duplicate spawns while a dispatch is in
         # flight AND within _COOLDOWN_SECONDS of the last arm. Live regression
@@ -697,10 +698,10 @@ class SpawnWorkerTool:
                 self._background_dispatch(
                     mission_prompt, utterance, manager, kontrollierer,
                     mission_language=mission_language,
-                    # Full de/en/es turn language (NOT the de/en-capped
-                    # mission_language): a failure readback the background task
-                    # renders itself must be in the same language the pipeline
-                    # will wrap it in.
+                    # Full turn language (not the coerced mission_language):
+                    # a failure readback the background task renders itself
+                    # must be in the same language the pipeline will wrap it
+                    # in.
                     readback_language=ack_language,
                 ),
                 # NOTE: prefix "jarvis-agent-" is a live matching key, not a

@@ -19,6 +19,7 @@ import { canNativeDrag, startNativeFileDrag } from "@/lib/nativeDrag";
 import { cn } from "@/lib/utils";
 import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
+import { uiLocale } from "@/lib/boardInsights";
 
 /**
  * The gallery on the Appshots page: every appshot the user took and every
@@ -95,7 +96,7 @@ function liftDialog(lifted: boolean): void {
 }
 
 function when(item: AppshotLibraryItem): string {
-  return new Date((item.edited_at || item.taken_at) * 1000).toLocaleString([], {
+  return new Date((item.edited_at || item.taken_at) * 1000).toLocaleString(uiLocale(), {
     day: "numeric",
     month: "short",
     hour: "2-digit",

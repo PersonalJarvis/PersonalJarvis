@@ -8,6 +8,7 @@ import {
   usageMix,
   wordsPerMinute,
   type MixRow,
+  uiLocale,
 } from "@/lib/boardInsights";
 import {
   BigNumber,
@@ -45,7 +46,7 @@ function SpeedCard({ data }: { data: BoardInsights }) {
   const ratio = typing > 0 ? wpm / typing : 0;
   return (
     <InsightCard testId="board-speed-card">
-      <BigNumber>{wpm > 0 ? Math.round(wpm).toLocaleString() : "—"}</BigNumber>
+      <BigNumber>{wpm > 0 ? Math.round(wpm).toLocaleString(uiLocale()) : "—"}</BigNumber>
       <div className="mt-2">
         <Eyebrow hint={t("board_insights.speed.hint").replace("{0}", String(typing))}>
           {t("board_insights.speed.label")}
@@ -86,7 +87,7 @@ function TimeSavedCard({ data }: { data: BoardInsights }) {
       <BigNumber>
         {data.dictation.words > 0
           ? hours >= 10
-            ? `${Math.round(hours).toLocaleString()} h`
+            ? `${Math.round(hours).toLocaleString(uiLocale())} h`
             : `${hours.toFixed(1)} h`
           : "—"}
       </BigNumber>
@@ -98,7 +99,7 @@ function TimeSavedCard({ data }: { data: BoardInsights }) {
       <Hairline />
       <dl className="flex flex-col gap-3 text-base">
         <FactRow
-          value={data.dictation.dictations.toLocaleString()}
+          value={data.dictation.dictations.toLocaleString(uiLocale())}
           label={t("board_insights.saved.dictations")}
         />
         <FactRow
@@ -106,7 +107,7 @@ function TimeSavedCard({ data }: { data: BoardInsights }) {
           label={t("board_insights.saved.spoken")}
         />
         <FactRow
-          value={`${Math.round(typing > 0 ? data.dictation.words / typing / 60 : 0).toLocaleString()} h`}
+          value={`${Math.round(typing > 0 ? data.dictation.words / typing / 60 : 0).toLocaleString(uiLocale())} h`}
           label={t("board_insights.saved.typing_would_take")}
         />
       </dl>
@@ -135,7 +136,7 @@ function WordsCard({ data }: { data: BoardInsights }) {
   return (
     <InsightCard testId="board-words-card">
       <div className="flex items-start justify-between gap-3">
-        <BigNumber>{total.toLocaleString()}</BigNumber>
+        <BigNumber>{total.toLocaleString(uiLocale())}</BigNumber>
         {trend !== null && (
           <QuickTooltip content={t("board_insights.words.trend_hint")} side="top" className="shrink-0">
             <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs font-medium tabular-nums text-foreground">
@@ -146,7 +147,7 @@ function WordsCard({ data }: { data: BoardInsights }) {
         )}
       </div>
       <div className="mt-2">
-        <Eyebrow hint={t("board_insights.words.novel_hint").replace("{0}", data.reference.novel_words.toLocaleString())}>
+        <Eyebrow hint={t("board_insights.words.novel_hint").replace("{0}", data.reference.novel_words.toLocaleString(uiLocale()))}>
           {t("board_insights.words.label")}
         </Eyebrow>
       </div>
@@ -179,8 +180,8 @@ function WordsCard({ data }: { data: BoardInsights }) {
             )}
           </div>
           <div className="mt-2 flex justify-between text-xs tabular-nums text-muted-foreground">
-            <span>{dictated.toLocaleString()}</span>
-            <span>{spoken.toLocaleString()}</span>
+            <span>{dictated.toLocaleString(uiLocale())}</span>
+            <span>{spoken.toLocaleString(uiLocale())}</span>
           </div>
         </div>
       )}
@@ -226,7 +227,7 @@ function UsageMixCard({ data }: { data: BoardInsights }) {
     <InsightCard testId="board-usage-mix">
       <CardTitleRow
         title={t("board_insights.mix.title")}
-        fact={t("board_insights.mix.active_days").replace("{0}", data.streak.active_days.toLocaleString())}
+        fact={t("board_insights.mix.active_days").replace("{0}", data.streak.active_days.toLocaleString(uiLocale()))}
       />
       {total === 0 ? (
         <p className="text-sm text-muted-foreground">{t("board_insights.mix.empty")}</p>

@@ -26,6 +26,7 @@ from jarvis.speech.pipeline import (
     _ACTION_DONE_PHRASE,
     _BRAIN_UNAVAILABLE_PHRASE,
     _CLARIFY_QUESTION_PHRASE,
+    _REALTIME_UNAVAILABLE_PHRASE,
     _STT_UNAVAILABLE_PHRASE,
     _TIMEOUT_NO_ANSWER_PHRASE,
     _TIMEOUT_TOOL_STALL_PHRASE,
@@ -97,6 +98,10 @@ def _make_pipe(
         ("spanish", "es"),
         ("es", "es"),
         ("es-ES", "es"),
+        # European Portuguese, same contract.
+        ("portuguese", "pt"),
+        ("pt", "pt"),
+        ("pt-PT", "pt"),
         # Unknown / missing → DEFAULT_LOCALE fallback.
         ("", "en"),
         (None, "en"),
@@ -119,8 +124,9 @@ def test_all_canned_phrase_tables_cover_de_en_es() -> None:
         _TIMEOUT_NO_ANSWER_PHRASE,
         _CLARIFY_QUESTION_PHRASE,
         _ACTION_DONE_PHRASE,
+        _REALTIME_UNAVAILABLE_PHRASE,
     ):
-        assert {"de", "en", "es"} <= set(table), table
+        assert {"de", "en", "es", "pt"} <= set(table), table
 
 
 @pytest.mark.asyncio
@@ -170,6 +176,20 @@ def test_smalltalk_fallback_is_german_for_whisper_language_name() -> None:
     assert "geht's gut" in answer, answer  # the German variant, not "I'm good"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "lang", "expected"),
+    [
+        ("como estás?", "portuguese", "Estou bem. O que fazemos a seguir?"),  # i18n-allow
+        ("tudo bem contigo?", "pt", "Estou bem. O que fazemos a seguir?"),  # i18n-allow
+        ("¿qué tal estás?", "spanish", "Estoy bien. ¿Qué hacemos ahora?"),  # i18n-allow
+    ],
+)
+def test_smalltalk_fallback_speaks_spanish_and_portuguese(
+    prompt: str, lang: str, expected: str
+) -> None:
+    assert _smalltalk_fallback_for_non_substantive(prompt, lang) == expected
+
+
 @pytest.mark.asyncio
 async def test_english_speaker_still_gets_english_phrases() -> None:
     # Regression guard: the fix must not over-rotate — a genuinely English
@@ -177,3 +197,17 @@ async def test_english_speaker_still_gets_english_phrases() -> None:
     pipe = _make_pipe(clarify_enabled=True)
     await pipe._handle_silent_brain_turn("english")
     assert pipe._spoken == [(_CLARIFY_QUESTION_PHRASE["en"], "en")], pipe._spoken
+
+
+@pytest.mark.asyncio
+async def test_clarify_question_is_portuguese_for_whisper_language_name() -> None:
+    pipe = _make_pipe(clarify_enabled=True)
+    await pipe._handle_silent_brain_turn("portuguese")
+    assert pipe._spoken == [(_CLARIFY_QUESTION_PHRASE["pt"], "pt")], pipe._spoken
+
+
+def test_bcp47_maps_portuguese_to_portugal() -> None:
+    assert pipeline_mod.SpeechPipeline._bcp47("pt") == "pt-PT"
+    assert set(pipeline_mod.SpeechPipeline._BG_READBACK_PHRASES["pt"]) == set(
+        pipeline_mod.SpeechPipeline._BG_READBACK_PHRASES["en"]
+    )

@@ -10,12 +10,13 @@ _REMEMBER = re.compile(
     r"^\s*(?:(?:please|bitte|por favor)[, ]+)?"  # i18n-allow: input vocabulary
     r"(?:(?:can|could) you (?:please )?)?"
     r"(?:remember|(?:merk|merke)\s+dir(?:\s+bitte)?|"  # i18n-allow
-    r"(?:speichere|speicher)\s+(?:dir\s+)?(?:bitte\s+)?|recuerda(?:\s+que)?)"  # i18n-allow
+    r"(?:speichere|speicher)\s+(?:dir\s+)?(?:bitte\s+)?|recuerda(?:\s+que)?|"  # i18n-allow
+    r"lembra-te(?:\s+de)?(?:\s+que)?|memoriza(?:\s+que)?)"  # i18n-allow: input vocabulary
     r"[\s,:]+(?P<content>.+?)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 _REFERENCE_ONLY = re.compile(
-    r"^(?:this|that|it|das|dies|dieses|es|esto|eso)"  # i18n-allow
+    r"^(?:this|that|it|das|dies|dieses|es|esto|eso|isto|isso|disto|disso)"  # i18n-allow
     r"(?:\s+(?:please|bitte|por favor))?[.!]*$",  # i18n-allow
     re.IGNORECASE,
 )
@@ -33,7 +34,8 @@ def user_evidence(event: dict[str, Any]) -> str:
 
 #: "Remember that not" declines; "remember not to call late" is a request.
 _NEGATED = re.compile(
-    r"^(?:(?:das|dies|es|this|that|it|eso)\s+(?:nicht|not|no)|nicht)\b",  # i18n-allow
+    r"^(?:(?:das|dies|es|this|that|it|eso|isso|isto)\s+"  # i18n-allow
+    r"(?:nicht|not|no|n[ãa]o)|nicht)\b",  # i18n-allow
     re.IGNORECASE,
 )
 #: One spoken or typed sentence: the request may sit anywhere in a longer turn.

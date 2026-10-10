@@ -270,3 +270,39 @@ def test_non_macos_routes_never_touch_the_permission_service(monkeypatch):
 
     assert body["permission_required"] is False
     assert gate.calls == []
+
+
+def test_wake_self_test_names_its_sentences_with_stable_codes(monkeypatch):
+    """Every self-test answer carries ``message_code`` / ``hint_code`` the UI
+    translates, next to the unchanged English sentences."""
+    import jarvis.speech.diagnose as d
+    from jarvis.speech.wake_phrase import WAKE_PLAN_MESSAGE_CODES
+    from jarvis.ui.web.settings_routes import WAKE_HINT_CODES, WAKE_MESSAGE_CODES
+
+    async def fake_measure(duration_s=3.0):
+        return -20.0
+
+    monkeypatch.setattr(d, "measure_mic_dbfs", fake_measure)
+    app, _gate = _macos_app(monkeypatch, PermissionOutcome.GRANTED)
+
+    body = TestClient(app).post("/api/settings/wake-word/self-test").json()
+
+    assert body["message"]
+    assert body["message_code"] in (*WAKE_MESSAGE_CODES, *WAKE_PLAN_MESSAGE_CODES)
+    assert body["hint_code"] in (*WAKE_HINT_CODES, "")
+    assert body["message_params"]["phrase"] == "Hey Nova"
+
+
+def test_macos_wake_self_test_denied_hint_has_a_code(monkeypatch):
+    import jarvis.speech.diagnose as d
+
+    async def forbidden_measure(duration_s=3.0):
+        raise AssertionError("must not measure without a grant")
+
+    monkeypatch.setattr(d, "measure_mic_dbfs", forbidden_measure)
+    app, _gate = _macos_app(monkeypatch, PermissionOutcome.DENIED)
+
+    body = TestClient(app).post("/api/settings/wake-word/self-test").json()
+
+    assert body["hint_code"] == "allow_mic_settings"
+    assert body["message_params"]["path"] in body["hint"]

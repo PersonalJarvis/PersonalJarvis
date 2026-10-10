@@ -24,7 +24,7 @@ It also asserts the privacy-permission declarations of the bundle:
   ``jarvis/core/macos_privacy_strings.py`` is in ``Info.plist`` with exactly that
   text, and the keys that table lists as removed (camera, speech recognition,
   system administration) are not;
-* the bundle is localised for German and Spanish: ``Info.plist`` declares
+* the bundle is localised for German, Spanish and European Portuguese: ``Info.plist`` declares
   ``CFBundleLocalizations`` and ``CFBundleDevelopmentRegion``, and
   ``Contents/Resources/<lang>.lproj/InfoPlist.strings`` exists for each language
   with exactly the text of that table (``packaging/macos/add_localizations.py``

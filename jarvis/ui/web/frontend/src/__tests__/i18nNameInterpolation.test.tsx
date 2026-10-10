@@ -74,7 +74,7 @@ describe("useT name substitution", () => {
     expect(screen.getByTestId("hint").textContent).toBe("Restart Athena");
   });
 
-  it.each(["en", "de", "es"] as const)(
+  it.each(["en", "de", "es", "pt"] as const)(
     "brands the %s workspace copy with a nonstandard assistant name",
     (language) => {
       useI18nStore.getState().setUi(language, { push: false });

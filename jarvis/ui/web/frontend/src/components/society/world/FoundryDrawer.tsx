@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Factory, Plus, X } from "lucide-react";
 
 import { fill, useT, useUiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { AgentSwatch } from "../AgentSwatch";
 import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
 import { isCreateCancelled } from "../create/createAgentStore";
@@ -21,7 +22,7 @@ const RECENT_LIMIT = 6;
 
 function useRelativeTime(): (ms: number) => string {
   const language = useUiLanguage();
-  const rtf = useMemo(() => new Intl.RelativeTimeFormat(language, { numeric: "auto" }), [language]);
+  const rtf = useMemo(() => new Intl.RelativeTimeFormat(localeForUiLanguage(language), { numeric: "auto" }), [language]);
   return useCallback(
     (ms: number) => {
       const seconds = Math.round((ms - Date.now()) / 1000);

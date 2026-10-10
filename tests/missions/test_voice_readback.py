@@ -260,7 +260,7 @@ def test_failure_reason_phrases_shared_with_announcer() -> None:
     assert "attempts_timed_out" in FAILURE_REASON_PHRASES["en"]
     assert all(
         "review_time_budget_exhausted" in FAILURE_REASON_PHRASES[language]
-        for language in ("de", "en", "es")
+        for language in ("de", "en", "es", "pt")
     )
     assert set(FAILURE_REASON_PHRASES["de"]) == set(FAILURE_REASON_PHRASES["en"])
 

@@ -68,7 +68,7 @@ def test_jarvis_started_tasks_report_back() -> None:
 
 def test_every_locale_has_its_own_labels() -> None:
     for key, labels in notices.NOTICE_LABELS.items():
-        assert set(labels) == {"en", "de", "es", "zh"}, key
+        assert set(labels) == {"en", "de", "es", "zh", "pt"}, key
     assert notices.label("task_done", "fr") == "Task done"  # unknown locale: English
 
 

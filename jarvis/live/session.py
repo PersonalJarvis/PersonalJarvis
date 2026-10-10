@@ -1135,7 +1135,14 @@ class LiveVoiceSession:
             log.exception("Live connection terminated")
             self._failed = True
             self._detail = "The voice connection was lost. Pending actions were not replayed."
-            await self._send_json({"type": "provider_error", "error": self._detail})
+            await self._send_json(
+                {
+                    "type": "provider_error",
+                    "error": self._detail,
+                    # Stable code the desktop UI translates; ``error`` stays.
+                    "message_code": "voice_connection_lost",
+                }
+            )
         finally:
             from jarvis.live.runtime import unregister
 

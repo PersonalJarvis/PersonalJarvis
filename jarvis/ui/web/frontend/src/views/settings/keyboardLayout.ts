@@ -42,6 +42,8 @@ export interface KeyCap {
    * wins over the ``codeToModifierToken``/``codeToKeyToken`` lookup.
    */
   token?: string;
+  /** i18n key for a descriptive cap (the mouse buttons); wins over ``label`` when rendered. */
+  labelKey?: string;
 }
 
 export type KeyRow = KeyCap[];
@@ -251,7 +253,7 @@ export function mouseButtonCode(button: number): string {
  * middle button can start autoscroll.
  */
 export const MOUSE_CAPS: KeyCap[] = [
-  { code: mouseButtonCode(1), label: "Middle", token: "mouse_middle" },
-  { code: mouseButtonCode(3), label: "Back", token: "mouse_x1" },
-  { code: mouseButtonCode(4), label: "Forward", token: "mouse_x2" },
+  { code: mouseButtonCode(1), label: "Middle", labelKey: "settings_view.keybinds.mouse.middle", token: "mouse_middle" },
+  { code: mouseButtonCode(3), label: "Back", labelKey: "settings_view.keybinds.mouse.back", token: "mouse_x1" },
+  { code: mouseButtonCode(4), label: "Forward", labelKey: "settings_view.keybinds.mouse.forward", token: "mouse_x2" },
 ];

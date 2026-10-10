@@ -10,7 +10,7 @@ import {
   Search,
 } from "lucide-react";
 
-import { buildDocSections, useDocSearch, useDocsGrouped } from "@/hooks/useDocs";
+import { buildDocSections, docSectionLabel, useDocSearch, useDocsGrouped } from "@/hooks/useDocs";
 import { useRecentDocs } from "@/hooks/useRecentDocs";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -198,7 +198,7 @@ export function DocsSearchModal({ open, onOpenChange, onSelect }: Props) {
                           {r.title}
                         </span>
                         <span className="shrink-0 text-xs text-muted-foreground">
-                          {r.section}
+                          {docSectionLabel(r.section)}
                         </span>
                       </div>
                       <div className="mt-0.5 line-clamp-2 text-sm text-muted-foreground [&>mark]:rounded-sm [&>mark]:bg-accent-soft [&>mark]:px-0.5 [&>mark]:text-foreground-strong">
@@ -262,7 +262,7 @@ function SuggestionItem({
         aria-hidden="true"
       />
       <span className="min-w-0 flex-1 truncate text-base text-foreground">{row.title}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{row.section}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{docSectionLabel(row.section)}</span>
     </Command.Item>
   );
 }

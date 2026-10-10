@@ -12,7 +12,7 @@
 import { useEffect, useMemo } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import { AdditiveBlending, MeshBasicMaterial, MeshStandardMaterial, RepeatWrapping, Shape, type Texture } from "three";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { cachedCanvasTexture } from "./canvasMaterials";
 import { Box, GEO, MAT, matte, Railing } from "./OfficeFurniture";
 import type { Department, OfficeLayout } from "./officeLayout";
@@ -366,7 +366,7 @@ function tambourMaterial(width: number): MeshStandardMaterial {
 }
 
 /** Ink letters on a transparent ground: the department's name, a short rule and "Department 0n" under it. */
-function drawLetters(label: string, number: number, accent: string, ctx: CanvasRenderingContext2D, w: number, h: number): void {
+function drawLetters(label: string, caption: string, accent: string, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h);
   const tracked = (text: string, font: string, y: number, spacing: number, fill: string) => {
     ctx.font = font;
@@ -392,15 +392,15 @@ function drawLetters(label: string, number: number, accent: string, ctx: CanvasR
   tracked(name, "600 104px Inter, system-ui, -apple-system, 'Segoe UI', sans-serif", 84, 4, AGENTS_SCENE.ink);
   ctx.fillStyle = accent;
   ctx.fillRect(w / 2 - 44, 154, 88, 5);
-  tracked(`DEPARTMENT ${String(number).padStart(2, "0")}`, "600 32px Inter, system-ui, -apple-system, 'Segoe UI', sans-serif", 194, 10, "#5d564e");
+  tracked(caption, "600 32px Inter, system-ui, -apple-system, 'Segoe UI', sans-serif", 194, 10, "#5d564e");
 }
 
 const letterMaterials = new Map<string, MeshStandardMaterial>();
-function letterMaterial(label: string, number: number, accent: string): MeshStandardMaterial {
-  const key = `${number}:${accent}:${label}`;
+function letterMaterial(label: string, caption: string, accent: string): MeshStandardMaterial {
+  const key = `${caption}:${accent}:${label}`;
   let material = letterMaterials.get(key);
   if (!material) {
-    const map = cachedCanvasTexture(`agents:letters:${key}`, LETTERS.w, LETTERS.h, (ctx, w, h) => drawLetters(label, number, accent, ctx, w, h));
+    const map = cachedCanvasTexture(`agents:letters:${key}`, LETTERS.w, LETTERS.h, (ctx, w, h) => drawLetters(label, caption, accent, ctx, w, h));
     material = new MeshStandardMaterial({ color: map ? "#ffffff" : AGENTS_SCENE.ink, map, transparent: true, alphaTest: 0.3, roughness: 0.6 });
     letterMaterials.set(key, material);
   }
@@ -454,6 +454,8 @@ function DepartmentWall({ label, number, width, position, rug }: {
   const plateW = Math.min(3.0, width * 0.5);
   const plateH = (plateW * LETTERS.h) / LETTERS.w;
   const shelfX = width / 2 - 0.9;
+  const t = useT();
+  const caption = fill(t("society.office.department_n"), { number: String(number).padStart(2, "0") });
   return (
     <group position={position}>
       <Box size={[width, WALL_H, 0.1]} position={[0, WALL_H / 2, -0.02]} material={WALL_MAT.cap} />
@@ -467,7 +469,7 @@ function DepartmentWall({ label, number, width, position, rug }: {
       <mesh position={[0, WALL_H - 0.42, 0.035]} material={washMaterial()}>
         <planeGeometry args={[width - 0.1, 0.8]} />
       </mesh>
-      <mesh position={[0, 1.34, 0.04]} material={letterMaterial(label, number, rug.border)}>
+      <mesh position={[0, 1.34, 0.04]} material={letterMaterial(label, caption, rug.border)}>
         <planeGeometry args={[plateW, plateH]} />
       </mesh>
       {shelfX > plateW / 2 + 0.55 && [-shelfX, shelfX].map((x, side) => (

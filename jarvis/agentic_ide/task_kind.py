@@ -20,7 +20,7 @@ rule set is a mild steer and none of them forbids the agent from doing the
 work — so an unrecognised instruction falls to a neutral set rather than to a
 guess.
 
-The German and Spanish stems here are speech-recognition *input vocabulary*:
+The German, Spanish and European Portuguese stems here are speech-recognition *input vocabulary*:
 the words a person actually says when handing work to an agent. They are
 matching data, not prose (see AGENTS.md §1, closed list item 3), and each such
 line carries an inline marker.
@@ -51,6 +51,12 @@ _INVESTIGATE_ES = (
     r"|por\s+qu[eé]\s+(?:falla|no|se|est[aá])"  # i18n-allow: input vocab
     r"|averigua\w*|investiga\w*|depura\w*"  # i18n-allow: input vocab
 )
+_INVESTIGATE_PT = (
+    r"|porqu[eê]\s+[eé]\s+que|por\s+que\s+raz[aã]o"  # i18n-allow: input vocab
+    r"|porque\s+(?:falha|n[aã]o|est[aá]|d[aá])"  # i18n-allow: input vocab
+    r"|por\s+que\s+(?:falha|n[aã]o|est[aá])"  # i18n-allow: input vocab
+    r"|descobre\s+(?:porqu|por\s+qu)\w*|diagnostica\w*"  # i18n-allow: input vocab
+)
 
 _REVIEW_EN = (
     r"(?:code[-\s]?)?review|audit|critique|assess|go\s+over"
@@ -61,6 +67,7 @@ _REVIEW_DE = (
     r"|begutacht\w*|durchsieh\w*|kontrollier\w*"  # i18n-allow: input vocab
 )
 _REVIEW_ES = r"|revisa\w*|audita\w*|eval[uú]a\w*"  # i18n-allow: input vocab
+_REVIEW_PT = r"|rev[eê]\b|rever|avalia\w*|analisa\w*"  # i18n-allow: input vocab
 
 _IMPLEMENT_EN = (
     r"add|build|implement|write|create|make|refactor|rename|move"
@@ -77,6 +84,11 @@ _IMPLEMENT_ES = (
     r"|a[ñn]ade?\w*|agrega\w*|implementa\w*|escribe?\w*"  # i18n-allow: input vocab
     r"|crea\w*|arregla\w*|corrige?\w*|refactoriza\w*"  # i18n-allow: input vocab
     r"|elimina\w*|reemplaza\w*|actualiza\w*"  # i18n-allow: input vocab
+)
+_IMPLEMENT_PT = (
+    r"|adiciona\w*|acrescenta\w*|escreve\w*|cria\b|criar|constr[oó]i\w*"  # i18n-allow: input vocab
+    r"|conserta\w*|refatoriza\w*|renomeia\w*|muda\b|mudar"  # i18n-allow: input vocab
+    r"|remove\w*|apaga\w*|substitui\w*|atualiza\w*"  # i18n-allow: input vocab
 )
 
 _QUESTION_EN = (
@@ -96,6 +108,11 @@ _QUESTION_ES = (
     r"|qu[eé]\s+(?:hace|es|son|significa)"  # i18n-allow: input vocab
     r"|d[oó]nde\s+(?:est[aá]|se)|explica\w*|describe?\w*"  # i18n-allow: input vocab
 )
+_QUESTION_PT = (
+    r"|como\s+(?:funciona|trabalha|[eé]\b)"  # i18n-allow: input vocab
+    r"|o\s+que\s+(?:faz|[eé]\b|s[aã]o|significa)"  # i18n-allow: input vocab
+    r"|onde\s+(?:est[aá]|fica|[eé]\b)|descreve\w*"  # i18n-allow: input vocab
+)
 
 
 def _compile(*parts: str) -> re.Pattern[str]:
@@ -109,10 +126,13 @@ def _compile(*parts: str) -> re.Pattern[str]:
 # investigation first, because "why does X fail" is an investigation even
 # though "fail" reads like a defect report.
 _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (KIND_INVESTIGATE, _compile(_INVESTIGATE_EN, _INVESTIGATE_DE, _INVESTIGATE_ES)),
-    (KIND_REVIEW, _compile(_REVIEW_EN, _REVIEW_DE, _REVIEW_ES)),
-    (KIND_IMPLEMENT, _compile(_IMPLEMENT_EN, _IMPLEMENT_DE, _IMPLEMENT_ES)),
-    (KIND_QUESTION, _compile(_QUESTION_EN, _QUESTION_DE, _QUESTION_ES)),
+    (
+        KIND_INVESTIGATE,
+        _compile(_INVESTIGATE_EN, _INVESTIGATE_DE, _INVESTIGATE_ES, _INVESTIGATE_PT),
+    ),
+    (KIND_REVIEW, _compile(_REVIEW_EN, _REVIEW_DE, _REVIEW_ES, _REVIEW_PT)),
+    (KIND_IMPLEMENT, _compile(_IMPLEMENT_EN, _IMPLEMENT_DE, _IMPLEMENT_ES, _IMPLEMENT_PT)),
+    (KIND_QUESTION, _compile(_QUESTION_EN, _QUESTION_DE, _QUESTION_ES, _QUESTION_PT)),
 )
 
 

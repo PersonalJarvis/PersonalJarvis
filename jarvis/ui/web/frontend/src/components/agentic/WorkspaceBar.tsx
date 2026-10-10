@@ -27,7 +27,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, FolderGit2, Pencil, Plus, X } from "lucide-react";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { WorkspaceCard } from "@/lib/agenticIdeApi";
 import { dragCarriesFiles, extractPaneDrop, type PaneDropPayload } from "./paneDrop";
@@ -399,9 +399,9 @@ export function WorkspaceBar({
             {...tabDragHandlersFor(workspace)}
             title={
               onDropFiles
-                ? `${workspace.folder} — drop a screenshot or document here to send it to this workspace`
+                ? fill(t("workspace_bar.drop_title"), { folder: workspace.folder })
                 : onReorder
-                  ? `${workspace.folder} — drag to reorder`
+                  ? fill(t("workspace_bar.reorder_title"), { folder: workspace.folder })
                   : workspace.folder
             }
             /*
@@ -453,7 +453,7 @@ export function WorkspaceBar({
                   value={draft}
                   maxLength={80}
                   disabled={busy}
-                  aria-label={`Rename ${workspace.name}`}
+                  aria-label={fill(t("workspace_bar.rename"), { workspace: workspace.name })}
                   data-testid={`workspace-rename-input-${workspace.id}`}
                   onFocus={(event) => event.currentTarget.select()}
                   onChange={(event) => setDraft(event.target.value)}
@@ -468,7 +468,7 @@ export function WorkspaceBar({
                 <button
                   type="submit"
                   disabled={busy || !draft.trim()}
-                  aria-label={`Save name for ${workspace.name}`}
+                  aria-label={fill(t("workspace_bar.rename_save"), { workspace: workspace.name })}
                   data-testid={`workspace-rename-save-${workspace.id}`}
                   className="flex h-6 w-6 items-center justify-center rounded text-primary hover:bg-primary/15 disabled:opacity-40"
                 >
@@ -477,7 +477,7 @@ export function WorkspaceBar({
                 <button
                   type="button"
                   disabled={busy}
-                  aria-label="Cancel rename"
+                  aria-label={t("workspace_bar.rename_cancel")}
                   onClick={() => setEditing(null)}
                   className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted"
                 >
@@ -550,8 +550,8 @@ export function WorkspaceBar({
 
                 <button
                   type="button"
-                  aria-label={`Rename ${workspace.name}`}
-                  title={`Rename ${workspace.name}`}
+                  aria-label={fill(t("workspace_bar.rename"), { workspace: workspace.name })}
+                  title={fill(t("workspace_bar.rename"), { workspace: workspace.name })}
                   disabled={busy}
                   data-testid={`workspace-rename-${workspace.id}`}
                   onClick={() => beginRename(workspace)}
@@ -578,7 +578,7 @@ export function WorkspaceBar({
                 <button
                   type="button"
                   disabled={busy}
-                  aria-label={`Confirm closing ${workspace.name}`}
+                  aria-label={fill(t("workspace_bar.close_confirm_aria"), { workspace: workspace.name })}
                   data-testid={`workspace-close-confirm-${workspace.id}`}
                   onClick={() => {
                     setConfirming(null);
@@ -586,22 +586,22 @@ export function WorkspaceBar({
                   }}
                   className="rounded bg-destructive/20 px-2 py-0.5 text-micro font-medium text-destructive transition-colors hover:bg-destructive/30 disabled:opacity-50"
                 >
-                  Close &amp; stop {workspace.live_terminals || workspace.terminals}
+                  {fill(t("workspace_bar.close_stop"), { count: workspace.live_terminals || workspace.terminals })}
                 </button>
                 <button
                   type="button"
-                  aria-label="Keep this workspace open"
+                  aria-label={t("workspace_bar.keep_aria")}
                   onClick={() => setConfirming(null)}
                   className="rounded px-1.5 py-0.5 text-micro text-muted-foreground hover:text-foreground"
                 >
-                  Keep
+                  {t("workspace_bar.keep")}
                 </button>
               </span>
             ) : !renaming ? (
               <button
                 type="button"
-                aria-label={`Close ${workspace.name}`}
-                title={`Close ${workspace.name} and stop its agents`}
+                aria-label={fill(t("workspace_bar.close"), { workspace: workspace.name })}
+                title={fill(t("workspace_bar.close_title"), { workspace: workspace.name })}
                 disabled={busy}
                 data-testid={`workspace-close-${workspace.id}`}
                 onClick={() => setConfirming(workspace.id)}
@@ -634,8 +634,8 @@ export function WorkspaceBar({
         data-testid="workspace-add"
         title={
           full && maxWorkspaces !== null
-            ? `${maxWorkspaces} workspaces are already open — close one first.`
-            : "Open another folder in its own workspace"
+            ? fill(t("workspace_bar.full"), { count: maxWorkspaces })
+            : t("workspace_bar.add_title")
         }
         onClick={() => {
           setConfirming(null);
@@ -682,10 +682,18 @@ function PaneCount({
   workspace: WorkspaceCard;
   selected: boolean;
 }) {
+  const t = useT();
   return (
     <span
       data-testid={`workspace-panes-${workspace.id}`}
-      title={`${workspace.terminals} terminal${workspace.terminals === 1 ? "" : "s"} open`}
+      title={fill(
+        t(
+          workspace.terminals === 1
+            ? "workspace_bar.terminals_open_one"
+            : "workspace_bar.terminals_open_other",
+        ),
+        { count: workspace.terminals },
+      )}
       className={cn(
         // No fill of its own: the tab it sits in is already a filled surface
         // when selected, and a badge inside it was a second box inside a box.

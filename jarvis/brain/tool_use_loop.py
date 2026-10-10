@@ -405,6 +405,7 @@ _ANTI_SILENCE_PHRASES: dict[str, str] = {
     ),
     "en": "I can't do that right now — I'm missing the right tool for it.",
     "es": "Ahora mismo no puedo hacerlo — me falta la herramienta adecuada.",
+    "pt": "Neste momento não consigo fazer isso — falta-me a ferramenta adequada.",
 }
 
 # Meta-/debug feedback acknowledgement. Must NOT narrate background bookkeeping
@@ -415,6 +416,7 @@ _META_DEBUG_ACK_PHRASES: dict[str, str] = {
     "de": "Verstanden. Was genau hätte anders sein sollen?",  # i18n-allow: spoken German TTS
     "en": "Understood. What exactly should have been different?",
     "es": "Entendido. ¿Qué debería haber sido diferente?",
+    "pt": "Entendido. O que devia ter sido diferente?",
 }
 
 
@@ -423,7 +425,7 @@ def _localized_phrase(
 ) -> str:
     """Pick the phrase variant matching the pin or the user's turn language.
 
-    A pinned ``reply_language`` (de/en/es) wins outright. In ``auto`` mode the
+    A pinned ``reply_language`` (de/en/es/pt) wins outright. In ``auto`` mode the
     language is detected from the utterance TEXT — the tool-use loop never
     receives the STT language tag (the pipeline resolves the turn language from
     that tag separately, and the loop is only handed ``user_utterance``), so we
@@ -939,7 +941,7 @@ class ToolUseLoop:
         block tool execution.
 
         ``reply_language`` (live bug 2026-06-10): the ``brain.reply_language``
-        pin (``auto``/``de``/``en``/``es``) — selects the language of the
+        pin (``auto``/``de``/``en``/``es``/``pt``) — selects the language of the
         spoken fallback phrases; ``auto`` mirrors the user's utterance.
         """
         tid = trace_id or uuid4()

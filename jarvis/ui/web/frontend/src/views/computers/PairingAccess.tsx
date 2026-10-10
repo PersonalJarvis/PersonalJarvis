@@ -5,10 +5,12 @@ import { useT } from "@/i18n";
 import { pairedServersApi } from "@/lib/computersApi";
 import { CopyField } from "./parts";
 import { errorText } from "./wizard/shared";
+import { useRunLocale } from "@/components/runs/format";
 
 /** Codes and revocation are explicit user actions; opening the dialog grants nothing. */
 export function PairingAccess() {
   const t = useT();
+  const runLocale = useRunLocale();
   const [expanded, setExpanded] = useState(false);
   const [invitation, setInvitation] = useState<{ code: string; expires_at: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,7 @@ export function PairingAccess() {
         {invitation && <>
           <CopyField value={invitation.code} label={t("computers.cx_pairing_code")} copyLabel={t("computers.copy")} copiedLabel={t("computers.copied")} />
           <CopyField value={`${window.location.origin}/#pairing_code=${encodeURIComponent(invitation.code)}`} label={t("computers.pair_link")} copyLabel={t("computers.copy")} copiedLabel={t("computers.copied")} />
-          <p className="text-xs text-muted-foreground">{t("computers.pair_expires")} {new Date(invitation.expires_at * 1000).toLocaleTimeString()}</p>
+          <p className="text-xs text-muted-foreground">{t("computers.pair_expires")} {new Date(invitation.expires_at * 1000).toLocaleTimeString(runLocale)}</p>
         </>}
         {clients.data?.map((client) => <div key={client.id} className="flex items-center justify-between gap-2 text-sm">
           <span>{client.name}</span><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => void act(client.id)}>{t("computers.pair_revoke")}</Button>

@@ -7,34 +7,37 @@ import { agentBrand } from "@/lib/agentBrand";
 import { robustCopy, saveOrDownload } from "@/lib/clipboard";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 
 import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 
-export const SPOKEN_KIND_LABEL: Record<string, string> = {
-  reply: "Reply",
-  clarify: "Clarifying question",
-  timeout: "Timeout notice",
-  unavailable: "Brain unavailable",
-  stt_unavailable: "Couldn't hear you",
-  privacy: "Privacy",
-  completion: "Background result",
-  subagent: "Agent / Output",
-  action_done: "Action confirmed",
-  backchannel: "Backchannel",
-  announcement: "Announcement",
-  preamble: "Preamble",
-  progress: "Progress update",
-  withheld: "Answer withheld (safety)",
-  other: "Spoken",
+/** Spoken-kind -> i18n key (`turn_card.kind_*`); translated where rendered. */
+export const SPOKEN_KIND_LABEL_KEY: Record<string, string> = {
+  reply: "turn_card.kind_reply",
+  clarify: "turn_card.kind_clarify",
+  timeout: "turn_card.kind_timeout",
+  unavailable: "turn_card.kind_unavailable",
+  stt_unavailable: "turn_card.kind_stt_unavailable",
+  privacy: "turn_card.kind_privacy",
+  completion: "turn_card.kind_completion",
+  subagent: "turn_card.kind_subagent",
+  action_done: "turn_card.kind_action_done",
+  backchannel: "turn_card.kind_backchannel",
+  announcement: "turn_card.kind_announcement",
+  preamble: "turn_card.kind_preamble",
+  progress: "turn_card.kind_progress",
+  withheld: "turn_card.kind_withheld",
+  other: "turn_card.kind_other",
 };
 
 export function spokenKindLabels(assistantName: string): Record<string, string> {
-  return {
-    ...SPOKEN_KIND_LABEL,
-    subagent: `${agentBrand(assistantName)} / Output`,
-  };
+  const out: Record<string, string> = {};
+  for (const [kind, key] of Object.entries(SPOKEN_KIND_LABEL_KEY)) {
+    out[kind] = fill(translate(key), { agent: agentBrand(assistantName) });
+  }
+  return out;
 }
 
 interface Props {
@@ -77,6 +80,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
     ? confirmedReplies.map((line) => line.text).join(" ")
     : turn.jarvis_text;
   const kindLabel = spokenKindLabels(assistantName);
+  const locale = useRunLocale();
 
   const copyTurn = useCallback(async () => {
     const text = formatTurnPlain(turn, spoken, visibleTurnNumber, kindLabel);
@@ -109,7 +113,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
     );
   }, [turn, spoken, pushToast, t, native, kindLabel]);
 
-  const startedAt = new Date(turn.started_ms).toLocaleTimeString("de", {
+  const startedAt = new Date(turn.started_ms).toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
@@ -130,7 +134,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
       {/* The turn line: quiet, with the actions appearing on hover. */}
       <div className="flex h-8 items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm text-foreground-faint">
-          <span className="font-medium text-muted-foreground">Turn {visibleTurnNumber}</span>
+          <span className="font-medium text-muted-foreground">{t("turn_card.turn")} {visibleTurnNumber}</span>
           <span>·</span>
           <span className="tabular-nums">{startedAt}</span>
           {turn.latency_total_ms > 0 && (
@@ -212,7 +216,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         {turn.tool_calls.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
             <Wrench aria-hidden className="h-3.5 w-3.5" />
-            <span>Tools:</span>
+            <span>{t("turn_card.tools_label")}</span>
             {turn.tool_calls.map((tc) => (
               <Badge key={tc} variant="secondary" className="font-mono">
                 {tc}
@@ -233,27 +237,29 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
                   className="text-foreground-faint"
                   title={
                     turn.voice_verified === false
-                      ? `Requested voice (native audio is not a verified speaker): ${
-                          turn.voice_provider
+                      ? fill(t("turn_card.voice_requested_title"), {
+                          voice: turn.voice_provider
                             ? `${turn.voice_name} (${turn.voice_provider})`
-                            : turn.voice_name
-                        }`
-                      : turn.voice_provider
-                        ? `Voice: ${turn.voice_name} (${turn.voice_provider})`
-                        : `Voice: ${turn.voice_name}`
+                            : turn.voice_name,
+                        })
+                      : fill(t("turn_card.voice_title"), {
+                          voice: turn.voice_provider
+                            ? `${turn.voice_name} (${turn.voice_provider})`
+                            : turn.voice_name,
+                        })
                   }
                 >
                   {[
                     turn.voice_name,
                     turn.voice_provider,
-                    turn.voice_verified === false ? "requested" : null,
+                    turn.voice_verified === false ? t("turn_card.voice_requested") : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
               )}
               {turn.awaiting_confirmation && (
-                <Badge variant="warning">Awaiting confirmation</Badge>
+                <Badge variant="warning">{t("turn_card.awaiting_confirmation")}</Badge>
               )}
             </div>
             <div className={cn(PROSE, "w-full rounded-lg border border-border bg-card p-4 text-foreground")}>
@@ -266,7 +272,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
             order they were heard, each with its kind as a small badge. */}
         {auxiliarySpoken.length > 0 && (
           <div className="space-y-2" data-testid="turn-spoken-output">
-            <div className="text-sm text-muted-foreground">Spoken output</div>
+            <div className="text-sm text-muted-foreground">{t("turn_card.spoken_output")}</div>
             {auxiliarySpoken.map((s, i) => (
               <div
                 key={`${s.ts_ms}-${i}`}
@@ -314,7 +320,7 @@ export function formatTurnPlain(
   kindLabel: Record<string, string> = spokenKindLabels(""),
 ): string {
   const lines: string[] = [];
-  lines.push(`--- Turn ${displayNumber} ---`);
+  lines.push(`--- ${translate("turn_card.turn")} ${displayNumber} ---`);
   if (turn.user_text) lines.push(`[USER]   ${turn.user_text}`);
   const meta: string[] = [];
   if (turn.tier) meta.push(`tier=${turn.tier}`);
@@ -336,7 +342,9 @@ export function formatTurnPlain(
   const jarvisLines: Array<{ ts_ms: number; lines: string[] }> = [];
   const hasConfirmedReply = spoken.some((line) => line.spoken_kind === "reply");
   if (turn.jarvis_text && !hasConfirmedReply) {
-    const prefix = turn.awaiting_confirmation ? "(awaiting confirmation) " : "";
+    const prefix = turn.awaiting_confirmation
+      ? `${translate("turn_card.awaiting_confirmation_prefix")} `
+      : "";
     jarvisLines.push({
       ts_ms: turn.ended_ms ?? Number.MAX_SAFE_INTEGER,
       lines: [`[JARVIS] ${prefix}${turn.jarvis_text}`],

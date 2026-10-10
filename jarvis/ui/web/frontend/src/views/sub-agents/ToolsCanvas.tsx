@@ -315,7 +315,7 @@ function ToolDetailSheet({
 
           <div>
             <div className="text-micro uppercase text-zinc-500 mb-1">
-              Arguments
+              {t("tools_canvas.arguments")}
             </div>
             <pre className="rounded bg-zinc-800/60 p-2 text-xs whitespace-pre-wrap text-zinc-200 break-all">
               {tool.args_preview || t("tools_canvas.empty")}
@@ -325,7 +325,7 @@ function ToolDetailSheet({
           {tool.output_preview && (
             <div>
               <div className="text-micro uppercase text-zinc-500 mb-1">
-                Output
+                {t("tools_canvas.output")}
               </div>
               <pre className="rounded bg-zinc-800/60 p-2 text-xs whitespace-pre-wrap text-zinc-200 break-all">
                 {tool.output_preview}

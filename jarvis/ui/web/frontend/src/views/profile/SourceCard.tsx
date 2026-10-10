@@ -26,7 +26,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Textarea } from "@/components/ui/textarea";
 import { PROSE_BASE, splitFrontMatter } from "@/components/outputs/MarkdownProse";
 import { getWSClient } from "@/hooks/useWebSocket";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { fetchJson, type RawProfileResponse } from "@/views/profile/api";
@@ -233,7 +234,7 @@ export function SourceCard({ doc }: { doc: SourceDocument }) {
                   <Clock aria-hidden className="h-3.5 w-3.5 shrink-0" />
                   {t("profile_view.source_updated").replace(
                     "{0}",
-                    lastUpdate.toLocaleDateString(),
+                    lastUpdate.toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui)),
                   )}
                 </span>
               )}

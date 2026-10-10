@@ -23,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { translate, useT } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
 import {
   useConductorDashboard,
   useCreateConductorJob,
@@ -33,6 +33,7 @@ import {
   type JobSummary,
   type RunRow,
 } from "@/hooks/useConductor";
+import { uiLocale } from "@/lib/boardInsights";
 
 // ---------------------------------------------------------------------
 // Icons + Labels
@@ -44,10 +45,11 @@ const TYPE_ICON: Record<string, typeof Clock> = {
   agent: Sparkles,
 };
 
+/** Job type -> i18n key of its badge label. */
 const TYPE_LABEL: Record<string, string> = {
-  shell: "Shell",
-  http: "HTTP",
-  agent: "Agent",
+  shell: "conductor_view.type_shell",
+  http: "conductor_view.type_http",
+  agent: "conductor_view.type_agent",
 };
 
 const SCHED_ICON: Record<string, typeof Clock> = {
@@ -80,8 +82,8 @@ export function ConductorView() {
     <div className="flex h-full flex-col">
       <ViewHeader
         icon={<Orbit className="h-4 w-4 text-primary" />}
-        title="Conductor"
-        subtitle="Schedule Tasks + Agentic Workflows — Open-Source, self-hosted, code-first."
+        title={t("conductor_view.title")}
+        subtitle={t("conductor_view.subtitle")}
         right={
           <div className="flex items-center gap-2">
             <Button
@@ -112,7 +114,7 @@ export function ConductorView() {
         {/* Links: Job-Katalog */}
         <div className="flex w-[46%] flex-col border-r border-border">
           <div className="px-5 py-2 text-micro uppercase tracking-wider text-muted-foreground">
-            Jobs
+            {t("conductor_view.jobs")}
           </div>
           <ScrollArea className="flex-1">
             <div className="space-y-2 px-5 pb-6">
@@ -135,7 +137,7 @@ export function ConductorView() {
         {/* Rechts: Timeline */}
         <div className="flex flex-1 flex-col">
           <div className="px-5 py-2 text-micro uppercase tracking-wider text-muted-foreground">
-            Timeline
+            {t("conductor_view.timeline")}
           </div>
           <ScrollArea className="flex-1">
             <div className="space-y-1.5 px-5 pb-6">
@@ -178,7 +180,7 @@ function SummaryBar({
     <div className="flex items-center gap-3 border-b border-border bg-background/30 px-5 py-2.5">
       <StatChip
         icon={<Orbit className="h-3.5 w-3.5" />}
-        label="Jobs"
+        label={t("conductor_view.jobs")}
         value={String(summary?.total ?? jobCount)}
       />
       <StatChip
@@ -188,17 +190,17 @@ function SummaryBar({
       />
       <StatChip
         icon={<Sparkles className="h-3.5 w-3.5 text-primary" />}
-        label="Agent"
+        label={t("conductor_view.type_agent")}
         value={String(summary?.by_type?.agent ?? 0)}
       />
       <StatChip
         icon={<Globe className="h-3.5 w-3.5" />}
-        label="HTTP"
+        label={t("conductor_view.type_http")}
         value={String(summary?.by_type?.http ?? 0)}
       />
       <StatChip
         icon={<TerminalSquare className="h-3.5 w-3.5" />}
-        label="Shell"
+        label={t("conductor_view.type_shell")}
         value={String(summary?.by_type?.shell ?? 0)}
       />
       <div className="ml-auto text-xs text-muted-foreground">
@@ -251,7 +253,7 @@ function JobCard({ job }: { job: JobSummary }) {
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-sm font-semibold">{job.name}</h3>
             <Badge variant="outline" className="text-micro">
-              {TYPE_LABEL[job.type] ?? job.type}
+              {TYPE_LABEL[job.type] ? t(TYPE_LABEL[job.type]) : job.type}
             </Badge>
             <Badge
               variant={job.schedule_type === "cron" ? "default" : "secondary"}
@@ -327,6 +329,10 @@ function JobCard({ job }: { job: JobSummary }) {
   );
 }
 
+/** Run triggers conductor/core reports; each has a `workflows_view.trigger_*`
+ *  label. An unknown value from a newer backend is shown as sent. */
+const CONDUCTOR_TRIGGERS = new Set(["manual", "cron", "interval", "webhook"]);
+
 function LastRunChip({
   state,
   at,
@@ -339,14 +345,14 @@ function LastRunChip({
     <Badge
       variant={ok ? "outline" : "destructive"}
       className="text-micro"
-      title={at ? new Date(at / 1e6).toLocaleString() : ""}
+      title={at ? new Date(at / 1e6).toLocaleString(uiLocale()) : ""}
     >
       {ok ? (
         <CheckCircle2 className="mr-1 h-3 w-3" />
       ) : (
         <AlertCircle className="mr-1 h-3 w-3" />
       )}
-      {at ? formatDeltaPast(at) : state}
+      {at ? formatDeltaPast(at) : translate(`workflows_view.run_state_${state}`)}
     </Badge>
   );
 }
@@ -362,6 +368,7 @@ function TimelineRow({
   run: RunRow;
   job: JobSummary | undefined;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const StateIcon =
     run.state === "completed"
@@ -409,7 +416,9 @@ function TimelineRow({
           {job?.name ?? run.job_id.slice(0, 8)}
         </span>
         <Badge variant="outline" className="text-micro">
-          {run.trigger}
+          {CONDUCTOR_TRIGGERS.has(run.trigger)
+            ? t(`workflows_view.trigger_${run.trigger}`)
+            : run.trigger}
         </Badge>
         {duration !== undefined && (
           <span className="font-mono text-xs text-muted-foreground">
@@ -418,7 +427,7 @@ function TimelineRow({
         )}
         {run.exit_code !== null && run.exit_code !== 0 && (
           <span className="font-mono text-xs text-destructive">
-            exit {run.exit_code}
+            {fill(t("conductor_view.exit_code"), { code: run.exit_code })}
           </span>
         )}
         {run.error && (
@@ -432,7 +441,7 @@ function TimelineRow({
           {run.output && (
             <div>
               <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">
-                Output
+                {t("conductor_view.output")}
               </div>
               <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-background/40 p-2 font-mono text-xs leading-snug">
                 {run.output.slice(0, 8000)}
@@ -442,7 +451,7 @@ function TimelineRow({
           {Object.keys(metrics).length > 0 && (
             <div>
               <div className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">
-                Metrics
+                {t("conductor_view.metrics")}
               </div>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(metrics).map(([k, v]) => (
@@ -472,9 +481,10 @@ function TimelineRow({
 // Job-Editor-Modal
 // ---------------------------------------------------------------------
 
-const EXAMPLE_SHELL_JSON = `{
+/** Example job shown in the editor; its description follows the UI language. */
+const exampleJobJson = (): string => `{
   "name": "URL-Healthcheck",
-  "description": "Pingt alle 5 Minuten ein API-Endpoint an.",
+  "description": ${JSON.stringify(translate("conductor_view.example_description"))},
   "spec": {
     "type": "http",
     "method": "GET",
@@ -487,7 +497,7 @@ const EXAMPLE_SHELL_JSON = `{
 
 function JobEditorModal({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const [text, setText] = useState(EXAMPLE_SHELL_JSON);
+  const [text, setText] = useState(exampleJobJson);
   const [err, setErr] = useState<string | null>(null);
   const createMut = useCreateConductorJob();
 
@@ -539,7 +549,7 @@ function JobEditorModal({ onClose }: { onClose: () => void }) {
             <code className="rounded bg-background/60 px-1">shell</code>,{" "}
             <code className="rounded bg-background/60 px-1">http</code>,{" "}
             <code className="rounded bg-background/60 px-1">agent</code>.
-            Schedule:{" "}
+            {t("conductor_view.schedule_label")}{" "}
             <code className="rounded bg-background/60 px-1">cron</code>,{" "}
             <code className="rounded bg-background/60 px-1">interval</code>,{" "}
             <code className="rounded bg-background/60 px-1">manual</code>,{" "}
@@ -624,7 +634,7 @@ function formatDeltaPast(ns: number): string {
 
 function formatShortTime(ns: number): string {
   try {
-    return new Date(ns / 1e6).toLocaleTimeString();
+    return new Date(ns / 1e6).toLocaleTimeString(uiLocale());
   } catch {
     return "—";
   }

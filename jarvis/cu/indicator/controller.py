@@ -56,6 +56,7 @@ _ESC_HINTS: dict[str, str] = {
     "de": "Esc zum Abbrechen",  # i18n-allow: localized product-surface UI string
     "en": "Esc to cancel",
     "es": "Esc para cancelar",  # i18n-allow: localized product-surface UI string
+    "pt": "Esc para cancelar",  # i18n-allow: localized product-surface UI string
 }
 
 _QUIT_GRACE_S = 1.5

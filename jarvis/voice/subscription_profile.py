@@ -22,7 +22,9 @@ from jarvis.plugins.brain.codex import CodexBrain
 CODEX_SUBSCRIPTION_VOICE_PROFILE = "codex-subscription-voice"
 LEGACY_CODEX_REALTIME_PROVIDER = "codex-subscription-realtime"
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German", "en": "English", "es": "Spanish", "pt": "European Portuguese",
+}
 _MAX_HISTORY_MESSAGES = 6
 _SUPPORTED_DESKTOP_PLATFORMS = frozenset({"win32", "darwin", "linux"})
 

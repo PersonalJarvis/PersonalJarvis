@@ -632,6 +632,7 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
                 DEFAULT_VOICE_DE,
                 DEFAULT_VOICE_EN,
                 DEFAULT_VOICE_ES,
+                DEFAULT_VOICE_PT,
                 InworldTTS,
             )
         except ImportError as exc:
@@ -643,7 +644,7 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
         # Per-language voices live in the [tts.inworld] sub-table (extra="allow"),
         # NOT [tts].voice_de — that field may hold a foreign Gemini voice name
         # ("Charon") which is not a valid Inworld voice. Falls back to the
-        # plugin's native defaults (Josef/Dennis/Diego). The shared [tts].model
+        # plugin's native defaults (Josef/Dennis/Diego/Leonor). The shared [tts].model
         # is ignored here (it may hold another family's id); the model comes from
         # the sub-table or the plugin default.
         extras = getattr(tts_cfg, "model_extra", None) or {}
@@ -653,6 +654,7 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             default_voice_de=iw.get("voice_de") or DEFAULT_VOICE_DE,
             default_voice_en=iw.get("voice_en") or DEFAULT_VOICE_EN,
             default_voice_es=iw.get("voice_es") or DEFAULT_VOICE_ES,
+            default_voice_pt=iw.get("voice_pt") or DEFAULT_VOICE_PT,
             model=iw.get("model") or INWORLD_DEFAULT_MODEL,
             language=tts_cfg.language_code or "auto",
             speed=float(iw.get("speed", getattr(tts_cfg, "speed", 1.0))),
@@ -717,6 +719,7 @@ def _build_provider(tts_cfg: Any, provider: str) -> Any:
             voice_id_de=ct.get("voice_id_de"),
             voice_id_en=ct.get("voice_id_en"),
             voice_id_es=ct.get("voice_id_es"),
+            voice_id_pt=ct.get("voice_id_pt"),
             language=ct.get("language", tts_cfg.language_code or "auto"),
             chunk_by_sentence=bool(ct.get("chunk_by_sentence", True)),
             speed=float(ct.get("speed", tts_cfg.speed)),

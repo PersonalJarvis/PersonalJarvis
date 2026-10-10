@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { KeyRound } from "lucide-react";
 import type { AntigravityStatus } from "@/hooks/useProviders";
 import { useT } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 
 /** A connected Google login is a subscription even without multi-account support. */
 export function AntigravitySubscriptionCard({ refresh }: { refresh: number }) {
@@ -28,7 +29,7 @@ export function AntigravitySubscriptionCard({ refresh }: { refresh: number }) {
     <div className="space-y-2 rounded-xl border border-border px-3 py-2">
       <p className="flex items-start gap-2 text-xs text-muted-foreground">
         <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-        {status ? connected || status.mode !== "api_key" ? status.message : t("agent_accounts.not_signed_in") : t(failed ? "agent_accounts.usage.state.unavailable" : "agent_accounts.loading")}
+        {status ? connected || status.mode !== "api_key" ? backendMessage(t, "apikeys_antigravity.status_msg", status.message_code, status.message_params, status.message) : t("agent_accounts.not_signed_in") : t(failed ? "agent_accounts.usage.state.unavailable" : "agent_accounts.loading")}
       </p>
       <p className="text-micro text-muted-foreground">{t("agent_accounts.single_google_login")}</p>
       <p className="text-micro text-muted-foreground">{t("agent_accounts.usage.state.unsupported")}</p>

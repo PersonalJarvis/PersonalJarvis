@@ -272,7 +272,8 @@
       "resident_unknown": "{total} insgesamt — Grafikspeicher unbekannt",
       "resident_context": "Kontext (Schätzung)",
       "resident_context_short": "Kontext",
-      "resident_reserve": "Reserve für Sprache rein/raus"
+      "resident_reserve": "Reserve für Sprache rein/raus",
+      "server_no_answer": "Der Server unter {url} antwortet nicht."
     },
     "installed": {
       "title": "Installierte Modelle",

@@ -3,6 +3,7 @@
 // avoids the WebView2 stale-list cache trap. Terminals are embedded (xterm
 // panes driven by the workspace PTY WebSocket), so launching just returns the
 // per-slot plan — it opens no OS windows.
+import { fill, translate } from "@/i18n";
 
 export interface WorkspaceAgent {
   name: string;
@@ -67,5 +68,5 @@ async function extractDetail(res: Response): Promise<string> {
   } catch {
     /* fall through to status code */
   }
-  return `request failed: ${res.status}`;
+  return fill(translate("shell_errors.request_failed_status"), { status: res.status });
 }

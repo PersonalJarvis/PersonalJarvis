@@ -1245,7 +1245,10 @@ function EntriesTable({
           <Cell align="right" muted>
             <span
               className="tabular-nums"
-              title={`${formatExact(row.tokens_in)} in / ${formatExact(row.tokens_out)} out`}
+              title={fill(t("costs_view.tokens_in_out"), {
+                input: formatExact(row.tokens_in),
+                output: formatExact(row.tokens_out),
+              })}
             >
               {formatTokensOrNone(row.tokens_in)} / {formatTokensOrNone(row.tokens_out)}
             </span>

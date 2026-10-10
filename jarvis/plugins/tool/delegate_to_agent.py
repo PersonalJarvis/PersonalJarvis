@@ -38,81 +38,97 @@ _ACK: Final[dict[str, str]] = {
     "de": "{name} ist dran, ich sage Bescheid.",  # i18n-allow: spoken ack
     "en": "{name} is on it, I will let you know.",
     "es": "{name} se encarga, te aviso.",
+    "pt": "{name} trata disso, eu aviso-te.",
 }
 _QUIET_ACK: Final[dict[str, str]] = {
     "de": "{name} ist dran.",  # i18n-allow: spoken ack
     "en": "{name} is on it.",
     "es": "{name} se encarga.",
+    "pt": "{name} trata disso.",
 }
 _ERROR_ACK: Final[dict[str, str]] = {
     "de": "{name} ist dran; ich melde mich bei Hindernissen.",  # i18n-allow: spoken ack
     "en": "{name} is on it; I will report any blockers.",
     "es": "{name} se encarga; te avisare si hay impedimentos.",
+    "pt": "{name} trata disso; aviso-te se houver impedimentos.",
 }
 _QUEUED: Final[dict[str, str]] = {
     "de": "Aufgabe für {name} erfasst; Start noch nicht bestätigt.",  # i18n-allow: spoken ack
     "en": "The task for {name} is recorded; its start is not confirmed yet.",
     "es": "La tarea para {name} está registrada; su inicio aún no está confirmado.",
+    "pt": "A tarefa para {name} está registada; o início ainda não está confirmado.",
 }
 _NO_AGENT: Final[dict[str, str]] = {
     "de": "Ich kenne keinen Agenten namens {target}.",  # i18n-allow: spoken reply
     "en": "I do not know an agent called {target}.",
     "es": "No conozco ningún agente llamado {target}.",
+    "pt": "Não conheço nenhum agente chamado {target}.",
 }
 _ASK_AGENT: Final[dict[str, str]] = {
     "de": "Meinst du {names}?",  # i18n-allow: spoken reply
     "en": "Did you mean {names}?",
     "es": "¿Te refieres a {names}?",
+    "pt": "Referes-te a {names}?",
 }
 _OR: Final[dict[str, str]] = {
     "de": " oder ",  # i18n-allow: spoken reply
     "en": " or ",
     "es": " o ",
+    "pt": " ou ",
 }
 _AVAILABLE: Final[dict[str, str]] = {
     "de": "Verfügbar sind: {names}.",  # i18n-allow: spoken reply
     "en": "Available agents: {names}.",
     "es": "Agentes disponibles: {names}.",
+    "pt": "Agentes disponíveis: {names}.",
 }
 _NO_FIT: Final[dict[str, str]] = {
     "de": "Keiner deiner Agenten passt zu dieser Aufgabe.",  # i18n-allow: spoken reply
     "en": "None of your agents fits this task.",
     "es": "Ninguno de tus agentes encaja con esta tarea.",
+    "pt": "Nenhum dos teus agentes se adequa a esta tarefa.",
 }
 _REFUSED: Final[dict[str, str]] = {
     "de": "{name} kann das gerade nicht übernehmen: {reason}.",  # i18n-allow: spoken reply
     "en": "{name} cannot take that right now: {reason}.",
     "es": "{name} no puede encargarse ahora: {reason}.",
+    "pt": "{name} não pode tratar disso agora: {reason}.",
 }
 _NOT_READY: Final[dict[str, str]] = {
     "de": "Die Agenten sind noch nicht bereit.",  # i18n-allow: spoken reply
     "en": "The agents are not ready yet.",
     "es": "Los agentes aún no están listos.",
+    "pt": "Os agentes ainda não estão prontos.",
 }
 _STATUS_IDLE: Final[dict[str, str]] = {
     "de": "{name} hat gerade nichts zu tun.",  # i18n-allow: spoken reply
     "en": "{name} has nothing to do right now.",
     "es": "{name} no tiene nada que hacer ahora.",
+    "pt": "{name} não tem nada para fazer agora.",
 }
 _STATUS_WORKING: Final[dict[str, str]] = {
     "de": "{name} arbeitet gerade: {text}",  # i18n-allow: spoken reply
     "en": "{name} is working on: {text}",
     "es": "{name} está trabajando en: {text}",
+    "pt": "{name} está a trabalhar em: {text}",
 }
 _STATUS_LAST: Final[dict[str, str]] = {
     "de": "{name}: zuletzt {kind}, {text}",  # i18n-allow: spoken reply
     "en": "{name}: last {kind}, {text}",
     "es": "{name}: último {kind}, {text}",
+    "pt": "{name}: último {kind}, {text}",
 }
 _ROSTER: Final[dict[str, str]] = {
     "de": "Deine Agenten: {names}.",  # i18n-allow: spoken reply
     "en": "Your agents: {names}.",
     "es": "Tus agentes: {names}.",
+    "pt": "Os teus agentes: {names}.",
 }
 _EMPTY_ROSTER: Final[dict[str, str]] = {
     "de": "Du hast noch keine Team-Agenten.",  # i18n-allow: spoken reply
     "en": "You do not have any team agents yet.",
     "es": "Todavía no tienes agentes en tu equipo.",
+    "pt": "Ainda não tens agentes na tua equipa.",
 }
 
 

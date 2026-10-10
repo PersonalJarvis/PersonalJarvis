@@ -84,9 +84,10 @@ FALLBACK_PHRASES: dict[str, str] = {
     "de": "Es trat ein Fehler auf.",  # i18n-allow: spoken German fallback phrase (runtime voice output)
     "en": "An error occurred.",
     # Runtime-output-language doctrine: every spoken phrase table carries all
-    # supported locales (de/en/es) so a Spanish-pinned user never falls back to
+    # supported locales (de/en/es/pt) so a Spanish-pinned user never falls back to
     # German. Used by the stacktrace, raw-dump, and post-scrub-residue guards.
     "es": "Se produjo un error.",
+    "pt": "Ocorreu um erro.",
 }
 
 
@@ -394,12 +395,13 @@ LONG_BASE64_RE = re.compile(
 # so a source URL / domain / footer can never reach TTS. Real spoken prose has
 # no http(s):// or bare www. token, so this does not touch a clean answer.
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
-# The SERP "more results from <source>" footer (de/en/es). Cut it before the
+# The SERP "more results from <source>" footer (de/en/es/pt). Cut it before the
 # bare-www pass so "Weitere Ergebnisse von www.x.de" goes as one unit.
 MORE_RESULTS_RE = re.compile(
     r"\b(?:weitere|mehr)\s+ergebnisse\s+(?:von|auf|bei)\s+\S+"  # de  # i18n-allow
     r"|more\s+results\s+(?:from|on|for)\s+\S+"                  # en
-    r"|m[aá]s\s+resultados\s+(?:de|en|para)\s+\S+",             # es
+    r"|m[aá]s\s+resultados\s+(?:de|en|para)\s+\S+"              # es
+    r"|mais\s+resultados\s+(?:de|do|da|em|no|na|para)\s+\S+",    # pt
     re.IGNORECASE,
 )
 # A bare www-prefixed domain reference ("www.gutefrage.net"). Anchored on the
@@ -419,6 +421,7 @@ SOURCE_LINK_PLACEHOLDER: dict[str, str] = {
     "de": "der Website",  # i18n-allow: spoken German placeholder (runtime voice output)
     "en": "the website",
     "es": "el sitio web",
+    "pt": "o site",
 }
 
 # Markdown

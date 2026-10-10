@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
+import pt from "@/i18n/locales/pt.json";
 import { reduceThinkingSteps, type ThinkingStep } from "@/lib/thinkingSteps";
 import type { ToolBlock, TurnBlock } from "./reduce";
 import {
@@ -156,7 +157,7 @@ describe("trace timeline", () => {
     expect(shortPath("C:\\Users\\me\\repo\\src\\a.ts")).toBe("…/repo/src/a.ts");
   });
 
-  it.each([["de", de], ["es", es]] as const)("fills every %s line", (lang, dict) => {
+  it.each([["de", de], ["es", es], ["pt", pt]] as const)("fills every %s line", (lang, dict) => {
     const tl = translator(dict as Dict);
     const line = buildTimeline([
       text("n", "Why."),
@@ -177,7 +178,7 @@ describe("trace_report locale parity", () => {
     return Object.entries(obj).flatMap(([k, v]) => (v && typeof v === "object" ? keys(v as Dict, `${prefix}${k}.`) : [`${prefix}${k}`]));
   }
   const base = keys((en as Dict).trace_report as Dict).sort();
-  it.each([["de", de], ["es", es]] as const)("%s carries exactly the English keys", (_lang, dict) => {
+  it.each([["de", de], ["es", es], ["pt", pt]] as const)("%s carries exactly the English keys", (_lang, dict) => {
     expect(keys((dict as Dict).trace_report as Dict).sort()).toEqual(base);
   });
   it("never uses {name}, which the i18n layer fills with the assistant's name", () => {

@@ -478,7 +478,8 @@
     "hidden": "Hidden",
     "visible": "Visible",
     "links": "Links",
-    "back": "Back"
+    "back": "Back",
+    "website_other": "Website / Other"
   },
   "contacts": {
     "subtitle": "Your personal address book — names, contact details, and a short note per person.",
@@ -552,7 +553,8 @@
       "partner": "Partner",
       "acquaintance": "Acquaintance",
       "other": "Other"
-    }
+    },
+    "remove": "Remove"
   },
   "dictionary": {
     "title": "Dictionary",
@@ -740,7 +742,8 @@
       "testing": "Testing…",
       "test_hint": "Tests the active mode with a sample. Uses the selected provider; nothing is saved.",
       "sample_before": "Before",
-      "sample_after": "After"
+      "sample_after": "After",
+      "ollama_local": "Ollama (local)"
     },
     "prompt_mode": {
       "title": "Prompt Mode",
@@ -763,6 +766,15 @@
     "api_keys": {
       "title": "Voice input",
       "description": "Keys and providers used to turn your speech into text."
+    },
+    "call_not_ended": "The voice call has not ended yet. Please try again.",
+    "not_running_here": "Voice is not running on this computer.",
+    "request_failed": "Voice request failed ({status}).",
+    "startup_audio_lost": "Voice startup audio could not be retained. Please start again.",
+    "reconnect_failed": "Voice reconnection failed.",
+    "backend_error": {
+      "voice_connection_lost": "The voice connection was lost. Pending actions were not replayed.",
+      "subscription_request_failed": "ChatGPT subscription access could not complete this request. No API key was used."
     }
   },
   "voice_state": {
@@ -842,7 +854,11 @@
     "realtime_webrtc_degraded": "The WebRTC transport could not be set up; audio continues over the audio socket.",
     "realtime_transport_capability_missing": "This window did not receive the desktop permission needed to open the subscription transport. Restart the app.",
     "realtime_transport_offer_unsupported": "This window cannot create the WebRTC connection the subscription transport needs. Use an API Realtime provider instead.",
-    "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again."
+    "realtime_transport_socket_unreachable": "The subscription transport channel could not be reached. Restart the app, then try again.",
+    "resize_hint": "Drag to resize the sidebar — double-click to reset",
+    "ide_navigation": "IDE navigation",
+    "workspace_options": "Workspace options",
+    "open_conversation_failed": "Could not open conversation"
   },
   "provider_billing": {
     "api": "API, usage-based billing",
@@ -1038,7 +1054,8 @@
     "tokens_out": "Output tokens",
     "tool_running": "Still running…",
     "interrupt_hint": "esc to interrupt",
-    "status_words": "Thinking…, Working…, Digging…, Reasoning…, Pondering…, Wrangling…, Puzzling…, Noodling…, Assembling…, Untangling…, Cooking…, Vibing…"
+    "status_words": "Thinking…, Working…, Digging…, Reasoning…, Pondering…, Wrangling…, Puzzling…, Noodling…, Assembling…, Untangling…, Cooking…, Vibing…",
+    "drop_nothing_usable": "That drop carried nothing this chat could use."
   },
   "chats_view": {
     "title": "Chat",
@@ -1321,7 +1338,14 @@
       "renamed": "Renamed",
       "delivered": "Delivered",
       "binary": "binary"
-    }
+    },
+    "tool_screenshot": "Screenshot",
+    "tool_web_search": "Web Search",
+    "tool_open_app": "Open App",
+    "tool_type_text": "Type Text",
+    "tool_remember": "Remember",
+    "tool_admin_op": "Admin Op",
+    "tool_multi_spawn": "Multi-Spawn"
   },
   "tasks_view": {
     "title": "Automations",
@@ -1472,7 +1496,165 @@
     "oauth_client_own": "Your own {family} client",
     "oauth_client_placeholder": "Placeholder {family} client — add your own when connecting",
     "fact_publisher": "Publisher",
-    "fact_source": "Source"
+    "fact_source": "Source",
+    "reauth_provider_rejected": "The provider no longer accepts this authorization",
+    "reauth_client_rejected": "The provider no longer accepts this app's OAuth client",
+    "reauth_client_missing": "Connected before Jarvis stored the OAuth client",
+    "reauth_rotation_lost": "A renewed token could not be saved, so it was retired",
+    "reauth_refresh_missing": "The access token expired and cannot be renewed automatically",
+    "reauth_unknown": "The authorization stopped working",
+    "reauth_retrying": "{headline}. Jarvis retries this once a day; reconnect to fix it now.",
+    "reauth_no_retry": "{headline}. This one cannot be retried automatically — reconnect to fix it.",
+    "ago_today": "today",
+    "ago_yesterday": "yesterday",
+    "ago_days": "{count} days ago",
+    "longevity_permanent": "Stays connected",
+    "longevity_self_renewing": "Renews itself",
+    "longevity_provider_limited": "Sign in again periodically",
+    "auth_browser_login": "Browser Login",
+    "auth_local": "Local device",
+    "auth_device_flow": "Device Flow",
+    "auth_access_token": "Access Token",
+    "auth_one_click": "One-Click",
+    "auth_allowlist": "Allowlist",
+    "auth_no_signin": "No sign-in",
+    "client_id_hint_spotify": "32-character id from the app's settings",
+    "client_id_hint_github": "Iv1.… from the OAuth App settings",
+    "client_id_hint_gitlab": "64-character application id",
+    "client_id_hint_figma": "client id from the app's settings",
+    "client_id_hint_hubspot": "UUID from the app's Auth settings",
+    "secret_not_needed_public": "not needed for a public/native app",
+    "secret_not_needed_native": "not needed for a Native App",
+    "secret_not_needed_empty": "not needed — leave this empty",
+    "secret_usually_not_needed": "usually not needed",
+    "err_session_failed": "The sign-in session could not be created. Please try again.",
+    "err_signin_page_unavailable": "The sign-in page is unavailable. Please try again.",
+    "err_denied": "Sign-in was declined. You can try again when ready.",
+    "err_timeout": "Sign-in timed out. Please try again.",
+    "err_provider_unreachable": "The provider could not be reached. Please try again later.",
+    "err_port_in_use": "The sign-in callback is busy. Close the other sign-in attempt and try again.",
+    "err_misconfigured": "Browser sign-in is pending publisher setup. No developer setup is required from you.",
+    "fallback_notice": "Browser login needs the publisher client, which isn't provisioned yet — you can connect with a token meanwhile.",
+    "err_pending_publisher": "This connection is pending publisher setup. Please try again when browser sign-in is available.",
+    "connection_unavailable": "Connection unavailable",
+    "unsupported_device": "Unsupported on this device",
+    "installed_count": "{count} installed",
+    "attention_one": "{plugin} needs reconnecting",
+    "attention_many": "{count} connections need reconnecting",
+    "attention_one_detail": "{reason} — reconnect to keep it working.",
+    "attention_many_detail": "Reconnect to keep them working: {plugins}",
+    "jump_to_it": "Jump to it",
+    "jump_to_first": "Jump to first",
+    "disconnect_plugin": "Disconnect plugin",
+    "reconnect_plugin": "Reconnect plugin",
+    "connect_plugin": "Connect plugin",
+    "authorization_link": "Authorization link",
+    "copy_link": "Copy link",
+    "copied": "Copied",
+    "copy": "Copy",
+    "copied_bang": "Copied!",
+    "unknown_error": "Unknown error",
+    "connecting_plugin": "Connecting {plugin}",
+    "browser_login": "Browser login",
+    "authorize_in_browser": "Authorize {product} in your browser",
+    "continue_in_browser": "Continue in the browser tab for {plugin} — sign in if prompted, click \"Authorize\", then come back here. No tab visible? Open it again or copy the link below. The plugin stays \"Not connected\" until you finish there.",
+    "waiting_callback": "Waiting for {plugin} to call back at",
+    "redirect_hint": "If the provider shows an error instead of asking for approval, allow exactly this address in your provider app's redirect settings, then open the sign-in again.",
+    "open_plugin_again": "Open {plugin} again",
+    "copy_link_hint_paste": "Or copy this link and paste it into your browser's address bar.",
+    "plugin_connected": "{plugin} connected",
+    "connect_named": "Connect {plugin}",
+    "device_flow": "Device flow",
+    "device_step1": "Step 1 — copy this code",
+    "device_step2": "Step 2 — paste it on {plugin}",
+    "open_plugin": "Open {plugin}",
+    "copy_link_hint_code": "Or copy this link, open it in your browser, and enter the code above.",
+    "waiting_authorization": "Waiting for authorization…",
+    "err_save_settings": "Could not save the connection settings. Please try again.",
+    "pkce_browser_unavailable": "Browser sign-in is not available yet.",
+    "pkce_signin_with": "You'll sign in with your {family} account in the browser.",
+    "provider_fallback": "provider",
+    "pkce_pending_intro": "Browser sign-in is pending publisher setup. Connect today with your own free {family} app — a few minutes, no code. Continue opens the real {plugin} login in your browser once the client below is filled in.",
+    "pkce_step1": "Step 1 — open the {family} app console",
+    "pkce_your_client": "Your OAuth client",
+    "pkce_own_client_advanced": "Use your own OAuth client (advanced)",
+    "pkce_step2": "Step 2 — paste the client from the app you just created.",
+    "pkce_step2_google": "Step 2 — paste the client from the app you just created. One client covers Gmail, Drive, Calendar and YouTube Music.",
+    "pkce_override": "Optional expert override. Paste a client from your own {family} {console}.",
+    "pkce_console": "console",
+    "pkce_google_one_client": "One client covers Gmail, Drive, Calendar and YouTube Music.",
+    "pkce_redirect_step3": "Step 3 — while creating the app, register this as its {term}, character for character:",
+    "pkce_redirect": "While creating the app, register this as its {term}, character for character:",
+    "pkce_redirect_term": "redirect URI",
+    "pkce_redirect_numeric": "It must be the numeric address, not {localhost}, and carry no trailing slash.",
+    "client_id": "Client ID",
+    "client_id_from": "Client ID from {family}",
+    "client_secret": "Client Secret",
+    "secret_optional_some": "optional for some providers",
+    "expert_token_alt": "Expert token alternative",
+    "expert_token_alt_body": "The shared browser login isn't provisioned yet. You can connect with a provider token meanwhile — the browser flow stays the default and takes over automatically once ready.",
+    "paste_token_instead": "Paste a token instead",
+    "continue": "Continue",
+    "remove_named": "Remove {plugin}?",
+    "disconnect_body": "This disconnects {plugin} and deletes its stored credentials. {assistant} loses access until you reconnect it.",
+    "removing": "Removing…",
+    "remove": "Remove",
+    "plugin_added": "{plugin} added",
+    "plugin_removed": "{plugin} removed",
+    "instance_intro": "Enter your instance address, then sign in and approve access in your browser.",
+    "instance_address": "Instance address",
+    "opening_browser": "Opening browser…",
+    "continue_in_browser_btn": "Continue in browser",
+    "err_discord_id": "Could not read your Discord ID.",
+    "err_discord_no_id": "Discord returned no user id.",
+    "err_discord_invite": "Could not build the invite link.",
+    "err_discord_no_invite": "Discord returned no invite link.",
+    "access_token": "Access token",
+    "pat_generate": "Generate a token at {plugin}",
+    "pat_open_tokens": "Open {plugin} tokens",
+    "copy_link_hint_open": "Or copy this link and open it in your browser yourself.",
+    "pat_get_key": "Get the key for {plugin}",
+    "pat_paste_below": "Paste the token below",
+    "or_separator": " or ",
+    "token": "Token",
+    "pat_should_start": "Should start with {prefix}",
+    "owner_lock_title": "Lock the bot to you (recommended)",
+    "owner_lock_aria": "Your numeric user id",
+    "owner_lock_hint": "Only this user id can command the bot. Leave blank to let the first person who messages it claim access instead.",
+    "looking_up": "Looking up…",
+    "discord_fill_id": "Fill in my Discord ID",
+    "opening": "Opening…",
+    "discord_add_bot": "Add the bot to my server",
+    "owner_lock_digits": "User id must be digits only.",
+    "validating": "Validating…",
+    "longevity_note": {
+      "github": "Browser login renews automatically. Pasted tokens expire as configured at creation.",
+      "discord": "OAuth tokens refresh automatically. A pasted bot token stays valid until you reset it in the Discord developer portal.",
+      "telegram": "A bot token stays valid until you revoke it in BotFather.",
+      "google_drive": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "gmail": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "google_calendar": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "clickup": "ClickUp states its access token does not expire, so this connection needs no renewal. That is a policy rather than a guarantee, so Jarvis still asks you to reconnect if it is ever rejected.",
+      "airtable": "Airtable ends a connection after 60 days without use. Jarvis renews it in the background every 12 hours, so it stays open as long as this machine runs from time to time.",
+      "cal_com": "Cal.com publishes no token lifetime, so how long this stays connected has not been confirmed. Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
+      "home_assistant": "Browser approval renews automatically until access is revoked in Home Assistant.",
+      "spotify": "Spotify caps a refresh token at six months, so the connection asks to be renewed twice a year. Nothing can extend that.",
+      "youtube_music": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "higgsfield": "Higgsfield issues a refresh token. How long the access token lasts is unpublished; Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
+      "aws": "AWS access lasts one hour and refresh is limited to a session of up to 12 hours; then sign in again.",
+      "google_cloud": "Google OAuth apps in Testing may lose refresh access after seven days; production apps follow account policy.",
+      "gitlab": "Browser login renews automatically. Pasted tokens expire on the date selected at creation.",
+      "linkedin": "Standard LinkedIn access tokens expire; refresh tokens are restricted to approved partners. Reconnect when requested.",
+      "meta": "Long-lived user tokens normally expire after about 60 days; reconnect before expiry.",
+      "youtube_studio": "Google OAuth apps in Testing may require reauthorization after seven days.",
+      "figma": "Browser login renews automatically. Pasted tokens expire on the date chosen when you create them."
+    },
+    "unavailable_reason": {
+      "amd_unverifiable": "AMD GPU availability could not be verified from Linux device information. Check hardware access and permissions, including container device access.",
+      "amd_no_gpu": "No AMD GPU is visible to this connector. A compatible AMD GPU must be exposed to this Linux environment before connecting.",
+      "amd_unsupported_os": "AMD GPU telemetry is unavailable on this operating system. This connector requires a compatible Linux AMD host with AMD SMI.",
+      "amd_smi_missing": "AMD SMI is unavailable. Install AMD's supported SMI/ROCm tooling on a compatible AMD host. Missing metrics are never reported as zero."
+    }
   },
   "skills_view": {
     "count": "{n} skills",
@@ -1559,7 +1741,19 @@
     "empty_list_body_a": "On first launch,",
     "empty_list_body_b": "copies the built-in skills to",
     "empty_list_body_c": "If that doesn't happen, check the backend logs.",
-    "search_no_hits": "No matches. Try a different term or remove a filter."
+    "search_no_hits": "No matches. Try a different term or remove a filter.",
+    "resource_references": "References",
+    "resource_scripts": "Scripts",
+    "resource_assets": "Assets",
+    "resource_agents": "Agents",
+    "password_placeholder": "Password",
+    "link_homepage": "Homepage",
+    "link_source": "Source",
+    "link_docs": "Docs",
+    "link_not_checked": "not checked",
+    "link_no_network": "no network",
+    "select_hint": "Built-in skills are protected and cannot be selected.",
+    "selected_count": "{count} selected"
   },
   "run_inspector": {
     "title": "Run Inspector",
@@ -1633,7 +1827,10 @@
       "empty": "No tools ran in this turn.",
       "command": "Command",
       "output": "Result",
-      "error": "Error"
+      "error": "Error",
+      "exit_code": "exit {code}",
+      "ok": "ok",
+      "fail": "fail"
     },
     "facts": {
       "endpoint": "endpoint",
@@ -1643,7 +1840,8 @@
       "interrupted": "interrupted",
       "context": "context",
       "turns": "turns",
-      "tokens": "tokens"
+      "tokens": "tokens",
+      "yes": "yes"
     },
     "env": {
       "mode": "Mode",
@@ -1656,7 +1854,31 @@
       "tiers": "Tiers",
       "voices": "Voices",
       "audio": "Audio",
-      "empty": "No environment recorded."
+      "empty": "No environment recorded.",
+      "audio_rates": "{input} Hz in · {output} Hz out"
+    },
+    "feature_computer_use": "Computer-Use",
+    "feature_skill": "Skill",
+    "outcome": {
+      "success": "Success",
+      "partial": "Partial",
+      "failed": "Failed"
+    },
+    "turn": "Turn",
+    "user": "User",
+    "thinking": "thinking",
+    "speaking": "speaking",
+    "slow": "slow",
+    "errors_count": "errors",
+    "role": {
+      "spoken": "spoken",
+      "system": "system",
+      "tool": "tool",
+      "error": "error"
+    },
+    "slo": {
+      "breach": "breach",
+      "warn": "warn"
     }
   },
   "voice_mode": {
@@ -1808,6 +2030,16 @@
       "connected": "connected",
       "disconnected": "disconnected",
       "error": "error"
+    },
+    "json_syntax": "JSON syntax",
+    "import_note": {
+      "appdata_missing": "APPDATA variable not set.",
+      "config_not_found": "Claude Desktop config not found at {path}.",
+      "invalid_json": "Config is not valid JSON (line {line}, column {column}).",
+      "not_readable": "Config not readable. Details are in the Jarvis log.",
+      "no_servers": "No mcpServers found in the Claude Desktop config.",
+      "imported": "{added} new servers imported.",
+      "imported_with_skipped": "{added} new servers imported, {skipped} skipped (already exist)."
     }
   },
   "shortcuts_view": {
@@ -2034,7 +2266,8 @@
         "jarvis_suffix": "spoken by {name}",
         "talk_line": "{0} h active · {1} chats",
         "streak": "{0}-day best streak"
-      }
+      },
+      "tweet_text": "I've spoken {words} words to my {product} across {sessions} conversations — {hours} h of voice. Build your own:"
     },
     "export": {
       "button": "Export CSV",
@@ -2361,7 +2594,8 @@
         "autonomy": "Autonomy",
         "impact": "Impact"
       }
-    }
+    },
+    "system_not_ready": "Profile system not ready."
   },
   "apikeys_view": {
     "title": "API Keys & Providers",
@@ -2650,7 +2884,19 @@
     "experimental_note": "Beta: this provider is not finished yet and uses an unstable protocol that can change without notice. If it cannot start, the call stops.",
     "experimental_consent": "Before you turn this on: this provider is still in beta and uses an experimental, unstable route that can change without notice. If it breaks, the call stops instead of switching to another provider on its own. Continue?",
     "key_verified_toast": "{0} answered — the key works.",
-    "key_check_failed_toast": "{0} did not answer: {1}"
+    "key_check_failed_toast": "{0} did not answer: {1}",
+    "delete_key_named": "Delete {key}",
+    "enter_key_named": "Enter {key}",
+    "install_failed_fallback": "install failed",
+    "model_download_failed_fallback": "model download failed",
+    "key_format_api_key": "{provider} API key",
+    "key_format_vertex_sa": "Vertex AI service account",
+    "key_format_vertex_sa_note": "This is a Vertex AI service-account file, not an AI Studio key — it bills a separate Google Cloud project.",
+    "key_format_aistudio": "Google AI Studio key",
+    "key_format_aistudio_note": "This shape works on Google AI Studio. Vertex AI refuses it — Vertex takes only an express-mode key (AQ.) or a Cloud project via [google].vertex_project.",
+    "key_format_google_express": "Google API key (AI Studio or Vertex express)",
+    "key_format_google_express_note": "AI Studio and Vertex AI express keys share this format — the card you save it under decides the endpoint, and for a Gemini card Jarvis detects it automatically.",
+    "key_format_unknown": "Unrecognized key format"
   },
   "apikeys_test": {
     "button": "Test",
@@ -2665,7 +2911,8 @@
     "status_error": "Integration error",
     "integration_ok_note": "The provider was reached — only the key/account/model is the blocker.",
     "integration_bad_note": "The provider could not be reached.",
-    "failed": "Test failed"
+    "failed": "Test failed",
+    "client_timeout": "No answer from the app after 80s — the backend may be busy or stuck."
   },
   "apikeys_base_url": {
     "label": "Server URL",
@@ -2892,7 +3139,9 @@
       "overlay_taskbar": "Overlay & taskbar"
     },
     "languages_group_title": "Languages",
-    "sections": { "voice": "Voice" },
+    "sections": {
+      "voice": "Voice"
+    },
     "music_group_title": "Music",
     "music": {
       "service_section": "Preferred service",
@@ -3029,7 +3278,38 @@
       "download_model_downloading": "Downloading the wake model…",
       "download_model_done": "Wake model downloaded — re-saving your wake word…",
       "download_model_error": "Could not download the wake model. Check your connection and try again.",
-      "download_model_retry": "Try again"
+      "download_model_retry": "Try again",
+      "diag_engine": "engine: {engine}",
+      "diag_language": "language: {language}",
+      "diag_not_in_vocab": "not in vocabulary",
+      "diag_mic_quiet": "mic quiet",
+      "msg": {
+        "custom_onnx": "Custom ONNX wake model: {path}",
+        "vosk_kws": "Any-word Vosk keyword spotting for '{phrase}' (model: {model}).",
+        "custom_onnx_missing": "Custom ONNX not found ({path}); using local-Whisper transcript match instead.",
+        "custom_onnx_other_phrase": "Custom wake model '{model_file}' belongs to a different phrase; '{phrase}' uses the local-Whisper transcript match.",
+        "stt_match_unreliable": "Custom phrase '{phrase}' is on the local-Whisper transcript match — this is UNRELIABLE for a hard name. Download the Vosk model for {language} to make it reliable (Settings -> Wake word -> 'Download wake model').",
+        "stt_match_unreliable_any_language": "Custom phrase '{phrase}' is on the local-Whisper transcript match — this is UNRELIABLE for a hard name. Download the Vosk model for the configured language to make it reliable (Settings -> Wake word -> 'Download wake model').",
+        "needs_local_model": "Wake word '{phrase}' needs a local model. Install the local speech pack (works for any word) or supply a custom .onnx to enable it. Until then the wake word is off — use the Call shortcut to start a voice turn.",
+        "needs_local_model_no_phrase": "Wake word 'your wake word' needs a local model. Install the local speech pack (works for any word) or supply a custom .onnx to enable it. Until then the wake word is off — use the Call shortcut to start a voice turn.",
+        "no_phrase": "No wake word set.",
+        "not_in_vocab": "'{phrase}' is not in the {language} model's vocabulary.",
+        "no_microphone": "No microphone detected.",
+        "mic_quiet": "Mic signal is very quiet.",
+        "ready": "Ready: '{phrase}' on engine '{engine}' (language '{language}'). Say it to wake.",
+        "activation_not_persisted": "The setting could not be saved to jarvis.toml. Details are in the Jarvis log.",
+        "model_ready": "Wake model ready.",
+        "model_download_failed": "Could not download the wake model right now; it will retry automatically. The wake word uses the fallback path until then."
+      },
+      "hint": {
+        "type_phrase": "Type a wake phrase first.",
+        "download_or_hotkey": "Download the local model or use the hotkey.",
+        "pick_real_word": "Pick a real word of your language, or use a different phrase.",
+        "connect_mic": "Connect/enable a mic.",
+        "speak_louder": "Speak louder or raise input gain.",
+        "allow_mic_dialog": "Press the test button and choose Allow in the macOS dialog.",
+        "allow_mic_settings": "Allow Microphone access in {path}, then retry."
+      }
     },
     "onboarding": {
       "wake_word": {
@@ -3172,7 +3452,21 @@
         "reserved": "Reserved by the system"
       },
       "dictate_toggle_label": "Hands-free dictation",
-      "caution_overlap": "This is contained in another shortcut, so pressing the longer one triggers both. Clear one of them if that is not what you want."
+      "caution_overlap": "This is contained in another shortcut, so pressing the longer one triggers both. Clear one of them if that is not what you want.",
+      "mouse": {
+        "middle_click": "Middle Click",
+        "back_combo": "Mouse Back",
+        "forward_combo": "Mouse Fwd",
+        "middle": "Middle",
+        "back": "Back",
+        "forward": "Forward"
+      },
+      "mouse_reason": {
+        "macos_needs_quartz": "Mouse-button shortcuts need the pyobjc Quartz package, which is not installed — install the [full] profile. Key combinations still work.",
+        "wayland": "Wayland does not let an application watch the mouse buttons globally, so a mouse-button shortcut cannot work here. Use a key combination, or bind a compositor shortcut to the Jarvis CLI.",
+        "linux_needs_pynput": "Mouse-button shortcuts need the pynput package, which is not installed — install the [desktop-linux] extra. Key combinations still work.",
+        "unsupported_host": "This system has no way to watch the mouse buttons globally — use a key combination instead."
+      }
     },
     "codex_title": "OpenAI Codex CLI",
     "codex_description": "Manual path for Windows PATH issues. Empty uses 'codex' from PATH.",
@@ -3186,7 +3480,8 @@
       "system": "System",
       "system_now_dark": "Following your system, which is currently dark.",
       "system_now_light": "Following your system, which is currently light."
-    }
+    },
+    "invalid_setting": "Invalid setting"
   },
   "telephony_view": {
     "title": "Telephony (experimental)",
@@ -3260,7 +3555,8 @@
       "completed": "Completed",
       "failed": "Failed",
       "no_audio": "No audio"
-    }
+    },
+    "copy_command": "Copy command"
   },
   "telephony_setup": {
     "title": "Telephony setup",
@@ -3338,7 +3634,8 @@
     "exit_fullscreen": "Close reader",
     "csv_empty": "This table is empty.",
     "csv_more_rows": "{n} more rows in the file.",
-    "reveal_in_folder": "Reveal in folder"
+    "reveal_in_folder": "Reveal in folder",
+    "fence_table": "table"
   },
   "common": {
     "see_more": "See more",
@@ -3363,7 +3660,11 @@
     "running": "running",
     "saving": "Saving…",
     "error": "Error",
-    "status": "Status"
+    "status": "Status",
+    "repeated_times": "Repeated {count} times",
+    "dismiss": "Dismiss",
+    "apply": "Apply",
+    "request_failed": "Request failed ({status})"
   },
   "docs": {
     "search_placeholder": "Filter title/tag…",
@@ -3379,7 +3680,9 @@
     "could_not_load": "Could not load doc.",
     "recent": "Recent",
     "search_button": "Search docs",
-    "search_hero": "Search the documentation"
+    "search_hero": "Search the documentation",
+    "section_other": "Other",
+    "breadcrumb": "Breadcrumb"
   },
   "sessions": {
     "select_one": "Select a session on the left.",
@@ -3389,7 +3692,12 @@
   "provider_switcher": {
     "loading_hint": "Provider list is loading — if it stays empty, check the backend.",
     "no_credential": "no credential",
-    "active": "Active"
+    "active": "Active",
+    "switched_toast": "Brain → {provider}",
+    "active_brain": "Active Brain",
+    "switching": "Switching…",
+    "name_local_realtime": "Self-hosted realtime",
+    "name_local_voice": "Local voice"
   },
   "wiki_provider": {
     "tier_label": "Wiki (long-term memory)",
@@ -3481,7 +3789,14 @@
     "needs_key_full": "{0}: first save API key, then activate.",
     "runs_as_subagent_hint": "Codex works as a {name}-Agent (background worker) on your ChatGPT login. After connecting, activate it in the {name}-Agent list below. A thinking brain needs the separate OpenAI API-key provider.",
     "brain_needs_openai_key": "Codex as a brain needs an OpenAI API key — the ChatGPT login only powers the Codex worker. Add an OpenAI key (e.g. on the OpenAI provider), then select Codex here.",
-    "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above."
+    "brain_key_hint": "To use Codex as a brain too, add an OpenAI API key (paid, separate from your ChatGPT login — which only powers the worker). Saving it unlocks the brain toggle above.",
+    "status_msg": {
+      "not_installed": "Codex CLI is not installed (run: {command}).",
+      "not_logged_in": "Codex is installed but not logged in — run 'codex login'.",
+      "connected_chatgpt": "Connected via ChatGPT.",
+      "connected_chatgpt_email": "Connected via ChatGPT ({email}).",
+      "connected_api_key": "Connected via OpenAI API key."
+    }
   },
   "apikeys_antigravity": {
     "login_started": "Google login was started in the terminal",
@@ -3489,10 +3804,21 @@
     "status_loading": "Loading Google login status",
     "connected": "Connected via your Google subscription.",
     "connected_as": "Connected via Google ({0}).",
-    "needs_login_full": "{0}: first sign in with Google, then activate."
+    "needs_login_full": "{0}: first sign in with Google, then activate.",
+    "connect_google": "Connect with Google",
+    "install_antigravity": "Install Antigravity",
+    "status_msg": {
+      "not_installed": "No Google CLI found. Install Antigravity with: {command} (Gemini CLI alternative: npm i -g @google/gemini-cli).",
+      "not_logged_in": "{cli} installed but not logged in — run the Google login.",
+      "connected_subscription": "Connected via Google subscription.",
+      "connected_subscription_email": "Connected via Google subscription ({email}).",
+      "connected_api_key": "Connected via a Google API key."
+    }
   },
   "mcps_toast": {
-    "connected": "{0} connected"
+    "connected": "{0} connected",
+    "disconnected": "{0} disconnected",
+    "removed": "{server} removed"
   },
   "profile_toast": {
     "fact_applied": "{0} fact(s) applied"
@@ -3542,13 +3868,18 @@
       "zh": {
         "label": "中文 (Chinese)",
         "description": "Use Simplified Chinese for every label and button."
+      },
+      "pt": {
+        "label": "Português (Portugal)",
+        "description": "Use European Portuguese for every label and button."
       }
     },
     "reply_options": {
       "auto": "{name} mirrors whichever language you speak or type.",
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "pt": "{name} responde em português."
     },
     "stt_options": {
       "auto": "Detect the language you speak automatically.",
@@ -3612,7 +3943,9 @@
     "last_pull": "last pull",
     "pull_every": "Pull every",
     "time_just_now": "just now",
-    "time_ago_prefix": ""
+    "time_ago_prefix": "",
+    "no_source": "no source",
+    "jarvis_federation": "Jarvis Federation"
   },
   "pair_dialog": {
     "title": "Pair a friend",
@@ -3671,7 +4004,8 @@
     "opened_in_editor": "Opened in editor",
     "open_failed": "Couldn't open in editor",
     "back_to_sessions": "Back to sessions",
-    "you": "You"
+    "you": "You",
+    "format_text": "Text"
   },
   "turn_card": {
     "turn": "Turn",
@@ -3683,7 +4017,29 @@
     "copy": "Copy",
     "download_turn": "Download this turn as a file",
     "thought": "Thought:",
-    "spoke": "Spoke:"
+    "spoke": "Spoke:",
+    "kind_reply": "Reply",
+    "kind_clarify": "Clarifying question",
+    "kind_timeout": "Timeout notice",
+    "kind_unavailable": "Brain unavailable",
+    "kind_stt_unavailable": "Couldn't hear you",
+    "kind_privacy": "Privacy",
+    "kind_completion": "Background result",
+    "kind_subagent": "{agent} / Output",
+    "kind_action_done": "Action confirmed",
+    "kind_backchannel": "Backchannel",
+    "kind_announcement": "Announcement",
+    "kind_preamble": "Preamble",
+    "kind_progress": "Progress update",
+    "kind_withheld": "Answer withheld (safety)",
+    "kind_other": "Spoken",
+    "tools_label": "Tools:",
+    "voice_requested_title": "Requested voice (native audio is not a verified speaker): {voice}",
+    "voice_title": "Voice: {voice}",
+    "voice_requested": "requested",
+    "awaiting_confirmation": "Awaiting confirmation",
+    "awaiting_confirmation_prefix": "(awaiting confirmation)",
+    "spoken_output": "Spoken output"
   },
   "wiki_search": {
     "dialog_label": "Wiki search",
@@ -3732,7 +4088,14 @@
   },
   "page_header": {
     "placeholder_title": "Provided by Agent D",
-    "open_in_obsidian": "Open in Obsidian"
+    "open_in_obsidian": "Open in Obsidian",
+    "field_type": "type",
+    "field_kind": "kind",
+    "field_status": "status",
+    "field_created": "created",
+    "field_updated": "updated",
+    "field_started": "started",
+    "field_last_activity": "last activity"
   },
   "obsidian_button": {
     "trigger_failed": "Could not trigger the Obsidian link",
@@ -3869,23 +4232,40 @@
     "cancel_all_body": "running mission(s) will be hard-stopped. Worker subprocesses are terminated via the Job Object; diffs already written stay in the worktrees.",
     "error_prefix": "Error",
     "stopping": "Stopping…",
-    "confirm_stop_all": "Yes, stop all"
+    "confirm_stop_all": "Yes, stop all",
+    "kill_all": "Kill All ({count})"
   },
   "mission_tree": {
     "no_prompt": "(no prompt)",
-    "empty": "No missions yet. The main assistant will dispatch one shortly…"
+    "empty": "No missions yet. The main assistant will dispatch one shortly…",
+    "unknown_prompt": "(unknown)"
   },
   "pty_terminal": {
     "stream_unreachable": "PTY stream unreachable.",
     "stream_disconnected": "Stream disconnected",
     "connect_failed": "PTY connection failed",
-    "connecting": "connecting…"
+    "connecting": "connecting…",
+    "worker_label": "worker {id}",
+    "status_offline": "offline",
+    "status_live": "live",
+    "close_code": "(code {code})"
   },
   "event_timeline": {
     "empty": "No events for this mission yet."
   },
   "verdict_panel": {
-    "empty": "No critic verdicts for this mission yet."
+    "empty": "No critic verdicts for this mission yet.",
+    "verdict_approve": "approve",
+    "verdict_revise": "revise",
+    "verdict_reject": "reject",
+    "iteration": "iter #{n}",
+    "axis_correctness": "correctness",
+    "axis_completeness": "completeness",
+    "axis_side_effects": "side effects",
+    "axis_security": "security",
+    "axis_pass": "pass",
+    "axis_fail": "fail",
+    "confidence": "Confidence"
   },
   "jarvis_agent_panel": {
     "select_mission": "Select a mission to see {name}-Agent workers.",
@@ -3893,7 +4273,11 @@
     "not_available": "(not available)",
     "copy_path": "Copy path",
     "file_link_copies_path": "file:// link (path is copied)",
-    "ended_label": "Ended"
+    "ended_label": "Ended",
+    "unknown_model": "(unknown model)",
+    "cost": "Cost",
+    "state_dir": "State-Dir",
+    "log_file": "Logfile"
   },
   "clis_view": {
     "status_connected": "connected",
@@ -4036,7 +4420,13 @@
     "clear": "Clear",
     "search_command": "Search command…",
     "success_only": "Successful only",
-    "usage_stats": "{total} calls · {rate}% successful · ⌀ {avg} ms"
+    "usage_stats": "{total} calls · {rate}% successful · ⌀ {avg} ms",
+    "col_version": "Version",
+    "fact_binary": "Binary",
+    "cmd_check": "Check",
+    "cmd_login": "Login",
+    "cmd_logout": "Logout",
+    "category_placeholder": "cloud / git / payments / other"
   },
   "cli_test_hub_view": {
     "subtitle_tell": "Tell",
@@ -4098,7 +4488,10 @@
       "twilio": "List my Twilio phone numbers",
       "vercel": "List my latest Vercel deployments",
       "wrangler": "List my Cloudflare Workers"
-    }
+    },
+    "meta_tool": "Tool",
+    "exit_label": "Exit",
+    "step_exit": "exit {code}"
   },
   "workflows_view": {
     "subtitle": "Your hosted AI-agent pipelines — cron-triggered or at the push of a button.",
@@ -4140,7 +4533,23 @@
     "now": "now",
     "ago_suffix": "ago",
     "run_missed": "missed",
-    "run_missed_hint": "The app was not running at the scheduled time — skipped to the next occurrence."
+    "run_missed_hint": "The app was not running at the scheduled time — skipped to the next occurrence.",
+    "title": "Workflows",
+    "step_tool": "Tool",
+    "seed_badge": "Seed",
+    "step_count_one": "{count} Step",
+    "step_count_other": "{count} Steps",
+    "steps_heading": "Steps ({count})",
+    "trigger_manual": "Manual",
+    "next_in": "Next in {delta}",
+    "run_state_completed": "completed",
+    "run_state_failed": "failed",
+    "run_state_running": "running",
+    "run_state_pending": "pending",
+    "trigger_cron": "Scheduled",
+    "trigger_event": "Event",
+    "trigger_interval": "Interval",
+    "trigger_webhook": "Webhook"
   },
   "conductor_view": {
     "new_job": "New job",
@@ -4156,7 +4565,19 @@
     "empty_jobs_hint": "3 demo jobs are seeded on first launch.",
     "empty_timeline": "No runs yet — click Play on a job.",
     "json_syntax_error": "JSON syntax error",
-    "now": "now"
+    "now": "now",
+    "title": "Conductor",
+    "subtitle": "Schedule Tasks + Agentic Workflows — Open-Source, self-hosted, code-first.",
+    "jobs": "Jobs",
+    "timeline": "Timeline",
+    "type_shell": "Shell",
+    "type_http": "HTTP",
+    "type_agent": "Agent",
+    "exit_code": "exit {code}",
+    "output": "Output",
+    "metrics": "Metrics",
+    "schedule_label": "Schedule:",
+    "example_description": "Pings an API endpoint every 5 minutes."
   },
   "chat_tab": {
     "loading_friends": "Loading friends …",
@@ -4180,7 +4601,8 @@
     "profile_standard_subline": "+ Mission title",
     "profile_standard_desc": "Friend also sees: which missions/tasks are currently running, success, duration.",
     "profile_detailed_subline": "+ {name}-Agent summary",
-    "profile_detailed_desc": "Friend also sees: signed {name}-Agent summaries (NO utterances)."
+    "profile_detailed_desc": "Friend also sees: signed {name}-Agent summaries (NO utterances).",
+    "default_badge": "default"
   },
   "tools_canvas": {
     "back_tooltip": "Back to the agents overview",
@@ -4189,7 +4611,9 @@
     "duration": "Duration",
     "empty": "(empty)",
     "no_tools_yet": "hasn't called any tools yet.",
-    "no_tools_explainer": "As soon as the {name}-Agent worker triggers a tool (e.g. dispatch_to_harness, run_shell, screenshot), it appears here as an icon node."
+    "no_tools_explainer": "As soon as the {name}-Agent worker triggers a tool (e.g. dispatch_to_harness, run_shell, screenshot), it appears here as an icon node.",
+    "arguments": "Arguments",
+    "output": "Output"
   },
   "use_web_socket": {
     "jarvis_opened": "{name} opened",
@@ -4197,7 +4621,20 @@
     "prompt_not_submitted": "the prompt is in its input box, not sent",
     "prompt_unconfirmed": "the prompt was typed in, but the pane never showed it arriving — check that pane",
     "dictation_nowhere": "No text field had focus, so the dictation was not inserted. It is in the dictation history.",
-    "realtime_provider_issue": "The realtime provider reported a problem."
+    "realtime_provider_issue": "The realtime provider reported a problem.",
+    "achievement_toast": "Achievement: {title}",
+    "achievement_title": {
+      "first_mcp": "First MCP Connection",
+      "openclaw_summoner": "Agent Summoner",
+      "tool_dabbler": "Tool Dabbler",
+      "tool_journeyman": "Tool Journeyman",
+      "tool_master": "Tool Master",
+      "triple_combo": "Triple Combo",
+      "ten_x_engineer": "10x Engineer",
+      "centennial": "Centennial",
+      "kilo_club": "Kilo Club",
+      "one_year_with_jarvis": "One Year with Jarvis"
+    }
   },
   "chat_thread": {
     "message_to": "Message to",
@@ -4220,13 +4657,19 @@
     "label_pubkey": "Jarvis public key (hex)",
     "telegram_id_placeholder": "e.g. 123456789",
     "pubkey_placeholder": "e.g. 4f3c2b…",
-    "submit": "Add"
+    "submit": "Add",
+    "mode_pair_link": "Pair-Link",
+    "label_display_name": "Display-Name"
   },
   "permission_matrix": {
     "subline_minimal": "Online/offline only",
     "subline_standard": "+ Mission title",
     "subline_detailed": "+ {name}-Agent summary",
-    "aria_label": "Sharing profile"
+    "aria_label": "Sharing profile",
+    "profile_minimal": "minimal",
+    "profile_standard": "standard",
+    "profile_detailed": "detailed",
+    "subline_detailed_agent": "+ {agent} summary"
   },
   "self_mod_view": {
     "all_actors": "All actors",
@@ -4235,7 +4678,29 @@
     "sensitive_path_notice": "Sensitive path — values redacted server-side (Plan §AP-2).",
     "intro_a": "Read-only view of the audit trail, mutable settings and backups.",
     "intro_b": "Mutations happen only via voice/chat — this view shows only what",
-    "intro_c": "changed about itself."
+    "intro_c": "changed about itself.",
+    "value_redacted": "Value redacted (Plan §AP-2 defense in depth)",
+    "actor_user": "User",
+    "actor_system": "System",
+    "col_timestamp": "Timestamp",
+    "col_actor": "Actor",
+    "col_path": "Path",
+    "col_old_new": "Old → New",
+    "col_outcome": "Outcome",
+    "outcome_ok": "OK",
+    "outcome_rolled_back": "ROLLED BACK",
+    "outcome_fail": "FAIL",
+    "audit_event": "Audit event",
+    "risk_safe": "safe",
+    "risk_ask": "ask",
+    "needs_restart": "Restart",
+    "col_filename": "Filename",
+    "col_size": "Size",
+    "col_age": "Age",
+    "title": "Self-Modification",
+    "tab_history": "History",
+    "tab_mutable": "Settings",
+    "tab_backups": "Backups"
   },
   "wiki_view": {
     "page_not_found": "Page not found",
@@ -4408,7 +4873,12 @@
       "paid_cap_reached": "The approved cost limit for {provider} is reached.",
       "paid_daily_cap_reached": "Automatic paid use on {provider} reached its daily limit.",
       "paid_consent_revoked": "Automatic paid use on {provider} was switched off."
-    }
+    },
+    "total_count": "{count} total",
+    "tab_verdicts": "Verdicts",
+    "tab_reasoning": "Reasoning",
+    "tab_plan": "Plan",
+    "step_n": "Step {n}"
   },
   "mission_tool_approvals": {
     "tab_label": "Approvals",
@@ -4485,7 +4955,8 @@
     "empty_prompt": "Describe what you need — the search ranks with AI.",
     "example_1": "“build a skill that prioritizes my emails”",
     "example_2": "“simplify the Git workflow”",
-    "example_3": "“PDF to structured Markdown”"
+    "example_3": "“PDF to structured Markdown”",
+    "score": "Score"
   },
   "missions": {
     "state_critiquing": "critic reviewing",
@@ -4505,7 +4976,57 @@
   "mascot_gigi": {
     "aria_label": "{name} mascot Gigi",
     "back_online": "back online!",
-    "connection_lost": "connection lost …"
+    "connection_lost": "connection lost …",
+    "idle": {
+      "hm": "hm …",
+      "all_quiet": "all quiet.",
+      "still_there": "still there?",
+      "whats_up": "what's up?",
+      "watching": "i'm watching you.",
+      "focused": "focused, huh?",
+      "take_break": "take a break sometime.",
+      "cool_work": "working on something cool today?",
+      "bit_boring": "a bit boring right now.",
+      "good_ears": "i've got good ears. in case you need anything."
+    },
+    "section": {
+      "chats_ready": "ready when you are.",
+      "chats_listening": "i'm listening.",
+      "chats_say_something": "say something.",
+      "chats_type_or_talk": "type or talk — either works.",
+      "agents_colleagues": "the agents are my colleagues.",
+      "agents_favourite": "who's your favourite?",
+      "skills_favourite": "skills are my favourite feature.",
+      "skills_learn": "what should we learn?",
+      "mcps_power": "more MCPs = more power.",
+      "mcps_add": "what should we add?",
+      "languages_speak": "i speak your language.",
+      "languages_switch": "switch language? just say so.",
+      "apikeys_careful": "keep the keys safe.",
+      "apikeys_no_git": "don't commit them to git!",
+      "settings_bother": "what's bugging you?",
+      "settings_tweak": "shall we tweak something?"
+    },
+    "voice": {
+      "listening_1": "i'm listening!",
+      "listening_2": "out with it.",
+      "listening_3": "yes?",
+      "thinking_1": "let me see …",
+      "thinking_2": "one moment.",
+      "thinking_3": "hmm …",
+      "speaking_1": "my turn to talk.",
+      "speaking_2": "listen for a sec.",
+      "error_1": "whoa.",
+      "error_2": "oops.",
+      "error_3": "that wasn't me!"
+    },
+    "time": {
+      "morning_1": "good morning!",
+      "morning_2": "rise and shine.",
+      "night_1": "still awake?",
+      "night_2": "it's late.",
+      "night_3": "getting enough sleep?"
+    }
   },
   "agents_view": {
     "subtitle": "Running {name}-Agents — role, status, output.",
@@ -4515,7 +5036,10 @@
     "phase4_notice": "Activated with Phase 4 (harness integration)."
   },
   "friends_view": {
-    "subtitle": "Telegram bot + local friend registry. You decide what friends see."
+    "subtitle": "Telegram bot + local friend registry. You decide what friends see.",
+    "title": "Friends",
+    "tab_chat": "Chat",
+    "tab_status": "Status"
   },
   "feedback": {
     "subtitle": "Report a bug or suggest a feature — both go straight to GitHub.",
@@ -4572,7 +5096,22 @@
     "open_workspaces": "Open workspaces",
     "workspace_summary_one": "{workspace}, workspace {index}, 1 terminal",
     "workspace_summary_many": "{workspace}, workspace {index}, {count} terminals",
-    "new_workspace": "New workspace"
+    "new_workspace": "New workspace",
+    "drop_title": "{folder} — drop a screenshot or document here to send it to this workspace",
+    "reorder_title": "{folder} — drag to reorder",
+    "rename": "Rename {workspace}",
+    "rename_save": "Save name for {workspace}",
+    "rename_cancel": "Cancel rename",
+    "close_confirm_aria": "Confirm closing {workspace}",
+    "close_stop": "Close & stop {count}",
+    "keep_aria": "Keep this workspace open",
+    "keep": "Keep",
+    "close": "Close {workspace}",
+    "close_title": "Close {workspace} and stop its agents",
+    "full": "{count} workspaces are already open — close one first.",
+    "add_title": "Open another folder in its own workspace",
+    "terminals_open_one": "{count} terminal open",
+    "terminals_open_other": "{count} terminals open"
   },
   "custom_cli": {
     "title_add": "Add a CLI of your own",
@@ -4764,6 +5303,52 @@
       "count_for": "Terminal count for {0}",
       "increase": "Use one more {0} terminal",
       "auto_names": "Terminal names are assigned automatically. After opening, you can rename them from each terminal header."
+    },
+    "agent_setup": {
+      "agents_aria": "Coding agents",
+      "agent": "Agent",
+      "choose_all": "Choose for all sessions",
+      "editing": "Editing session {number}",
+      "all_sessions": "All sessions",
+      "none": "No coding agents available. Connect a coding agent in CLIs to continue.",
+      "count_aria": "Number of sessions",
+      "how_many": "How many sessions?",
+      "sessions_one": "{count} session",
+      "sessions_other": "{count} sessions",
+      "more": "More",
+      "add_more": "Add more anytime",
+      "opens_as": "opens as {columns} × {rows}",
+      "lineup_aria": "Session lineup",
+      "will_launch": "Will launch",
+      "click_hint": "Click a session to choose a different agent",
+      "choose_agent": "Choose an agent",
+      "edit_session": "Edit session {number}: {agent}"
+    },
+    "run_on": {
+      "online": "Keeps running while this PC is off",
+      "unknown": "Not checked yet",
+      "offline": "Not reachable right now",
+      "auto": "Automatic",
+      "auto_detail": "Picks this PC or a computer by their shares",
+      "local": "This computer",
+      "local_detail": "Stops when this PC sleeps or shuts down",
+      "label": "Runs on",
+      "copy_note": "The folder is copied to {computer} first, uncommitted changes included. Files like .env and private keys stay on this PC. The coding CLI must be installed there.",
+      "none_hint": "Want agents that keep working while this PC is off?",
+      "connect_server": "Connect a server"
+    },
+    "shape": {
+      "exact_count": "Exact count · type a number",
+      "one_fewer": "Use one fewer terminal",
+      "one_more": "Use one more terminal",
+      "count_aria": "Number of terminals",
+      "use_n": "Use {count} terminals",
+      "all_on_screen": "All on one screen.",
+      "columns_narrow": "All on one screen, about {columns} columns each — narrow for an agent's output. This window fits {affordable} across comfortably at text size {size}; maximize a pane to read it full size.",
+      "columns_each": "All on one screen, about {columns} columns each.",
+      "px_each": "All on one screen, about {px} px each.",
+      "px_narrow": "All on one screen, about {px} px each — narrow for an agent's output. Maximize a pane to read it full size.",
+      "across": "{columns} across"
     }
   },
   "agent_accounts": {
@@ -4820,6 +5405,17 @@
       "fallback": "Use a terminal window instead",
       "cancel": "Cancel sign-in",
       "show_cli": "Show what the CLI displays"
+    },
+    "workspace": {
+      "toast_switched": "New {agent} terminals will use {account}.",
+      "chip_title": "New {agent} terminals open on {account}. Panes already running keep theirs. Click to switch.",
+      "chip_aria": "Switch which {agent} subscription new terminals use",
+      "open_title": "Workspace settings — choose which subscription new terminals use",
+      "title": "Workspace settings",
+      "description": "Connect several subscriptions of the same coding CLI and choose which one powers new agent terminals.",
+      "close": "Close settings",
+      "new_terminals": "new terminals",
+      "note": "Switching applies to every terminal opened from now on, splits included — the panes you already have keep the account they started with, so no running agent loses its conversation. Only a pane whose subscription was chosen deliberately (in the workspace wizard) passes that choice on when you split it."
     }
   },
   "ide_chats": {
@@ -5062,6 +5658,73 @@
       "no_target": "Open or select an agent terminal before attaching a file.",
       "choose": "Choose files",
       "remove": "Remove this pending context"
+    },
+    "view_buttons": {
+      "grid_title": "Terminal grid — every pane on screen at once.",
+      "chat_title": "Chat view — read one agent at a time, like a conversation."
+    },
+    "focus_mode": {
+      "on_title": "Focused coding mode is on — Jarvis answers inside this workspace. Click to leave.",
+      "off_title": "Turn on focused coding mode — Jarvis answers inside this workspace until you switch back."
+    },
+    "close_workspace": {
+      "aria": "Close workspace",
+      "title": "Close the workspace and stop every agent in it",
+      "confirm_title": "Close this workspace?",
+      "confirm_body_one": "This stops all {count} coding agent and closes every terminal session. Anything already written to disk stays.",
+      "confirm_body_other": "This stops all {count} coding agents and closes every terminal session. Anything already written to disk stays.",
+      "keep": "Keep workspace open",
+      "confirm": "Close workspace"
+    },
+    "empty_workspace": {
+      "all_closed": "Every terminal in this workspace is closed.",
+      "open_terminal": "Open a terminal",
+      "picker_title": "Open a terminal — what?",
+      "picker_aria": "What should run in the new terminal?"
+    },
+    "close_pane": {
+      "aria": "Close {pane}",
+      "title": "Close {pane}?",
+      "body": "The coding agent running in this terminal is stopped and its session is gone. Anything it already wrote to disk stays.",
+      "keep": "Keep it open",
+      "confirm": "Close {pane}"
+    },
+    "pane": {
+      "copy_unavailable": "Could not copy the terminal selection on this machine.",
+      "paste_unavailable": "Could not read the clipboard on this machine.",
+      "ready_reattached": "still running — picked up where you left it",
+      "ready_resumed": "continued its previous conversation",
+      "ready_fresh": "started a new conversation",
+      "drop_empty": "That drop carried no file this pane could use.",
+      "starting": "Starting {agent}…",
+      "attaching": "Attaching to {pane}…",
+      "drop_hint_before": "Drop to put it in front of ",
+      "drop_hint_after": "",
+      "tip_drag": "Drag {pane} by this bar to move it.",
+      "tip_restore": "Double-click to put it back.",
+      "tip_fill": "Double-click to fill the workspace.",
+      "tip_restore_named": "Double-click to put {pane} back in the grid.",
+      "tip_fill_named": "Double-click to make {pane} fill the workspace.",
+      "move": "Move {pane}",
+      "rename": "Rename {pane}",
+      "rename_save": "Save name for {pane}",
+      "rename_cancel": "Cancel renaming {pane}",
+      "running_on_account": "Running on {account}",
+      "review_changes": "Review changes by {pane}",
+      "restore": "Restore {pane}",
+      "maximize": "Maximize {pane}",
+      "split_right": "Open another terminal beside {pane}",
+      "split_down": "Split {pane} and open a terminal below it",
+      "split_right_picker": "Open beside — what?",
+      "split_down_picker": "Split below — what?",
+      "split_right_picker_aria": "What should run beside {pane}?",
+      "split_down_picker_aria": "What should run below {pane}?",
+      "unreachable": "{pane} could not be reached.",
+      "exited_detail": "{agent} {detail}",
+      "exited": "{agent} is no longer running in {pane}.",
+      "restart_aria": "Restart {pane}",
+      "restart_title": "Start a fresh {agent} in {pane}",
+      "restart": "Restart"
     }
   },
   "prompt_writer": {
@@ -5213,7 +5876,8 @@
     "delete_failed": "That could not be deleted.",
     "delete_running": "This run is still working. Stop it first, then delete it.",
     "open_from_agent": "Artifacts",
-    "open_from_agent_hint": "Show the pages and pictures the latest runs produced."
+    "open_from_agent_hint": "Show the pages and pictures the latest runs produced.",
+    "summary": "Summary"
   },
   "marketplace_origin": {
     "badge": "Marketplace",
@@ -5481,7 +6145,13 @@
     "agent_asks_default": "It asks you before it acts until you change that.",
     "agent_instructions": "Its standing instructions",
     "import_agent": "Import an agent file",
-    "import_failed": "That file could not be imported: {error}"
+    "import_failed": "That file could not be imported: {error}",
+    "request_failed": "Marketplace request failed ({status})",
+    "refresh_failed": "Refresh failed ({status})",
+    "install_failed": "Install failed ({status})",
+    "contents_failed": "Could not read that entry ({status})",
+    "err_identity_start": "Sign-in start failed ({status})",
+    "err_identity_failed": "sign-in failed"
   },
   "costs_view": {
     "title": "Spend & Tokens",
@@ -5639,7 +6309,8 @@
       "free": "Free",
       "unknown": "Unpriced",
       "subscription": "Subscription"
-    }
+    },
+    "tokens_in_out": "{input} in / {output} out"
   },
   "all_chats": {
     "title": "All chats",
@@ -5781,7 +6452,9 @@
       "history_chats": "Chats",
       "history_voice": "Voice",
       "history_empty": "Nothing here yet",
-      "history_delete": "Delete"
+      "history_delete": "Delete",
+      "proposal_ask_first": "ask first: {tools}",
+      "proposal_always_allow": "always allow: {tools}"
     },
     "world": {
       "minimap_label": "Island map",
@@ -6230,6 +6903,35 @@
       "message": "Your message to the group",
       "stop": "Stop round",
       "send": "Ask the group"
+    },
+    "floor": {
+      "department_other": "Other",
+      "agent_fallback": "Agent",
+      "workspace_fallback": "Workspace"
+    },
+    "provider_label": {
+      "ollama": "Ollama (local)",
+      "local_server": "Local server"
+    },
+    "sample": {
+      "daily_at": "daily {time}",
+      "lead": {
+        "title": "Chief executive — leads and delegates the whole team",
+        "description": "You are the lead of this agent society: its chief executive. You own the goals, not the tasks. Every request that reaches you is triaged, shaped into a clear assignment and handed to the orchestrator or specialist whose title fits; you never do a specialist's work yourself. You keep the team small, the hand-offs written (what was done, evidence, what remains, who owns the next step) and the spend inside the daily budget. Ask-tier actions always wait for the person; you never route around an approval. You speak for the team in the person's language and report outcomes, not activity.",
+        "routine": "Morning stand-up digest"
+      },
+      "scout": {
+        "name": "Scout",
+        "title": "Research orchestrator",
+        "description": "You own research. You break a question into sources, read broadly, keep evidence links and hand back a brief with what remains open.",
+        "routine": "Morning research brief"
+      },
+      "archivist": {
+        "name": "Archivist",
+        "title": "Knowledge curator",
+        "description": "You own the shared memory. You turn finished work into short, sourced wiki notes under your namespace and propose what deserves promotion to shared knowledge.",
+        "routine": "Nightly curation pass"
+      }
     }
   },
   "chat_tools": {
@@ -6508,7 +7210,8 @@
     "expand": "Enlarge {file}",
     "open_file": "Open file",
     "download": "Download",
-    "retry": "Retry"
+    "retry": "Retry",
+    "image_fallback": "image"
   },
   "slash": {
     "locale": "en",
@@ -6625,6 +7328,23 @@
       "title": "Go to file",
       "placeholder": "Type a file name; add :42 to jump to line 42",
       "no_match": "No file matches."
+    },
+    "errors": {
+      "not_editable": "The file on disk can no longer be edited here.",
+      "reopen_dirty": "Save or discard the changes before reopening the file in another encoding."
+    },
+    "encoding_scripts": {
+      "labelled": "{script} ({encoding})",
+      "utf8_bom": "UTF-8 with BOM",
+      "western": "Western",
+      "central_european": "Central European",
+      "cyrillic": "Cyrillic",
+      "greek": "Greek",
+      "turkish": "Turkish",
+      "japanese": "Japanese",
+      "chinese_simplified": "Chinese Simplified",
+      "chinese_traditional": "Chinese Traditional",
+      "korean": "Korean"
     }
   },
   "ide_side_panel": {
@@ -7051,6 +7771,12 @@
         "data": "Data",
         "perf": "Performance",
         "rocket": "Release"
+      },
+      "import_errors": {
+        "unreadable": "{file}: could not be read.",
+        "not_markdown": "{file}: not a Markdown or text file.",
+        "too_large": "{file}: larger than {size} KB.",
+        "not_text": "{file}: not a text file."
       }
     },
     "office": {
@@ -7227,7 +7953,8 @@
       "close": "Close",
       "gone": "This appshot is no longer kept, so it cannot be edited.",
       "text_placeholder": "Type…"
-    }
+    },
+    "editor_title": "Appshot editor"
   },
   "jarvisx": {
     "title": "Jarvis X",
@@ -7496,5 +8223,967 @@
     "logged_offer": "{provider} / {model}, estimated {cost}, cap {cap}.",
     "paid_usage": "Paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap}).",
     "paid_usage_automatic": "Automatic paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap})."
+  },
+  "ide_projects": {
+    "connect_failed": "Could not connect this folder. Try again.",
+    "choose_folder_error": "Choose a folder to continue.",
+    "back_to_project": "Back to project",
+    "choose_folder_title": "Choose a folder",
+    "connect_title": "Connect project",
+    "connect_description": "Choose a source folder and an optional project name.",
+    "choose_folder_hint": "Choose a folder to continue",
+    "use_folder": "Use this folder",
+    "project_name": "Project name",
+    "project_name_optional": "Project name (optional)",
+    "source_folder": "Source folder",
+    "change": "Change",
+    "add_folder_hint": "Add a folder from this computer",
+    "choose_folder": "Choose folder",
+    "connecting": "Connecting…",
+    "reorder_needs_restart": "This view is newer than the backend — restart the app and try again.",
+    "reveal_desktop_only": "Opening folders works in the desktop app only.",
+    "sessions_one": "{count} agent session",
+    "sessions_other": "{count} agent sessions",
+    "path_copied": "Folder path copied",
+    "path_copy_failed": "Could not copy the folder path",
+    "opening": "Opening {label}…",
+    "open_failed": "{label} could not be started",
+    "workspace_copy": "{workspace} copy",
+    "interrupt_failed": "{failed} of {total} agents could not be interrupted.",
+    "interrupted_one": "Interrupted {count} agent.",
+    "interrupted_other": "Interrupted {count} agents.",
+    "the_computer": "the computer",
+    "this_computer": "this computer",
+    "moving": "Moving {workspace} to {target}. This can take a minute.",
+    "moved": "{workspace} now runs on {target}.",
+    "rename_named": "Rename {target}",
+    "save_named": "Save {target}",
+    "cancel_rename_named": "Cancel renaming {target}",
+    "open_named": "Open {target}",
+    "collapse_named": "Collapse {target}",
+    "expand_named": "Expand {target}",
+    "not_restorable": "This workspace cannot be restored on this machine",
+    "drag_hint": "{target} — drag to reorder, or press Alt plus arrow keys to move",
+    "switching": "Switching workspace",
+    "project_actions_for": "Project actions for {target}",
+    "project_actions": "Project actions",
+    "new_workspace_in": "New workspace in {project}",
+    "new_workspace": "New workspace",
+    "workspace_actions_for": "Workspace actions for {target}",
+    "workspace_actions": "Workspace actions",
+    "create_workspace": "Create workspace",
+    "open_in": "Open in {editor}",
+    "not_installed": "Not installed",
+    "open_on": "Open on {target}",
+    "the_web": "the web",
+    "the_web_page": "the web page",
+    "new_worktree": "New workspace in a worktree",
+    "new_worktree_hint": "Own folder and branch for its agents",
+    "rename_project": "Rename project",
+    "unpin_project": "Unpin project",
+    "pin_project": "Pin project",
+    "delete_project": "Delete project",
+    "add_agent": "Add another agent",
+    "duplicate": "Duplicate workspace",
+    "duplicate_hint_one": "Starts {count} fresh agent",
+    "duplicate_hint_other": "Starts {count} fresh agents",
+    "interrupt_one": "Interrupt {count} working agent",
+    "interrupt_other": "Interrupt {count} working agents",
+    "interrupt_hint": "Stops the current task, keeps the chat",
+    "reopen": "Reopen workspace",
+    "reopen_unreachable": "Its folder is not reachable",
+    "copy_path": "Copy folder path",
+    "move_to": "Move workspace to {computer}",
+    "move_hint": "Keeps running while this PC is off",
+    "bring_back": "Bring workspace back here",
+    "git_hint": "Commit, push, pull request, worktrees",
+    "rename_workspace": "Rename workspace",
+    "remove_workspace": "Remove workspace",
+    "workspaces": "Workspaces",
+    "connect_folder_title": "Connect project folder",
+    "pinned": "Pinned",
+    "other_projects": "Other projects",
+    "empty": "Connect a folder to start a project.",
+    "remove_title": "Remove {workspace}?",
+    "remove_body_one": "Its {count} coding agent will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.",
+    "remove_body_other": "Its {count} coding agents will stop and the workspace leaves the sidebar. The folder on disk and its chats stay untouched.",
+    "remove_body_closed": "The workspace leaves the sidebar. The folder on disk and its chats stay untouched.",
+    "removing": "Removing…",
+    "remove_named": "Remove {workspace}",
+    "delete_title": "Delete {project}?",
+    "delete_body_idle": "This forgets the project and its chats. The folders on disk stay untouched.",
+    "delete_body": "This stops {agents} in {workspaces} and forgets the project and its chats. The folders on disk stay untouched.",
+    "running_agents_one": "{count} running agent",
+    "running_agents_other": "{count} running agents",
+    "open_workspaces_one": "{count} open workspace",
+    "open_workspaces_other": "{count} open workspaces",
+    "deleting": "Deleting…",
+    "delete_named": "Delete {project}",
+    "show_in_explorer": "Show in Explorer",
+    "show_in_finder": "Show in Finder",
+    "show_in_file_manager": "Show in file manager",
+    "keep": "Keep"
+  },
+  "ide_folder_picker": {
+    "create_failed": "Could not create that folder.",
+    "drop_not_folder": "That was not a folder. Drop a folder here, or pick one from the list.",
+    "drop_finding": "Finding the folder you dropped…",
+    "drop_not_found": "Could not find that folder.",
+    "this_machine": "This machine",
+    "starting_with": "Folders starting with “{leaf}”",
+    "folders_in": "Folders in {folder}",
+    "places": "Places",
+    "drop_overlay": "Drop to choose this folder",
+    "search_placeholder": "Search by name or paste a path",
+    "search_aria": "Search folders by name, or paste a path",
+    "clear_search": "Clear search",
+    "browse_title": "Choose the folder in this computer's own folder window",
+    "window_open": "Window open…",
+    "browse": "Browse…",
+    "new_folder_title": "Make a new folder in {path}",
+    "your_home_folder": "your home folder",
+    "new_folder": "New folder",
+    "native_open_note": "A folder window has opened. Choose your folder there. If you cannot see it, it is behind this window or in the taskbar.",
+    "go_up": "Go up one folder",
+    "nothing_called": "Nothing on {machine} is called “{query}”",
+    "called_anywhere": "Folders called “{query}” anywhere on {machine}",
+    "folder_path": "Folder path",
+    "start_title": "Start: recent folders and places on {machine}",
+    "click_to_edit_path": "Click to see and edit the whole path",
+    "show_whole_path": "Show the whole path",
+    "type_path": "Type a path",
+    "type_path_title": "Type or paste a path — Tab completes folder names",
+    "hide_hidden": "Hide hidden folders",
+    "show_hidden": "Show hidden folders",
+    "hidden_shown_title": "Hidden folders (names starting with a dot) are shown",
+    "hidden_list_title": "Also list hidden folders — names starting with a dot",
+    "reload": "Reload this folder",
+    "new_folder_name": "Name of the new folder",
+    "create": "Create",
+    "cancel_new_folder": "Cancel new folder",
+    "created_in": "Created in",
+    "recent_folders": "Recent folders",
+    "terminals_one": "{count} terminal",
+    "terminals_other": "{count} terminals",
+    "forget": "Forget {folder}",
+    "forget_title": "Remove from this list (the folder itself stays)",
+    "create_folder_named": "Create folder “{folder}”",
+    "in_parent": "in {path}",
+    "empty_search": "No folder with that name was found.",
+    "empty_search_hint": "To open one by where it is, type its full path — like {example}.",
+    "empty_leaf": "No folder here starts with “{leaf}”.",
+    "empty_needle": "No folder here matches “{query}”. Keep typing to search the whole machine.",
+    "empty_folder": "This folder has no folders inside. You can choose it as it is, or make a new folder in it.",
+    "empty_start": "Nothing to list here — search above, drop a folder, or type its path.",
+    "path_example_before": "A full path on this machine looks like",
+    "path_example_after": ".",
+    "tip_drag": "Tip: you can also drag a folder here from your file manager.",
+    "chosen_folder": "Chosen folder:",
+    "no_folder_chosen": "No folder chosen yet. Open a folder in the list to choose it.",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "days_ago": "{count} days ago",
+    "last_week": "Last week",
+    "weeks_ago": "{count} weeks ago",
+    "path_input_placeholder": "Type a path — Tab completes folder names",
+    "go_to_path": "Go to this path"
+  },
+  "shell_events": {
+    "empty": "No events yet. Emit a test event from the Debug tab.",
+    "hide_payload": "hide",
+    "show_payload": "payload"
+  },
+  "ide_panes": {
+    "exit": {
+      "stopped": "stopped",
+      "ctrl_c": "stopped with Ctrl-C (0xC000013A)",
+      "access_violation": "crashed — memory access violation (0xC0000005)",
+      "stack_overrun": "crashed — stack buffer overrun (0xC0000409)",
+      "heap_corruption": "crashed — heap corruption (0xC0000374)",
+      "unhandled_exception": "crashed — unhandled exception (0xC000041D)",
+      "dll_missing": "could not start — a required DLL was missing (0xC0000142)",
+      "unexpected": "stopped unexpectedly — use Restart to bring it back",
+      "unexpected_code": "stopped unexpectedly (exit code {code}) — use Restart to bring it back"
+    },
+    "socket": {
+      "authorizing": "Authorizing the terminal…",
+      "auth_failed": "Terminal authorization failed — retrying.",
+      "workspace_closed": "This workspace was closed — reloading…",
+      "start_failed_this": "This terminal could not be started.",
+      "start_failed": "The terminal could not be started.",
+      "no_such_pane": "This terminal is no longer part of the open workspace.",
+      "waiting_workspace": "Waiting for the workspace to come back…",
+      "unreachable": "Could not reach the terminal — retrying.",
+      "connection_lost": "Terminal connection lost (code {code}) — reconnecting."
+    },
+    "common": {
+      "done": "Done"
+    },
+    "install": {
+      "title": "Install {agent}",
+      "installing": "Installing {agent}",
+      "starting": "Starting the installer for {agent}…",
+      "installed": "{agent} is installed",
+      "watching": "Watching for {agent} to appear…"
+    },
+    "picker": {
+      "no_shell": "no shell here",
+      "not_installed": "not installed",
+      "install": "Install"
+    },
+    "close_dialog": {
+      "workspace_title": "Close {workspace}?",
+      "workspace_title_unnamed": "Close workspace?",
+      "pane_body": "The coding agent in this pane stops right away, including any task it is still working on.",
+      "workspace_body_empty": "The workspace closes. You can restore it from Projects at any time.",
+      "workspace_body_one": "Its coding agent stops right away. You can restore the workspace from Projects at any time.",
+      "workspace_body_other": "All {count} coding agents stop right away. You can restore the workspace from Projects at any time.",
+      "keep": "Keep running",
+      "close_agent": "Close agent"
+    },
+    "fork": {
+      "title": "Fork {pane}",
+      "description": "Start a second agent from where this one is. The original keeps running unchanged.",
+      "chat_title": "Fork chat",
+      "chat_body": "A new agent opens beside this one and continues a copy of the conversation, in the same folder.",
+      "worktree_title": "Fork into a worktree",
+      "worktree_needs_repo": "Needs a git repository — this folder is not one.",
+      "worktree_body": "Same copy of the conversation, but in its own git worktree and branch, so both agents can change files without getting in each other's way.",
+      "how": "How to fork",
+      "branch_label": "Worktree and branch name",
+      "finding_name": "Finding a name…",
+      "branch_hint": "Created from the last commit. Changes that are not committed yet stay in the current folder.",
+      "cannot_copy": "{agent} cannot copy its conversation, so the fork starts with a fresh chat.",
+      "confirm_worktree": "Fork into worktree"
+    },
+    "move": {
+      "no_room": "No room",
+      "summary_empty": "{workspace} is empty, so {pane} fills it.",
+      "summary_even": "{pane} joins {workspace}, and every pane gets an even share.",
+      "summary_left": "Left of {anchor}: {pane} takes half of its space.",
+      "summary_right": "Right of {anchor}: {pane} takes half of its space.",
+      "summary_above": "Above {anchor}: {pane} takes half of its space.",
+      "summary_below": "Below {anchor}: {pane} takes half of its space.",
+      "place_left": "Place {pane} left of {anchor}",
+      "place_right": "Place {pane} right of {anchor}",
+      "place_above": "Place {pane} above {anchor}",
+      "place_below": "Place {pane} below {anchor}",
+      "title": "Move {pane} to {workspace}",
+      "description": "Point at a pane and click the side it should go on. The agent keeps running.",
+      "loading": "Loading {workspace}…",
+      "fills_empty": "Fills the empty workspace",
+      "tile_aria": "{anchor}. Arrow keys choose the side {pane} goes on.",
+      "confirm": "Move to {workspace}"
+    },
+    "activity": {
+      "label": {
+        "stopped": "stopped",
+        "status_unknown": "status unknown",
+        "working": "working",
+        "starting": "starting",
+        "needs_you": "needs you",
+        "exited": "exited",
+        "failed": "failed",
+        "done": "done",
+        "idle": "idle",
+        "error": "error",
+        "live": "live"
+      },
+      "hint": {
+        "interrupted": "The task was interrupted.",
+        "unknown": "No verified task status is available.",
+        "working": "Working — the task is still in progress.",
+        "starting": "Starting up. Its agent has not taken the pane yet.",
+        "asking": "Stopped with a question on screen. It is waiting for your answer.",
+        "exited": "Its process is gone.",
+        "failed": "Its agent could not be started.",
+        "done": "Finished and waiting at its prompt. That it stopped, not that the work is right.",
+        "idle": "Waiting at its prompt. Nothing has been sent to it yet.",
+        "connecting": "Connecting to the pane.",
+        "error": "This pane could not be reached.",
+        "connected": "Connected."
+      },
+      "duration_seconds": "{count}s",
+      "duration_minutes": "{count} min",
+      "duration_hour_one": "1 hour",
+      "duration_hours_other": "{count} hours",
+      "for_elapsed": "For {elapsed}."
+    },
+    "recap": {
+      "why": {
+        "pinned": "You wrote this. It stays until you reset it.",
+        "cli_title": "The agent in this pane named its session itself.",
+        "disabled": "Model recaps are switched off, so this is read from the pane's own output.",
+        "not_started": "Nothing is running in this pane yet, so there is nothing to summarize.",
+        "warming": "Too little output so far to summarize — this line is read from the pane's own output.",
+        "working": "A summary is being written now. This line is read from the pane's own output.",
+        "queued": "Waiting its turn to be summarized. This line is read from the pane's own output.",
+        "unavailable": "No model could summarize this pane, so this line is read from its own output."
+      },
+      "credit": {
+        "user": "Written by you",
+        "cli_named": "Named by {writer}",
+        "cli": "Named by the agent",
+        "model_named": "Summarized by {writer}",
+        "model": "Summarized by a model",
+        "heuristic": "Read from the output"
+      },
+      "ago_seconds": "{count}s ago",
+      "ago_minutes": "{count} min ago",
+      "ago_hours": "{count} h ago",
+      "what_doing": "What {pane} is doing",
+      "write_yourself": "Write it yourself",
+      "back_to_auto": "Back to the automatic recap",
+      "summarize_again": "Summarize this pane again",
+      "header_line": "Header line",
+      "header_placeholder": "What this pane is for",
+      "longer": "The longer version",
+      "optional": "— optional",
+      "detail_placeholder": "Where the work stands, what is outstanding…",
+      "save_hint": "⌘/Ctrl + Enter to save",
+      "save_empty_hint": "Save with an empty line to go back to the automatic recap"
+    },
+    "receipt": {
+      "just_now": "just now",
+      "ago_hour_one": "1 hour ago",
+      "ago_hours_other": "{count} hours ago",
+      "load_failed": "The full prompt could not be read.",
+      "sent": "Prompt sent",
+      "sent_note": "the agent took it and started",
+      "typed": "Prompt typed, not started",
+      "typed_note": "it is sitting in this pane's input box — press Enter here to run it",
+      "unconfirmed": "Prompt sent — start could not be confirmed",
+      "unconfirmed_note": "it went to the pane; the agent's start could not be confirmed",
+      "read_title": "Read exactly what was sent to {pane}",
+      "dismiss": "Dismiss the delivery receipt for {pane}",
+      "click_to_read": "click to read what was sent",
+      "loading_rest": "Opening of {count} characters — reading the rest…",
+      "opening_only": "Showing the opening only — {error}",
+      "delivered": "{count} characters, delivered to {pane}.",
+      "delivered_at": "{count} characters, delivered to {pane} at {clock}."
+    },
+    "options": {
+      "title": "Workspace options",
+      "close": "Close workspace options",
+      "arrangement": "Terminal arrangement",
+      "balance": "Balance layout",
+      "arrangement_hint": "Drag a terminal title to an edge to place it beside, above or below another terminal. Drop in the center to swap positions.",
+      "style": "Terminal style",
+      "style_minimal": "Minimal",
+      "style_minimal_hint": "Square frames, slim title row",
+      "style_classic": "Classic",
+      "style_classic_hint": "Rounded cards, taller title bar",
+      "appearance": "Terminal appearance",
+      "appearance_auto_aria": "Match app appearance",
+      "appearance_dark_aria": "dark terminals",
+      "appearance_light_aria": "light terminals",
+      "appearance_auto": "Match app",
+      "appearance_dark": "Dark",
+      "appearance_light": "Light",
+      "add_agent": "Add coding agent",
+      "git": "Git: branches, commits, worktrees"
+    },
+    "github": {
+      "state_branch": "Published branch",
+      "state_draft": "Draft pull request",
+      "state_open": "Open pull request",
+      "state_queued": "In the merge queue",
+      "state_merged": "Pull request merged",
+      "state_closed": "Closed without merging",
+      "unavailable": "GitHub status unavailable",
+      "branch_generic": "GitHub branch",
+      "dest_pr": "pull request #{number}",
+      "dest_branch": "branch",
+      "open_aria": "Open GitHub {destination}: {identity}",
+      "open_title": "Open {destination}",
+      "refresh_failed": "GitHub status could not be refreshed.",
+      "refreshing": "Refreshing GitHub status…"
+    },
+    "dock": {
+      "swap": "Swap positions",
+      "left": "Place on the left",
+      "right": "Place on the right",
+      "above": "Place above",
+      "below": "Place below"
+    },
+    "grid": {
+      "placed_swap": "{pane} and {target} swapped.",
+      "placed_left": "{pane} placed left {target}.",
+      "placed_right": "{pane} placed right {target}.",
+      "placed_above": "{pane} placed above {target}.",
+      "placed_below": "{pane} placed below {target}.",
+      "arrange_failed": "Could not save the arrangement. The previous order was restored.",
+      "moved_toast": "{pane} moved to {workspace}. Its agent keeps running.",
+      "moved_renamed_toast": "{pane} moved to {workspace} as {renamed}. Its agent keeps running.",
+      "moved": "{pane} moved to {workspace}.",
+      "moved_renamed": "{pane} moved to {workspace} as {renamed}.",
+      "forked_branch": "{pane} forked into {fork} on branch {branch}.",
+      "forked": "{pane} forked into {fork}.",
+      "the_computer": "the computer",
+      "this_computer": "this computer",
+      "placing": "Moving {pane} to {computer}. The folder and the conversation go with it.",
+      "placed_on": "{pane} now runs on {computer}.",
+      "bring_back": "Bring back to this computer",
+      "run_on": "Run on {computer}",
+      "another_computer": "another computer",
+      "no_pane_up": "No pane above {pane}.",
+      "no_pane_down": "No pane below {pane}.",
+      "no_pane_left": "No pane to the left of {pane}.",
+      "no_pane_right": "No pane to the right of {pane}.",
+      "tile_aria": "{pane}. Drag to an edge to dock, or the center to swap. Alt+Arrow swaps with a neighbor.",
+      "move_to_menu": "Move to {workspace}…",
+      "not_into": "Not into {workspace}: another folder",
+      "that_workspace": "that workspace"
+    },
+    "header": {
+      "split_right": "Split right",
+      "split_down": "Split down",
+      "split_left": "Split left",
+      "split_up": "Split up",
+      "rename_failed": "The name could not be saved.",
+      "name_for": "Name for {pane}",
+      "save_name": "Save name",
+      "actions_for": "Actions for {pane}",
+      "swap_focused": "Swap with focused pane",
+      "fork_menu": "Fork…",
+      "unzoom": "Unzoom",
+      "zoom": "Zoom",
+      "conversation_history": "Conversation history",
+      "open_as_chat": "Open as chat",
+      "review_changes": "Review changes",
+      "restart_agent": "Restart agent",
+      "right_click_title": "Shift+right-click opens the pane menu while forwarding is enabled.",
+      "right_click": "Send right-clicks to pane",
+      "right_click_hint": "Shift + right-click: pane menu",
+      "more_actions": "More actions for {pane}",
+      "status_connecting": "connecting",
+      "status_live": "live",
+      "status_exited": "exited",
+      "status_error": "error",
+      "runs_on": "Runs on {computer}. It keeps working while this app is closed.",
+      "worktree_branch": "Runs in its own git worktree on branch {branch}",
+      "drag_hint": "Drag to reorder, or focus this title and press Alt with an arrow key.",
+      "add_beside": "Add agent beside {pane}"
+    },
+    "request_failed": "Request failed ({status}).",
+    "seam": {
+      "resize_pair": "Drag to resize {before} and {after}",
+      "resize_columns": "Drag to resize these two columns of terminals",
+      "pane_before": "the pane before",
+      "pane_after": "the pane after"
+    }
+  },
+  "ide_git": {
+    "detached_at": "Detached at {head}",
+    "current_branch": "Current branch",
+    "worktree_badge": "worktree",
+    "uncommitted": "{count} uncommitted",
+    "nothing_uncommitted": "Nothing uncommitted",
+    "changes_one": "{count} change",
+    "changes_other": "{count} changes",
+    "clean": "clean",
+    "compared_with": "Compared with {upstream}",
+    "ahead": "ahead",
+    "behind": "behind",
+    "not_pushed_title": "This branch has not been pushed yet",
+    "not_pushed": "not pushed",
+    "without_git": "Without git",
+    "without_git_hint": "Open the folder as it is",
+    "init": "Initialize git",
+    "init_hint": "New repository on main, ready for branches",
+    "share_checkout": "Share this checkout",
+    "share_checkout_hint": "Same folder as the other agents",
+    "current_checkout": "Current checkout",
+    "work_on_branch": "Work on {branch} in the project folder",
+    "work_in_folder": "Work in the project folder",
+    "new_worktree": "New worktree",
+    "new_worktree_hint_agent": "Own folder and branch, opens as its own tab",
+    "new_worktree_hint": "Own folder and branch, agents never collide",
+    "new_branch": "New branch",
+    "new_branch_hint": "Branch off here, in the project folder",
+    "existing_branch": "Existing branch",
+    "existing_branch_hint": "Check out another branch here",
+    "existing_worktree": "Existing worktree",
+    "existing_worktree_hint": "Open a worktree that is already there",
+    "works_on": "Works on {branch}",
+    "works_in_folder": "Works in the project folder",
+    "opens_as_is": "Opens the folder as it is",
+    "opens_as_is_hint": "No git here. You can set it up if you like.",
+    "summary_agent_hint": "Same folder as your other agents. Nothing to set up.",
+    "summary_workspace_hint": "In the project folder, as it is now. Nothing to set up.",
+    "reading_repo": "Reading repository…",
+    "git_options": "Git options",
+    "hide_options": "Hide options",
+    "not_installed": "Git is not installed on this computer. Install it from git-scm.com to use branches and worktrees.",
+    "checkout_aria": "Git checkout",
+    "recommended": "Recommended",
+    "branch_name": "Branch name",
+    "suggest_name": "Suggest another name",
+    "based_on": "Based on",
+    "base_branch": "Base branch",
+    "hint_current": "current",
+    "hint_default": "default",
+    "unborn": "This repository has no commit yet — make a first commit before branching.",
+    "creates_worktree": "Creates {path}. Only committed work is copied; an existing branch is reused.",
+    "dirty_moves": "Your uncommitted changes move along to the new branch.",
+    "folder_switches": "The project folder switches to the new branch for every agent in it.",
+    "branch": "Branch",
+    "worktree": "Worktree",
+    "detached": "detached",
+    "init_note": "Creates a repository on {branch} with an empty first commit. Your files are not committed — you decide what goes in.",
+    "tag_modified": "modified",
+    "tag_added": "added",
+    "tag_deleted": "deleted",
+    "tag_renamed": "renamed",
+    "tag_copied": "copied",
+    "tag_conflict": "conflict",
+    "tag_new": "new",
+    "committed": "Committed {sha}.",
+    "pushed_to": "Pushed to {upstream}.",
+    "fetched": "Fetched every remote.",
+    "draft_pr_opened": "Draft pull request opened.",
+    "pr_opened": "Pull request opened.",
+    "merged": "Merged {branch} into {target} ({sha}).",
+    "pruned": "Forgot worktrees whose folders are gone.",
+    "initialized": "Initialized a repository on main.",
+    "refresh": "Refresh",
+    "close_panel": "Close Git panel",
+    "open_link": "Open link",
+    "open": "Open",
+    "not_installed_refresh": "Git is not installed on this computer. Install it from git-scm.com, then refresh.",
+    "not_a_repo": "This folder is not a git repository yet. Initialize one to give agents branches and worktrees.",
+    "worktree_of": "A worktree of {folder}. Its agents work on their own branch without touching the main folder.",
+    "changes": "Changes",
+    "nothing_uncommitted_full": "Nothing uncommitted.",
+    "commit_message": "Commit message",
+    "commit_placeholder": "Commit message, e.g. feat: add login form",
+    "no_changes": "No changes to commit",
+    "commit_all": "Commit all",
+    "share": "Share",
+    "no_remote": "This repository has no remote",
+    "push": "Push",
+    "publish_branch": "Publish branch",
+    "fetch": "Fetch",
+    "install_gh": "Install the GitHub CLI (gh) to open pull requests",
+    "switch_feature_branch": "Switch to a feature branch first",
+    "pull_request": "Pull request",
+    "drafts": "Open pull requests as drafts",
+    "commit_first": "Commit the changes first",
+    "merge_into": "Merge {branch} into {target}",
+    "worktrees": "Worktrees",
+    "pruning": "Pruning…",
+    "prune_missing": "Prune missing",
+    "no_worktrees": "No worktrees yet. A worktree gives agents their own folder and branch, so several can change code at once.",
+    "detached_head": "detached {head}",
+    "this_workspace": "this workspace",
+    "folder_missing": "folder missing",
+    "locked": "locked",
+    "remove_named": "Remove {folder}",
+    "confirm_removal": "Confirm removal",
+    "remove_note": "The folder is deleted. Committed work stays on its branch.",
+    "also_delete_branch": "Also delete branch {branch} if it is merged",
+    "removing": "Removing…",
+    "remove_anyway": "Remove anyway",
+    "remove_worktree": "Remove worktree"
+  },
+  "ide_hotkeys": {
+    "menu": {
+      "aria": "IDE shortcuts",
+      "all_keys": "All keys",
+      "cancel": "cancel",
+      "exit": "exit"
+    },
+    "badge": {
+      "rename": "RENAME",
+      "workspace": "WORKSPACE",
+      "keys": "KEYS",
+      "prefix": "PREFIX"
+    },
+    "bar": {
+      "right": "right",
+      "left": "left",
+      "above": "above",
+      "below": "below",
+      "even_grid": "even grid",
+      "back": "back",
+      "new": "new",
+      "worktree": "worktree",
+      "rename": "rename",
+      "close": "close",
+      "git": "git",
+      "options": "options",
+      "connect_folder": "connect folder",
+      "switch": "switch",
+      "any_key": "any key",
+      "split": "split",
+      "move": "move",
+      "zoom": "zoom",
+      "workspaces": "workspaces",
+      "all_keys": "all keys",
+      "send_leader": "send {keys}"
+    },
+    "help": {
+      "open_agent": "Open {agent}",
+      "to_right": "To the right",
+      "to_left": "To the left",
+      "above": "Above",
+      "below": "Below",
+      "even_grid": "Even grid",
+      "group_workspace": "Workspace",
+      "new_workspace": "New workspace",
+      "new_worktree_workspace": "New worktree workspace",
+      "rename_workspace": "Rename workspace",
+      "close_workspace": "Close workspace",
+      "git_panel": "Git panel",
+      "workspace_options": "Workspace options",
+      "connect_folder": "Connect a project folder",
+      "prev_next_workspace": "Previous / next workspace",
+      "go_to_workspace_n": "Go to workspace 1–9",
+      "group_new_pane": "New pane",
+      "agent_then_arrow": "{agent}, then an arrow",
+      "split_right_same": "Split right, same agent",
+      "split_below_same": "Split below, same agent",
+      "choose_agent": "Choose agent…",
+      "group_panes": "Panes",
+      "focus_neighbor": "Focus neighbor",
+      "swap_neighbor": "Swap with neighbor",
+      "maximize_restore": "Maximize / restore",
+      "rename_pane": "Rename pane",
+      "fork_pane": "Fork pane",
+      "close_pane": "Close pane",
+      "even_layout": "Even out layout",
+      "group_workspaces": "Workspaces",
+      "workspace_menu": "Workspace menu…",
+      "go_to_workspace": "Go to workspace",
+      "next_prev_workspace": "Next / previous workspace",
+      "send_leader": "Send {keys} to the pane"
+    }
+  },
+  "workspace_terminal": {
+    "connection_failed": "Connection to the terminal failed.",
+    "process_exited": "process exited: {code}",
+    "terminal_error": "terminal error",
+    "auth_failed": "Terminal authorization failed — reopen to retry.",
+    "connection_closed": "Terminal connection closed (code {code}).",
+    "status_live": "live",
+    "status_error": "error",
+    "status_exited": "exited",
+    "status_connecting": "connecting…"
+  },
+  "shell_sections": {
+    "telephony_setup": "Telephony setup",
+    "agent_instructions": "Assistant",
+    "voice_shortcuts": "Voice Shortcuts",
+    "voice_language": "Dictation Language",
+    "voice_api_keys": "Voice Input Keys",
+    "visualization": "Visualization"
+  },
+  "shell_errors": {
+    "open_terminal_path_failed": "Could not open that terminal path.",
+    "git_after_restart": "Git options load after the next app restart.",
+    "git_request_failed": "Git request failed ({status})",
+    "no_clipboard": "no clipboard is available here",
+    "open_path_failed": "Could not open that file or folder on this computer.",
+    "workspace_closed_adding": "The workspace closed while adding a terminal.",
+    "workspace_closed_sizes": "The workspace closed while saving pane sizes.",
+    "workspace_closed_moving": "The workspace closed while moving a terminal.",
+    "view_newer_than_backend": "This view is newer than the backend — restart the app and try again.",
+    "workspace_closed_renaming": "The workspace closed while renaming a terminal.",
+    "workspace_closed_forking": "The workspace closed while forking a terminal.",
+    "workspace_not_open": "The workspace is no longer open.",
+    "request_failed_status": "request failed: {status}"
+  },
+  "shell_labels": {
+    "mission": "Mission"
+  },
+  "plugins_category": {
+    "home_devices": "Home & Devices",
+    "lists_tasks": "Lists & Tasks",
+    "calendar_mail": "Calendar & Mail",
+    "messaging": "Messaging",
+    "knowledge_reading": "Knowledge & Reading",
+    "media_creativity": "Media & Creativity",
+    "files_photos": "Files & Photos",
+    "developer": "Developer",
+    "custom": "Custom"
+  },
+  "plugins_community": {
+    "portable_note_agents": "Portable skill · also runs in {agents}",
+    "portable_note_other": "Portable skill · also runs in other agents",
+    "auth_pat": "Personal access token",
+    "auth_device": "Device sign-in",
+    "auth_oauth": "OAuth sign-in",
+    "auth_allowlist": "Account allowlist",
+    "install_failed": "Install failed ({status})",
+    "title": "Community marketplace",
+    "intro": "Plugins and skills published by anyone. Nothing here is reviewed by the {product} team — read what a card would connect to before installing it.",
+    "marketplace_section_hint": "The whole marketplace — plugins and skills — in its own section",
+    "marketplace_section": "Marketplace section",
+    "publish_hint": "Publish your own plugin or skill on the marketplace website",
+    "publish": "Publish your own",
+    "refresh": "Re-fetch the community index",
+    "search_placeholder": "Search community plugins and skills…",
+    "plugins": "Plugins",
+    "skills": "Skills",
+    "loading": "Loading community index…",
+    "error": "The community index could not be loaded. Check the connection and try Refresh.",
+    "disabled": "The community marketplace is switched off in the configuration (marketplace.community_index_url is empty).",
+    "unavailable": "The community index is unreachable and no saved copy exists yet. Connect to the internet once to load it.",
+    "stale": "Showing a saved copy — the index could not be refreshed just now.",
+    "files_loading": "Reading the published files…",
+    "files_error": "The published files could not be read just now. The install below is unaffected — but you would be installing something you have not seen.",
+    "whats_inside": "What's inside",
+    "files_one": "1 file",
+    "files_other": "{count} files",
+    "file_truncated": "Shown up to 256 kB — the published file is longer. Open the source to read the rest.",
+    "files_exact": "Exactly as published. These are the bytes {product} downloads when you install it — nothing is added or rewritten in between.",
+    "not_installable": "Not installable: {error}",
+    "read_contents": "Read what {entry} contains",
+    "badge_unreviewed": "Community · not reviewed",
+    "installed": "Installed",
+    "installed_lower": "installed",
+    "by": "by {publisher}",
+    "unknown_publisher": "unknown publisher",
+    "view_source": "View the published source",
+    "view_source_of": "View source of {entry}",
+    "remove_hint": "Remove this plugin and its stored access",
+    "name_taken_hint": "A built-in plugin already uses this name",
+    "name_taken": "Name taken",
+    "install": "Install",
+    "read_skill": "Read what {entry} tells the assistant",
+    "portable": "Portable",
+    "manual_hint": "No direct download — open the source and follow its steps",
+    "manual": "Manual",
+    "install_named": "Install {entry}?",
+    "skill_unreviewed": "Community skill · not reviewed",
+    "plugin_unreviewed": "Community plugin · not reviewed",
+    "published_by": "Published by",
+    "unknown_author": "an unknown author",
+    "version": "version {version}",
+    "portable_follow": "{note}. {product} follows its instructions and ignores the settings meant for other agents.",
+    "skill_download_from": "The instructions are downloaded from:",
+    "terminal_comment": "# The same install, from a terminal.",
+    "skill_explainer": "A skill is a set of instructions the assistant follows — the text above is exactly what it would be told to do.",
+    "sends_to": "After you connect it, requests and your {entry} access token go to:",
+    "runs_command": "After you connect it, this command runs on your computer:",
+    "metadata_only": "This entry is metadata only — it adds no server and runs no command.",
+    "signin_method": "Sign-in method:",
+    "signin_not_yet": "— installing does not connect anything yet."
+  },
+  "ide_threads": {
+    "layout_aria": "IDE layout",
+    "layout_grid": "Terminal grid",
+    "layout_threads": "Threads",
+    "layout_verse": "Jarvis Verse",
+    "terminal_needs_folder": "Terminal needs a project folder",
+    "hide_terminal": "Hide terminal",
+    "show_terminal": "Show terminal",
+    "terminal": "Terminal",
+    "resize_terminal": "Resize the terminal",
+    "terminals": "Terminals",
+    "terminal_n": "Terminal {number}",
+    "close_named": "Close {target}",
+    "close_terminal": "Close terminal",
+    "new_terminal": "New terminal",
+    "where_agent_works": "Where the agent works",
+    "not_a_repo": "Not a git repository",
+    "worktree_base_title": "The branch the new worktree starts from",
+    "agent_on_branch": "The agent is working on this branch",
+    "switch_branch": "Switch branch",
+    "from_branch": "from {branch}",
+    "uncommitted_changes": "Uncommitted changes",
+    "own_branch": "own branch",
+    "branches": "Branches",
+    "start_worktree_from": "Start the worktree from",
+    "switch_to": "Switch to",
+    "in_a_worktree": "in a worktree",
+    "no_local_branches": "No local branches yet.",
+    "hint_new_thread": "new thread",
+    "hint_connect_first": "connect first",
+    "agent_model_aria": "Coding agent and model",
+    "choose_agent": "Choose an agent",
+    "loading_agents": "Loading agents…",
+    "search_agents_models": "Search agents and models",
+    "access_aria": "What the agent may do without asking",
+    "sub_status_running": "Working",
+    "sub_status_done": "Done",
+    "sub_status_failed": "Failed",
+    "sub_status_stopped": "Stopped",
+    "tools_one": "{count} tool",
+    "tools_other": "{count} tools",
+    "tokens": "{count} tokens",
+    "waiting_approval": "Waiting for your approval",
+    "using_tool": "Using {tool}",
+    "stopped_before_answer": "Stopped before it answered",
+    "finished": "Finished",
+    "open_subagent": "Open sub-agent {title}, {status}",
+    "subagents_one": "{count} sub-agent",
+    "subagents_other": "{count} sub-agents",
+    "count_working": "{count} working",
+    "count_waiting": "{count} waiting",
+    "count_failed": "{count} failed",
+    "subagents_aria": "Sub-agents",
+    "main_thread": "Main thread",
+    "in_background": "In the background",
+    "task": "Task",
+    "task_from": "Task from {parent}",
+    "the_main_agent": "the main agent",
+    "show_less": "Show less",
+    "show_whole_task": "Show the whole task",
+    "unstreamed_running": "This agent's CLI does not stream a sub-agent's steps. Its answer shows here when it finishes.",
+    "unstreamed_done": "This agent's CLI reported only the task and the answer, not the sub-agent's steps.",
+    "new_thread": "New thread",
+    "age_now": "now",
+    "age_minutes": "{count}m",
+    "age_hours": "{count}h",
+    "age_days": "{count}d",
+    "age_weeks": "{count}w",
+    "connect_folder_first": "Connect a project folder first.",
+    "connect_a_project": "Connect a project",
+    "empty_body": "Threads run a coding agent in a project folder. Connect one to start.",
+    "connect_folder": "Connect folder",
+    "build_in": "What should we build in {project}?",
+    "projects": "Projects",
+    "connect_another": "Connect another folder",
+    "new_activity": "New activity",
+    "new_thread_in": "New thread in {project}",
+    "save_name": "Save name",
+    "cancel_renaming": "Cancel renaming",
+    "thread_actions_for": "Thread actions for {target}",
+    "thread_actions": "Thread actions",
+    "show_more": "Show {count} more",
+    "start_thread": "Start a thread",
+    "archived_count": "Archived ({count})",
+    "restore_named": "Restore {target}",
+    "restore": "Restore",
+    "delete_confirm": "Delete this thread?",
+    "delete_body": "Its conversation leaves the list. The coding agent's own history stays on disk.",
+    "rename": "Rename",
+    "new_thread_here": "New thread in this project",
+    "archive": "Archive",
+    "plan_ready": "Plan ready",
+    "approval_needed": "Approval needed",
+    "one_of": "1 of {count}",
+    "plan_hint": "Build it, or keep planning and say what to change.",
+    "keep_planning": "Keep planning",
+    "decline": "Decline",
+    "always_allow_title": "Approve, and stop asking for this in this thread",
+    "always_allow": "Always allow",
+    "build_it": "Build it",
+    "approve": "Approve",
+    "build_switches": "Build it switches access to {mode} and starts building.",
+    "build_starts": "Build it starts building.",
+    "or_keep_planning": "Or keep planning and type what to change.",
+    "asks": "{asker} asks",
+    "the_agent": "The agent",
+    "n_of": "{index} of {count}",
+    "own_answer": "Or type your own answer",
+    "skip": "Skip",
+    "choose_connected_agent": "Choose a connected coding agent first.",
+    "queue_paused": "Queue paused after the agent stopped.",
+    "send_next": "Send next",
+    "queued": "Queued",
+    "files_one": "{count} file",
+    "files_other": "{count} files",
+    "remove_queued": "Remove queued message",
+    "message_agent": "Message the coding agent",
+    "queue_placeholder": "Queue a follow-up for when the agent is done",
+    "composer_placeholder": "Ask for changes, send follow-ups, or attach images",
+    "stop_agent": "Stop the agent",
+    "stop": "Stop",
+    "queue_message": "Queue message",
+    "send_message": "Send message",
+    "queue_title": "Queue for when the agent is done",
+    "copy_message": "Copy message",
+    "scroll_newest": "Scroll to the newest message"
+  },
+  "ide_view": {
+    "split_right": "Right",
+    "split_down": "Down",
+    "split_left": "Left",
+    "split_up": "Up",
+    "split_right_aria": "Split right",
+    "split_down_aria": "Split down",
+    "split_left_aria": "Split left",
+    "split_up_aria": "Split up",
+    "split_right_hint": "Open the new agent to the right of the pane",
+    "split_down_hint": "Open the new agent below the pane",
+    "split_left_hint": "Open the new agent to the left of the pane",
+    "split_up_hint": "Open the new agent above the pane",
+    "choose_folder": "Choose a folder for this project.",
+    "choose_agent_every": "Choose an installed coding agent for every session.",
+    "connect_agent_clis": "Connect a coding agent in CLIs to continue.",
+    "no_project": "This workspace belongs to no connected project.",
+    "no_workspace_n": "There is no workspace {number}.",
+    "workspace_fallback": "workspace",
+    "loading_projects": "Loading projects…",
+    "choose_workspace": "Choose a workspace",
+    "select_workspace_hint": "Select a workspace from Projects, or create one with + beside its project.",
+    "connect_folder_hint": "Connect a folder to bring its coding agents and Jarvis into one workspace.",
+    "add_agent": "Add coding agent",
+    "agents_one": "{count} agent",
+    "agents_other": "{count} agents",
+    "sessions_one": "{count} session",
+    "sessions_other": "{count} sessions",
+    "where_open": "Where should it open?",
+    "next_to": "Next to",
+    "split_next_to": "Split next to",
+    "auto_grid": "Automatic even grid",
+    "split_direction": "Split direction",
+    "joins_grid": "The new agent joins the grid and every pane gets an equal share.",
+    "copying_starting": "Copying the folder and starting the agent there. Large folders take a minute.",
+    "name_optional": "Name (optional)",
+    "workspace_placeholder": "Workspace",
+    "copying_folder": "Copying the folder…",
+    "starting": "Starting…",
+    "workspace_name": "Workspace name"
+  },
+  "install_standard": {
+    "method": "Install method",
+    "copy_command": "Copy the install command",
+    "copy_named": "Copy the {method} install command",
+    "copied": "Copied",
+    "copy": "Copy",
+    "heading": "Install",
+    "tab_cli": "CLI",
+    "tab_runner": "uvx",
+    "tab_prompt": "Prompt",
+    "hint_cli": "Runs in any terminal while the app is running.",
+    "hint_runner": "No install needed — uv fetches the CLI and runs the same command.",
+    "hint_prompt": "Paste this to your assistant — it runs the install for you.",
+    "note_jarvis": "Runs in any terminal while {product} is running.",
+    "note_skills_sh": "Installs the same skill into Claude Code, Cursor, Codex, and other agents."
+  },
+  "plugins_package": {
+    "plugin_json_invalid": "plugin.json is not valid JSON — fix it before publishing.",
+    "no_mcp_json": "No mcp.json found — fine when the auth block points at a hosted MCP server or the package is skills-only.",
+    "missing_type_one": "mcp.json server {servers} missing \"type\" — the store requires \"type\": \"streamable-http\" | \"stdio\" | \"sse\" on every server.",
+    "missing_type_other": "mcp.json servers {servers} missing \"type\" — the store requires \"type\": \"streamable-http\" | \"stdio\" | \"sse\" on every server.",
+    "too_many_skills": "More than 10 bundled skills — the store accepts at most 10.",
+    "nothing_found": "No plugin.json and no SKILL.md found — a package folder needs one of the two at its top level. A single file works too when it is named SKILL.md or starts with YAML frontmatter (---).",
+    "no_frontmatter": "SKILL.md does not start with YAML frontmatter (---) — the store requires it."
+  },
+  "debug_view": {
+    "title": "Debug",
+    "subtitle": "Live event bus and diagnostics",
+    "event_count": "{count} events",
+    "event_timeline": "Event timeline",
+    "emit": "Emit",
+    "clear": "Clear",
+    "switch_brain_provider": "Switch brain provider",
+    "flight_recorder": "Flight recorder",
+    "traces_from": "JSONL traces from",
+    "replay_coming": "replay player coming later.",
+    "metrics": "Metrics",
+    "metrics_coming": "Latency / tokens / cost per provider — live charts from phase 2."
+  },
+  "install_terminal": {
+    "pane_title": "install {package}",
+    "starting": "Starting the installer for {package}…"
+  },
+  "install_agents": {
+    "decrease": "decrease",
+    "increase": "increase",
+    "recheck": "re-check"
   }
 }

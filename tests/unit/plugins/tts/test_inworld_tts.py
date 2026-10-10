@@ -17,6 +17,7 @@ import pytest
 from jarvis.plugins.tts.inworld_tts import (
     INWORLD_TTS_SAMPLE_RATE,
     InworldTTS,
+    _normalize_language,
     strip_wav_header,
 )
 
@@ -53,6 +54,11 @@ def patched_secret():
 @pytest.fixture
 def tts(patched_secret) -> InworldTTS:
     return InworldTTS(allow_sapi5_fallback=False)
+
+
+def test_portuguese_is_normalized_to_european_portuguese():
+    assert _normalize_language("pt") == "pt-PT"
+    assert _normalize_language("pt-PT") == "pt-PT"
 
 
 def test_strip_wav_header_removes_riff_but_leaves_raw_pcm():

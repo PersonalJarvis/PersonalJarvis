@@ -1,6 +1,6 @@
 /**
  * Every `society.*` key the society surfaces ask for must exist in en — and
- * de/es must carry exactly the keys en carries in that block. The keys are
+ * de/es/pt must carry exactly the keys en carries in that block. The keys are
  * read from the source files themselves, so a roster, card or creator string
  * added without its translations fails here, not in front of a person.
  * Modelled on agent-chat-i18n-parity.test.ts.
@@ -11,11 +11,13 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 // The island's strings live in the lazy `society` chunk (world README); a
 // key may come from either file, and the chunk mirrors across locales too.
 import enWorld from "./locales/society/en.json";
 import deWorld from "./locales/society/de.json";
 import esWorld from "./locales/society/es.json";
+import ptWorld from "./locales/society/pt.json";
 
 function flatten(obj: Record<string, unknown>, prefix = ""): string[] {
   const out: string[] = [];
@@ -87,10 +89,11 @@ describe("society i18n parity", () => {
     }
   });
 
-  it("de and es carry exactly the society keys en carries", () => {
+  it("de, es and pt carry exactly the society keys en carries", () => {
     for (const [name, loc, world] of [
       ["de", de, deWorld],
       ["es", es, esWorld],
+      ["pt", pt, ptWorld],
     ] as const) {
       const keys = blockKeys(loc as Record<string, unknown>, world as Record<string, unknown>);
       const missing = [...enKeys].filter((k) => !keys.has(k));

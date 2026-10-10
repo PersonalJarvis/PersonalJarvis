@@ -25,7 +25,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { BrandedSelect } from "@/components/ui/select";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 import { endMissionDrag, startMissionDrag } from "@/lib/missionDnd";
@@ -441,7 +442,7 @@ function ArtifactCard({
   onDeleteKey: (row: RailRow) => void;
 }) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const title = rowTitle(row);
   const request = rowRequest(row);
   const status: OutputStatus =

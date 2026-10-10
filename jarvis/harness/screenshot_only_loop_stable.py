@@ -1772,11 +1772,12 @@ _READ_DISCIPLINE_BLOCK = (
 _READ_PROOF_MAX: int = 600
 
 
-#: de/en/es -> the English language name used inside the verifier directive.
+#: de/en/es/pt -> the English language name used inside the verifier directive.
 _PROOF_LANGUAGE_NAMES: dict[str, str] = {
     "de": "German",
     "en": "English",
     "es": "Spanish",
+    "pt": "European Portuguese",
 }
 
 

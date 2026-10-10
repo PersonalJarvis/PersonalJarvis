@@ -32,6 +32,7 @@ import {
   type AgentChatSurface,
   type ChatAttachment,
 } from "@/lib/agentChatApi";
+import { translate } from "@/i18n";
 
 export interface ChatAttachments {
   /** What will travel with the next message. */
@@ -224,7 +225,7 @@ export function useChatAttachments(
           surface,
         });
         if (found.length === 0) {
-          onProblem("That drop carried nothing this chat could use.", "warning");
+          onProblem(translate("agent_chat.drop_nothing_usable"), "warning");
           return;
         }
         const pictures = matchPreviews(found, payload.files);

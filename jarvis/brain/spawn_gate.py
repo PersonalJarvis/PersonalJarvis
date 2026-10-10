@@ -176,7 +176,7 @@ def _confirm_verdicts(text: str) -> set[str]:
         from jarvis.voice.echo_confirmation import classify_response  # noqa: PLC0415
     except Exception:  # noqa: BLE001 — classifier fault = no confirmation
         return set()
-    return {classify_response(text, language=lang) for lang in ("de", "en", "es")}
+    return {classify_response(text, language=lang) for lang in ("de", "en", "es", "pt")}
 
 
 class DelegationOfferWindow:

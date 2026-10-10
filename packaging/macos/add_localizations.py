@@ -1,4 +1,4 @@
-"""Write the German and Spanish ``InfoPlist.strings`` into a built ``Personal Jarvis.app``.
+"""Write the translated ``InfoPlist.strings`` into a built ``Personal Jarvis.app``.
 
 PyInstaller's ``BUNDLE`` writes the base (English) ``Info.plist`` and, through
 ``jarvis.spec``, the ``CFBundleLocalizations`` key. The per-language strings that

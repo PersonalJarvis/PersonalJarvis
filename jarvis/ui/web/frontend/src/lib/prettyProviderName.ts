@@ -7,11 +7,11 @@
  * while `/api/settings/voice-mode` is still in flight. Unknown ids pass
  * through unchanged so a newly added provider never renders as a blank.
  */
+import { translate } from "@/i18n";
+
 const PROVIDER_NAMES: Record<string, string> = {
   "claude-api": "Claude (API)",
   openrouter: "OpenRouter",
-  ollama: "Ollama (local)",
-  "ollama-local": "Ollama (local)",
   "ollama-cloud": "Ollama (Cloud)",
   gemini: "Gemini",
   vertex: "Vertex AI",
@@ -24,13 +24,21 @@ const PROVIDER_NAMES: Record<string, string> = {
   "openai-realtime": "OpenAI Realtime",
   "gemini-live": "Gemini Live",
   "vertex-live": "Vertex AI Live",
-  "local-realtime": "Self-hosted realtime",
-  "local-voice": "Local voice",
   unknown: "—",
+};
+
+/** Fallback names that contain ordinary words, translated when read. */
+const PROVIDER_NAME_KEYS: Record<string, string> = {
+  ollama: "voice.polish.ollama_local",
+  "ollama-local": "voice.polish.ollama_local",
+  "local-realtime": "provider_switcher.name_local_realtime",
+  "local-voice": "provider_switcher.name_local_voice",
 };
 
 export function prettyProviderName(id: string): string {
   const key = id.trim();
   if (!key) return "—";
+  const i18nKey = PROVIDER_NAME_KEYS[key];
+  if (i18nKey) return translate(i18nKey);
   return PROVIDER_NAMES[key] ?? key;
 }

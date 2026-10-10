@@ -52,7 +52,8 @@ _EXPLICIT_VERB_RE = re.compile(
     r"start(?:e|et|en)?|f[üu]hr(?:e|t|en)?|fuehr(?:e|t|en)?|"  # i18n-allow: speech-input vocabulary
     r"aktivier(?:e|t|en)?|"  # i18n-allow: speech-input vocabulary
     r"run|use|execute|launch|trigger|invoke|activate|start|"
-    r"usa|ejecuta|lanza|activa"  # i18n-allow: speech-input vocabulary
+    r"usa|ejecuta|lanza|activa|"  # i18n-allow: speech-input vocabulary
+    r"utiliza|executa|corre|lan[çc]a|ativa|inicia"  # i18n-allow: speech-input vocabulary
     r")\b",
     re.IGNORECASE,
 )
@@ -73,7 +74,8 @@ _INFO_QUESTION_OPENER_RE = re.compile(
     r"welche[rsnm]?|wof[üu]r|wofuer|wozu|woher|wohin|wo|"  # i18n-allow: speech-input vocabulary
     r"how|what|whats|why|which|who|whom|whose|when|where|"
     r"qu[ée]|c[óo]mo|cu[áa]ndo|d[óo]nde|por\s+qu[ée]|"  # i18n-allow: speech-input vocabulary
-    r"para\s+qu[ée]|qui[ée]n(?:es)?|cu[áa]l(?:es)?"  # i18n-allow: speech-input vocabulary
+    r"para\s+qu[ée]|qui[ée]n(?:es)?|cu[áa]l(?:es)?|"  # i18n-allow: speech-input vocabulary
+    r"o\s+que|quando|onde|porqu[eê]|quem|qual|quais"  # i18n-allow: speech-input vocabulary
     r")\b",
     re.IGNORECASE,
 )

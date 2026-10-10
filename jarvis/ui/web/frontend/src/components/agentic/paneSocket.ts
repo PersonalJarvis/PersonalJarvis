@@ -47,6 +47,7 @@
  * is the most reliable signal there is that the wait should end now.
  */
 
+import { fill, translate } from "@/i18n";
 import { mintWsTicket } from "@/lib/ws";
 import {
   jitteredDelay,
@@ -391,13 +392,13 @@ export function openPaneSocket(
     if (stopped) return;
     if (ticket) pendingTicket = ticket;
     if (ticket !== null && ticketRetries <= MAX_TICKET_RETRIES) {
-      handlers.onTrouble("Authorizing the terminal…", true);
+      handlers.onTrouble(translate("ide_panes.socket.authorizing"), true);
       // Fixed short delay: the very next attempt carries a fresh credential,
       // so escalating the backoff would only postpone a working terminal.
       schedule(jitteredDelay(0, MIN_BACKOFF, MIN_BACKOFF));
       return;
     }
-    retryLater("Terminal authorization failed — retrying.");
+    retryLater(translate("ide_panes.socket.auth_failed"));
   };
 
   const handleDrop = (code: number) => {
@@ -406,7 +407,7 @@ export function openPaneSocket(
       // showing a workspace that has been closed. Stop, and ask for the real
       // one — the grid that comes back brings its own panes with it.
       stopped = true;
-      handlers.onTrouble("This workspace was closed — reloading…", true);
+      handlers.onTrouble(translate("ide_panes.socket.workspace_closed"), true);
       askForFreshState("stale-workspace");
       return;
     }
@@ -415,13 +416,13 @@ export function openPaneSocket(
       // not start. Retrying cannot fix a missing key, so this ends the pane,
       // and it ends it with the server's OWN sentence: that sentence names the
       // problem and the page to fix it on, which no message written here could.
-      giveUp(serverReason || "This terminal could not be started.");
+      giveUp(serverReason || translate("ide_panes.socket.start_failed_this"));
       return;
     }
     if (code === CLOSE_NO_SUCH_PANE) {
       // The server is not saying "not right now", it is saying "not here".
       // No number of retries turns that into a terminal.
-      giveUp("This terminal is no longer part of the open workspace.");
+      giveUp(translate("ide_panes.socket.no_such_pane"));
       // A pane that the open workspace does not have means the grid on screen
       // is out of date — one pane is merely where that became visible. Left
       // alone it stays visible as a dead rectangle for the rest of the session
@@ -441,7 +442,7 @@ export function openPaneSocket(
       waits += 1;
       // The server's own sentence when it gave one ("Copying the folder to
       // vps…" while a pane is set up on a computer); otherwise the restart case.
-      handlers.onTrouble(serverReason || "Waiting for the workspace to come back…", true);
+      handlers.onTrouble(serverReason || translate("ide_panes.socket.waiting_workspace"), true);
       // Before settling into the slow knock, ask once whether the world still
       // looks the way this pane thinks it does. A workspace that opened while
       // the panes were waiting announces itself, but a pane that has already
@@ -462,8 +463,8 @@ export function openPaneSocket(
     }
     retryLater(
       attempts === 0 && ws === null
-        ? "Could not reach the terminal — retrying."
-        : `Terminal connection lost (code ${code || "?"}) — reconnecting.`,
+        ? translate("ide_panes.socket.unreachable")
+        : fill(translate("ide_panes.socket.connection_lost"), { code: code || "?" }),
     );
   };
 
@@ -474,7 +475,7 @@ export function openPaneSocket(
     try {
       socket = new WebSocket(paneUrl(opts, ticket));
     } catch {
-      retryLater("Could not reach the terminal — retrying.");
+      retryLater(translate("ide_panes.socket.unreachable"));
       return;
     }
     ws = socket;
@@ -571,7 +572,7 @@ export function openPaneSocket(
         // because the close handler runs a moment later and would otherwise
         // have nothing to say beyond what the bare code implies.
         serverReason = msg.message ?? "";
-        handlers.onTrouble(msg.message ?? "The terminal could not be started.", true);
+        handlers.onTrouble(msg.message ?? translate("ide_panes.socket.start_failed"), true);
       }
     });
 

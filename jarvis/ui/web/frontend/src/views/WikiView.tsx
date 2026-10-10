@@ -22,7 +22,8 @@ import { BookOpen, Maximize2, Minimize2, Network, Search, X } from "lucide-react
 import { useQuery } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { useWikiPanelStore } from "@/store/wikiPanel";
 import {
@@ -66,7 +67,7 @@ const IS_MAC =
 
 export function WikiView(): JSX.Element {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   useWikiLive();
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [centreTab, setCentreTab] = useState<CentreTab>("graph");

@@ -20,6 +20,8 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { useCanvasInterval } from "@/hooks/useCanvasInterval";
 import { useFrame } from "@react-three/fiber";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   CanvasTexture, Color, CylinderGeometry, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D,
   RepeatWrapping, SphereGeometry, SRGBColorSpace, TorusGeometry, type Texture,
@@ -718,9 +720,9 @@ export function ideSpendFrom(summary: CostSummary | undefined, days: number): Id
   };
 }
 
-/** $1,234 · $12.30 · $0.042: whole dollars once it is large, cents below. Pure. */
-export function formatUsd(v: number): string {
-  if (v >= 1000) return `$${Math.round(v).toLocaleString("en-US")}`;
+/** $1,234 · $12.30 · $0.042: whole dollars once it is large, cents below, grouped for `locale`. Pure. */
+export function formatUsd(v: number, locale = "en-US"): string {
+  if (v >= 1000) return `$${Math.round(v).toLocaleString(locale)}`;
   if (v >= 1) return `$${v.toFixed(2)}`;
   if (v > 0) return `$${v.toFixed(3)}`;
   return "$0";
@@ -734,7 +736,14 @@ export function formatCount(v: number): string {
   return String(Math.round(v));
 }
 
-function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, failed: boolean): void {
+/** The status wall's words and its locale, resolved by the component that draws it. */
+interface StatusWallLabels {
+  locale: string; spend: string; days: string; na: string; cost: string; billed: string; tokens: string; sessions: string;
+  peak: string; empty: string; unavailable: string; loading: string; topModels: string;
+}
+
+function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, failed: boolean, l: StatusWallLabels): void {
+  const usd = (v: number) => formatUsd(v, l.locale);
   ctx.fillStyle = SCREEN_BG;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = "#5eead4";
@@ -747,17 +756,17 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, 
   const titleW = ctx.measureText("AGENTIC IDE").width;
   ctx.fillStyle = "#8fa3ba";
   ctx.font = FONT(30);
-  ctx.fillText(`SPEND · ${spend ? `${spend.days}D` : "…"}`, 36 + titleW + 24, 52);
+  ctx.fillText(`${l.spend} · ${spend ? fill(l.days, { days: spend.days }) : "…"}`, 36 + titleW + 24, 52);
   ctx.textAlign = "right";
   ctx.font = FONT(34);
-  ctx.fillText(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), w - 36, 50);
+  ctx.fillText(new Date().toLocaleTimeString(l.locale, { hour: "2-digit", minute: "2-digit" }), w - 36, 50);
   // KPI tiles: what the IDE's agents cost, what of it an API key paid, tokens, sessions.
-  const dash = failed ? "n/a" : "…";
+  const dash = failed ? l.na : "…";
   const tiles: [string, string, string][] = [
-    ["COST", spend ? formatUsd(spend.cost) : dash, "#5eead4"],
-    ["API BILLED", spend ? formatUsd(spend.billed) : dash, "#e8b23a"],
-    ["TOKENS", spend ? formatCount(spend.tokens) : dash, "#7dd3fc"],
-    ["SESSIONS", spend ? String(spend.sessions) : dash, "#c4b5fd"],
+    [l.cost, spend ? usd(spend.cost) : dash, "#5eead4"],
+    [l.billed, spend ? usd(spend.billed) : dash, "#e8b23a"],
+    [l.tokens, spend ? formatCount(spend.tokens) : dash, "#7dd3fc"],
+    [l.sessions, spend ? spend.sessions.toLocaleString(l.locale) : dash, "#c4b5fd"],
   ];
   const tw = (w - 72 - 3 * 20) / 4;
   tiles.forEach(([label, value, colour], i) => {
@@ -769,7 +778,7 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, 
     ctx.textAlign = "left";
     ctx.fillStyle = "#8fa3ba";
     ctx.font = FONT(24);
-    ctx.fillText(label, x + 22, 126);
+    ctx.fillText(label, x + 22, 126, tw - 30);
     ctx.fillStyle = colour;
     ctx.font = FONT(value.length > 8 ? 46 : 58, 700);
     ctx.fillText(value, x + 22, 184);
@@ -793,18 +802,18 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, 
     ctx.textAlign = "left";
     ctx.fillStyle = "#8fa3ba";
     ctx.font = FONT(20);
-    ctx.fillText(`${formatUsd(peak)} / day peak`, cx, cy + ch + 24);
+    ctx.fillText(fill(l.peak, { amount: usd(peak) }), cx, cy + ch + 24);
   } else {
     ctx.textAlign = "center";
     ctx.fillStyle = "#4b5d72";
     ctx.font = FONT(26);
-    ctx.fillText(spend ? "no spend in this window" : failed ? "spend unavailable" : "loading…", cx + cw / 2, cy + ch / 2);
+    ctx.fillText(spend ? l.empty : failed ? l.unavailable : l.loading, cx + cw / 2, cy + ch / 2);
   }
   const mx = cx + cw + 40, mw = w - mx - 36;
   ctx.textAlign = "left";
   ctx.fillStyle = "#8fa3ba";
   ctx.font = FONT(22);
-  ctx.fillText("TOP MODELS", mx, cy + 8);
+  ctx.fillText(l.topModels, mx, cy + 8);
   const models = spend?.models ?? [];
   const top = models[0]?.cost || 1;
   models.forEach((m, i) => {
@@ -812,7 +821,7 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, 
     ctx.textAlign = "left";
     ctx.fillStyle = "#e6f1ff";
     ctx.font = FONT(22, 600);
-    const cost = formatUsd(m.cost);
+    const cost = usd(m.cost);
     const room = mw - ctx.measureText(cost).width - 20;
     let name = m.name;
     while (name.length > 3 && ctx.measureText(`${name}…`).width > room) name = name.slice(0, -1);
@@ -827,17 +836,17 @@ function drawStatusWall(ctx: Ctx, w: number, h: number, spend: IdeSpend | null, 
   });
 }
 
-function drawThroughput(ctx: Ctx, w: number, h: number, data: ClusterData, tick: number): void {
+function drawThroughput(ctx: Ctx, w: number, h: number, data: ClusterData, tick: number, net: string, locale: string): void {
   ctx.fillStyle = SCREEN_BG;
   ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = "#7dd3fc";
   ctx.font = FONT(26, 700);
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText("NET  Gb/s", 22, 28);
+  ctx.fillText(`${net}  Gb/s`, 22, 28);
   ctx.textAlign = "right";
   ctx.fillStyle = "#e6f1ff";
-  ctx.fillText((40 + data.load * 60 + 3 * Math.sin(tick)).toFixed(1), w - 22, 28);
+  ctx.fillText((40 + data.load * 60 + 3 * Math.sin(tick)).toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), w - 22, 28);
   drawChart(ctx, 18, 58, w - 36, h - 76, tick, 4.2, 0.3 + data.load * 0.5, "#7dd3fc", "rgba(125,211,252,0.14)");
   drawChart(ctx, 18, 58, w - 36, h - 76, tick, 9.1, 0.2 + data.load * 0.3, "#c4b5fd", "rgba(196,181,253,0.08)");
 }
@@ -912,8 +921,25 @@ export function StatusWall() {
   const spend = ideSpendFrom(summary.data, IDE_SPEND_FILTERS.days);
   // The clock in the corner moves once a minute; the numbers when the summary answers.
   const tick = useTicker(30_000);
-  const screen = useCanvasScreen(1280, Math.round((1280 * WALL.h) / WALL.w), `${tick}:${summary.dataUpdatedAt}:${summary.isError}`,
-    (ctx, w, h) => drawStatusWall(ctx, w, h, spend, summary.isError && !spend));
+  const t = useT();
+  const locale = useRunLocale();
+  const labels: StatusWallLabels = {
+    locale,
+    spend: t("society.office.status_spend"),
+    days: t("society.office.status_days"),
+    na: t("society.office.status_na"),
+    cost: t("society.office.status_cost"),
+    billed: t("society.office.status_billed"),
+    tokens: t("society.office.status_tokens"),
+    sessions: t("society.office.status_sessions"),
+    peak: t("society.office.status_peak"),
+    empty: t("society.office.status_empty"),
+    unavailable: t("society.office.status_unavailable"),
+    loading: t("society.office.status_loading"),
+    topModels: t("society.office.status_top_models"),
+  };
+  const screen = useCanvasScreen(1280, Math.round((1280 * WALL.h) / WALL.w), `${tick}:${summary.dataUpdatedAt}:${summary.isError}:${JSON.stringify(labels)}`,
+    (ctx, w, h) => drawStatusWall(ctx, w, h, spend, summary.isError && !spend, labels));
   const dive = useMonitorDive("costs", [WALL.w, WALL.h], 0.0155);
   return (
     <group>
@@ -938,8 +964,11 @@ const MUG = new CylinderGeometry(0.04, 0.036, 0.1, 16);
 export function NocConsole() {
   const data = useClusterData();
   const tick = useTicker(2000);
-  const key = `${tick}:${data.load}`;
-  const net = useCanvasScreen(MON_CANVAS.w, MON_CANVAS.h, key, (ctx, w, h) => drawThroughput(ctx, w, h, data, tick));
+  const t = useT();
+  const locale = useRunLocale();
+  const netLabel = t("society.office.status_net");
+  const key = `${tick}:${data.load}:${netLabel}:${locale}`;
+  const net = useCanvasScreen(MON_CANVAS.w, MON_CANVAS.h, key, (ctx, w, h) => drawThroughput(ctx, w, h, data, tick, netLabel, locale));
   const gpu = useCanvasScreen(MON_CANVAS.w, MON_CANVAS.h, key, (ctx, w, h) => drawThermal(ctx, w, h, data, tick));
   const log = useCanvasScreen(MON_CANVAS.w, MON_CANVAS.h, key, (ctx, w, h) => drawLog(ctx, w, h, data, tick));
   const monZ = DESK.z - DESK.d / 2 + 0.16;

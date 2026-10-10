@@ -409,10 +409,18 @@ async def list_plugins(response: Response) -> dict[str, Any]:
         item["reauth_at"] = meta.reauth_at
         item["refresh_expires_at"] = meta.refresh_expires_at
         item["unavailable_reason"] = None
+        item["unavailable_reason_code"] = ""
         if spec.id == "amd_gpu" and spec.auth.mode == "local":
-            from jarvis.marketplace.amd_mcp import amd_unavailable_reason
+            from jarvis.marketplace.amd_mcp import (
+                amd_unavailable_reason,
+                amd_unavailable_reason_code,
+            )
 
             item["unavailable_reason"] = amd_unavailable_reason()
+            # Stable code so the UI shows the reason in the user's language.
+            item["unavailable_reason_code"] = amd_unavailable_reason_code(
+                item["unavailable_reason"]
+            )
         if isinstance(spec.auth, OAuthPkceLoopbackAuth):
             from jarvis.marketplace.connect_helpers import (
                 is_placeholder_client_id,

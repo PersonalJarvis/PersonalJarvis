@@ -108,7 +108,7 @@ def usage_descriptions() -> dict[str, str]:
     return dict(_USAGE_DESCRIPTIONS)
 
 
-# --- Localisation (German and Spanish) ----------------------------------------
+# --- Localisation (German, Spanish and European Portuguese) ------------------
 #
 # macOS shows the usage string of the user's preferred language when the bundle
 # is localised for it: ``Contents/Resources/<lang>.lproj/InfoPlist.strings``
@@ -118,13 +118,14 @@ def usage_descriptions() -> dict[str, str]:
 # it. The two bundles share this one table: ``jarvis.spec`` lists the languages in
 # its plist and ``packaging/macos/add_localizations.py`` writes the files into the
 # built ``.dmg`` app before it is signed; the managed bundle does both itself.
-# The wording follows the English table and the in-app German/Spanish copy ("du" /
-# "tu"). German and Spanish are allowed here because this is the closed product
-# surface (``scripts/ci/german-allowlist.txt``). That macOS shows these strings in
-# the permission dialog of a localised system is UNVERIFIED (no Mac was available).
+# The wording follows the English table and the in-app German/Spanish/Portuguese
+# copy ("du" / "tu"). German, Spanish and Portuguese are allowed here because this
+# is the closed product surface (``scripts/ci/german-allowlist.txt``). That macOS
+# shows these strings in the permission dialog of a localised system is UNVERIFIED
+# (no Mac was available).
 
 #: Languages the bundles ship an Info.plist for; ``en`` is the base text.
-LOCALIZATIONS: tuple[str, ...] = ("en", "de", "es")
+LOCALIZATIONS: tuple[str, ...] = ("en", "de", "es", "pt-PT")
 
 #: ``CFBundleDevelopmentRegion``: the language of the base ``Info.plist`` strings.
 DEVELOPMENT_REGION = "en"
@@ -204,6 +205,42 @@ _LOCALIZED_USAGE_DESCRIPTIONS: dict[str, dict[str, str]] = {
             "un servidor de IA local."
         ),
     },
+    # European Portuguese. Apple names the bundle localisation ``pt-PT``
+    # (``pt-PT.lproj``); a bare ``pt`` would be read as Brazilian Portuguese.
+    "pt-PT": {
+        "NSMicrophoneUsageDescription": (
+            f"{PRODUCT_NAME} usa o microfone quando ditas, falas com o Jarvis "
+            "ou ativas a palavra de ativação."
+        ),
+        "NSScreenCaptureUsageDescription": (
+            f"{PRODUCT_NAME} captura o ecrã quando lhe pedes para ver o que lá "
+            "está ou para controlar uma app por ti."
+        ),
+        "NSAppleEventsUsageDescription": (
+            f"{PRODUCT_NAME} envia comandos a outras apps, como um leitor de "
+            "música ou um terminal, quando uma funcionalidade que usas precisa."
+        ),
+        "NSDesktopFolderUsageDescription": (
+            f"{PRODUCT_NAME} trabalha com ficheiros da tua pasta Secretária quando lho pedes."
+        ),
+        "NSDocumentsFolderUsageDescription": (
+            f"{PRODUCT_NAME} trabalha com ficheiros da tua pasta Documentos quando lho pedes."
+        ),
+        "NSDownloadsFolderUsageDescription": (
+            f"{PRODUCT_NAME} trabalha com ficheiros da tua pasta Transferências quando lho pedes."
+        ),
+        "NSRemovableVolumesUsageDescription": (
+            f"{PRODUCT_NAME} trabalha com ficheiros de um disco externo quando lho pedes."
+        ),
+        "NSNetworkVolumesUsageDescription": (
+            f"{PRODUCT_NAME} trabalha com ficheiros de um disco de rede quando lho pedes."
+        ),
+        "NSLocalNetworkUsageDescription": (
+            f"{PRODUCT_NAME} liga-se a dispositivos e servidores da tua rede "
+            "local que configuraste, como um hub de casa inteligente ou um "
+            "servidor de IA local."
+        ),
+    },
 }
 
 #: The languages that get an ``<lang>.lproj/InfoPlist.strings`` (English is the base).
@@ -211,7 +248,7 @@ LOCALIZED_LANGUAGES: tuple[str, ...] = tuple(_LOCALIZED_USAGE_DESCRIPTIONS)
 
 
 def localized_usage_descriptions(language: str) -> dict[str, str]:
-    """A fresh ``{Info.plist key: usage string}`` dict for ``language`` (``de`` / ``es``)."""
+    """A fresh ``{Info.plist key: usage string}`` dict for ``language`` (e.g. ``de``, ``pt-PT``)."""
     return dict(_LOCALIZED_USAGE_DESCRIPTIONS[language])
 
 

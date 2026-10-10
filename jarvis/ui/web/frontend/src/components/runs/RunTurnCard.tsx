@@ -42,11 +42,12 @@ const ROLE_INK: Record<string, string> = {
   error: "text-destructive",
 };
 
+/** Transcript role -> i18n key. */
 const ROLE_LABEL: Record<string, string> = {
-  jarvis: "spoken",
-  system: "system",
-  tool: "tool",
-  error: "error",
+  jarvis: "run_inspector.role.spoken",
+  system: "run_inspector.role.system",
+  tool: "run_inspector.role.tool",
+  error: "run_inspector.role.error",
 };
 
 type TabId = "decisions" | "latency" | "tools" | "events" | "errors";
@@ -101,7 +102,7 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold text-foreground-strong">
-              Turn {turn.idx + 1}
+              {t("run_inspector.turn")} {turn.idx + 1}
             </h3>
             <OutcomeBadge outcome={turn.outcome} />
           </div>
@@ -128,7 +129,7 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
 
         {/* User */}
         {turn.user_text && (
-          <Block icon={<Mic2 aria-hidden className="h-3.5 w-3.5" />} label="User">
+          <Block icon={<Mic2 aria-hidden className="h-3.5 w-3.5" />} label={t("run_inspector.user")}>
             {turn.user_text}
           </Block>
         )}
@@ -170,10 +171,10 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
             <span className="flex items-center gap-1.5 tabular-nums">
-              <Brain aria-hidden className="h-3.5 w-3.5" /> {fmtMs(turn.think_ms)} thinking
+              <Brain aria-hidden className="h-3.5 w-3.5" /> {fmtMs(turn.think_ms)} {t("run_inspector.thinking")}
             </span>
             <span className="flex items-center gap-1.5 tabular-nums">
-              <Hourglass aria-hidden className="h-3.5 w-3.5" /> {fmtMs(turn.speak_ms)} speaking
+              <Hourglass aria-hidden className="h-3.5 w-3.5" /> {fmtMs(turn.speak_ms)} {t("run_inspector.speaking")}
             </span>
           </div>
         )}
@@ -238,7 +239,7 @@ function TurnFacts({ turn }: { turn: RunTurn }) {
     ]);
   }
   if (turn.extras.interrupted) {
-    facts.push([t("run_inspector.facts.interrupted"), "yes"]);
+    facts.push([t("run_inspector.facts.interrupted"), t("run_inspector.facts.yes")]);
   }
   if (turn.extras.context_tokens) {
     facts.push([
@@ -286,7 +287,9 @@ function Block({
 }
 
 function TraceLine({ line }: { line: TranscriptLine }) {
-  const label = line.spoken_kind || ROLE_LABEL[line.role] || line.role;
+  const t = useT();
+  const roleKey = ROLE_LABEL[line.role];
+  const label = line.spoken_kind || (roleKey ? t(roleKey) : line.role);
   return (
     <div className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-secondary">
       <Badge variant="secondary" className="shrink-0">

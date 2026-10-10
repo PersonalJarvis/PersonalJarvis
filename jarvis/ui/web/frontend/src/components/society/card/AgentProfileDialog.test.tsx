@@ -5,7 +5,7 @@ import { SAMPLE_ROSTER } from "../mockRoster";
 import { AgentProfileDialog } from "./AgentProfileDialog";
 import { RosterRail } from "../roster/RosterRail";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true, useUiLanguage: () => "en" }));
 vi.mock("../AgentSwatch", () => ({ AgentSwatch: () => <span /> }));
 
 const agent = { ...SAMPLE_ROSTER[1], agentId: "research", name: "Research", title: "Researcher", description: "Check primary sources.", tier: "specialist" as const };

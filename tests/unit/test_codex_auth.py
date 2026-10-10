@@ -115,6 +115,8 @@ def test_status_not_installed_when_binary_missing(monkeypatch: pytest.MonkeyPatc
     assert status.connected is False
     assert status.mode == "unknown"
     assert status.message  # never empty — UI shows this instead of "loading"
+    assert status.message_code == "not_installed"
+    assert status.to_dict()["message_code"] == "not_installed"
 
 
 def test_status_detects_chatgpt_from_auth_json(

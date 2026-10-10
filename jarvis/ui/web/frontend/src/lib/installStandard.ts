@@ -31,6 +31,8 @@
  * answers.
  */
 
+import { fill, translate } from "@/i18n";
+
 export type EntryKind = "plugin" | "skill";
 
 /** Which install standard a line belongs to. */
@@ -206,7 +208,7 @@ export function installBlock(
       id: "jarvis",
       label: "Personal Jarvis",
       command: cli,
-      note: "Runs in any terminal while Personal Jarvis is running.",
+      note: fill(translate("install_standard.note_jarvis"), { product: "Personal Jarvis" }),
     },
   ];
 
@@ -220,7 +222,7 @@ export function installBlock(
         id: "skills",
         label: "skills.sh",
         command: skillsShCommand(target),
-        note: "Installs the same skill into Claude Code, Cursor, Codex, and other agents.",
+        note: translate("install_standard.note_skills_sh"),
       });
     }
   }

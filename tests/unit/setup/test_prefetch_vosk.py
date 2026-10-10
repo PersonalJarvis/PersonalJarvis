@@ -35,7 +35,7 @@ def test_full_prefetch_downloads_every_onboarding_language(monkeypatch):
     monkeypatch.setattr(
         prefetch,
         "_supported_vosk_languages",
-        lambda: ("en", "de", "es"),
+        lambda: ("en", "de", "es", "pt"),
     )
     monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: False)
 
@@ -45,7 +45,7 @@ def test_full_prefetch_downloads_every_onboarding_language(monkeypatch):
     )
 
     assert rc == 0
-    assert seen == ["en", "de", "es"]
+    assert seen == ["en", "de", "es", "pt"]
 
 
 def test_full_prefetch_continues_after_one_language_fails(monkeypatch):
@@ -59,7 +59,7 @@ def test_full_prefetch_continues_after_one_language_fails(monkeypatch):
     monkeypatch.setattr(
         prefetch,
         "_supported_vosk_languages",
-        lambda: ("en", "de", "es"),
+        lambda: ("en", "de", "es", "pt"),
     )
     monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: False)
 
@@ -69,7 +69,7 @@ def test_full_prefetch_continues_after_one_language_fails(monkeypatch):
     )
 
     assert rc == 1
-    assert seen == ["en", "de", "es"]
+    assert seen == ["en", "de", "es", "pt"]
 
 
 def test_vosk_none_result_marks_prefetch_failed(monkeypatch):

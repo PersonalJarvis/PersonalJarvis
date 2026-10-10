@@ -13,6 +13,7 @@ import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import type { PaneStyle } from "./terminalThemes";
 import { cn } from "@/lib/utils";
+import { fill, translate, useT } from "@/i18n";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { treeLayout, treeLeaves, type LayoutNode, type PaneSeam } from "./treeLayout";
 import { useTreeSizes } from "./useTreeSizes";
@@ -83,6 +84,7 @@ function sameFolder(left: string | undefined, right: string | undefined): boolea
 }
 
 export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSelect, selected, fontSize, appearance, disabled = false, onMutationStart, onMutationEnd, paneStyle: look = "classic", workspaces = [], active = true }: Props) {
+  const t = useT();
   const theme = useThemeValue();
   const pushToast = useEventStore((state) => state.pushToast);
   // The pane an agent card in the side panel pointed at, framed in blue.
@@ -195,11 +197,11 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       // A rename/close or a newer snapshot must never be overwritten by the
       // response to an earlier drag. The parent also invalidates pending polls.
       if (latest.current.session === owner && nextSession.id === owner.id) latest.current.onChanged(nextSession);
-      setAnnouncement(position === "swap" ? `${source.name} and ${target.name} swapped.` : `${source.name} placed ${position} ${target.name}.`);
+      setAnnouncement(fill(translate(`ide_panes.grid.placed_${position}`), { pane: source.name, target: target.name }));
     } catch (error) {
       if (mounted.current) {
         pushToast("error", (error as Error).message);
-        setAnnouncement("Could not save the arrangement. The previous order was restored.");
+        setAnnouncement(translate("ide_panes.grid.arrange_failed"));
       }
     } finally {
       saveInFlight.current = false;
@@ -237,9 +239,10 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       setMoving(null);
       const next = result.state.session;
       if (next && latest.current.session === owner && next.id === owner.id) latest.current.onChanged(next);
-      const renamed = result.terminal.name !== terminal.name ? ` as ${result.terminal.name}` : "";
-      pushToast("success", `${terminal.name} moved to ${target.name}${renamed}. Its agent keeps running.`);
-      setAnnouncement(`${terminal.name} moved to ${target.name}${renamed}.`);
+      const renamed = result.terminal.name !== terminal.name;
+      const vars = { pane: terminal.name, workspace: target.name, renamed: result.terminal.name };
+      pushToast("success", fill(translate(renamed ? "ide_panes.grid.moved_renamed_toast" : "ide_panes.grid.moved_toast"), vars));
+      setAnnouncement(fill(translate(renamed ? "ide_panes.grid.moved_renamed" : "ide_panes.grid.moved"), vars));
     } catch (error) {
       // The dialog stays open, so another place can be picked.
       if (mounted.current) pushToast("error", (error as Error).message);
@@ -289,7 +292,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
         litRow = hit;
       }
       const blocked = row && targetId && !workspace && targetId !== latest.current.session.id
-        ? row.getAttribute("data-pane-drop-name") || "that workspace" : null;
+        ? row.getAttribute("data-pane-drop-name") || translate("ide_panes.grid.that_workspace") : null;
       return { workspace, blocked };
     };
     const onMove = (motion: PointerEvent) => {
@@ -358,7 +361,9 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       if (next.id !== latest.current.session.id) return;
       latest.current.onChanged(next);
       latest.current.onSelect(terminal.name);
-      setAnnouncement(terminal.branch ? `${forking.name} forked into ${terminal.name} on branch ${terminal.branch}.` : `${forking.name} forked into ${terminal.name}.`);
+      setAnnouncement(terminal.branch
+        ? fill(translate("ide_panes.grid.forked_branch"), { pane: forking.name, fork: terminal.name, branch: terminal.branch })
+        : fill(translate("ide_panes.grid.forked"), { pane: forking.name, fork: terminal.name }));
     } catch (error) { pushToast("error", (error as Error).message); }
     finally {
       latest.current.onMutationEnd?.();
@@ -384,17 +389,20 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   const place = async (terminal: TerminalState, computerId: string | null) => {
     const id = idOf(terminal);
     if (placing) return;
-    const target = computerId ? (computers.find((c) => c.id === computerId)?.name ?? "the computer") : "this computer";
+    const target = computerId
+      ? (computers.find((c) => c.id === computerId)?.name ?? translate("ide_panes.grid.the_computer"))
+      : translate("ide_panes.grid.this_computer");
     setPlacing(id);
-    pushToast("info", `Moving ${terminal.name} to ${target}. The folder and the conversation go with it.`);
+    pushToast("info", fill(translate("ide_panes.grid.placing"), { pane: terminal.name, computer: target }));
     latest.current.onMutationStart?.();
     try {
       const { session: next, message } = await placeTerminal(terminal.name, latest.current.session.id, computerId);
       if (!mounted.current) return;
       if (next && next.id === latest.current.session.id) latest.current.onChanged(next);
       setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }));
-      pushToast("success", `${terminal.name} now runs on ${target}. ${message}`.trim());
-      setAnnouncement(`${terminal.name} now runs on ${target}.`);
+      const placed = fill(translate("ide_panes.grid.placed_on"), { pane: terminal.name, computer: target });
+      pushToast("success", `${placed} ${message}`.trim());
+      setAnnouncement(placed);
     } catch (error) { pushToast("error", (error as Error).message); }
     finally {
       latest.current.onMutationEnd?.();
@@ -403,12 +411,12 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   };
   const placementItems = (terminal: TerminalState) => {
     if (placing) return [];
-    if (terminal.computer_id) return [{ label: "Bring back to this computer", run: () => void place(terminal, null) }];
+    if (terminal.computer_id) return [{ label: t("ide_panes.grid.bring_back"), run: () => void place(terminal, null) }];
     return computers.filter((computer) => computer.health.status !== "provisioning")
-      .map((computer) => ({ label: `Run on ${computer.name}`, run: () => void place(terminal, computer.id) }));
+      .map((computer) => ({ label: fill(t("ide_panes.grid.run_on"), { computer: computer.name }), run: () => void place(terminal, computer.id) }));
   };
   const computerName = (terminal: TerminalState) => terminal.computer_id
-    ? (computers.find((computer) => computer.id === terminal.computer_id)?.name ?? "another computer") : undefined;
+    ? (computers.find((computer) => computer.id === terminal.computer_id)?.name ?? t("ide_panes.grid.another_computer")) : undefined;
   // Any other render mid-drag (a poll, a pane going live) would paint the
   // pre-drag sizes; re-apply the in-flight layout right after it.
   useLayoutEffect(() => {
@@ -433,7 +441,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     if (command.kind === "focus" || command.kind === "swap") {
       const neighbor = neighborInDirection(layout.boxes, index, command.direction);
       const target = neighbor === null ? undefined : tiles[neighbor];
-      if (!target) { setAnnouncement(`No pane ${command.direction === "up" ? "above" : command.direction === "down" ? "below" : `to the ${command.direction}`} of ${terminal.name}.`); return; }
+      if (!target) { setAnnouncement(fill(t(`ide_panes.grid.no_pane_${command.direction}`), { pane: terminal.name })); return; }
       if (command.kind === "swap") { void move(id, idOf(target)); return; }
       setMaximized(null);
       focusPane(target);
@@ -474,7 +482,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
       {tiles.map((terminal, index) => {
         const id = idOf(terminal);
         return <div key={id} ref={(node) => { if (node) paneNodes.current.set(id, node); else paneNodes.current.delete(id); }} data-session-id={id} data-spotlit={spotlitPane === terminal.name ? "true" : undefined} tabIndex={0}
-          aria-label={`${terminal.name}. Drag to an edge to dock, or the center to swap. Alt+Arrow swaps with a neighbor.`}
+          aria-label={fill(t("ide_panes.grid.tile_aria"), { pane: terminal.name })}
           onKeyDown={(event) => {
             if (event.target !== event.currentTarget && !(event.target instanceof HTMLElement && event.target.closest("[data-ide-drag-handle]"))) return;
             if (!event.altKey || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
@@ -510,12 +518,12 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             branch={terminal.branch || undefined} folder={terminal.folder || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             workspaceItems={transferring || saving || disabled ? [] : movable
-              .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
+              .map((workspace) => ({ label: fill(t("ide_panes.grid.move_to_menu"), { workspace: workspace.name }), run: () => askWhere(id, workspace) }))}
             onFork={terminal.accepts_prompts === false ? undefined : () => setForking({ name: terminal.name, agent: terminal.agent, displayName: terminal.display_name, workspaceId: session.id })} />
           {drag?.target?.id === id && <div aria-hidden="true" data-testid="dock-preview" data-position={drag.target.position}
             className={cn("pointer-events-none absolute z-20 flex items-center justify-center border-2 p-2", minimal ? "rounded-none" : "rounded-xl", "border-ring/70 bg-accent/[0.15]",
               drag.target.position === "left" ? "inset-y-1 left-1 w-1/2" : drag.target.position === "right" ? "inset-y-1 right-1 w-1/2" : drag.target.position === "above" ? "inset-x-1 top-1 h-1/2" : drag.target.position === "below" ? "inset-x-1 bottom-1 h-1/2" : "inset-1")}>
-            <span className="rounded-md bg-popover px-3 py-2 text-center text-xs font-medium text-popover-foreground shadow-lg">{DOCK_LABELS[drag.target.position]}</span>
+            <span className="rounded-md bg-popover px-3 py-2 text-center text-xs font-medium text-popover-foreground shadow-lg">{t(DOCK_LABELS[drag.target.position])}</span>
           </div>}
         </div>;
       })}
@@ -543,8 +551,8 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
     {drag && dragged && <div aria-hidden="true" className="pointer-events-none fixed z-[100] flex items-center gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm font-medium text-popover-foreground shadow-xl"
       style={{ left: drag.x + 14, top: drag.y + 14 }}>
       <AgentMark agent={dragged.agent} label={dragged.display_name} variant="plain" />{dragged.name}
-      {drag.workspace && <span className="font-normal text-muted-foreground">Move to {drag.workspace.name}</span>}
-      {drag.blocked && <span className="font-normal text-destructive">Not into {drag.blocked}: another folder</span>}
+      {drag.workspace && <span className="font-normal text-muted-foreground">{fill(t("ide_panes.move.confirm"), { workspace: drag.workspace.name })}</span>}
+      {drag.blocked && <span className="font-normal text-destructive">{fill(t("ide_panes.grid.not_into"), { workspace: drag.blocked })}</span>}
     </div>}
     <span className="sr-only" role="status">{announcement}</span>
     <ForkPaneDialog source={forking} busy={forkBusy} onCancel={() => setForking(null)} onConfirm={(choice) => void fork(choice)} />

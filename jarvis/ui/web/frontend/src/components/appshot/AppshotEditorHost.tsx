@@ -1,6 +1,7 @@
 import { Suspense, lazy } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 
+import { useT } from "@/i18n";
 import { useAppshotEditor } from "@/store/appshotEditor";
 
 // The editor and its strings load only when someone edits an appshot.
@@ -28,6 +29,7 @@ function returnToCorner(id: string, flyFrom: [number, number, number, number]) {
 }
 
 export function AppshotEditorHost() {
+  const t = useT();
   const openId = useAppshotEditor((s) => s.openId);
   const close = useAppshotEditor((s) => s.close);
   const applied = useAppshotEditor((s) => s.applied);
@@ -43,7 +45,7 @@ export function AppshotEditorHost() {
           className="fixed inset-0 z-[95] outline-none"
           data-testid="appshot-editor-host"
         >
-          <Dialog.Title className="sr-only">Appshot editor</Dialog.Title>
+          <Dialog.Title className="sr-only">{t("appshots.editor_title")}</Dialog.Title>
           {openId !== null && (
             <Suspense fallback={<div className="h-full w-full bg-background" />}>
               <AppshotEditor

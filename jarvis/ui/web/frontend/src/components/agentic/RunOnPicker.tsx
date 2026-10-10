@@ -10,6 +10,7 @@ import { useComputerChoiceList } from "@/hooks/useComputers";
 import { computersApi } from "@/lib/computersApi";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 
 const RUN_ON_KEY = "jarvis.agenticIde.runOn.";
 /** The picker's value for "let automatic placement choose" (Settings, Computers). */
@@ -52,10 +53,10 @@ export function storeRunOn(projectId: string | undefined, computerId: string | n
   } catch { /* a convenience only */ }
 }
 
-function detailFor(status: string): string {
-  if (status === "online") return "Keeps running while this PC is off";
-  if (status === "unknown") return "Not checked yet";
-  return "Not reachable right now";
+function detailKeyFor(status: string): string {
+  if (status === "online") return "workspace_launcher.run_on.online";
+  if (status === "unknown") return "workspace_launcher.run_on.unknown";
+  return "workspace_launcher.run_on.offline";
 }
 
 export function RunOnPicker({
@@ -73,6 +74,7 @@ export function RunOnPicker({
   /** Offer "Automatic" (value {@link RUN_ON_AUTO}) when automatic placement is on. */
   allowAuto?: boolean;
 }) {
+  const t = useT();
   const { computers, loaded } = useComputerChoiceList();
   const setActiveSection = useEventStore((state) => state.setActiveSection);
   const usable = computers.filter(
@@ -82,13 +84,13 @@ export function RunOnPicker({
   const auto = placement.on && usable.length > 0;
   const options = [
     ...(auto
-      ? [{ id: RUN_ON_AUTO as string | null, name: "Automatic", detail: "Picks this PC or a computer by their shares", online: true, icon: Shuffle }]
+      ? [{ id: RUN_ON_AUTO as string | null, name: t("workspace_launcher.run_on.auto"), detail: t("workspace_launcher.run_on.auto_detail"), online: true, icon: Shuffle }]
       : []),
-    { id: null as string | null, name: "This computer", detail: "Stops when this PC sleeps or shuts down", online: true, icon: Laptop },
+    { id: null as string | null, name: t("workspace_launcher.run_on.local"), detail: t("workspace_launcher.run_on.local_detail"), online: true, icon: Laptop },
     ...usable.map((computer) => ({
       id: computer.id as string | null,
       name: computer.name,
-      detail: detailFor(computer.health.status),
+      detail: t(detailKeyFor(computer.health.status)),
       online: computer.health.status === "online",
       icon: Server,
     })),
@@ -107,8 +109,8 @@ export function RunOnPicker({
   const chosen = usable.find((computer) => computer.id === value);
   return (
     <fieldset data-testid="ide-run-on" disabled={disabled}>
-      <legend className="text-xs font-medium text-muted-foreground">Runs on</legend>
-      <div role="radiogroup" aria-label="Runs on" className="mt-2 grid gap-2 sm:grid-cols-2">
+      <legend className="text-xs font-medium text-muted-foreground">{t("workspace_launcher.run_on.label")}</legend>
+      <div role="radiogroup" aria-label={t("workspace_launcher.run_on.label")} className="mt-2 grid gap-2 sm:grid-cols-2">
         {options.map((option) => {
           const active = option.id === value;
           const Icon = option.icon;
@@ -145,16 +147,15 @@ export function RunOnPicker({
       </div>
       {chosen && (
         <p data-testid="ide-run-on-note" className="mt-2 text-xs text-muted-foreground">
-          The folder is copied to {chosen.name} first, uncommitted changes included. Files like .env
-          and private keys stay on this PC. The coding CLI must be installed there.
+          {fill(t("workspace_launcher.run_on.copy_note"), { computer: chosen.name })}
         </p>
       )}
       {usable.length === 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Want agents that keep working while this PC is off?{" "}
+          {t("workspace_launcher.run_on.none_hint")}{" "}
           <button type="button" onClick={() => setActiveSection("computers")}
             className="font-medium text-accent underline-offset-4 hover:underline">
-            Connect a server
+            {t("workspace_launcher.run_on.connect_server")}
           </button>
         </p>
       )}

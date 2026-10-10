@@ -65,6 +65,7 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { verifyLines } from "./verifyLines";
+import { useRunLocale } from "@/components/runs/format";
 
 /** Ollama's shipped default when OLLAMA_KEEP_ALIVE is not set. */
 const KEEP_ALIVE_DEFAULT = "5m";
@@ -277,6 +278,7 @@ export function ServerPanel({
   initialLogOpen?: boolean;
 }) {
   const t = useT();
+  const runLocale = useRunLocale();
   const pushToast = useEventStore((s) => s.pushToast);
   const { providers, refetch: refetchProviders } = useProviders();
   const descriptor = useMemo(
@@ -606,7 +608,7 @@ export function ServerPanel({
                   {row.context_length ? (
                     <div className="text-xs text-muted-foreground tabular-nums">
                       {fill(t("local_models.server.context"), {
-                        tokens: row.context_length.toLocaleString(),
+                        tokens: row.context_length.toLocaleString(runLocale),
                       })}
                     </div>
                   ) : null}

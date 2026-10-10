@@ -7,7 +7,7 @@ brain must never freely phrase "done" for a change that was refused or rolled
 back (the maintainer's original ask: "don't confirm something that wasn't done").
 
 This renders that line directly from the ``set_config_value`` tool result, in
-de/en/es (every supported language — AGENTS.md "Runtime Output Language"). It is
+de/en/es/pt (every supported language — AGENTS.md "Runtime Output Language"). It is
 separate from ``echo_confirmation.format_outcome`` (the two-turn confirm flow)
 because the failure results here carry no ``PendingMutation``, only an
 ``error_kind``.
@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from .echo_confirmation import is_sensitive_path
 
-_SUPPORTED = ("de", "en", "es")
+_SUPPORTED = ("de", "en", "es", "pt")
 _DEFAULT = "de"
 
 # outcome key -> {lang -> template}. ``{label}`` / ``{value}`` are filled for the
@@ -30,6 +30,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Erledigt — {label} ist jetzt {value}.",
         "en": "Done — {label} is now {value}.",
         "es": "Listo — {label} ahora es {value}.",
+        "pt": "Feito — {label} agora é {value}.",
     },
     "applied_restart": {
         "de": "Erledigt — {label} ist jetzt {value}. Starte Jarvis einmal neu, "
@@ -38,6 +39,8 @@ _PHRASES: dict[str, dict[str, str]] = {
               "effect.",
         "es": "Listo — {label} ahora es {value}. Reinicia Jarvis una vez para que "
               "surta efecto.",
+        "pt": "Feito — {label} agora é {value}. Reinicia o Jarvis uma vez para "
+              "que tenha efeito.",
     },
     # Hard-refuse (secrets / self-lockout) — an honest decline, never a question.
     "refused": {
@@ -46,22 +49,26 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I won't change that by voice — please do that deliberately in "
               "Settings.",
         "es": "Eso no lo cambio por voz — hazlo a propósito en los Ajustes.",
+        "pt": "Isso não altero por voz — faz isso de propósito nas Definições.",
     },
     "unknown_setting": {
         "de": "Das ist keine Einstellung, die ich ändern kann.",  # i18n-allow
         "en": "That isn't a setting I can change.",
         "es": "Ese no es un ajuste que pueda cambiar.",
+        "pt": "Essa não é uma definição que eu possa alterar.",
     },
     "invalid_value": {
         "de": "Das geht so nicht — die Einstellung bleibt unverändert.",  # i18n-allow
         "en": "That doesn't work — the setting stays unchanged.",
         "es": "Eso no funciona — el ajuste queda sin cambios.",
+        "pt": "Assim não dá — a definição fica sem alterações.",
     },
     "rollback": {
         "de": "Konnte ich nicht speichern, ich habe den vorherigen Stand "  # i18n-allow
               "wiederhergestellt.",  # i18n-allow
         "en": "I couldn't save it, I restored the previous state.",
         "es": "No pude guardarlo, restauré el estado anterior.",
+        "pt": "Não consegui guardar, repus o estado anterior.",
     },
 }
 
@@ -83,11 +90,11 @@ def _lang(language: str | None) -> str:
 def _value_for_speech(value: Any, lang: str) -> str:
     """Render a setting value for speech (bool localized, else stringified)."""
     if isinstance(value, bool):  # before int — bool is an int subtype
-        on = {"de": "an", "en": "on", "es": "activado"}[lang]
-        off = {"de": "aus", "en": "off", "es": "desactivado"}[lang]
+        on = {"de": "an", "en": "on", "es": "activado", "pt": "ativado"}[lang]
+        off = {"de": "aus", "en": "off", "es": "desactivado", "pt": "desativado"}[lang]
         return on if value else off
     if value is None:
-        return {"de": "leer", "en": "empty", "es": "vacío"}[lang]
+        return {"de": "leer", "en": "empty", "es": "vacío", "pt": "vazio"}[lang]
     return str(value)
 
 
@@ -98,7 +105,7 @@ def _label(description: str) -> str:
 
 
 def config_readback(
-    *, success: bool, output: Any, language: str | Literal["de", "en", "es"] = "de"
+    *, success: bool, output: Any, language: str | Literal["de", "en", "es", "pt"] = "de"
 ) -> str | None:
     """The honest spoken line for a ``set_config_value`` result, or ``None``.
 
@@ -114,7 +121,7 @@ def config_readback(
         sens = is_sensitive_path(str(output.get("path", "")))
         if sens:
             value = {"de": "der neue Wert", "en": "the new value",
-                     "es": "el nuevo valor"}[lang]
+                     "es": "el nuevo valor", "pt": "o novo valor"}[lang]
         else:
             value = _value_for_speech(output.get("new_value"), lang)
         key = "applied_restart" if output.get("requires_restart") else "applied"

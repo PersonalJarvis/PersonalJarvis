@@ -318,6 +318,7 @@ def test_suppress_acks_are_short_and_unique() -> None:
             "de": ("schon", "läuft", "dabei", "dran", "bereits", "arbeit"),  # i18n-allow
             "en": ("already", "still", "running", "working", "progress"),
             "es": ("marcha", "sigo", "proceso", "está", "ya tiene"),  # i18n-allow
+            "pt": ("curso", "ainda", "já", "trabalhar", "está com"),
         }[lang]
         for ack in pool:
             assert 5 <= len(ack) <= 60, (

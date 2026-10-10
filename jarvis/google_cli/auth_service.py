@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +114,18 @@ def _email_from_accounts(home: Path) -> str | None:
     return active if isinstance(active, str) and active else None
 
 
+#: Every ``GoogleCliAuthStatus.message_code``. The desktop UI translates each
+#: one (``apikeys_antigravity.status_msg.<code>``);
+#: ``tests/unit/ui/test_backend_message_codes.py`` keeps both sides in step.
+GOOGLE_CLI_STATUS_MESSAGE_CODES: tuple[str, ...] = (
+    "not_installed",
+    "not_logged_in",
+    "connected_subscription",
+    "connected_subscription_email",
+    "connected_api_key",
+)
+
+
 @dataclass(frozen=True)
 class GoogleCliAuthStatus:
     """Snapshot of the Google CLI login state for the UI + provider routes."""
@@ -127,6 +139,10 @@ class GoogleCliAuthStatus:
     user_email: str | None = None
     binary_path: str = ""
     error: str | None = None
+    # Stable code + fill-ins for ``message`` (``GOOGLE_CLI_STATUS_MESSAGE_CODES``)
+    # so the desktop UI shows it in the user's language; ``message`` stays English.
+    message_code: str = ""
+    message_params: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +151,8 @@ class GoogleCliAuthStatus:
             "mode": self.mode,
             "cli_kind": self.cli_kind,
             "message": self.message,
+            "message_code": self.message_code,
+            "message_params": dict(self.message_params),
             "version": self.version,
             "user_email": self.user_email,
             "binary_path": self.binary_path,
@@ -187,6 +205,8 @@ class GoogleCliAuthService:
         if cli is None:
             return GoogleCliAuthStatus(
                 message=f"No Google CLI found. {antigravity_install_hint()}",
+                message_code="not_installed",
+                message_params={"command": antigravity_install_command(None)},
                 error="no google cli binary",
             )
 
@@ -202,16 +222,22 @@ class GoogleCliAuthService:
         # installed agy shows a bare "Installed" and the user rightly asks
         # "installed WHAT?" (test-machine report 2026-07-18).
         kind_label = "Antigravity (agy)" if cli.kind == "agy" else "Gemini CLI"
+        message_params: dict[str, str] = {"cli": kind_label}
         if not connected:
             message = f"{kind_label} installed but not logged in — run the Google login."
+            message_code = "not_logged_in"
         elif mode == "oauth-personal":
             message = (
                 f"Connected via Google subscription ({email})."
                 if email
                 else "Connected via Google subscription."
             )
+            message_code = "connected_subscription_email" if email else "connected_subscription"
+            if email:
+                message_params["email"] = email
         else:
             message = "Connected via a Google API key."
+            message_code = "connected_api_key"
 
         log.info(
             "google cli status: installed=True connected=%s mode=%s kind=%s",
@@ -225,6 +251,8 @@ class GoogleCliAuthService:
             mode=mode,
             cli_kind=cli.kind,
             message=message,
+            message_code=message_code,
+            message_params=message_params,
             version=cli.version,
             user_email=email,
             binary_path=(cli.argv_prefix[0] if cli.argv_prefix else ""),

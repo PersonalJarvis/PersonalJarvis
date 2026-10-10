@@ -48,12 +48,12 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     );
     fireEvent.click(screen.getByTestId("ui-language"));
     const ui = await waitFor(() => screen.getByTestId("ui-language-panel"));
-    for (const code of ["en", "de", "es", "zh"]) {
+    for (const code of ["en", "de", "es", "zh", "pt"]) {
       expect(ui.textContent).toContain(`languages_view.options.${code}.label`);
     }
     fireEvent.click(screen.getByTestId("reply-language"));
     const reply = await waitFor(() => screen.getByTestId("reply-language-panel"));
-    for (const code of ["auto", "en", "de", "es"]) {
+    for (const code of ["auto", "en", "de", "es", "pt"]) {
       expect(reply.textContent).toContain(`languages_view.reply_options.${code}`);
     }
   });
@@ -91,12 +91,12 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     // list.
     const firstAll = values.indexOf("af");
     expect(firstAll).toBeGreaterThan(0);
-    expect(values.slice(1, 5)).toEqual(["en", "de", "es", "zh"]);
+    expect(values.slice(1, 6)).toEqual(["en", "de", "es", "zh", "pt"]);
     const commonBand = values.slice(1, firstAll);
     expect(commonBand).not.toContain("hi");
     expect(commonBand).not.toContain("ar");
     expect(values.slice(-2)).toEqual(["hi", "ar"]);
-    for (const code of ["en", "de", "es", "zh", "fr"]) {
+    for (const code of ["en", "de", "es", "zh", "pt", "fr"]) {
       expect(values.indexOf(code)).toBeLessThan(firstAll);
       expect(values.lastIndexOf(code)).toBeGreaterThan(firstAll);
     }

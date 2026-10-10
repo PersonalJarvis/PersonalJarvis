@@ -222,10 +222,33 @@ def test_registry_dicts_are_json_serializable_and_small() -> None:
     assert len(payload.encode("utf-8")) < 100_000
 
 
-@pytest.mark.parametrize("locale", ["de", "en", "es"])
+@pytest.mark.parametrize("locale", ["de", "en", "es", "pt"])
 def test_every_command_has_voice_aliases_for_all_supported_locales(locale) -> None:
     """Supported languages are equal (AGENTS.md §1) — no de/en-only bias."""
     for cmd in get_registry():
         assert cmd.voice_aliases.get(locale), (
             f"{cmd.id}: missing {locale} voice alias"
         )
+
+
+@pytest.mark.parametrize("locale", ["de", "en", "es", "pt"])
+def test_voice_aliases_are_unique_per_locale(locale) -> None:
+    """One spoken phrase must name exactly one command in each locale."""
+    owners: dict[str, str] = {}
+    for cmd in get_registry():
+        for alias in cmd.voice_aliases.get(locale, ()):
+            key = alias.casefold().strip()
+            assert key not in owners, (
+                f"{locale} alias {alias!r} used by both {owners[key]} and {cmd.id}"
+            )
+            owners[key] = cmd.id
+
+
+def test_voice_alias_locales_cover_reply_languages() -> None:
+    """Every concrete reply language has voice aliases on every command."""
+    from jarvis.commands.registry import REPLY_LANGUAGES
+
+    concrete = {lang for lang in REPLY_LANGUAGES if lang != "auto"}
+    for cmd in get_registry():
+        missing = concrete - set(cmd.voice_aliases)
+        assert not missing, f"{cmd.id}: no voice aliases for {sorted(missing)}"

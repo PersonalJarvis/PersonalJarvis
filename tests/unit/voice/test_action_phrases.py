@@ -21,6 +21,7 @@ class TestResolvePhraseLanguage:
     def test_explicit_pin_wins(self) -> None:
         assert resolve_phrase_language("en", "öffne den Explorer") == "en"
         assert resolve_phrase_language("es", "open the explorer") == "es"
+        assert resolve_phrase_language("pt", "open the explorer") == "pt"
         assert resolve_phrase_language("de", "open the explorer") == "de"
 
     def test_auto_detects_from_text(self) -> None:
@@ -37,6 +38,23 @@ class TestActionPhrase:
         assert action_phrase("cu_done", "en") == "Done."
         assert action_phrase("cu_done", "de") == "Erledigt."
         assert action_phrase("cu_done", "es") == "Listo."
+        assert action_phrase("cu_done", "pt") == "Feito."
+
+    def test_every_phrase_has_a_portuguese_column_with_the_spanish_placeholders(
+        self,
+    ) -> None:
+        # All locales rank equally: a missing pt column would silently serve the
+        # German fallback to a European Portuguese speaker.
+        import string
+
+        from jarvis.voice.action_phrases import _PHRASES
+
+        def fields(text: str) -> set[str]:
+            return {f for _, f, _, _ in string.Formatter().parse(text) if f}
+
+        for key, variants in _PHRASES.items():
+            assert "pt" in variants, key
+            assert fields(variants["pt"]) == fields(variants["es"]), key
 
     def test_unknown_language_falls_back_to_german(self) -> None:
         assert action_phrase("cu_done", "fr") == "Erledigt."
@@ -264,7 +282,7 @@ class TestNoCapableProviderPhrase:
     """
 
     def test_exit_3_is_the_no_provider_phrase(self) -> None:
-        for lang in ("de", "en", "es"):
+        for lang in ("de", "en", "es", "pt"):
             out = cu_failure_readback(lang, error="exit 3", exit_code=3)
             assert not _EXIT_TOKEN_RE.search(out), out
             assert out == action_phrase("cu_exit_no_provider", lang)
@@ -299,9 +317,10 @@ class TestElevationPausePhrases:
         de = action_phrase("cu_awaiting_elevation", "de")
         en = action_phrase("cu_awaiting_elevation", "en")
         es = action_phrase("cu_awaiting_elevation", "es")
-        for text in (de, en, es):
+        pt = action_phrase("cu_awaiting_elevation", "pt")
+        for text in (de, en, es, pt):
             assert len(text) > 10
-        assert de != en != es
+        assert len({de, en, es, pt}) == 4
         # It must tell the user WHAT to do: confirm an admin/security prompt.
         assert "admin" in en.lower()
 
@@ -314,7 +333,7 @@ class TestElevationPausePhrases:
         # exit 9 == waited for the admin confirmation, none came. It must be an
         # elevation-specific human sentence — NOT the generic "didn't work" and
         # NOT the misleading "couldn't see the screen" (exit 1).
-        for lang in ("de", "en", "es"):
+        for lang in ("de", "en", "es", "pt"):
             out = cu_failure_readback(lang, error="exit 9", exit_code=9)
             assert not _EXIT_TOKEN_RE.search(out), out
             assert out == action_phrase("cu_exit_needs_elevation", lang)
@@ -350,7 +369,7 @@ class TestBlockedPermissionReadback:
         )
 
     def test_profile_line_does_not_degrade_to_the_generic_phrase(self) -> None:
-        for lang in ("de", "en", "es"):
+        for lang in ("de", "en", "es", "pt"):
             out = cu_failure_readback(
                 lang, error=None, exit_code=8, detail=self._detail()
             )
@@ -368,11 +387,15 @@ class TestBlockedPermissionReadback:
     def test_german_and_spanish_name_the_permission_and_where_to_allow_it(self) -> None:
         de = cu_failure_readback("de", error=None, exit_code=8, detail=self._detail())
         es = cu_failure_readback("es", error=None, exit_code=8, detail=self._detail())
+        pt = cu_failure_readback("pt", error=None, exit_code=8, detail=self._detail())
         assert "Bedienungshilfen" in de  # i18n-allow: asserts the German phrase
         assert "Accesibilidad" in es
+        assert "Acessibilidade" in pt
         assert "Datenschutz" in de  # i18n-allow: the Settings path is spoken, not just the name
         assert "Privacidad" in es
-        for out in (de, es):
+        assert "Privacidade" in pt
+        assert "depois" in pt  # the ">" separator is spoken as a word
+        for out in (de, es, pt):
             assert ">" not in out and "&" not in out  # separators become words
             assert "[cu]" not in out
             assert "steps=" not in out
@@ -412,9 +435,9 @@ class TestBlockedPermissionReadback:
         de = cu_failure_readback("de", error=None, exit_code=8, detail=self._detail(sentence))
         assert de == action_phrase("cu_blocked_restricted", "de")
 
-    def test_unrecognised_sentence_falls_back_to_the_fixed_phrase_in_de_and_es(self) -> None:
+    def test_unrecognised_sentence_falls_back_to_the_fixed_phrase_in_de_es_pt(self) -> None:
         sentence = "A macOS permission is needed to continue, so the task stopped."
-        for lang in ("de", "es"):
+        for lang in ("de", "es", "pt"):
             out = cu_failure_readback(
                 lang, error=None, exit_code=8, detail=self._detail(sentence)
             )
@@ -443,7 +466,7 @@ class TestBlockedPermissionReadback:
         out = cu_failure_readback("en", error=None, exit_code=8, detail=self._PROFILE)
         assert out == action_phrase("cu_exit_action_failed", "en")
 
-    @pytest.mark.parametrize("lang", ["de", "es"])
+    @pytest.mark.parametrize("lang", ["de", "es", "pt"])
     @pytest.mark.parametrize(
         "permission",
         ["screen_recording", "accessibility", "input_monitoring", "microphone", "automation"],
@@ -472,8 +495,9 @@ class TestBlockedPermissionReadback:
         # that is open / a permission that cannot be asked for.
         assert out != action_phrase("cu_blocked_generic", lang)
         assert "Settings" not in out and "Ajustes" not in out and "Systemeinstellungen" not in out
+        assert "Definições" not in out
 
-    @pytest.mark.parametrize("lang", ["de", "es"])
+    @pytest.mark.parametrize("lang", ["de", "es", "pt"])
     def test_a_switch_that_is_off_still_says_where_to_allow_it(self, lang: str) -> None:
         from jarvis.platform.permission_service import user_detail_for
         from jarvis.platform.permissions import PermissionId
@@ -483,7 +507,9 @@ class TestBlockedPermissionReadback:
         assert out.startswith(
             action_phrase("cu_blocked_permission", lang, permission="@@", pane="##").split("@@")[0]
         ), out
-        assert "Mikrofon" in out or "Micrófono" in out  # i18n-allow: asserts the phrase
+        assert any(  # i18n-allow: asserts the phrase
+            name in out for name in ("Mikrofon", "Micrófono", "Microfone")  # i18n-allow
+        )
 
     def test_every_blocked_phrase_exists_in_all_languages(self) -> None:
         for key in (
@@ -499,9 +525,9 @@ class TestBlockedPermissionReadback:
                 lang: action_phrase(
                     key, lang, sentence="S.", permission="P", pane="Pane"
                 )
-                for lang in ("de", "en", "es")
+                for lang in ("de", "en", "es", "pt")
             }
-            assert len(set(texts.values())) == 3, key
+            assert len(set(texts.values())) == 4, key
             assert all(len(text) > 10 for text in texts.values()), key
 
 

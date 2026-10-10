@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import type { AccountUsage } from "@/lib/agentAccountsApi";
 import { consumeAccountReset, fetchAccountResets, ResetRequestError, type AccountResets, type ResetAttempt, type ResetCredit } from "@/lib/agentResetsApi";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -24,7 +25,7 @@ export function BankedResets({ accountId, accountName, revision, onUsage }: {
   onUsage: (usage: AccountUsage) => void;
 }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const [snapshot, setSnapshot] = useState<AccountResets | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

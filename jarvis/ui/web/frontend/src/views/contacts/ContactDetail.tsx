@@ -26,6 +26,7 @@ import { IdentityAvatar } from "@/components/identity/IdentityAvatar";
 import { PROSE_BASE } from "@/components/outputs/MarkdownProse";
 import { relationshipLabel } from "./constants";
 import { updateContact, type Contact } from "./api";
+import { uiLocale } from "@/lib/boardInsights";
 
 /**
  * The detail (right) pane for the selected contact — a read view with actions:
@@ -429,12 +430,12 @@ function formatUpdated(iso: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return date.toLocaleString(uiLocale(), { dateStyle: "medium", timeStyle: "short" });
 }
 
 function formatBirthday(iso: string): string {
   // Parse as a plain date (no timezone shifts): "1990-04-12" stays April 12.
   const [y, m, d] = iso.split("-").map(Number);
   if (!y || !m || !d) return iso;
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { dateStyle: "long" });
+  return new Date(y, m - 1, d).toLocaleDateString(uiLocale(), { dateStyle: "long" });
 }

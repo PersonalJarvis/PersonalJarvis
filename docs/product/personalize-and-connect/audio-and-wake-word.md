@@ -82,8 +82,8 @@ records. This prevents two audio sessions from competing for one device.
    `Nova` does not activate it. The configured phrase also supplies the
    assistant's display name: `Hey Nova` becomes **Nova**.
 3. Under **Which language do you speak?**, choose how you pronounce the phrase,
-   not where its name or spelling came from. English, German, Spanish, and
-   **Auto** are available.
+   not where its name or spelling came from. English, German, Spanish,
+   European Portuguese, and **Auto** are available.
 4. Keep **Detection engine** on **Auto (recommended)**.
 5. Select **Save wake word**. A running desktop pipeline normally switches
    immediately; follow a restart notice when live switching was unavailable.

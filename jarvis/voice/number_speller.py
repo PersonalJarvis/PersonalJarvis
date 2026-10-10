@@ -12,7 +12,8 @@ hot path. It never raises, and when ``num2words`` is unavailable (a minimal
 install that did not pull the dependency) it is a transparent no-op so text
 passes through unchanged instead of crashing the voice path.
 
-Locale-aware separators: German/Spanish use a comma decimal and dot thousands
+Locale-aware separators: German/Spanish/Portuguese use a comma decimal and dot
+thousands
 ("3,8" = three-point-eight, "1.000" = one thousand); English is the reverse.
 
 Structured forms are recognised BEFORE the separator logic, because a dot is
@@ -40,12 +41,13 @@ except Exception:  # noqa: BLE001 — any import failure degrades to a no-op
 
 # Supported locales. Anything else falls through unchanged (honesty over a wrong
 # guess — never spell a French number with German words).
-_SUPPORTED = ("de", "en", "es")
+_SUPPORTED = ("de", "en", "es", "pt")
 
 # (decimal separator, thousands separator) per locale.
 _SEPARATORS: dict[str, tuple[str, str]] = {
     "de": (",", "."),
     "es": (",", "."),
+    "pt": (",", "."),
     "en": (".", ","),
 }
 
@@ -55,15 +57,20 @@ _SEPARATORS: dict[str, tuple[str, str]] = {
 _GROUPED_INT_RE: dict[str, re.Pattern[str]] = {
     "de": re.compile(r"\d{1,3}(?:\.\d{3})+"),
     "es": re.compile(r"\d{1,3}(?:\.\d{3})+"),
+    "pt": re.compile(r"\d{1,3}(?:\.\d{3})+"),
     "en": re.compile(r"\d{1,3}(?:,\d{3})+"),
 }
 
 # Time connector between hour and minute words, per locale.
+# Portuguese inflects the hour noun ("uma hora" / "duas horas"), so its time is
+# assembled in ``_spell_time_pt`` instead of these tables.
 _TIME_JOIN: dict[str, str] = {"de": " Uhr ", "en": " ", "es": " y "}
 _TIME_JOIN_OCLOCK: dict[str, str] = {"de": " Uhr", "en": " o'clock", "es": " en punto"}
 
 # The word spoken for the dot inside a version number or an IP address.
-_DOT_JOIN: dict[str, str] = {"de": " Punkt ", "en": " point ", "es": " punto "}  # i18n-allow
+_DOT_JOIN: dict[str, str] = {  # i18n-allow
+    "de": " Punkt ", "en": " point ", "es": " punto ", "pt": " ponto ",  # i18n-allow
+}
 
 # Month names for the date verbaliser — spoken output vocabulary.
 _MONTHS: dict[str, tuple[str, ...]] = {
@@ -78,6 +85,10 @@ _MONTHS: dict[str, tuple[str, ...]] = {
     "es": (  # i18n-allow
         "enero", "febrero", "marzo", "abril", "mayo", "junio",
         "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ),
+    "pt": (  # i18n-allow
+        "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+        "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
     ),
 }
 
@@ -98,6 +109,7 @@ _DATE_CUES: dict[str, frozenset[str]] = {
     "de": _DE_CUES_DATIVE | _DE_CUES_ARTICLE,
     "en": frozenset({"on", "by", "from", "since", "until", "till", "after", "before", "the"}),
     "es": frozenset({"el", "del", "al", "desde", "hasta", "en", "para"}),  # i18n-allow
+    "pt": frozenset({"a", "de", "em", "no", "dia", "desde", "até", "para"}),  # i18n-allow
 }
 
 # A clock time, optionally followed by a German "Uhr" that we consume so the
@@ -129,6 +141,8 @@ def _norm_lang(language: str | None) -> str:
         return "en"
     if low.startswith("es"):
         return "es"
+    if low.startswith("pt"):
+        return "pt"
     if low.startswith("de"):
         return "de"
     return low  # unknown → not in _SUPPORTED → passthrough
@@ -172,7 +186,25 @@ def _spell_number_token(token: str, lang: str) -> str | None:
     return _spell_value(int(int_part), lang)
 
 
+def _spell_time_pt(hour: int, minute: int) -> str | None:
+    """European Portuguese clock time: "vinte horas e trinta", "uma hora"."""
+    h_word = _spell_value(hour, "pt")
+    if h_word is None:
+        return None
+    if h_word == "um" or h_word.endswith(" e um"):  # the hour noun is feminine
+        h_word = h_word[:-2] + "uma"
+    noun = "hora" if hour == 1 else "horas"  # i18n-allow
+    if minute == 0:
+        return f"{h_word} {noun}"
+    m_word = _spell_value(minute, "pt")
+    if m_word is None:
+        return None
+    return f"{h_word} {noun} e {m_word}"
+
+
 def _spell_time(hour: str, minute: str, lang: str) -> str | None:
+    if lang == "pt":
+        return _spell_time_pt(int(hour), int(minute))
     h_word = _spell_value(int(hour), lang)
     if h_word is None:
         return None
@@ -231,8 +263,8 @@ def _spell_date(day: int, month: int, year: int | None, lang: str, cue: str) -> 
         if ordinal is None:
             return None
         spoken = f"{month_name} {ordinal}"
-    else:  # Spanish speaks the day of the month as a cardinal
-        cardinal = _spell_value(day, "es")
+    else:  # Spanish and European Portuguese speak the day as a cardinal
+        cardinal = _spell_value(day, lang)
         if cardinal is None:
             return None
         spoken = f"{cardinal} de {month_name}"  # i18n-allow
@@ -241,7 +273,7 @@ def _spell_date(day: int, month: int, year: int | None, lang: str, cue: str) -> 
     year_word = _spell_year(year, lang)
     if year_word is None:
         return None
-    if lang == "es":
+    if lang in ("es", "pt"):
         return f"{spoken} de {year_word}"  # i18n-allow
     return f"{spoken} {year_word}"
 

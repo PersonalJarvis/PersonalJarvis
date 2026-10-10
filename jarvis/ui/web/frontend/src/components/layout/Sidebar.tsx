@@ -502,9 +502,9 @@ export function Sidebar({
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
         {/* The IDE has no "back" row: the caption's back arrow leaves it, so
             the workspace tree starts right under the sidebar header. */}
-        {onIdeSection ? (railed && <nav aria-label="IDE navigation" className="px-2 pt-2">
+        {onIdeSection ? (railed && <nav aria-label={t("sidebar.ide_navigation")} className="px-2 pt-2">
           <div className="flex flex-col items-center gap-1">
-            <button type="button" aria-label="Workspace options" title="Workspace options"
+            <button type="button" aria-label={t("sidebar.workspace_options")} title={t("sidebar.workspace_options")}
               disabled={!activeIdeWorkspaceId}
               onClick={() => { if (activeIdeWorkspaceId) openIdeWorkspaceOptions(activeIdeWorkspaceId); }}
               className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35">

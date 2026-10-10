@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock, Plus, X } from "lucide-react";
 import { useLocaleChunk, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { displayRoutineTitle, routineScheduleLine, useAgentRoutines, useCreateAgentRoutine, type LiveRoutine } from "../cardData";
 import type { AgentRoutine } from "../data";
@@ -13,6 +14,7 @@ import { AgentRoutineDetail } from "./AgentRoutineDetail";
 export interface AgentRoutinesListProps { agentId: string; sampleRoutines?: AgentRoutine[]; variant?: "rail" | "sheet"; className?: string; onDetailOpenChange?: (open: boolean) => void; }
 export function AgentRoutinesList({ agentId, sampleRoutines, variant = "rail", className, onDetailOpenChange }: AgentRoutinesListProps) {
   const t = useT(); useLocaleChunk("society");
+  const locale = useRunLocale();
   const live = useAgentRoutines(agentId); const create = useCreateAgentRoutine();
   const [open, setOpen] = useState(false); const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState(""); const [schedule, setSchedule] = useState<Record<string, unknown> | null>(null);
@@ -57,7 +59,7 @@ export function AgentRoutinesList({ agentId, sampleRoutines, variant = "rail", c
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-medium text-foreground">{displayRoutineTitle(routine.title)}</span>
             <span className="block break-words text-[11px] leading-snug text-muted-foreground">{routineScheduleLine(routine, t)}{routine.state === "paused" ? ` · ${t("tasks_view.state.paused")}` : ""}</span>
-            {routine.dueMs && active ? <span className="block text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(routine.dueMs).toLocaleString(undefined, { timeZoneName: "short" })}</span> : null}
+            {routine.dueMs && active ? <span className="block text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(routine.dueMs).toLocaleString(locale, { timeZoneName: "short" })}</span> : null}
           </span>
           </button>
           {trigger?.type === "webhook" && <div className="pl-6"><WebhookConnection key={routine.id} taskId={routine.id} /></div>}

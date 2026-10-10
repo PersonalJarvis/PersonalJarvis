@@ -27,7 +27,8 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
@@ -343,7 +344,7 @@ function commitDateLabel(seconds: number, lang: string, now = Date.now()): strin
 
 function CommitDate({ seconds }: { seconds: number }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   if (!seconds) return null;
   const full = new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(seconds * 1000));
   return (
@@ -487,7 +488,7 @@ function BranchDetails({
   editors: BranchEditors | null;
 }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const pushToast = useEventStore((state) => state.pushToast);
   const [contents, setContents] = useState<BranchContents | null>(null);
   const [error, setError] = useState("");

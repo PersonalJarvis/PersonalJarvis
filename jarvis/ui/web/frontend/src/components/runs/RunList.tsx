@@ -1,6 +1,8 @@
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import { FeatureBadges } from "./FeatureBadges";
+import { useRunLocale } from "./format";
 import { OutcomeDot } from "./OutcomeBadge";
 import type { RunListItem } from "./types";
 
@@ -23,6 +25,8 @@ export function RunList({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const t = useT();
+  const locale = useRunLocale();
   return (
     <ul className="space-y-0.5" data-testid="run-list">
       {items.map((r) => {
@@ -46,18 +50,18 @@ export function RunList({
                   {r.preview || r.session_id.slice(0, 8)}
                 </span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                  {new Date(r.started_ms).toLocaleTimeString([], {
+                  {new Date(r.started_ms).toLocaleTimeString(locale, {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-x-1.5 pl-4 text-sm tabular-nums text-muted-foreground">
-                <span>{r.turn_count} turns</span>
+                <span>{r.turn_count} {t("run_inspector.facts.turns")}</span>
                 {r.duration_s !== null && <span>· {r.duration_s.toFixed(1)}s</span>}
-                {slow && <span className="text-warning">· slow</span>}
+                {slow && <span className="text-warning">· {t("run_inspector.slow")}</span>}
                 {r.error_count > 0 && (
-                  <span className="text-destructive">· {r.error_count} errors</span>
+                  <span className="text-destructive">· {r.error_count} {t("run_inspector.errors_count")}</span>
                 )}
               </div>
               {r.feature_tags.length > 0 && (

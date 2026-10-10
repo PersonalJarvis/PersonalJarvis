@@ -343,8 +343,9 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     # Piper (on-device). A Piper voice speaks ONE language, so this picker is a
     # speaker choice, not a language choice: the provider still resolves the
     # file from the turn's output language. Both sets are listed; the masculine
-    # trio is what the install downloads, and the feminine one is fetched on
-    # demand. Kept in sync with SHERPA_BUNDLES in jarvis/speech/local_models.py.
+    # set is what the install downloads, and the feminine one is fetched on
+    # demand (Piper has no feminine European Portuguese voice, so Tugão serves
+    # both profiles for pt). Kept in sync with SHERPA_BUNDLES in jarvis/speech/local_models.py.
     "piper-local": (
         "voice",
         _curated(
@@ -352,6 +353,7 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
                 ("vits-piper-de_DE-thorsten-medium", "Thorsten — German, masculine"),
                 ("vits-piper-en_US-ryan-medium", "Ryan — English, masculine"),
                 ("vits-piper-es_ES-davefx-medium", "Dave — Spanish, masculine"),
+                ("vits-piper-pt_PT-tugao-medium", "Tugão — European Portuguese, masculine"),
                 ("vits-piper-de_DE-ramona-low", "Ramona — German, feminine"),
                 ("vits-piper-en_US-amy-medium", "Amy — English, feminine"),
                 ("vits-piper-es_ES-sharvard-medium", "Sharvard — Spanish, feminine"),
@@ -364,7 +366,7 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     # voice) instead of a curated one — kept in sync with DEFAULT_VOICES in
     # jarvis/plugins/tts/elevenlabs_tts.py.
     # Inworld — the new premium default (arena-#1 realtime, mid-2026). Voices are
-    # multilingual; these native masculine de/en/es voices are the curated pick,
+    # multilingual; these native de/en/es/pt voices are the curated pick,
     # kept in sync with DEFAULT_VOICE_* in jarvis/plugins/tts/inworld_tts.py.
     "inworld": (
         "voice",
@@ -376,6 +378,8 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
                 ("Ashley", "Ashley — English, bright"),
                 ("Diego", "Diego — Spanish, formal"),
                 ("Lupita", "Lupita — Spanish, warm"),
+                ("Leonor", "Leonor — European Portuguese"),
+                ("Heitor", "Heitor — Brazilian Portuguese, masculine"),
             ]
         ),
     ),

@@ -15,7 +15,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, ArrowUpRight, FileText, RefreshCw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   fetchWikiBacklinks,
   fetchWikiGraph,
@@ -540,7 +541,7 @@ function PageContext({
   onSelect: (slug: string) => void;
 }) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const backlinksQuery = useQuery({
     queryKey: ["wiki", "backlinks", slug],
     queryFn: () => fetchWikiBacklinks(slug),

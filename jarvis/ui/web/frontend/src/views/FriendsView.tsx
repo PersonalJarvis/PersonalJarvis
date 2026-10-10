@@ -29,7 +29,7 @@ export function FriendsView() {
     <div className="flex h-full flex-col">
       <ViewHeader
         icon={<Users className="h-4 w-4 text-primary" />}
-        title="Friends"
+        title={t("friends_view.title")}
         subtitle={t("friends_view.subtitle")}
         right={
           <button
@@ -44,10 +44,10 @@ export function FriendsView() {
 
       <div className="flex flex-shrink-0 gap-1 border-b border-border px-6 py-2">
         <TabButton active={tab === "chat"} onClick={() => setTab("chat")}>
-          Chat
+          {t("friends_view.tab_chat")}
         </TabButton>
         <TabButton active={tab === "status"} onClick={() => setTab("status")}>
-          Status
+          {t("friends_view.tab_status")}
         </TabButton>
       </div>
 

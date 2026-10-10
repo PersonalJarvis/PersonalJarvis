@@ -869,6 +869,30 @@ def test_work_in_front_of_the_first_kind_brief_disables_the_map() -> None:
     assert intent.spawn_group_tasks(utterance) == {}
 
 
+@pytest.mark.parametrize(
+    ("utterance", "task"),
+    [
+        (
+            "Open two claudes and one codex. Prompt the claudes to fix the tests for option A",
+            "fix the tests for option A",
+        ),
+        (
+            "Open two claudes. Prompt the claudes to keep the old API and treat it as",
+            "keep the old API and treat it as",
+        ),
+        (
+            "Open two claudes. Prompt the claudes to add a case for e",
+            "add a case for e",
+        ),
+    ],
+)
+def test_english_group_tasks_keep_words_that_are_portuguese_articles(
+    utterance: str, task: str
+) -> None:
+    """ "a", "as", "e", "o" end English tasks; only Portuguese input trims them."""
+    assert intent.spawn_group_tasks(utterance) == {"claude": task}
+
+
 def test_a_cli_named_inside_another_groups_task_is_not_an_addressee() -> None:
     """ "prompt the claudes to fix codex bugs" briefs the claudes, not Codex."""
     utterance = "Open two claude terminals. Prompt the claudes to fix the codex integration bugs."

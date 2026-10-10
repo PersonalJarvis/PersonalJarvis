@@ -51,7 +51,7 @@ def test_paid_fallback_reasons_cross_every_layer() -> None:
     new_reasons = {"paid_daily_cap_reached", "paid_consent_revoked"}
     assert new_reasons <= set(CAPACITY_WAIT_REASONS)
     assert new_reasons <= _ts_union("CapacityWaitReason")
-    for lang in ("de", "en"):
+    for lang in ("de", "en", "es", "pt"):
         assert new_reasons <= set(CAPACITY_WAIT_PHRASES[lang])
 
 
@@ -69,13 +69,14 @@ def test_event_type_listed_in_ts() -> None:
     assert "MissionWaitingCapacity" in _ts_union("EventType")
 
 
-@pytest.mark.parametrize("lang", ["de", "en"])
+@pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
 def test_voice_phrases_cover_every_reason(lang: str) -> None:
     assert set(CAPACITY_WAIT_REASONS) <= set(CAPACITY_WAIT_PHRASES[lang])
 
 
-def test_voice_phrase_tables_share_keys() -> None:
-    assert set(CAPACITY_WAIT_PHRASES["de"]) == set(CAPACITY_WAIT_PHRASES["en"])
+@pytest.mark.parametrize("lang", ["en", "es", "pt"])
+def test_voice_phrase_tables_share_keys(lang: str) -> None:
+    assert set(CAPACITY_WAIT_PHRASES[lang]) == set(CAPACITY_WAIT_PHRASES["de"])
 
 
 @pytest.mark.parametrize("lang", _LOCALES)

@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import type { SessionListItem } from "@/components/sessions/types";
 import { useSessionDetail } from "@/hooks/useSessions";
 import { useCapabilities } from "@/hooks/useCapabilities";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { robustCopy, saveOrDownload } from "@/lib/clipboard";
 import { TranscriptActions } from "./TranscriptActions";
@@ -24,7 +25,7 @@ export function TranscriptState({ kind = "empty", title, body, retry, children }
 
 export function TranscriptReader({ session, onBack }: { session: SessionListItem; onBack: () => void }) {
   const t = useT();
-  const locale = useUiLanguage();
+  const locale = useRunLocale();
   const detail = useSessionDetail(session.id);
   const [search, setSearch] = useState("");
   const [original, setOriginal] = useState(false);

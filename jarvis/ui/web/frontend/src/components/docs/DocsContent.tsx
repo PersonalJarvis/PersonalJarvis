@@ -159,7 +159,7 @@ function DocsContentInner({
   return (
     <article className="mx-auto w-full max-w-reading pb-20 pt-12">
       <header className="mb-10 border-b border-border pb-8">
-        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-sm">
+        <nav aria-label={t("docs.breadcrumb")} className="flex items-center gap-1.5 text-sm">
           <button
             type="button"
             onClick={onShowOverview}

@@ -7,6 +7,8 @@
  * files saved without the editor.
  */
 
+import { fill, translate } from "@/i18n";
+
 /** What the file pickers offer. `.txt` too: plenty of prompts live in plain text. */
 export const MARKDOWN_ACCEPT = ".md,.markdown,.mdx,.txt,text/markdown,text/plain";
 
@@ -34,17 +36,17 @@ function readText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(reader.error ?? new SkillImportError(`${file.name}: could not be read.`));
+    reader.onerror = () => reject(reader.error ?? new SkillImportError(fill(translate("ide_side_panel.skills.import_errors.unreadable"), { file: file.name })));
     reader.readAsText(file);
   });
 }
 
 /** A file's text, refusing binaries and anything too large to paste. */
 export async function readMarkdownFile(file: File): Promise<string> {
-  if (!isMarkdownFile(file)) throw new SkillImportError(`${file.name}: not a Markdown or text file.`);
-  if (file.size > MAX_IMPORT_BYTES) throw new SkillImportError(`${file.name}: larger than ${Math.round(MAX_IMPORT_BYTES / 1000)} KB.`);
+  if (!isMarkdownFile(file)) throw new SkillImportError(fill(translate("ide_side_panel.skills.import_errors.not_markdown"), { file: file.name }));
+  if (file.size > MAX_IMPORT_BYTES) throw new SkillImportError(fill(translate("ide_side_panel.skills.import_errors.too_large"), { file: file.name, size: Math.round(MAX_IMPORT_BYTES / 1000) }));
   const text = await readText(file);
-  if (text.includes(String.fromCharCode(0))) throw new SkillImportError(`${file.name}: not a text file.`);
+  if (text.includes(String.fromCharCode(0))) throw new SkillImportError(fill(translate("ide_side_panel.skills.import_errors.not_text"), { file: file.name }));
   return withoutBom(text).replace(/\r\n?/g, "\n");
 }
 

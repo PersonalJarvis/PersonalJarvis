@@ -22,6 +22,7 @@ def test_download_model_ok(client):
     body = r.json()
     assert body["ok"] is True
     assert body["present"] is True
+    assert body["message_code"] == "model_ready"
 
 
 def test_download_model_failure_is_non_fatal(monkeypatch):
@@ -40,3 +41,4 @@ def test_download_model_failure_is_non_fatal(monkeypatch):
     assert body["ok"] is False
     assert body["present"] is False
     assert body["message"]
+    assert body["message_code"] == "model_download_failed"

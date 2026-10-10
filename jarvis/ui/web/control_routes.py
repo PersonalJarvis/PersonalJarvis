@@ -154,7 +154,7 @@ class PendingIdBody(BaseModel):
 class LanguageBody(BaseModel):
     # Constrained so a bad value (e.g. "zh") is rejected with 422 at the boundary
     # instead of being written to jarvis.toml and silently normalised to "auto".
-    reply_language: Literal["auto", "de", "en", "es"]
+    reply_language: Literal["auto", "de", "en", "es", "pt"]
 
 
 class SecretBody(BaseModel):
@@ -313,14 +313,14 @@ def reject_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
 
 @router.put("/language", dependencies=[Depends(require_control_key)])
 def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
-    """Switch the language. A concrete code (de/en/es) sets BOTH the reply
+    """Switch the language. A concrete code (de/en/es/pt) sets BOTH the reply
     language (what Jarvis speaks) AND the interface language (what the user
     sees) so the whole experience switches; "auto" only affects replies (it
     mirrors the input language). Both are SAFE -> applied immediately, and the
     interface switches live in the open UI via the ConfigReloaded broadcast."""
     store = _pending_store(request)
     reason = "control-api language switch"
-    switch_ui = body.reply_language in ("de", "en", "es")
+    switch_ui = body.reply_language in ("de", "en", "es", "pt")
     # Validate BOTH writes before applying either, so a refused interface
     # language never leaves the reply language switched on its own.
     writer = _control_writer(request)

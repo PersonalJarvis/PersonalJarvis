@@ -27,7 +27,7 @@ import {
   usePreferredOpener,
   useSetPreferredOpener,
 } from "@/hooks/useOutputs";
-import { useT, useUiLanguage } from "@/i18n";
+import { translate, useT, useUiLanguage } from "@/i18n";
 import { localeForUiLanguage } from "@/components/runs/format";
 
 import { fetchSessionExport, openSessionWith, sessionExportUrl } from "./api";
@@ -43,9 +43,14 @@ type ExportFormat = "markdown" | "plain" | "json";
 
 const FORMAT_LABEL: Record<ExportFormat, string> = {
   markdown: "Markdown",
-  plain: "Text",
+  plain: "session_detail.format_text",
   json: "JSON",
 };
+
+/** "Text" is a word, the other two are format names. */
+function formatLabel(format: ExportFormat): string {
+  return format === "plain" ? translate(FORMAT_LABEL.plain) : FORMAT_LABEL[format];
+}
 
 const FORMATS: ExportFormat[] = ["plain", "markdown", "json"];
 
@@ -116,7 +121,7 @@ export function SessionDetail({ detail, loading, error, onBack }: Props) {
         const text = await fetchSessionExport(detail.session.id, format);
         const ok = await robustCopy(text);
         if (ok) {
-          pushToast("success", `${t("session_detail.copied_as")} ${FORMAT_LABEL[format]}`);
+          pushToast("success", `${t("session_detail.copied_as")} ${formatLabel(format)}`);
         } else {
           pushToast("error", t("session_detail.copy_failed_clipboard"));
         }
@@ -215,7 +220,7 @@ export function SessionDetail({ detail, loading, error, onBack }: Props) {
   const exportActions = useMemo<MenuAction[]>(() => {
     const actions: MenuAction[] = [];
     for (const format of FORMATS) {
-      const label = FORMAT_LABEL[format];
+      const label = formatLabel(format);
       actions.push({
         id: `copy-${format}`,
         label: `${t("session_detail.copy_action")} ${label}`,

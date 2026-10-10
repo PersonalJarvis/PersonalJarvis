@@ -660,6 +660,20 @@ def test_unsupported_response_lang_en_in_plan() -> None:
     assert "I can't do that yet" in plan.response_text
 
 
+@pytest.mark.parametrize(
+    ("lang", "opening"),
+    [
+        ("pt", "Ainda não consigo fazer isso."),  # i18n-allow: PT TTS
+        ("es", "Eso todavía no lo sé hacer."),  # i18n-allow: Spanish TTS
+        ("fr", "I can't do that yet."),
+    ],
+)
+def test_unsupported_response_speaks_the_turn_language(lang: str, opening: str) -> None:
+    plan = match_local_action("schick eine email", lang=lang, _registry=_FAKE_REG)
+    assert plan is not None and plan.response_text is not None
+    assert plan.response_text.startswith(opening)
+
+
 # ---------------------------------------------------------------------------
 # Positive cases — these MUST NOT return UNSUPPORTED even with a registry
 # that knows the verbs (because resolve_intent returns non-None for them).

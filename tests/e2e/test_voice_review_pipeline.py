@@ -52,7 +52,9 @@ def _make_ctx() -> ExecutionContext:
     return ExecutionContext(
         trace_id=uuid4(),
         user_utterance="e2e smoke",
-        config={},
+        # The German AD-14 wording is asserted below; the turn language is
+        # stamped explicitly so the ambient default cannot change it.
+        config={"output_language": "de"},
         memory_read=None,
     )
 

@@ -19,7 +19,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import {
   MINIMUM_CONTRAST_RATIO,
@@ -199,7 +199,9 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
         ws.addEventListener("close", (ev) => {
           setConnected(false);
           if (ev.code !== 1000 && ev.code !== 1001) {
-            setStreamError(`${t("pty_terminal.stream_disconnected")} (Code ${ev.code}).`);
+            setStreamError(
+              `${t("pty_terminal.stream_disconnected")} ${fill(t("pty_terminal.close_code"), { code: ev.code })}.`,
+            );
           }
         });
       } catch (e) {
@@ -251,16 +253,18 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
       <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />
-          <span className="font-mono">worker {workerId.slice(0, 12)}</span>
+          <span className="font-mono">
+            {fill(t("pty_terminal.worker_label"), { id: workerId.slice(0, 12) })}
+          </span>
         </div>
         <div className="flex items-center gap-2 text-micro uppercase tracking-wider">
           {streamError ? (
             <span className="flex items-center gap-1 text-destructive">
               <AlertCircle className="h-3 w-3" />
-              offline
+              {t("pty_terminal.status_offline")}
             </span>
           ) : connected ? (
-            <span className="text-muted-foreground">live</span>
+            <span className="text-muted-foreground">{t("pty_terminal.status_live")}</span>
           ) : (
             <span className="text-muted-foreground">{t("pty_terminal.connecting")}</span>
           )}

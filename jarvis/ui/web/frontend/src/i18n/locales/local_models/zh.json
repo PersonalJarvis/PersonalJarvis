@@ -272,7 +272,8 @@
       "resident_unknown": "共 {total}——显存未知",
       "resident_context": "上下文（估算）",
       "resident_context_short": "上下文",
-      "resident_reserve": "语音输入/输出预留"
+      "resident_reserve": "语音输入/输出预留",
+      "server_no_answer": "位于 {url} 的服务器没有响应。"
     },
     "installed": {
       "title": "已安装的模型",

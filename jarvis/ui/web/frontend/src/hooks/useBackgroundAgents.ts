@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { translate } from "@/i18n";
 
 /**
  * What keeps running after the desktop window closes — GET/PUT
@@ -58,7 +59,7 @@ export function useBackgroundAgents() {
       const detail = body.detail;
       const message = typeof detail === "string" ? detail
         : Array.isArray(detail)
-          ? detail.map((item: { msg?: string }) => item.msg ?? "Invalid setting").join("; ")
+          ? detail.map((item: { msg?: string }) => item.msg ?? translate("settings_view.invalid_setting")).join("; ")
           : `HTTP ${res.status}`;
       throw new Error(message);
     }

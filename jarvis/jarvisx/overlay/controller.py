@@ -69,6 +69,12 @@ _TEXTS: dict[str, dict[str, str]] = {
         "edit": "点击编辑",  # i18n-allow: product UI string
         "stop": "停止",  # i18n-allow: product UI string
     },
+    "pt": {
+        "select_capture": "Arrasta para capturar  ·  Esc para cancelar",  # i18n-allow: overlay UI
+        "select_record": "Arrasta a área a gravar  ·  Esc para cancelar",  # i18n-allow: overlay UI
+        "edit": "Clica para editar",  # i18n-allow: localized overlay UI string
+        "stop": "Parar",  # i18n-allow: localized overlay UI string
+    },
 }
 
 

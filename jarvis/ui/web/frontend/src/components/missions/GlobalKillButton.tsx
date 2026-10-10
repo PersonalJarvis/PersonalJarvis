@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, Skull } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { cancelAllMissions } from "./api";
 import { selectActiveCount, useMissionsStore } from "./store";
 import { useShallow } from "zustand/react/shallow";
@@ -47,7 +47,7 @@ export function GlobalKillButton() {
         title={t("global_kill_button.cancel_all_running")}
       >
         <Skull className="mr-1.5 h-4 w-4" />
-        Kill All ({activeCount})
+        {fill(t("global_kill_button.kill_all"), { count: activeCount })}
       </Button>
 
       {open && (

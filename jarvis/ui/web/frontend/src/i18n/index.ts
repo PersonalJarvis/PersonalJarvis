@@ -11,7 +11,7 @@
  *   <span>{t("nav.skills")}</span>
  *
  *   import { useUiLanguage, setUiLanguage } from "@/i18n";
- *   const lang = useUiLanguage();      // "en" | "de" | "es" | "zh"
+ *   const lang = useUiLanguage();      // "en" | "de" | "es" | "zh" | "pt"
  *   setUiLanguage("de");               // updates reactively when loaded
  *
  * STT recognition language (what Whisper transcribes the spoken voice INTO) is
@@ -23,10 +23,10 @@ import { create } from "zustand";
 import enJson from "./locales/en.json";
 import { useEventStore } from "@/store/events";
 
-export type UiLanguage = "en" | "de" | "es" | "zh";
+export type UiLanguage = "en" | "de" | "es" | "zh" | "pt";
 // "auto" mirrors the user's input language; the rest hard-pin the reply language.
 // Mirrors jarvis/brain/manager.py::SUPPORTED_REPLY_LANGUAGES (single source of truth).
-export type ReplyLanguage = "auto" | "en" | "de" | "es";
+export type ReplyLanguage = "auto" | "en" | "de" | "es" | "pt";
 // "auto" lets the recogniser detect the spoken language per utterance (the
 // default); a concrete code forces what it transcribes into. Deliberately a
 // plain string, not a union: the accepted set is every language the recogniser
@@ -43,10 +43,10 @@ const STT_FALLBACK_OPTIONS: readonly string[] = ["auto"];
 const REPLY_LANGUAGE_ENDPOINT = "/api/settings/reply-language";
 const UI_LANGUAGE_ENDPOINT = "/api/settings/ui-language";
 const STT_LANGUAGE_ENDPOINT = "/api/settings/stt-language";
-const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es"];
+const REPLY_VALUES: readonly ReplyLanguage[] = ["auto", "en", "de", "es", "pt"];
 
 export function isUiLanguage(v: unknown): v is UiLanguage {
-  return v === "en" || v === "de" || v === "es" || v === "zh";
+  return v === "en" || v === "de" || v === "es" || v === "zh" || v === "pt";
 }
 
 function isReplyLanguage(v: unknown): v is ReplyLanguage {
@@ -66,6 +66,7 @@ const RESOURCES: Record<UiLanguage, Record<string, unknown>> = {
   de: enJson as Record<string, unknown>,
   es: enJson as Record<string, unknown>,
   zh: enJson as Record<string, unknown>,
+  pt: enJson as Record<string, unknown>,
 };
 
 type LazyUiLanguage = Exclude<UiLanguage, "en">;
@@ -74,6 +75,7 @@ const UI_LOCALE_LOADERS: Record<LazyUiLanguage, () => Promise<unknown>> = {
   de: () => import("./locales/de.json"),
   es: () => import("./locales/es.json"),
   zh: () => import("./locales/zh.json"),
+  pt: () => import("./locales/pt.json"),
 };
 const UI_LOCALE_PROMISES: Partial<Record<LazyUiLanguage, Promise<void>>> = {};
 
@@ -103,8 +105,8 @@ export function loadUiLocale(lang: UiLanguage): Promise<void> {
 /**
  * Locale chunks that load on demand.
  *
- * English rides in the startup bundle; German, Spanish and Chinese load on
- * demand.
+ * English rides in the startup bundle; German, Spanish, Chinese and Portuguese
+ * load on demand.
  * A section nobody opens on start — the marketplace's publish studio, say —
  * keeps its strings in
  * `locales/<chunk>/<lang>.json` and asks for them with `useLocaleChunk` when
@@ -127,24 +129,28 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     de: () => import("./locales/marketplace/de.json"),
     es: () => import("./locales/marketplace/es.json"),
     zh: () => import("./locales/marketplace/zh.json"),
+    pt: () => import("./locales/marketplace/pt.json"),
   },
   local_models: {
     en: () => import("./locales/local_models/en.json"),
     de: () => import("./locales/local_models/de.json"),
     es: () => import("./locales/local_models/es.json"),
     zh: () => import("./locales/local_models/zh.json"),
+    pt: () => import("./locales/local_models/pt.json"),
   },
   society: {
     en: () => import("./locales/society/en.json"),
     de: () => import("./locales/society/de.json"),
     es: () => import("./locales/society/es.json"),
     zh: () => import("./locales/society/zh.json"),
+    pt: () => import("./locales/society/pt.json"),
   },
   computers: {
     en: () => import("./locales/computers/en.json"),
     de: () => import("./locales/computers/de.json"),
     es: () => import("./locales/computers/es.json"),
     zh: () => import("./locales/computers/zh.json"),
+    pt: () => import("./locales/computers/pt.json"),
   },
   // First-run guide and app tour: read on one boot, then only on a replay.
   onboarding: {
@@ -152,6 +158,7 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     de: () => import("./locales/onboarding/de.json"),
     es: () => import("./locales/onboarding/es.json"),
     zh: () => import("./locales/onboarding/zh.json"),
+    pt: () => import("./locales/onboarding/pt.json"),
   },
   // The appshot editor: opened from a capture, never on start.
   appshot_editor: {
@@ -159,6 +166,7 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     de: () => import("./locales/appshot_editor/de.json"),
     es: () => import("./locales/appshot_editor/es.json"),
     zh: () => import("./locales/appshot_editor/zh.json"),
+    pt: () => import("./locales/appshot_editor/pt.json"),
   },
   // The provider page (Settings → API Keys).
   providers: {
@@ -166,6 +174,7 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     de: () => import("./locales/providers/de.json"),
     es: () => import("./locales/providers/es.json"),
     zh: () => import("./locales/providers/zh.json"),
+    pt: () => import("./locales/providers/pt.json"),
   },
   // A pane's "Review changes" dialog: opened from its title bar, never on start.
   pane_review: {
@@ -173,10 +182,11 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     de: () => import("./locales/pane_review/de.json"),
     es: () => import("./locales/pane_review/es.json"),
     zh: () => import("./locales/pane_review/zh.json"),
+    pt: () => import("./locales/pane_review/pt.json"),
   },
 };
 
-const EXTRA: Record<UiLanguage, Record<string, unknown>[]> = { en: [], de: [], es: [], zh: [] };
+const EXTRA: Record<UiLanguage, Record<string, unknown>[]> = { en: [], de: [], es: [], zh: [], pt: [] };
 const CHUNK_PROMISES: Partial<Record<LocaleChunk, Promise<void>>> = {};
 
 function unwrapModule(mod: unknown): Record<string, unknown> {
@@ -380,11 +390,12 @@ export async function hydrateUiLanguage(): Promise<void> {
 /**
  * Mirror the interface language onto `<html lang>`. Chinese text falls back to
  * a system font, and the tag is what makes the browser pick Simplified Chinese
- * glyphs instead of another CJK locale's forms.
+ * glyphs instead of another CJK locale's forms. Portuguese is European
+ * Portuguese, so it is tagged `pt-PT` rather than the bare `pt`.
  */
 function applyDocumentLanguage(lang: UiLanguage): void {
   try {
-    document.documentElement.lang = lang === "zh" ? "zh-CN" : lang;
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : lang === "pt" ? "pt-PT" : lang;
   } catch {
     /* SSR / tests without a document */
   }

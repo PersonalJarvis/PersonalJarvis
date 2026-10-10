@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentMemoryFiles, LearnedInstructions } from "./AgentKnowledge";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useUiLanguage: () => "en" }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 

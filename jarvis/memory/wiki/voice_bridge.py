@@ -91,6 +91,9 @@ _ACK_KEYWORDS = (  # i18n-allow: multilingual acknowledgement-phrase matching vo
     "anotado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
     "guardado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
     "apuntado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
+    "registad",  # i18n-allow: pt acknowledgement ("fica registado"); "anotado"/"guardado" shared
+    "tomei nota",  # i18n-allow: Portuguese acknowledgement-phrase matching vocabulary
+    "memorizad",  # i18n-allow: Portuguese acknowledgement-phrase matching vocabulary
 )
 
 # Minimum length for an acknowledged user utterance to be worth a review.

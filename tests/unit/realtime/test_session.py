@@ -9138,7 +9138,7 @@ async def test_the_handshake_notice_follows_the_pinned_reply_language():
     English (or German) that the call is ending.
     """
     seen = {}
-    for pin in ("de", "en", "es"):
+    for pin in ("de", "en", "es", "pt"):
         jsons = []
         sess = _no_metered_fallback_session(
             _UnreachableProvider(
@@ -9156,7 +9156,7 @@ async def test_the_handshake_notice_follows_the_pinned_reply_language():
         seen[pin] = notice["text"]
         await sess.end(reason="test")
 
-    assert len(set(seen.values())) == 3, (
+    assert len(set(seen.values())) == 4, (
         f"each supported locale needs its own wording, got {seen}"
     )
 

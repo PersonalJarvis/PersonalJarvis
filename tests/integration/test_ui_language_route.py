@@ -42,7 +42,7 @@ def test_get_returns_current_ui_language(ctx) -> None:
     tc, _, _ = ctx
     body = tc.get("/api/settings/ui-language").json()
     assert body["language"] == "en"
-    assert set(body["options"]) == {"en", "de", "es", "zh"}
+    assert set(body["options"]) == {"en", "de", "es", "pt", "zh"}
 
 
 def test_put_persists_and_broadcasts(ctx) -> None:
@@ -64,6 +64,14 @@ def test_put_accepts_chinese(ctx) -> None:
     assert res.status_code == 200, res.text
     assert 'language = "zh"' in config_file.read_text(encoding="utf-8")
     assert any(ev.language == "zh" for ev in captured)
+
+
+def test_put_accepts_european_portuguese(ctx) -> None:
+    tc, config_file, captured = ctx
+    res = tc.put("/api/settings/ui-language", json={"language": "pt"})
+    assert res.status_code == 200, res.text
+    assert 'language = "pt"' in config_file.read_text(encoding="utf-8")
+    assert any(ev.language == "pt" for ev in captured)
 
 
 def test_put_rejects_unknown_language(ctx) -> None:

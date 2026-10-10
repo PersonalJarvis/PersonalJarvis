@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 import {
   registerBrowserVoiceCallOwner,
   setBrowserVoiceCallLive,
@@ -310,9 +311,17 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           // the exact transport error, the socket close reason. Replacing all
           // of them with one generic line sent users to test a credential
           // that was never the problem.
-          const backendDetail =
+          // A sentence the backend authored itself (not a provider's error
+          // text) also carries `message_code`, translated here; anything else
+          // is shown as sent.
+          const backendDetail = backendMessage(
+            t,
+            "voice.backend_error",
+            typeof payload.message_code === "string" ? payload.message_code : "",
+            null,
             (typeof payload.error === "string" ? payload.error.trim() : "") ||
-            (typeof payload.reason === "string" ? payload.reason.trim() : "");
+              (typeof payload.reason === "string" ? payload.reason.trim() : ""),
+          );
           if (status === "audio_ready") {
             connected = true;
             initialNativeStartPending.current = false;

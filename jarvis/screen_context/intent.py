@@ -13,7 +13,7 @@ call and no network. An LLM classifier here would sit on the voice path (AP-9),
 and it would make "did it look at my screen, and why?" unanswerable after the
 fact — ``IntentVerdict.evidence`` exists so that question always has an answer.
 
-**Every supported locale is equal** (AGENTS.md §1): de, en and es are matched
+**Every supported locale is equal** (AGENTS.md §1): de, en, es and pt are matched
 simultaneously rather than selected by the session locale, because a bilingual
 user mixes them inside one sentence and a locale-gated matcher would go deaf on
 the half it did not pick. Adding a locale is a data entry below, not code.
@@ -58,6 +58,11 @@ _SCREEN_CONTEXT_META_RE: re.Pattern[str] = re.compile(
     r"\b(?:pantalla|captura|ver|mirar)\b"
     r"|\bque\s+pasa\s+(?:si|cuando)\b[^.?!]{0,96}"
     r"\b(?:pantalla|captura)\b"
+    # --- European Portuguese --- i18n-allow: PT speech-input matching data
+    r"|\bcomo\s+(?:(?:e\s+que\s+)?(?:posso|podes|poderia|podias)|se\s+pode)\b"
+    r"[^.?!]{0,96}\b(?:ecra|captura|ver|olhar)\b"
+    r"|\bo\s+que\s+acontece\s+(?:se|quando)\b[^.?!]{0,96}"
+    r"\b(?:ecra|captura)\b"
     r")",
     re.IGNORECASE,
 )
@@ -67,7 +72,7 @@ _SCREEN_CONTEXT_META_RE: re.Pattern[str] = re.compile(
 # Normalization
 # --------------------------------------------------------------------------
 
-# German digraphs plus Spanish accent stripping, so the vocabulary below can be
+# German digraphs plus Spanish/Portuguese accent stripping, so the vocabulary below can be
 # written in plain ASCII and still match accented input.  # i18n-allow
 _TRANSLITERATION = str.maketrans(
     {
@@ -75,6 +80,7 @@ _TRANSLITERATION = str.maketrans(
         "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",  # i18n-allow
         "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ñ": "n",
         "à": "a", "è": "e", "ì": "i", "ò": "o", "ù": "u", "ç": "c",
+        "ã": "a", "õ": "o", "â": "a", "ê": "e", "ô": "o",
     }
 )
 
@@ -109,7 +115,10 @@ _IDIOM_NOISE_RE: re.Pattern[str] = re.compile(
     r"|\bsieh\s+zu,?\s+dass\b|\bschau\s+(?:nach|ob)\b"  # i18n-allow: DE input
     # --- Spanish --- i18n-allow: Spanish speech-input matching data
     r"|\bvamos\s+a\s+ver\b|\ba\s+ver\s+si\b|\bya\s+veo\b|\bveremos\b"
-    r"|\bse\s+ve\b|\bmira\s+que\b|\bmira,?\s+(?:pero|es\s+que)\b",
+    r"|\bse\s+ve\b|\bmira\s+que\b|\bmira,?\s+(?:pero|es\s+que)\b"
+    # --- European Portuguese --- i18n-allow: PT speech-input matching data
+    r"|\bvamos\s+la\s+ver\b|\bja\s+vejo\b|\bve\s+se\b|\bestou\s+a\s+ver\b"
+    r"|\bolha\s+que\b|\bolha,?\s+(?:mas|e\s+que)\b",
     re.IGNORECASE,
 )
 
@@ -155,6 +164,10 @@ _WINDOW_SCOPE_RE: re.Pattern[str] = re.compile(
     r"(?:ventana|pestana|pagina|aplicacion|hoja)\b"
     r"|\b(?:este|ese)\s+(?:dialogo|documento|programa|archivo)\b"
     r"|\ben\s+(?:esta|esa)\s+(?:ventana|pestana|pagina|aplicacion)\b"
+    # --- European Portuguese --- i18n-allow: PT speech-input matching data
+    r"|\b(?:esta|essa)\s+(?:janela|pagina|aplicacao|app|folha)\b"
+    r"|\b(?:este|esse)\s+(?:separador|dialogo|documento|programa|ficheiro)\b"
+    r"|\bnest[ae]\s+(?:janela|pagina|aplicacao|separador|documento)\b"
     r")",
     re.IGNORECASE,
 )
@@ -201,6 +214,7 @@ _DE_TAIL = (  # i18n-allow: German speech-input matching data
     r"|ueberhaupt|hier|da))*"
 )
 _ES_TAIL = r"(?:\s+(?:exactamente|ahora|aqui|ahi|entonces))*"
+_PT_TAIL = r"(?:\s+(?:exatamente|agora|aqui|ai|entao))*"
 
 _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     r"(?:"
@@ -344,6 +358,24 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     rf"|\blee\s+(?:esto|eso){_END}"
     r"|\blee\s+(?:el|este|ese)\s+(?:error|mensaje|dialogo|aviso)\b"
     r"|\beste\s+error\b|\besta\s+ventana\s+de\s+error\b"
+
+    # ---------------- European Portuguese ---------------- i18n-allow: PT speech input
+    r"|\bolha\s+(?:para\s+)?(?:isto|isso|o\s+ecra|o\s+meu\s+ecra|o\s+erro)\b"
+    r"|\bolha\s+(?:para\s+)?(?:esta|essa)\s+(?:janela|pagina|aplicacao|app)\b"
+    r"|\bve\s+(?:isto|isso|o\s+ecra|o\s+meu\s+ecra)\b"
+    r"|\bda\s+uma\s+(?:vista\s+de\s+olhos|olhadela)"
+    rf"(?:\s+(?:a|em)\s+(?:isto|isso)|\s+ao\s+(?:meu\s+)?ecra)?{_END}"
+    r"|\b(?:podes|consegues)\s+ver\s+(?:isto|isso|o\s+meu\s+ecra|o\s+ecra)\b"
+    r"|\b(?:ves|estas\s+a\s+ver)\s+(?:isto|isso|o\s+meu\s+ecra)\b"
+    r"|\bo\s+que\s+(?:e\s+que\s+)?(?:ves|estas\s+a\s+ver)\b"
+    r"|\b(?:no|ao)\s+(?:meu\s+)?ecra\b|\bmeu\s+ecra\b"
+    rf"|\b(?:tira|faz|captura)(?:-me)?\b{_NEAR}"
+    r"\b(?:captura\s+de\s+ecra|screenshot)\b"
+    r"|\banalisa\s+(?:esta\s+|essa\s+|a\s+)?captura\s+de\s+ecra\b"
+    r"|\bo\s+que\s+diz\s+(?:ai|aqui|isto|isso)\b"
+    rf"|\ble\s+(?:isto|isso){_END}"
+    r"|\ble\s+(?:o|a|este|esta|esse|essa)\s+(?:erro|mensagem|dialogo|aviso)\b"
+    r"|\besta\s+janela\s+de\s+erro\b"
     r")",
     re.IGNORECASE,
 )
@@ -370,6 +402,9 @@ _APPSHOT_META_RE: re.Pattern[str] = re.compile(
     # i18n-allow: Spanish speech-input matching data
     rf"|\bque\s+(?:es|son)\s+(?:un\s+)?{_APPSHOT_WORD}"
     rf"|\bcomo\s+(?:funciona|funcionan|se\s+hace)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
+    # i18n-allow: Portuguese speech-input matching data
+    rf"|\bo\s+que\s+(?:e|sao)\s+(?:um\s+)?{_APPSHOT_WORD}"
+    rf"|\bcomo\s+(?:funciona|funcionam|se\s+faz)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
     # Opening the Appshots settings page is navigation, not a capture.
     r"|\b(?:open|go\s+to|navigate\s+to|oeffne|geh\s+(?:zu|in|auf)"  # i18n-allow: DE input
     r"|wechsel\s+(?:zu|in)|abre|ve\s+a)\b[^.?!]{0,24}?"
@@ -397,8 +432,8 @@ def mentions_appshot(text: str) -> bool:
 # stay read-only while a later independent clause still owns its operation:
 # "Explain this, then close the window." -> [observe, operate].
 _COMMAND_CLAUSE_SPLIT_RE: re.Pattern[str] = re.compile(
-    r"[.!?;]+|,\s*(?=(?:then|dann|luego)\b)|"
-    r"\b(?:and\s+then|then|und\s+dann|dann|y\s+luego|luego)\b",
+    r"[.!?;]+|,\s*(?=(?:then|dann|luego|depois)\b)|"
+    r"\b(?:and\s+then|then|und\s+dann|dann|y\s+luego|luego|e\s+depois|depois)\b",
     re.IGNORECASE,
 )
 
@@ -435,6 +470,12 @@ _ES_ACTION = (
     r"selecciona|elige|envia|guarda|elimina|borra|descarga|sube|abre|cierra|"
     r"actualiza|recarga|inicia\s+sesion|cierra\s+sesion|minimiza|maximiza|"
     r"mueve|cambia|navega|amplia|reduce)\w*"
+)
+_PT_ACTION = (  # i18n-allow: Portuguese speech-input matching data
+    r"(?:clica|carrega\s+em|prime|escreve|cola|desliza|arrasta|seleciona|"
+    r"escolhe|envia|guarda|elimina|apaga|descarrega|abre|fecha|atualiza|"
+    r"recarrega|inicia\s+sessao|termina\s+sessao|minimiza|maximiza|move|"
+    r"muda|navega|amplia|reduz)\w*"
 )
 
 # German separable verbs park the particle at the END of the clause: "mach das
@@ -476,8 +517,9 @@ _DE_SEPARABLE_ACTION = (
 )
 
 _ACTION_CONNECTOR_SPLIT_RE: re.Pattern[str] = re.compile(
-    rf"\b(?:and|und|y)\s+"
-    rf"(?=(?:{_EN_ACTION}|{_DE_ACTION}|{_ES_ACTION})\b|(?:{_DE_SEPARABLE_ACTION}))",
+    rf"\b(?:and|und|y|e)\s+"
+    rf"(?=(?:{_EN_ACTION}|{_DE_ACTION}|{_ES_ACTION}|{_PT_ACTION})\b"
+    rf"|(?:{_DE_SEPARABLE_ACTION}))",
     re.IGNORECASE,
 )
 
@@ -488,7 +530,9 @@ _OPERATION_EXPLANATION_CLAUSE_RE: re.Pattern[str] = re.compile(
     r"|^(?:(?:kannst|koenntest|wuerdest|wirst)\s+du\s+(?:bitte\s+)?|bitte\s+)?"
     r"(?:erklaer|zeig|sag)\w*\b"
     r"|^(?:(?:puedes|podrias)\s+(?:por\s+favor\s+)?|por\s+favor\s+)?"
-    r"(?:explica|muestra|dime)\b",
+    r"(?:explica|muestra|dime)\b"
+    r"|^(?:(?:podes|consegues|podias)\s+(?:por\s+favor\s+)?|por\s+favor\s+)?"
+    r"(?:explica|mostra|diz)\b",
     re.IGNORECASE,
 )
 
@@ -509,14 +553,24 @@ _SCREEN_OPERATION_CLAUSE_RE: re.Pattern[str] = re.compile(
     rf"[^.?!]{{0,72}}?{_DE_SEPARABLE_ACTION}"  # i18n-allow
     # Spanish imperative and modal request forms.
     rf"|^(?:por\s+favor\s+)?{_ES_ACTION}\b"
-    rf"|^(?:puedes|podrias)\s+(?:por\s+favor\s+)?[^.?!]{{0,96}}?{_ES_ACTION}\b",
+    rf"|^(?:puedes|podrias)\s+(?:por\s+favor\s+)?[^.?!]{{0,96}}?{_ES_ACTION}\b"
+    # European Portuguese imperative and modal request forms.
+    rf"|^(?:por\s+favor\s+)?{_PT_ACTION}\b"
+    rf"|^(?:podes|consegues|podias)\s+(?:por\s+favor\s+)?[^.?!]{{0,96}}?{_PT_ACTION}\b",
     re.IGNORECASE,
+)
+
+_SURFACE_NOUN = (  # i18n-allow: Spanish/Portuguese speech-input matching data
+    r"(?:ventana|pestana|pagina|aplicacion|hoja|janela|aplicacao|app|folha)"
 )
 
 _ACTION_STATE_OBSERVATION_RE: re.Pattern[str] = re.compile(
     rf"^(?:{_EN_ACTION})\s+(?:is|are|was|were|looks?|seems?|appears?)\b"
     rf"|^(?:{_DE_ACTION})\s+(?:ist|sind|war|waren|scheint)\b"  # i18n-allow
-    rf"|^(?:{_ES_ACTION})\s+(?:esta|estan|parece)\b",
+    # Accent folding merges "está" (is) with the demonstrative "esta" (this),
+    # so a following surface noun means "close THIS window", an operation.
+    rf"|^(?:{_ES_ACTION}|{_PT_ACTION})\s+(?:esta(?!\s+{_SURFACE_NOUN}\b)"
+    r"|estan|estao|parece)\b",
     re.IGNORECASE,
 )
 
@@ -589,6 +643,14 @@ _AMBIGUOUS_RE: re.Pattern[str] = re.compile(
     rf"|\besta\s+bien\s+(?:esto|eso){_ES_TAIL}{_END}"
     rf"|\bpuedes\s+(?:revisar|comprobar)(?:\s+(?:esto|eso))?{_END}"
     rf"|\bque\s+significa\s+(?:esto|eso){_ES_TAIL}{_END}"
+    # --- European Portuguese --- i18n-allow: PT speech-input matching data
+    rf"|\bo\s+que\s+(?:e\s+)?(?:isto|isso){_PT_TAIL}{_END}"
+    rf"|\be\s+(?:isto|isso){_PT_TAIL}{_END}"
+    rf"|\bporque\s+(?:e\s+que\s+)?(?:isto|isso)\s+(?:e\s+assim|esta\s+assim)"
+    rf"{_PT_TAIL}{_END}"
+    rf"|\b(?:isto|isso)\s+esta\s+(?:bem|certo|correto){_PT_TAIL}{_END}"
+    rf"|\bpodes\s+(?:verificar|confirmar)(?:\s+(?:isto|isso))?{_END}"
+    rf"|\bo\s+que\s+significa\s+(?:isto|isso){_PT_TAIL}{_END}"
     r")",
     re.IGNORECASE,
 )
@@ -679,12 +741,14 @@ _CLARIFY_QUESTION: dict[str, str] = {
     "en": "Should I take a look at your screen?",
     "de": "Soll ich einmal auf deinen Bildschirm schauen?",  # i18n-allow: spoken
     "es": "¿Quieres que eche un vistazo a tu pantalla?",
+    "pt": "Queres que dê uma vista de olhos ao teu ecrã?",
 }
 
 _CANCELLED_REPLY: dict[str, str] = {
     "en": "Okay, I won't look at your screen.",
     "de": "Okay, ich schaue nicht auf deinen Bildschirm.",  # i18n-allow: spoken
     "es": "De acuerdo, no miraré tu pantalla.",
+    "pt": "Está bem, não vou olhar para o teu ecrã.",
 }
 
 _NO_VISION_PROVIDER_REPLY: dict[str, str] = {
@@ -701,6 +765,10 @@ _NO_VISION_PROVIDER_REPLY: dict[str, str] = {
         "Capturé la pantalla, pero ninguno de tus asistentes disponibles puede "
         "analizar imágenes ahora. Conecta un proveedor con visión en Claves API."
     ),
+    "pt": (
+        "Capturei o ecrã, mas nenhum dos teus assistentes disponíveis consegue "
+        "analisar imagens agora. Liga um fornecedor com visão em Chaves API."
+    ),
 }
 
 _CAPTURE_FAILURE_REPLY: dict[str, str] = {
@@ -716,6 +784,10 @@ _CAPTURE_FAILURE_REPLY: dict[str, str] = {
     "es": (
         "No pude revisar la pantalla de forma segura porque falló el contexto "
         "de pantalla. No se adjuntó ninguna captura."
+    ),
+    "pt": (
+        "Não consegui analisar o ecrã em segurança porque o contexto de ecrã "
+        "falhou. Não foi anexada nenhuma captura."
     ),
 }
 
@@ -786,6 +858,28 @@ _CAPTURE_UNAVAILABLE_REPLY: dict[str, dict[str, str]] = {
             "El sistema de captura de pantalla no está disponible ahora. "
             "Reinicia la aplicación de escritorio y vuelve a pedirlo. No se "
             "inició ninguna acción de escritorio."
+        ),
+    },
+    "pt": {
+        "capture_permission": (
+            "Não consigo capturar o teu ecrã enquanto a gravação de ecrã não "
+            "estiver autorizada nas definições do sistema. Dá essa permissão e "
+            "volta a pedir. Não foi iniciada nenhuma ação no ambiente de trabalho."
+        ),
+        "wayland_portal": (
+            "A captura de ecrã ainda não funciona numa sessão Wayland. Inicia "
+            "uma sessão X11, por exemplo GNOME on Xorg, e volta a pedir. Não "
+            "foi iniciada nenhuma ação no ambiente de trabalho."
+        ),
+        "no_display": (
+            "Não consigo aceder a um ecrã interativo neste dispositivo. Inicia "
+            "uma sessão no ambiente de trabalho ou liga um ecrã e volta a "
+            "pedir. Não foi iniciada nenhuma ação no ambiente de trabalho."
+        ),
+        "capture_backend_unavailable": (
+            "O sistema de captura de ecrã não está disponível agora. Reinicia "
+            "a aplicação de ambiente de trabalho e volta a pedir. Não foi "
+            "iniciada nenhuma ação no ambiente de trabalho."
         ),
     },
 }

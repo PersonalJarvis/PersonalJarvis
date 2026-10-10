@@ -29,7 +29,8 @@ import {
 } from "@/lib/wikiApi";
 import { cleanTitle } from "@/lib/wikiModel";
 import { cn } from "@/lib/utils";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 
 import { PageHeader } from "./PageHeader";
 
@@ -49,7 +50,7 @@ const AS_OF_RE = /\s*\(as of (\d{4}-\d{2}-\d{2})\)/g;
 
 export function PageRenderer({ slug, onWikilinkClick }: PageRendererProps) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const qc = useQueryClient();
   const pageQuery = useQuery({
     queryKey: ["wiki", "page", slug],

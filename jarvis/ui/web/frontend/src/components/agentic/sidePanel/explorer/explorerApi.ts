@@ -1,5 +1,7 @@
 /** The explorer's git reads: what changed in a workspace, and one file's diff. */
 
+import { fill, translate } from "@/i18n";
+
 export type ChangeStatus = "modified" | "added" | "deleted" | "untracked" | "conflicted";
 
 /** A pane whose coding agent wrote a changed file, read from that agent's own record. */
@@ -59,7 +61,7 @@ export interface FileDiff {
 async function read<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
-    let message = `Request failed (${res.status}).`;
+    let message = fill(translate("ide_panes.request_failed"), { status: res.status });
     try {
       const body = (await res.json()) as { detail?: unknown };
       if (typeof body.detail === "string") message = body.detail;

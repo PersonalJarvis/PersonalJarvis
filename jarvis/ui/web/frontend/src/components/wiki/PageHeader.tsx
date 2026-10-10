@@ -5,7 +5,8 @@
  */
 import { lazy, Suspense } from "react";
 
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import type { WikiKind } from "@/lib/wikiApi";
 import { GROUP_LABEL_KEY, groupOfKind, relativeAge } from "@/lib/wikiModel";
 import { cn } from "@/lib/utils";
@@ -30,14 +31,15 @@ interface PageHeaderProps {
   words?: number;
 }
 
+/** Frontmatter field -> i18n key of its pill label. */
 const FRIENDLY_LABELS: Record<string, string> = {
-  type: "type",
-  entity_kind: "kind",
-  status: "status",
-  created: "created",
-  updated: "updated",
-  started: "started",
-  last_activity: "last activity",
+  type: "page_header.field_type",
+  entity_kind: "page_header.field_kind",
+  status: "page_header.field_status",
+  created: "page_header.field_created",
+  updated: "page_header.field_updated",
+  started: "page_header.field_started",
+  last_activity: "page_header.field_last_activity",
 };
 
 const MAX_PILLS = 6;
@@ -53,7 +55,7 @@ export function PageHeader({
   words,
 }: PageHeaderProps) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const pills = buildPills(frontmatter);
   const breadcrumb = breadcrumbFromPath(vaultRelPath);
   const group = groupOfKind(kind);
@@ -120,7 +122,7 @@ export function PageHeader({
               className="inline-flex h-6 items-center gap-1 rounded-sm border border-border px-2 text-muted-foreground"
               data-pill-key={p.key}
             >
-              <span>{p.label}</span>
+              <span>{t(p.label)}</span>
               <span className="text-foreground">{p.value}</span>
             </span>
           ))}

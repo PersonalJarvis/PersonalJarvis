@@ -233,7 +233,8 @@ export function languageName(code: string, ui: string): string {
   const tag = code.trim();
   if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/i.test(tag)) return code;
   try {
-    return new Intl.DisplayNames([ui], { type: "language" }).of(tag) ?? code;
+    // A bare "pt" means Brazilian Portuguese in CLDR; the app's Portuguese is European.
+    return new Intl.DisplayNames([ui === "pt" ? "pt-PT" : ui], { type: "language" }).of(tag) ?? code;
   } catch {
     // Intl rejects some well-formed but unknown tags; the raw value is honest.
     return code;

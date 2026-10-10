@@ -14,8 +14,9 @@ heuristic, which scored the English sentence 0-0 and broke the tie to German
 truth the pipeline already uses for the turn language — instead of a private,
 weaker detector.
 
-The spawn-announcement composer supports de/en only (ack-brain convention), so
-Spanish/unknown text under "auto" collapses to English (never silently German).
+The spawn-announcement composer speaks every supported reply language, so a
+pinned es/pt reply language passes through and Spanish/Portuguese text under
+"auto" keeps its language; unknown text collapses to English (never German).
 """
 from __future__ import annotations
 
@@ -33,6 +34,8 @@ def _manager(reply_language: str) -> BrainManager:
     """A BrainManager with __init__ bypassed — only ``_reply_language`` matters."""
     m = BrainManager.__new__(BrainManager)
     m._reply_language = reply_language
+    m._turn_detected_lang = ""
+    m._conversation_language = ""
     return m
 
 
@@ -55,9 +58,27 @@ def test_pinned_english_always_wins_over_german_text() -> None:
     assert _manager("en")._spawn_ack_language(text) == "en"
 
 
-def test_spanish_auto_collapses_to_english_for_de_en_composer() -> None:
-    # The composer speaks de/en only; Spanish must degrade to English, not German.
-    assert _manager("auto")._spawn_ack_language("¿Qué ciudad me recomiendas?") == "en"
+def test_spanish_auto_keeps_spanish() -> None:
+    assert _manager("auto")._spawn_ack_language("¿Qué ciudad me recomiendas?") == "es"
+
+
+def test_portuguese_auto_keeps_portuguese() -> None:
+    text = "Podes dizer-me qual é a melhor cidade para visitar na Austrália?"  # i18n-allow
+    assert _manager("auto")._spawn_ack_language(text) == "pt"
+
+
+def test_every_pinned_reply_language_passes_through() -> None:
+    from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
+
+    for code in SUPPORTED_REPLY_LANGUAGES:
+        if code == "auto":
+            continue
+        assert _manager(code)._spawn_ack_language(AUSTRALIA_EN) == code
+
+
+def test_pinned_portuguese_wins_over_german_text() -> None:
+    text = "Mach bitte das Licht im Wohnzimmer an"  # i18n-allow: German voice fixture
+    assert _manager("pt")._spawn_ack_language(text) == "pt"
 
 
 def test_ambiguous_utterance_does_not_default_to_german() -> None:

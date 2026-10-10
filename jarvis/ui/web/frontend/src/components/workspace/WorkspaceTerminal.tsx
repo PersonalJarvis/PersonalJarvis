@@ -28,6 +28,7 @@ import {
   type TerminalAppearance,
 } from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
+import { fill, translate, useT } from "@/i18n";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
 import {
   activateTerminalLink,
@@ -99,6 +100,7 @@ export function WorkspaceTerminal({
   const [status, setStatus] = useState<Status>("connecting");
   const [error, setError] = useState<string | null>(null);
   const appAppearance = useThemeValue();
+  const t = useT();
   const appearance = requestedAppearance ?? appAppearance;
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -202,7 +204,7 @@ export function WorkspaceTerminal({
         ws = new WebSocket(buildUrl(paneKey, params));
       } catch {
         setStatus("error");
-        setError("Connection to the terminal failed.");
+        setError(translate("workspace_terminal.connection_failed"));
         return;
       }
       ws.onopen = () => {
@@ -235,15 +237,17 @@ export function WorkspaceTerminal({
           }
         } else if (msg.t === "exit") {
           setStatus("exited");
-          term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
+          term.write(
+            `\r\n\x1b[33m[${fill(translate("workspace_terminal.process_exited"), { code: msg.code ?? "?" })}]\x1b[0m\r\n`,
+          );
         } else if (msg.t === "error") {
           setStatus("error");
-          setError(msg.message ?? "terminal error");
+          setError(msg.message ?? translate("workspace_terminal.terminal_error"));
         }
       };
       ws.onerror = () => {
         setStatus("error");
-        setError("Connection to the terminal failed.");
+        setError(translate("workspace_terminal.connection_failed"));
       };
       ws.onclose = (ev) => {
         if (everLive) {
@@ -255,8 +259,8 @@ export function WorkspaceTerminal({
           setError((e) =>
             e ??
             (ev.code === 4401
-              ? "Terminal authorization failed — reopen to retry."
-              : `Terminal connection closed (code ${ev.code || "?"}).`),
+              ? translate("workspace_terminal.auth_failed")
+              : fill(translate("workspace_terminal.connection_closed"), { code: ev.code || "?" })),
           );
         }
       };
@@ -336,16 +340,16 @@ export function WorkspaceTerminal({
         </div>
         <span className="text-micro uppercase tracking-wider">
           {status === "live" ? (
-            <span className="text-muted-foreground">live</span>
+            <span className="text-muted-foreground">{t("workspace_terminal.status_live")}</span>
           ) : status === "error" ? (
             <span className="flex items-center gap-1 text-destructive">
               <AlertCircle className="h-3 w-3" />
-              error
+              {t("workspace_terminal.status_error")}
             </span>
           ) : status === "exited" ? (
-            <span className="text-muted-foreground">exited</span>
+            <span className="text-muted-foreground">{t("workspace_terminal.status_exited")}</span>
           ) : (
-            <span className="text-muted-foreground">connecting…</span>
+            <span className="text-muted-foreground">{t("workspace_terminal.status_connecting")}</span>
           )}
         </span>
       </header>}

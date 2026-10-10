@@ -206,7 +206,7 @@ Test connectivity and authentication for one provider.
 Pin the language Jarvis answers in (auto follows the spoken language).
 
 - **Endpoint:** `PUT /api/settings/reply-language`
-- **Arguments:** `language` (one of: auto, de, en, es; required); `persist` (boolean; optional)
+- **Arguments:** `language` (one of: auto, de, en, es, pt; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `languages`
 - **Voice example (EN):** "answer in german from now on"

@@ -113,7 +113,7 @@ export function AddFriendMenu({
           <ModeButton
             active={mode === "link"}
             icon={<Users className="h-3.5 w-3.5" />}
-            label="Pair-Link"
+            label={t("add_friend_menu.mode_pair_link")}
             onClick={() => setMode("link")}
           />
         </div>
@@ -136,7 +136,7 @@ export function AddFriendMenu({
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3 px-5 py-4">
-            <FieldLabel label="Display-Name">
+            <FieldLabel label={t("add_friend_menu.label_display_name")}>
               <input
                 type="text"
                 value={displayName}

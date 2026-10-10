@@ -19,6 +19,7 @@ import { openExternalUrl } from "@/lib/openExternal";
 import { PRODUCT_NAME } from "@/lib/branding";
 import { useEventStore } from "@/store/events";
 import type { AgentTemplateWire } from "@/lib/agentShare";
+import { fill, translate, useT } from "@/i18n";
 
 // ---------------------------------------------------------------------------
 // Community marketplace tab.
@@ -91,8 +92,8 @@ function portableNote(skill: CommunitySkillWire): string | null {
   if (skill.flavor !== "portable") return null;
   const agents = (skill.compatible_agents ?? []).filter(Boolean);
   return agents.length > 0
-    ? `Portable skill · also runs in ${agents.join(", ")}`
-    : "Portable skill · also runs in other agents";
+    ? fill(translate("plugins_community.portable_note_agents"), { agents: agents.join(", ") })
+    : translate("plugins_community.portable_note_other");
 }
 
 /** A published agent template (see jarvis/society/agent_template.py). */
@@ -172,15 +173,17 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} kB`;
 }
 
+/** Translation keys; translated where rendered. */
 const AUTH_MODE_LABEL: Record<string, string> = {
-  pat_paste: "Personal access token",
-  oauth_device_flow: "Device sign-in",
-  hosted_mcp_oauth_dcr: "OAuth sign-in",
-  oauth_pkce_loopback: "OAuth sign-in",
-  hosted_mcp_allowlist: "Account allowlist",
+  pat_paste: "plugins_community.auth_pat",
+  oauth_device_flow: "plugins_community.auth_device",
+  hosted_mcp_oauth_dcr: "plugins_community.auth_oauth",
+  oauth_pkce_loopback: "plugins_community.auth_oauth",
+  hosted_mcp_allowlist: "plugins_community.auth_allowlist",
 };
 
 export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: string) => void } = {}) {
+  const t = useT();
   const queryClient = useQueryClient();
   // The storefront section shows the same index with room to browse it; this
   // tab keeps the plugin connect flow next to the installed plugins.
@@ -215,7 +218,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
           .json()
           .then((body: { detail?: string }) => body.detail)
           .catch(() => undefined);
-        throw new Error(detail ?? `Install failed (${res.status})`);
+        throw new Error(detail ?? fill(translate("plugins_community.install_failed"), { status: res.status }));
       }
       return res.json();
     },
@@ -262,7 +265,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
           .json()
           .then((body: { detail?: string }) => body.detail)
           .catch(() => undefined);
-        throw new Error(detail ?? `Install failed (${res.status})`);
+        throw new Error(detail ?? fill(translate("plugins_community.install_failed"), { status: res.status }));
       }
       return res.json();
     },
@@ -303,38 +306,37 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
       <header className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="font-display text-base font-semibold tracking-tight text-foreground">
-            Community marketplace
+            {t("plugins_community.title")}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Plugins and skills published by anyone. Nothing here is
-            reviewed by the {PRODUCT_NAME} team — read what a card would connect
-            to before installing it.
+            {fill(t("plugins_community.intro"), { product: PRODUCT_NAME })}
           </p>
         </div>
         <Button
           size="sm"
           variant="outline"
           onClick={() => setActiveSection("marketplace")}
-          title="The whole marketplace — plugins and skills — in its own section"
+          title={t("plugins_community.marketplace_section_hint")}
         >
           <Store className="mr-1.5 h-3.5 w-3.5" />
-          Marketplace section
+          {t("plugins_community.marketplace_section")}
         </Button>
         <Button
           size="sm"
           variant="outline"
           onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
-          title="Publish your own plugin or skill on the marketplace website"
+          title={t("plugins_community.publish_hint")}
         >
           <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
-          Publish your own
+          {t("plugins_community.publish")}
         </Button>
         <Button
           size="sm"
           variant="ghost"
           onClick={() => refreshMutation.mutate()}
           disabled={refreshMutation.isPending}
-          title="Re-fetch the community index"
+          title={t("plugins_community.refresh")}
+          aria-label={t("plugins_community.refresh")}
         >
           <RefreshCw
             className={cn("h-3.5 w-3.5", refreshMutation.isPending && "animate-spin")}
@@ -350,7 +352,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search community plugins and skills…"
+            placeholder={t("plugins_community.search_placeholder")}
             className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-faint-foreground"
           />
         </label>
@@ -359,7 +361,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
       {plugins.length > 0 && (
         <section>
           <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
-            Plugins
+            {t("plugins_community.plugins")}
           </h3>
           <div className="grid gap-2 sm:grid-cols-2">
             {plugins.map((p) => (
@@ -381,7 +383,7 @@ export function CommunityTab({ onInstalled }: { onInstalled?: (pluginName: strin
       {skills.length > 0 && (
         <section>
           <h3 className="mb-3 font-display text-xs font-semibold text-muted-foreground">
-            Skills
+            {t("plugins_community.skills")}
           </h3>
           <div className="grid gap-2 sm:grid-cols-2">
             {skills.map((s) => (
@@ -453,41 +455,39 @@ function StatusNotice({
   error: unknown;
   isLoading: boolean;
 }) {
+  const t = useT();
   if (isLoading) {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading community index…
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("plugins_community.loading")}
       </p>
     );
   }
   if (error) {
     return (
       <Notice tone="error">
-        The community index could not be loaded. Check the connection and try
-        Refresh.
+        {t("plugins_community.error")}
       </Notice>
     );
   }
   if (status === "disabled") {
     return (
       <Notice tone="muted">
-        The community marketplace is switched off in the configuration
-        (marketplace.community_index_url is empty).
+        {t("plugins_community.disabled")}
       </Notice>
     );
   }
   if (status === "unavailable") {
     return (
       <Notice tone="error">
-        The community index is unreachable and no saved copy exists yet.
-        Connect to the internet once to load it.
+        {t("plugins_community.unavailable")}
       </Notice>
     );
   }
   if (status === "stale") {
     return (
       <Notice tone="warn">
-        Showing a saved copy — the index could not be refreshed just now.
+        {t("plugins_community.stale")}
       </Notice>
     );
   }
@@ -524,20 +524,20 @@ function Notice({
  *  are shown open — a fold would put the content one click away again, which
  *  is the state this panel exists to end. */
 function ContentsPanel({ name }: { name: string }) {
+  const t = useT();
   const { data, isLoading, error } = useEntryContents(name);
 
   if (isLoading) {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading the published files…
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("plugins_community.files_loading")}
       </p>
     );
   }
   if (error || !data) {
     return (
       <Notice tone="warn">
-        The published files could not be read just now. The install below is
-        unaffected — but you would be installing something you have not seen.
+        {t("plugins_community.files_error")}
       </Notice>
     );
   }
@@ -548,9 +548,11 @@ function ContentsPanel({ name }: { name: string }) {
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <p className="text-xs font-medium text-foreground">What's inside</p>
+        <p className="text-xs font-medium text-foreground">{t("plugins_community.whats_inside")}</p>
         <p className="shrink-0 text-micro text-muted-foreground">
-          {data.files.length === 1 ? "1 file" : `${data.files.length} files`} ·{" "}
+          {data.files.length === 1
+            ? t("plugins_community.files_one")
+            : fill(t("plugins_community.files_other"), { count: data.files.length })} ·{" "}
           {formatBytes(total)}
         </p>
       </div>
@@ -576,16 +578,14 @@ function ContentsPanel({ name }: { name: string }) {
             </pre>
             {file.truncated && (
               <p className="bg-card px-2.5 py-1.5 text-micro text-foreground">
-                Shown up to 256 kB — the published file is longer. Open the
-                source to read the rest.
+                {t("plugins_community.file_truncated")}
               </p>
             )}
           </div>
         ))}
       </div>
       <p className="mt-1.5 text-micro text-muted-foreground">
-        Exactly as published. These are the bytes {PRODUCT_NAME} downloads when
-        you install it — nothing is added or rewritten in between.
+        {fill(t("plugins_community.files_exact"), { product: PRODUCT_NAME })}
       </p>
     </div>
   );
@@ -636,6 +636,7 @@ function CommunityPluginRow({
   onUninstall: () => void;
   uninstalling: boolean;
 }) {
+  const t = useT();
   const name = plugin.display_name ?? plugin.name;
   if (!plugin.valid) {
     return (
@@ -651,7 +652,7 @@ function CommunityPluginRow({
             className="truncate text-xs text-muted-foreground"
             title={plugin.error}
           >
-            Not installable: {plugin.error}
+            {fill(t("plugins_community.not_installable"), { error: plugin.error ?? "" })}
           </p>
         </div>
       </article>
@@ -673,18 +674,18 @@ function CommunityPluginRow({
         type="button"
         onClick={onInstall}
         className="min-w-0 flex-1 text-left"
-        title={`Read what ${name} contains`}
+        title={fill(t("plugins_community.read_contents"), { entry: name })}
       >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {name}
           </h4>
           <span className="shrink-0 text-micro font-medium text-foreground">
-            Community · not reviewed
+            {t("plugins_community.badge_unreviewed")}
           </span>
           {plugin.installed && (
             <span className="shrink-0 text-micro font-medium text-foreground-strong">
-              · Installed
+              · {t("plugins_community.installed")}
             </span>
           )}
         </div>
@@ -692,7 +693,9 @@ function CommunityPluginRow({
           {plugin.description}
         </p>
         <p className="truncate text-micro text-muted-foreground">
-          {plugin.publisher ? `by ${plugin.publisher}` : "unknown publisher"}
+          {plugin.publisher
+            ? fill(t("plugins_community.by"), { publisher: plugin.publisher })
+            : t("plugins_community.unknown_publisher")}
           {plugin.version ? ` · v${plugin.version}` : ""}
         </p>
       </button>
@@ -701,8 +704,8 @@ function CommunityPluginRow({
           type="button"
           onClick={() => openExternalUrl(plugin.source_url ?? "")}
           className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="View the published source"
-          aria-label={`View source of ${name}`}
+          title={t("plugins_community.view_source")}
+          aria-label={fill(t("plugins_community.view_source_of"), { entry: name })}
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </button>
@@ -713,7 +716,8 @@ function CommunityPluginRow({
           variant="ghost"
           onClick={onUninstall}
           disabled={uninstalling}
-          title="Remove this plugin and its stored access"
+          title={t("plugins_community.remove_hint")}
+          aria-label={t("plugins_community.remove_hint")}
         >
           {uninstalling ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -724,13 +728,13 @@ function CommunityPluginRow({
       ) : plugin.seed_conflict ? (
         <span
           className="shrink-0 text-micro text-muted-foreground"
-          title="A built-in plugin already uses this name"
+          title={t("plugins_community.name_taken_hint")}
         >
-          Name taken
+          {t("plugins_community.name_taken")}
         </span>
       ) : (
         <Button size="sm" variant="outline" onClick={onInstall}>
-          Install
+          {t("plugins_community.install")}
         </Button>
       )}
     </article>
@@ -748,6 +752,7 @@ function CommunitySkillRow({
   installing: boolean;
   installError: string | null;
 }) {
+  const t = useT();
   return (
     <article
       className={cn(
@@ -763,21 +768,21 @@ function CommunitySkillRow({
         type="button"
         onClick={onInstall}
         className="min-w-0 flex-1 text-left"
-        title={`Read what ${skill.title} tells the assistant`}
+        title={fill(t("plugins_community.read_skill"), { entry: skill.title })}
       >
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <h4 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {skill.title}
           </h4>
           <span className="shrink-0 text-micro font-medium text-foreground">
-            Community · not reviewed
+            {t("plugins_community.badge_unreviewed")}
           </span>
           {skill.flavor === "portable" && (
             <span
               className="shrink-0 rounded-full border border-border px-1.5 text-micro font-medium text-muted-foreground"
               title={portableNote(skill) ?? undefined}
             >
-              Portable
+              {t("plugins_community.portable")}
             </span>
           )}
         </div>
@@ -785,7 +790,9 @@ function CommunitySkillRow({
           {skill.description}
         </p>
         <p className="truncate text-micro text-muted-foreground">
-          {skill.publisher ? `by ${skill.publisher}` : "unknown publisher"}
+          {skill.publisher
+            ? fill(t("plugins_community.by"), { publisher: skill.publisher })
+            : t("plugins_community.unknown_publisher")}
           {installError ? ` · ${installError}` : ""}
         </p>
       </button>
@@ -794,26 +801,26 @@ function CommunitySkillRow({
           type="button"
           onClick={() => openExternalUrl(skill.source_url ?? "")}
           className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title="View the published source"
-          aria-label={`View source of ${skill.title}`}
+          title={t("plugins_community.view_source")}
+          aria-label={fill(t("plugins_community.view_source_of"), { entry: skill.title })}
         >
           <ExternalLink className="h-3.5 w-3.5" />
         </button>
       )}
       {skill.installed ? (
         <span className="inline-flex shrink-0 items-center gap-1 text-micro font-medium text-foreground-strong">
-          <Check className="h-3 w-3" /> Installed
+          <Check className="h-3 w-3" /> {t("plugins_community.installed")}
         </span>
       ) : skill.raw_url ? (
         <Button size="sm" variant="outline" onClick={onInstall} disabled={installing}>
-          {installing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Install"}
+          {installing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("plugins_community.install")}
         </Button>
       ) : (
         <span
           className="shrink-0 text-micro text-muted-foreground"
-          title="No direct download — open the source and follow its steps"
+          title={t("plugins_community.manual_hint")}
         >
-          Manual
+          {t("plugins_community.manual")}
         </span>
       )}
     </article>
@@ -837,6 +844,7 @@ export function SkillInstallConsentDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !isPending) onCancel();
@@ -869,30 +877,32 @@ export function SkillInstallConsentDialog({
             id="community-skill-install-title"
             className="font-display text-base font-semibold tracking-tight"
           >
-            {skill.installed ? skill.title : `Install ${skill.title}?`}
+            {skill.installed ? skill.title : fill(t("plugins_community.install_named"), { entry: skill.title })}
           </h2>
           <p className="text-micro text-foreground">
-            Community skill · not reviewed
-            {skill.installed ? " · installed" : ""}
+            {t("plugins_community.skill_unreviewed")}
+            {skill.installed ? ` · ${t("plugins_community.installed_lower")}` : ""}
           </p>
         </header>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
           <p className="text-muted-foreground">{skill.description}</p>
           <p className="text-xs text-muted-foreground">
-            Published by{" "}
+            {t("plugins_community.published_by")}{" "}
             <span className="text-foreground">
-              {skill.publisher ?? "an unknown author"}
+              {skill.publisher ?? t("plugins_community.unknown_author")}
             </span>
-            {skill.version ? ` · version ${skill.version}` : ""}
+            {skill.version ? ` · ${fill(t("plugins_community.version"), { version: skill.version })}` : ""}
           </p>
           {/* A portable skill was written for the open format, not for this
               app. Saying so up front explains both the extra install command
               below and why settings meant for another agent are ignored. */}
           {portableNote(skill) && (
             <p className="text-xs text-muted-foreground">
-              {portableNote(skill)}. {PRODUCT_NAME} follows its instructions and
-              ignores the settings meant for other agents.
+              {fill(t("plugins_community.portable_follow"), {
+                note: portableNote(skill) ?? "",
+                product: PRODUCT_NAME,
+              })}
             </p>
           )}
           {/* The instructions themselves, before the fine print: a skill IS
@@ -900,7 +910,7 @@ export function SkillInstallConsentDialog({
           <ContentsPanel name={skill.name} />
           <div>
             <p className="mb-1 text-xs font-medium text-foreground">
-              The instructions are downloaded from:
+              {t("plugins_community.skill_download_from")}
             </p>
             <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
               {skill.raw_url}
@@ -913,12 +923,11 @@ export function SkillInstallConsentDialog({
             <InstallTerminal
               commands={skillInstall.commands}
               path={`~/marketplace/${skill.name}`}
-              comment="# The same install, from a terminal."
+              comment={t("plugins_community.terminal_comment")}
             />
           )}
           <p className="text-xs text-muted-foreground">
-            A skill is a set of instructions the assistant follows — the text
-            above is exactly what it would be told to do.
+            {t("plugins_community.skill_explainer")}
           </p>
           {errorMessage && (
             <p className="flex items-start gap-2 rounded-md bg-secondary px-2 py-1.5 text-xs text-destructive">
@@ -930,14 +939,14 @@ export function SkillInstallConsentDialog({
 
         <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
-            {skill.installed ? "Close" : "Cancel"}
+            {t(skill.installed ? "common.close" : "common.cancel")}
           </Button>
           {!skill.installed && (
             <Button size="sm" onClick={onConfirm} disabled={isPending}>
               {isPending ? (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               ) : null}
-              Install
+              {t("plugins_community.install")}
             </Button>
           )}
         </footer>
@@ -963,6 +972,7 @@ export function InstallConsentDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !isPending) onCancel();
@@ -994,11 +1004,11 @@ export function InstallConsentDialog({
               id="community-install-title"
               className="font-display text-base font-semibold tracking-tight"
             >
-              {plugin.installed ? name : `Install ${name}?`}
+              {plugin.installed ? name : fill(t("plugins_community.install_named"), { entry: name })}
             </h2>
             <p className="text-micro text-foreground">
-              Community plugin · not reviewed
-              {plugin.installed ? " · installed" : ""}
+              {t("plugins_community.plugin_unreviewed")}
+              {plugin.installed ? ` · ${t("plugins_community.installed_lower")}` : ""}
             </p>
           </div>
         </header>
@@ -1006,18 +1016,17 @@ export function InstallConsentDialog({
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4 text-sm">
           <p className="text-muted-foreground">{plugin.description}</p>
           <p className="text-xs text-muted-foreground">
-            Published by{" "}
+            {t("plugins_community.published_by")}{" "}
             <span className="text-foreground">
-              {plugin.publisher ?? "an unknown author"}
+              {plugin.publisher ?? t("plugins_community.unknown_author")}
             </span>
-            {plugin.version ? ` · version ${plugin.version}` : ""}
+            {plugin.version ? ` · ${fill(t("plugins_community.version"), { version: plugin.version })}` : ""}
           </p>
 
           {mcp?.transport === "http" && mcp.url && (
             <div>
               <p className="mb-1 text-xs font-medium text-foreground">
-                After you connect it, requests and your {name} access token go
-                to:
+                {fill(t("plugins_community.sends_to"), { entry: name })}
               </p>
               <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
                 {mcp.url}
@@ -1027,7 +1036,7 @@ export function InstallConsentDialog({
           {mcp?.transport === "stdio" && (
             <div>
               <p className="mb-1 text-xs font-medium text-foreground">
-                After you connect it, this command runs on your computer:
+                {t("plugins_community.runs_command")}
               </p>
               <code className="block break-all rounded-md border border-border bg-muted px-2 py-1.5 text-xs text-foreground">
                 {(mcp.install ?? []).join(" ")}
@@ -1036,14 +1045,14 @@ export function InstallConsentDialog({
           )}
           {!mcp && (
             <p className="text-xs text-muted-foreground">
-              This entry is metadata only — it adds no server and runs no
-              command.
+              {t("plugins_community.metadata_only")}
             </p>
           )}
           {authLabel && (
             <p className="text-xs text-muted-foreground">
-              Sign-in method: <span className="text-foreground">{authLabel}</span>
-              {" "}— installing does not connect anything yet.
+              {t("plugins_community.signin_method")}{" "}
+              <span className="text-foreground">{t(authLabel)}</span>{" "}
+              {t("plugins_community.signin_not_yet")}
             </p>
           )}
 
@@ -1059,7 +1068,7 @@ export function InstallConsentDialog({
             <InstallTerminal
               commands={pluginInstall.commands}
               path={`~/marketplace/${plugin.name}`}
-              comment="# The same install, from a terminal."
+              comment={t("plugins_community.terminal_comment")}
             />
           )}
 
@@ -1073,14 +1082,14 @@ export function InstallConsentDialog({
 
         <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-3">
           <Button size="sm" variant="ghost" onClick={onCancel} disabled={isPending}>
-            {plugin.installed ? "Close" : "Cancel"}
+            {t(plugin.installed ? "common.close" : "common.cancel")}
           </Button>
           {!plugin.installed && (
             <Button size="sm" onClick={onConfirm} disabled={isPending}>
               {isPending ? (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               ) : null}
-              Install
+              {t("plugins_community.install")}
             </Button>
           )}
         </footer>

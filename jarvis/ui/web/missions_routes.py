@@ -32,7 +32,9 @@ from jarvis.missions.events import (
     MissionApproved,
     MissionCancelled,
     MissionFailed,
+    MissionLanguage,
     MissionTimedOut,
+    coerce_mission_language,
     now_ms,
 )
 from jarvis.missions.isolation.worktree import resolve_outputs_root
@@ -45,6 +47,7 @@ from jarvis.missions.state_machine import (
 )
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
+from jarvis.missions.voice.readback import approved_summary
 from jarvis.ui.web.missions_worker import extract_worker_missions
 
 logger = logging.getLogger(__name__)
@@ -113,7 +116,7 @@ class DispatchBody(BaseModel):
     """Payload for POST /dispatch."""
 
     prompt: str
-    language: Literal["de", "en"] = "de"
+    language: MissionLanguage = "de"
     confirmed: bool = False  # Phase-5 destructive_confirm gate (UI-Path)
 
 
@@ -298,7 +301,7 @@ async def get_mission_result(
     result_uri: str | None = None
     reason: str | None = None
     if isinstance(terminal, MissionApproved):
-        summary = terminal.summary_de if language == "de" else terminal.summary_en
+        summary = approved_summary(terminal, language)
         result_uri = terminal.result_uri
     elif isinstance(terminal, (MissionFailed, MissionCancelled)):
         reason = terminal.reason
@@ -762,9 +765,7 @@ async def rerun_mission(
         action = "restart"
         source_actor_reason = "ui_restart"
 
-    safe_language: Literal["de", "en"] = (
-        language if language in ("de", "en") else "de"
-    )
+    safe_language = coerce_mission_language(language)
     new_mission_id = await mgr.dispatch(
         prompt=prompt,
         language=safe_language,

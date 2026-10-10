@@ -26,6 +26,7 @@ import { Check, Copy } from "lucide-react";
 import { robustCopy } from "@/lib/clipboard";
 import { shellPrompt, type InstallCommand } from "@/lib/installStandard";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 export function InstallTerminal({
   commands,
@@ -42,6 +43,7 @@ export function InstallTerminal({
   className?: string;
 }) {
   const [activeId, setActiveId] = useState(commands[0]?.id);
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<number | undefined>(undefined);
 
@@ -64,7 +66,7 @@ export function InstallTerminal({
   return (
     <div className={className}>
       {commands.length > 1 && (
-        <div role="tablist" aria-label="Install method" className="mb-1.5 flex gap-1">
+        <div role="tablist" aria-label={t("install_standard.method")} className="mb-1.5 flex gap-1">
           {commands.map((cmd) => (
             <button
               key={cmd.id}
@@ -112,7 +114,7 @@ export function InstallTerminal({
           <button
             type="button"
             onClick={onCopy}
-            aria-label="Copy the install command"
+            aria-label={t("install_standard.copy_command")}
             className={cn(
               "ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 font-mono text-xs transition-colors",
               copied
@@ -125,7 +127,7 @@ export function InstallTerminal({
             ) : (
               <Copy className="h-3 w-3" />
             )}
-            {copied ? "Copied" : "Copy"}
+            {t(copied ? "install_standard.copied" : "install_standard.copy")}
           </button>
         </div>
 

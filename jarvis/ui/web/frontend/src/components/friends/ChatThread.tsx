@@ -12,6 +12,7 @@ import {
 import type { FriendDetail, FriendMessage } from "@/hooks/useFriends";
 import { SourceBadge } from "./SourceBadge";
 import { cn } from "@/lib/utils";
+import { uiLocale } from "@/lib/boardInsights";
 
 /**
  * Chat thread for a friend (right side of the chat tab).
@@ -160,7 +161,7 @@ function EmptyThread({ hasChannel }: { hasChannel: boolean }) {
 function formatTimestamp(ns: number): string {
   try {
     const date = new Date(ns / 1_000_000);
-    return date.toLocaleTimeString("de-DE", {
+    return date.toLocaleTimeString(uiLocale(), {
       hour: "2-digit",
       minute: "2-digit",
     });

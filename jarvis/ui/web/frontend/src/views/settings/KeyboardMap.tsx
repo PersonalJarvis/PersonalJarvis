@@ -189,7 +189,7 @@ export function KeyboardMap({
             <div className="flex gap-1">
               {MOUSE_CAPS.map((cap) => (
                 <div key={cap.code} className="w-[3.25rem]">
-                  <Key cap={cap} {...keyProps} />
+                  <Key cap={cap.labelKey ? { ...cap, label: t(cap.labelKey) } : cap} {...keyProps} />
                 </div>
               ))}
             </div>

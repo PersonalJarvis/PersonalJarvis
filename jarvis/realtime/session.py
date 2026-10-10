@@ -1042,6 +1042,7 @@ _LOCAL_OUTPUT_FAILURE: dict[str, str] = {
     "de": "Ich konnte das gerade nicht abspielen. Der Lautsprecher war weg.",  # i18n-allow
     "en": "I couldn't play that just now. The speaker disappeared.",
     "es": "No pude reproducirlo ahora. El altavoz desapareció.",  # i18n-allow
+    "pt": "Não consegui reproduzir isso agora. O altifalante desapareceu.",  # i18n-allow
 }
 _HISTORY_LOST_INSTRUCTION = (
     "The previous realtime connection dropped and this is a FRESH session. "
@@ -1053,6 +1054,7 @@ _OUTPUT_LANGUAGE_FAILURE: dict[str, str] = {
     "de": "Ich konnte gerade keine sichere Antwort auf Deutsch erzeugen.",  # i18n-allow
     "en": "I couldn't produce a safe answer in English just now.",
     "es": "No pude generar una respuesta segura en español ahora mismo.",  # i18n-allow
+    "pt": "Não consegui gerar uma resposta segura em português agora.",  # i18n-allow
 }
 _PUBLIC_FACT_UNCERTAINTY: dict[str, str] = {
     "de": (  # i18n-allow
@@ -1062,6 +1064,9 @@ _PUBLIC_FACT_UNCERTAINTY: dict[str, str] = {
     "en": "I couldn't verify that reliably with a public source just now.",
     "es": (  # i18n-allow
         "No pude verificarlo de forma fiable con una fuente pública ahora mismo."
+    ),
+    "pt": (  # i18n-allow
+        "Não consegui confirmar isso com fiabilidade numa fonte pública agora."
     ),
 }
 # When a delegated Brain reply ends in a question (clarify or confirmation),
@@ -1705,6 +1710,12 @@ _DELEGATE_BRIDGE_TEXTS: dict[str, tuple[str, ...]] = {
         "Sigo en ello, un momento.",
         "Dame un momento más.",
     ),
+    "pt": (  # i18n-allow: localized runtime progress output
+        "Ainda estou a tratar disso.",
+        "Só um momento, está quase.",
+        "Continuo nisso, dá-me um momento.",
+        "Dá-me só mais um momento.",
+    ),
 }
 
 
@@ -1727,6 +1738,9 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
         "es": (  # i18n-allow: localized runtime voice output
             "La conexión de voz no se estableció a tiempo, así que lo detuve."
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "A ligação de voz não ficou pronta a tempo, por isso parei."
+        ),
     },
     "unavailable": {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1735,6 +1749,9 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
         "en": "I couldn't establish the voice connection just now.",
         "es": (  # i18n-allow: localized runtime voice output
             "No pude establecer la conexión de voz ahora mismo."
+        ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Não consegui estabelecer a ligação de voz agora."
         ),
     },
     "rate_limited": {
@@ -1750,6 +1767,10 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
             "La conexión de voz está saturada ahora mismo. "
             "Inténtalo de nuevo en un momento."
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "A ligação de voz está sobrecarregada neste momento. "
+            "Tenta outra vez daqui a pouco."
+        ),
     },
     "no_credits": {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1764,6 +1785,10 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
             "Se agotó el saldo de la conexión de voz. "
             "Recárgalo con el proveedor y volverá a funcionar."
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "O saldo da ligação de voz esgotou-se. "
+            "Carrega-o no fornecedor e volta a funcionar."
+        ),
     },
     "dropped": {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1772,6 +1797,9 @@ _HANDSHAKE_FAILURE_MESSAGES: dict[str, dict[str, str]] = {
         "en": "The voice connection dropped.",
         "es": (  # i18n-allow: localized runtime voice output
             "Se cortó la conexión de voz."
+        ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "A ligação de voz caiu."
         ),
     },
 }
@@ -1843,6 +1871,11 @@ _INTERRUPT_ACK_TEXTS: dict[str, tuple[str, ...]] = {
         "Vale, lo he detenido.",
         "De acuerdo, lo cancelo.",
         "Vale, lo dejo.",
+    ),
+    "pt": (  # i18n-allow: localized runtime voice output
+        "Ok, parei isso.",
+        "Está bem, vou cancelar isso.",
+        "Ok, deixo isso.",
     ),
 }
 
@@ -1955,7 +1988,9 @@ _REALTIME_SAFETY_APPENDIX = (
     "delivered it to the user. Never repeat or paraphrase an earlier tagged "
     "result in a later turn unless the user explicitly asks for a repeat."
 )
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German", "en": "English", "es": "Spanish", "pt": "European Portuguese",
+}
 
 _REALTIME_ENDING_SECTION_RE = re.compile(
     r"(?ms)^ENDING THE CALL[ \t]*\r?\n.*?(?=^CONTEXT[ \t]*(?:\r?\n|\Z)|\Z)"

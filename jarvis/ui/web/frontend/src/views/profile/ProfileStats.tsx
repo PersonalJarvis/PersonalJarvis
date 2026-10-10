@@ -6,7 +6,8 @@
  */
 import { useBoardSummary } from "@/hooks/useBoard";
 import { useBoardInsights } from "@/hooks/useBoardInsights";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 
 function Stat({
   label,
@@ -38,7 +39,7 @@ function Stat({
 
 export function ProfileStats() {
   const t = useT();
-  const ui = useUiLanguage();
+  const ui = useRunLocale();
   const summary = useBoardSummary();
   const insights = useBoardInsights();
 

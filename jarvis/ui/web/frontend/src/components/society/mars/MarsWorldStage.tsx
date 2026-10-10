@@ -165,7 +165,7 @@ export function MarsWorldStage({ topRight, onOpenLedger, onSelectAgent, stationP
         {navigation.isError && <p role="status">{t("society.mars.positions_offline")}</p>}
         <MarsBackgroundControl />
         <p>{t(mode === "player" ? "society.mars.player_help" : "society.mars.orbit_help")}</p>
-        <p role="status" aria-live="polite">{selectedBuilding ? `${selectedBuilding.name} — ${t(selectedBuilding.access === "required-interior" ? "society.mars.interior_pending" : "society.mars.access_pending")}` : t("society.mars.placeholder_actor")}</p>
+        <p role="status" aria-live="polite">{selectedBuilding ? `${t(`society.mars.building_${selectedBuilding.id}`)} — ${t(selectedBuilding.access === "required-interior" ? "society.mars.interior_pending" : "society.mars.access_pending")}` : t("society.mars.placeholder_actor")}</p>
         {selected === "operations" && onOpenStation && <button type="button" className="mars-use-station" onClick={onOpenStation}>{t("society.mars.station_title")}</button>}
       </div>
     </section>

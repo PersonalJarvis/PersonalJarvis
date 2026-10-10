@@ -29,6 +29,7 @@ import {
   Youtube,
 } from "lucide-react";
 
+import { translate } from "@/i18n";
 import { agentBrandNow } from "@/lib/agentBrand";
 
 export interface ToolAppearance {
@@ -40,9 +41,8 @@ export interface ToolAppearance {
   iconColor: string;
 }
 
-const DEFAULT: ToolAppearance = {
+const DEFAULT: Omit<ToolAppearance, "label"> = {
   Icon: Play,
-  label: "Tool",
   bg: "bg-zinc-800",
   ring: "ring-zinc-600",
   iconColor: "text-zinc-300",
@@ -105,7 +105,7 @@ export function getToolAppearance(
   if (tool === "multi_spawn" || tool === "multi-spawn") {
     return {
       Icon: Users,
-      label: "Multi-Spawn",
+      label: translate("subagents_view.tool_multi_spawn"),
       bg: "bg-purple-950",
       ring: "ring-purple-500",
       iconColor: "text-purple-300",
@@ -130,7 +130,7 @@ export function getToolAppearance(
   ) {
     return {
       Icon: Camera,
-      label: "Screenshot",
+      label: translate("subagents_view.tool_screenshot"),
       bg: "bg-pink-950",
       ring: "ring-pink-500",
       iconColor: "text-pink-300",
@@ -141,7 +141,7 @@ export function getToolAppearance(
   if (tool === "search_web" || tool === "search-web") {
     return {
       Icon: Search,
-      label: "Web Search",
+      label: translate("subagents_view.tool_web_search"),
       bg: "bg-blue-950",
       ring: "ring-blue-500",
       iconColor: "text-blue-300",
@@ -224,7 +224,7 @@ export function getToolAppearance(
     }
     return {
       Icon: AppWindow,
-      label: "Open App",
+      label: translate("subagents_view.tool_open_app"),
       bg: "bg-indigo-950",
       ring: "ring-indigo-500",
       iconColor: "text-indigo-300",
@@ -235,7 +235,7 @@ export function getToolAppearance(
   if (tool === "type_text" || tool === "type-text") {
     return {
       Icon: Keyboard,
-      label: "Type Text",
+      label: translate("subagents_view.tool_type_text"),
       bg: "bg-slate-900",
       ring: "ring-slate-500",
       iconColor: "text-slate-300",
@@ -245,7 +245,7 @@ export function getToolAppearance(
   if (tool === "remember") {
     return {
       Icon: MessageSquare,
-      label: "Remember",
+      label: translate("subagents_view.tool_remember"),
       bg: "bg-foreground",
       ring: "ring-foreground",
       iconColor: "text-foreground",
@@ -265,7 +265,7 @@ export function getToolAppearance(
   if (tool === "dispatch_to_admin" || tool === "dispatch-to-admin") {
     return {
       Icon: Server,
-      label: "Admin Op",
+      label: translate("subagents_view.tool_admin_op"),
       bg: "bg-rose-950",
       ring: "ring-rose-500",
       iconColor: "text-rose-300",

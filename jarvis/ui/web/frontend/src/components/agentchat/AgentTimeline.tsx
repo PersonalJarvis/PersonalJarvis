@@ -11,7 +11,8 @@ import { TurnTrace, type Decide, type TraceLook } from "./WorkTrace";
 import type { TimelineItem, TurnItem, TextBlock } from "./reduce";
 import { TraceMessageLine } from "./TraceTimeline";
 import { attachTurnMessages, type TraceMessage } from "./turnMessages";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 
 /** Shared transcript shell; the work trace owns all execution presentation. */
@@ -255,9 +256,10 @@ export function timeStamps(items: TimelineItem[], now: Date = new Date()): Map<s
 }
 
 function stampLabel(at: Date, now: Date): string {
-  const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const locale = localeForUiLanguage(useI18nStore.getState().ui);
+  const time = at.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
   if (at.toDateString() === now.toDateString()) return time;
-  const date = at.toLocaleDateString(undefined, {
+  const date = at.toLocaleDateString(locale, {
     month: "short",
     day: "numeric",
     ...(at.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),

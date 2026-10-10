@@ -13,6 +13,7 @@ import type {
   PermissionModeOption,
 } from "./agentChatApi";
 import type { ChatProject } from "./chatLibraryApi";
+import { fill, translate } from "@/i18n";
 
 export interface AgentStatus {
   name: string;
@@ -595,7 +596,7 @@ async function detail(res: Response): Promise<string> {
   } catch {
     /* fall through */
   }
-  return `request failed: ${res.status}`;
+  return fill(translate("shell_errors.request_failed_status"), { status: res.status });
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -1158,7 +1159,7 @@ export async function openTerminalTarget(
   if (!res.ok) throw new Error(await detail(res));
   const result = (await res.json()) as OpenTerminalTargetResult;
   if (!result.opened) {
-    throw new Error("Could not open that file or folder on this computer.");
+    throw new Error(translate("shell_errors.open_path_failed"));
   }
   return result;
 }
@@ -1399,7 +1400,7 @@ export async function addTerminal(payload: {
   const body = (await res.json()) as { state: IdeState; message?: string };
   if (body.message) options.onMessage?.(body.message);
   if (!body.state.session)
-    throw new Error("The workspace closed while adding a terminal.");
+    throw new Error(translate("shell_errors.workspace_closed_adding"));
   return body.state.session;
 }
 
@@ -1471,7 +1472,7 @@ export async function saveLayoutWeights(layout: LayoutNode): Promise<SessionStat
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
   if (!body.state.session)
-    throw new Error("The workspace closed while saving pane sizes.");
+    throw new Error(translate("shell_errors.workspace_closed_sizes"));
   return body.state.session;
 }
 
@@ -1502,7 +1503,7 @@ export async function moveTerminal(
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
   if (!body.state.session)
-    throw new Error("The workspace closed while moving a terminal.");
+    throw new Error(translate("shell_errors.workspace_closed_moving"));
   return body.state.session;
 }
 
@@ -1573,7 +1574,7 @@ export async function transferTerminal(
     // The route's own 404 names the missing pane; a bare "Not Found" (or a
     // 405) means the backend serving this view predates the route.
     if (res.status === 405 || (res.status === 404 && message === "Not Found")) {
-      throw new Error("This view is newer than the backend — restart the app and try again.");
+      throw new Error(translate("shell_errors.view_newer_than_backend"));
     }
     throw new Error(message);
   }
@@ -1602,7 +1603,7 @@ export async function renameTerminal(
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
   if (!body.state.session)
-    throw new Error("The workspace closed while renaming a terminal.");
+    throw new Error(translate("shell_errors.workspace_closed_renaming"));
   return body.state.session;
 }
 
@@ -1654,7 +1655,7 @@ export async function forkTerminal(
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState; terminal: TerminalState };
   if (!body.state.session)
-    throw new Error("The workspace closed while forking a terminal.");
+    throw new Error(translate("shell_errors.workspace_closed_forking"));
   return { session: body.state.session, terminal: body.terminal };
 }
 
@@ -1712,7 +1713,7 @@ export async function closeTerminal(
   );
   if (!res.ok) throw new Error(await detail(res));
   const body = (await res.json()) as { state: IdeState };
-  if (!body.state.session) throw new Error("The workspace is no longer open.");
+  if (!body.state.session) throw new Error(translate("shell_errors.workspace_not_open"));
   return body.state.session;
 }
 
@@ -1759,7 +1760,7 @@ export async function closeTerminals(names: string[]): Promise<CloseTerminalsRes
     failed: Array<{ name: string; detail: string }>;
     state: IdeState;
   };
-  if (!body.state.session) throw new Error("The workspace is no longer open.");
+  if (!body.state.session) throw new Error(translate("shell_errors.workspace_not_open"));
   return {
     closed: body.closed ?? [],
     failed: body.failed ?? [],

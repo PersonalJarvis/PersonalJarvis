@@ -58,7 +58,8 @@ import { BackLink, SoftButton, StatusDot } from "@/components/extensions/primiti
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   buildStory,
   deriveOutcome,
@@ -165,7 +166,7 @@ interface Props {
 
 export function AgentInsight({ agent, onBack, onOpenOutput }: Props) {
   const t = useT();
-  const locale = useUiLanguage();
+  const locale = useRunLocale();
   const assistantName = useEventStore((s) => s.assistantName);
   const agentName = agentBrand(assistantName);
   const missionId = agent.mission_id ?? missionIdFromTraceId(agent.trace_id);

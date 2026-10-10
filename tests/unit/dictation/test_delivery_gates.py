@@ -283,9 +283,9 @@ async def test_a_user_pin_outranks_the_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_tag_outside_de_en_es_is_kept_rather_than_coerced() -> None:
-    """``detect_text_language`` only knows de/en/es, so letting it overrule a
-    French tag would relabel that dictation as whichever of the three it scored
+async def test_a_tag_outside_the_supported_set_is_kept_rather_than_coerced() -> None:
+    """``detect_text_language`` only knows de/en/es/pt, so letting it overrule a
+    French tag would relabel that dictation as whichever of the four it scored
     highest on — and then run THAT language's filler rules over it. Keeping the
     tag makes the cleanup a documented no-op, which is the honest answer for
     ~95 of the 100 recognition languages.
@@ -295,7 +295,7 @@ async def test_a_tag_outside_de_en_es_is_kept_rather_than_coerced() -> None:
     so a resolver that trusted the text here would clean French with Spanish
     rules.
     """
-    french = "Il faut que je vous envoie le document avec les chiffres tout de suite."
+    french = "Le rapport est sur la table, avec les notes de la réunion."
     from jarvis.core.turn_language import detect_text_language
 
     assert detect_text_language(french) == "es", "fixture no longer bites"

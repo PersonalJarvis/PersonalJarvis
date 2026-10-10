@@ -492,9 +492,9 @@ def test_build_native_bundle_layout_and_clang_invocation(
 
     assert info["JarvisBundleFormatVersion"] == _BUNDLE_FORMAT_VERSION
     assert "other apps" in info["NSAppleEventsUsageDescription"].lower()
-    # The German and Spanish dialog text is laid out with the bundle, before signing.
-    assert info["CFBundleLocalizations"] == ["en", "de", "es"]
-    for language in ("de", "es"):
+    # The German, Spanish and Portuguese dialog text is laid out with the bundle, before signing.
+    assert info["CFBundleLocalizations"] == ["en", "de", "es", "pt-PT"]
+    for language in ("de", "es", "pt-PT"):
         strings = bundle / "Contents" / "Resources" / f"{language}.lproj" / "InfoPlist.strings"
         assert "NSMicrophoneUsageDescription" in strings.read_text(encoding="utf-8")
     executable = bundle / "Contents" / "MacOS" / "PersonalJarvis"

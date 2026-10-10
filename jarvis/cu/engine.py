@@ -212,7 +212,12 @@ _JUDGE_SYSTEM = (
     "* When done:false, state briefly in proof what is still missing."
 )
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+    "pt": "European Portuguese",
+}
 
 
 def _proof_language_directive(output_language: str | None) -> str:

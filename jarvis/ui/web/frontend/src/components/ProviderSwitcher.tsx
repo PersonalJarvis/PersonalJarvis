@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { BrandedSelect } from "@/components/ui/select";
 import { switchBrainProvider, useProviders } from "@/hooks/useProviders";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 /**
@@ -35,7 +35,7 @@ export function ProviderSwitcher() {
     setPending(true);
     try {
       await switchBrainProvider(choice);
-      pushToast("success", `Brain → ${choice}`);
+      pushToast("success", fill(t("provider_switcher.switched_toast"), { provider: choice }));
       window.dispatchEvent(new CustomEvent("jarvis:brain-switched"));
       refetch();
     } catch (e) {
@@ -48,12 +48,12 @@ export function ProviderSwitcher() {
   return (
     <div className="space-y-3">
       <label className="text-xs text-muted-foreground">
-        Active Brain
+        {t("provider_switcher.active_brain")}
       </label>
       <BrandedSelect
         value={choice}
         onValueChange={setTarget}
-        ariaLabel="Active Brain"
+        ariaLabel={t("provider_switcher.active_brain")}
         options={brainProviders.map((provider) => ({
           value: provider.id,
           label: `${provider.label}${
@@ -65,7 +65,7 @@ export function ProviderSwitcher() {
         }))}
       />
       <Button onClick={handleApply} disabled={pending} className="w-full">
-        {pending ? "Switching…" : "Apply"}
+        {pending ? t("provider_switcher.switching") : t("common.apply")}
       </Button>
       {active && (
         <p className="text-xs text-muted-foreground">

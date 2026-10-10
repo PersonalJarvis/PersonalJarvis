@@ -48,6 +48,10 @@ export interface WakeWordSaveResult {
   // the Call shortcut is the activation.
   wake_available: boolean;
   message: string;
+  // Stable code + fill-ins for `message` (WakeWordPlan.message_code in
+  // jarvis/speech/wake_phrase.py); the UI translates it, else shows `message`.
+  message_code?: string;
+  message_params?: Record<string, string>;
   persisted: boolean;
   restart_required: boolean;
 }
@@ -64,6 +68,8 @@ export interface WakeActivationResult {
   persisted: boolean;
   // Empty when persisted; otherwise the writer's own reason, in one sentence.
   message: string;
+  // Translatable code for `message` ("activation_not_persisted" or empty).
+  message_code?: string;
 }
 
 /**

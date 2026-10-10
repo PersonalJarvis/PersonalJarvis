@@ -16,6 +16,38 @@ _PCI_DEVICES = Path("/sys/bus/pci/devices")
 _DRM_DEVICES = Path("/sys/class/drm")
 
 
+#: The user-facing sentences :func:`amd_unavailable_reason` answers with, keyed
+#: by a stable code the desktop UI translates
+#: (``plugins_view.unavailable_reason.<code>``); the English sentence stays the
+#: API answer and :func:`amd_unavailable_reason_code` maps it back to its code.
+AMD_UNAVAILABLE_REASONS: dict[str, str] = {
+    "amd_unverifiable": (
+        "AMD GPU availability could not be verified from Linux device information. "
+        "Check hardware access and permissions, including container device access."
+    ),
+    "amd_no_gpu": (
+        "No AMD GPU is visible to this connector. A compatible AMD GPU must be exposed "
+        "to this Linux environment before connecting."
+    ),
+    "amd_unsupported_os": (
+        "AMD GPU telemetry is unavailable on this operating system. "
+        "This connector requires a compatible Linux AMD host with AMD SMI."
+    ),
+    "amd_smi_missing": (
+        "AMD SMI is unavailable. Install AMD's supported SMI/ROCm tooling "
+        "on a compatible AMD host. Missing metrics are never reported as zero."
+    ),
+}
+
+
+def amd_unavailable_reason_code(reason: str | None) -> str:
+    """The stable code of an :func:`amd_unavailable_reason` sentence, or ``""``."""
+    for code, sentence in AMD_UNAVAILABLE_REASONS.items():
+        if sentence == reason:
+            return code
+    return ""
+
+
 def _amd_hardware_unavailable_reason() -> str | None:
     """Read Linux device metadata only; an installed CLI is not hardware evidence.
 
@@ -50,28 +82,16 @@ def _amd_hardware_unavailable_reason() -> str | None:
                 # Hot unplug and unreadable sysfs must not escape into the UI.
                 incomplete = True
     if not readable_root or incomplete:
-        return (
-            "AMD GPU availability could not be verified from Linux device information. "
-            "Check hardware access and permissions, including container device access."
-        )
-    return (
-        "No AMD GPU is visible to this connector. A compatible AMD GPU must be exposed "
-        "to this Linux environment before connecting."
-    )
+        return AMD_UNAVAILABLE_REASONS["amd_unverifiable"]
+    return AMD_UNAVAILABLE_REASONS["amd_no_gpu"]
 
 
 def amd_unavailable_reason() -> str | None:
     """Cheap preflight for UI availability; connect still checks actual device data."""
     if sys.platform != "linux":
-        return (
-            "AMD GPU telemetry is unavailable on this operating system. "
-            "This connector requires a compatible Linux AMD host with AMD SMI."
-        )
+        return AMD_UNAVAILABLE_REASONS["amd_unsupported_os"]
     if not shutil.which("amd-smi"):
-        return (
-            "AMD SMI is unavailable. Install AMD's supported SMI/ROCm tooling "
-            "on a compatible AMD host. Missing metrics are never reported as zero."
-        )
+        return AMD_UNAVAILABLE_REASONS["amd_smi_missing"]
     return _amd_hardware_unavailable_reason()
 
 

@@ -1,4 +1,5 @@
 // === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
+import { fill, useT } from "@/i18n";
 import { agentBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -12,14 +13,25 @@ import type { StatusProfile } from "@/hooks/useFriends";
  * functionally inactive (e.g. during the mutation call).
  */
 const profiles = (
+  t: (key: string) => string,
   assistantName: string,
 ): { value: StatusProfile; label: string; subline: string }[] => [
-  { value: "minimal", label: "minimal", subline: "Online/offline only" },
-  { value: "standard", label: "standard", subline: "+ mission title" },
+  {
+    value: "minimal",
+    label: t("permission_matrix.profile_minimal"),
+    subline: t("permission_matrix.subline_minimal"),
+  },
+  {
+    value: "standard",
+    label: t("permission_matrix.profile_standard"),
+    subline: t("permission_matrix.subline_standard"),
+  },
   {
     value: "detailed",
-    label: "detailed",
-    subline: `+ ${agentBrand(assistantName)} summary`,
+    label: t("permission_matrix.profile_detailed"),
+    subline: fill(t("permission_matrix.subline_detailed_agent"), {
+      agent: agentBrand(assistantName),
+    }),
   },
 ];
 
@@ -35,14 +47,15 @@ export function PermissionMatrix({
   disabled?: boolean;
 }) {
   const assistantName = useEventStore((s) => s.assistantName);
+  const t = useT();
   const groupName = `permission-${friendId}`;
   return (
     <div
       role="radiogroup"
-      aria-label="Sharing-Profile"
+      aria-label={t("permission_matrix.aria_label")}
       className="grid gap-2 sm:grid-cols-3"
     >
-      {profiles(assistantName).map((p) => {
+      {profiles(t, assistantName).map((p) => {
         const isActive = p.value === current;
         return (
           <label

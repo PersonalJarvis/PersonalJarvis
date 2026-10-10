@@ -436,6 +436,42 @@ def combos_collide(a: str, b: str) -> bool:
     return tokens_a <= tokens_b or tokens_b <= tokens_a
 
 
+#: The user-facing sentences :func:`mouse_hotkeys_available` answers with,
+#: keyed by a stable code the desktop UI translates
+#: (``settings_view.keybinds.mouse_reason.<code>``). The English sentence stays
+#: the API answer; ``mouse_hotkeys_reason_code`` maps it back to its code.
+MOUSE_HOTKEY_REASONS: dict[str, str] = {
+    "macos_needs_quartz": (
+        "Mouse-button shortcuts need the pyobjc Quartz package, which is "
+        "not installed — install the [full] profile. Key combinations "
+        "still work."
+    ),
+    "wayland": (
+        "Wayland does not let an application watch the mouse buttons "
+        "globally, so a mouse-button shortcut cannot work here. Use a "
+        "key combination, or bind a compositor shortcut to the Jarvis "
+        "CLI."
+    ),
+    "linux_needs_pynput": (
+        "Mouse-button shortcuts need the pynput package, which is not "
+        "installed — install the [desktop-linux] extra. Key combinations "
+        "still work."
+    ),
+    "unsupported_host": (
+        "This system has no way to watch the mouse buttons globally — use a "
+        "key combination instead."
+    ),
+}
+
+
+def mouse_hotkeys_reason_code(reason: str) -> str:
+    """The stable code of a :func:`mouse_hotkeys_available` sentence, or ``""``."""
+    for code, sentence in MOUSE_HOTKEY_REASONS.items():
+        if sentence == reason:
+            return code
+    return ""
+
+
 def mouse_hotkeys_available(platform: str | None = None) -> tuple[bool, str]:
     """Can this host bind a MOUSE BUTTON as a shortcut? ``(ok, reason)``.
 
@@ -461,11 +497,7 @@ def mouse_hotkeys_available(platform: str | None = None) -> tuple[bool, str]:
     if host == "darwin":
         if _module_present("Quartz"):
             return True, ""
-        return False, (
-            "Mouse-button shortcuts need the pyobjc Quartz package, which is "
-            "not installed — install the [full] profile. Key combinations "
-            "still work."
-        )
+        return False, MOUSE_HOTKEY_REASONS["macos_needs_quartz"]
     if host == "linux":
         try:
             from jarvis.platform.probes import is_wayland
@@ -474,23 +506,11 @@ def mouse_hotkeys_available(platform: str | None = None) -> tuple[bool, str]:
         except Exception:  # noqa: BLE001 — a probe failure must never hard-fail
             wayland = False
         if wayland:
-            return False, (
-                "Wayland does not let an application watch the mouse buttons "
-                "globally, so a mouse-button shortcut cannot work here. Use a "
-                "key combination, or bind a compositor shortcut to the Jarvis "
-                "CLI."
-            )
+            return False, MOUSE_HOTKEY_REASONS["wayland"]
         if _module_present("pynput"):
             return True, ""
-        return False, (
-            "Mouse-button shortcuts need the pynput package, which is not "
-            "installed — install the [desktop-linux] extra. Key combinations "
-            "still work."
-        )
-    return False, (
-        "This system has no way to watch the mouse buttons globally — use a "
-        "key combination instead."
-    )
+        return False, MOUSE_HOTKEY_REASONS["linux_needs_pynput"]
+    return False, MOUSE_HOTKEY_REASONS["unsupported_host"]
 
 
 def _module_present(name: str) -> bool:
@@ -1227,7 +1247,9 @@ __all__ = [
     "HotkeyVerdict",
     "combos_collide",
     "modifier_snapshot",
+    "MOUSE_HOTKEY_REASONS",
     "mouse_hotkeys_available",
+    "mouse_hotkeys_reason_code",
     "normalized_combo_tokens",
     "validate_hotkey",
     "_normalize_combo",

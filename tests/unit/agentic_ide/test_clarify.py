@@ -206,6 +206,7 @@ ASKS = [
     ("Kannst du bitte Mags prompten?", ["Alex", "Max", "Maggie"]),
     ("Dena soll die Tests fixen", None),
     ("Kannst du Ellice beauftragen, den Bug zu fixen", None),
+    ("Ilies deve corrigir os testes", None),  # i18n-allow: pt speech input
 ]
 
 # "But not, for example: 'can you tell me what Elon Musk is doing right now?'
@@ -224,6 +225,9 @@ STAYS_OUT = [
     "schick das an Alexander Müller weiter",
     "lass die Tests laufen und fixe die Fehler",
     "Das soll man mal fixen",
+    "Diz-me o que o Elon Musk faz",  # i18n-allow: pt speech input
+    "como está o tempo hoje",  # i18n-allow: pt speech input
+    "podes corrigir o erro por favor",  # i18n-allow: pt speech input
 ]
 
 
@@ -286,6 +290,11 @@ def test_a_misheard_collective_address_cannot_brief_the_whole_workspace() -> Non
         # A handover verb and a name and nothing else is NOT workspace evidence.
         ("Sag mir was Elon Musk gerade macht", False),
         ("wie ist das Wetter", False),
+        ("diz ao Max para corrigir os testes", True),  # i18n-allow: pt input
+        ("o Max deve corrigir os testes", True),  # i18n-allow: pt input
+        ("o Max tem de rever o código", True),  # i18n-allow: pt input
+        ("quero dar instruções ao terminal", True),  # i18n-allow: pt input
+        ("diz-me como está o tempo", False),  # i18n-allow: pt input
     ],
 )
 def test_workspace_gate(spoken: str, expected: bool) -> None:
@@ -318,6 +327,9 @@ def test_an_all_lowercase_transcript_still_refuses_function_words() -> None:
         "What has Ellis done?",
         "How far is Ellis?",
         "Que ha hecho Ellis?",
+        "O que fez o Ellis?",  # i18n-allow: pt speech input under test
+        "Em que ponto está o Ellis?",  # i18n-allow: pt speech input under test
+        "O Ellis já está pronto?",  # i18n-allow: pt speech input under test
     ],
 )
 def test_a_status_question_addresses_the_workspace(spoken: str) -> None:
@@ -342,6 +354,7 @@ def test_a_garbled_call_sign_in_a_status_question_asks() -> None:
         # a human being — the surname is the only thing that tells them apart.
         "Sag mir was Elon Musk gerade macht",
         "Was hat Angela Merkel gemacht?",
+        "O que fez a Angela Merkel?",  # i18n-allow: pt speech input under test
     ],
 )
 def test_a_status_question_about_a_person_stays_out_of_the_workspace(
@@ -349,3 +362,11 @@ def test_a_status_question_about_a_person_stays_out_of_the_workspace(
 ) -> None:
     assert addresses_workspace(spoken) is False
     assert _outcome(spoken) == "silent"
+
+
+def test_portuguese_function_words_are_never_call_signs() -> None:
+    """An all-lowercase pt sentence never turns a function word into a name."""
+    need = detect_clarification(
+        "podes por favor corrigir o erro no ficheiro", names=PANES  # i18n-allow
+    )
+    assert need is None

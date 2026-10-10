@@ -40,8 +40,17 @@ const POLISH_PROVIDER_LABELS: Record<string, string> = {
   gemini: "Google Gemini",
   openai: "OpenAI",
   openrouter: "OpenRouter",
-  ollama: "Ollama (local)",
 };
+
+/** A polish provider's display label; Ollama names its local runtime in the UI language. */
+function polishProviderLabelOrNull(id: string, t: (key: string) => string): string | null {
+  if (id === "ollama") return t("voice.polish.ollama_local");
+  return POLISH_PROVIDER_LABELS[id] ?? null;
+}
+
+function polishProviderLabel(id: string, t: (key: string) => string): string {
+  return polishProviderLabelOrNull(id, t) ?? id;
+}
 
 export interface LanguageTabProps {
   /**
@@ -482,7 +491,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                           label:
                             id === "auto"
                               ? t("voice.polish.provider_auto")
-                              : POLISH_PROVIDER_LABELS[id] ?? id,
+                              : polishProviderLabel(id, t),
                         })),
                       },
                     ]}
@@ -702,7 +711,7 @@ export function LanguageTab({ hideHeader = false }: LanguageTabProps = {}) {
                       className="mt-1 text-title font-semibold text-foreground"
                       data-testid="dictation-translate-provider-name"
                     >
-                      {POLISH_PROVIDER_LABELS[wordingProvider.family] ??
+                      {polishProviderLabelOrNull(wordingProvider.family, t) ??
                         wordingProvider.label ??
                         wordingProvider.family}
                     </p>

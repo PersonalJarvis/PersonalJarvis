@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
+import pt from "@/i18n/locales/pt.json";
 
-const LOCALES = { en, de, es } as const;
-const CODES = ["en", "de", "es"] as const;
-const REPLY_CODES = ["auto", "en", "de", "es"] as const;
+const LOCALES = { en, de, es, pt } as const;
+const CODES = ["en", "de", "es", "pt"] as const;
+const REPLY_CODES = ["auto", "en", "de", "es", "pt"] as const;
 
 describe("locale completeness (raw-key bug guard)", () => {
   for (const [name, loc] of Object.entries(LOCALES)) {
@@ -21,7 +22,7 @@ describe("locale completeness (raw-key bug guard)", () => {
       }
     });
 
-    it(`${name}: reply_options cover auto/en/de/es`, () => {
+    it(`${name}: reply_options cover auto/en/de/es/pt`, () => {
       for (const code of REPLY_CODES) {
         expect(lv.reply_options[code], `${name}.reply_options.${code}`).toBeTruthy();
       }

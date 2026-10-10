@@ -23,7 +23,7 @@ from jarvis.speech.tts_eval.corpus import HARD_CORPUS, EvalItem, items_for_langu
 from jarvis.speech.tts_eval.harness import EvalReport, SynthResult, Thresholds, evaluate
 from jarvis.speech.tts_eval.metrics import default_metrics
 
-_BCP47 = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+_BCP47 = {"de": "de-DE", "en": "en-US", "es": "es-ES", "pt": "pt-PT"}
 
 
 def _make_synth_fn(provider: str):

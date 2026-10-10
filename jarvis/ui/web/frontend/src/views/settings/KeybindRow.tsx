@@ -16,7 +16,8 @@ import { KeyboardMap } from "@/views/settings/KeyboardMap";
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { useChordCapture } from "@/views/settings/useChordCapture";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { translate, useT } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 
 // The keyboard family (Mac vs PC modifier labels) is fixed for the session.
 const _KB_PLATFORM = detectKeyboardPlatform();
@@ -63,9 +64,7 @@ export function formatCombo(combo: string): string {
     space: "Space",
     // Mouse buttons, named the way the hardware and the browser do (X1/X2 are
     // Back/Forward in every application that uses them).
-    mouse_middle: "Middle Click",
-    mouse_x1: "Mouse Back",
-    mouse_x2: "Mouse Fwd",
+    // Translated on use (see MOUSE_COMBO_LABEL_KEYS below), not here.
     // Navigation / editing cluster + numpad operators (the backend key names).
     up: "↑",
     down: "↓",
@@ -94,9 +93,19 @@ export function formatCombo(combo: string): string {
   // matter what the type says.
   return (combo ?? "")
     .split("+")
-    .map((p) => labels[p] ?? numpad(p) ?? p.toUpperCase())
+    .map((p) => {
+      const mouseKey = MOUSE_COMBO_LABEL_KEYS[p];
+      return mouseKey ? translate(mouseKey) : labels[p] ?? numpad(p) ?? p.toUpperCase();
+    })
     .join(" + ");
 }
+
+/** Mouse-button tokens get descriptive words, so they follow the UI language. */
+const MOUSE_COMBO_LABEL_KEYS: Record<string, string> = {
+  mouse_middle: "settings_view.keybinds.mouse.middle_click",
+  mouse_x1: "settings_view.keybinds.mouse.back_combo",
+  mouse_x2: "settings_view.keybinds.mouse.forward_combo",
+};
 
 /**
  * Each action's i18n label key — used to mark a key "already used by <action>"
@@ -558,7 +567,17 @@ export function KeybindRow({
       onToggleToken={onToggleToken}
       // Absent until the route serves the probe — see KeybindsConfig.
       mouseSupported={config?.mouse_buttons?.supported ?? true}
-      mouseReason={config?.mouse_buttons?.reason}
+      mouseReason={
+        config?.mouse_buttons?.reason
+          ? backendMessage(
+              t,
+              "settings_view.keybinds.mouse_reason",
+              config.mouse_buttons.reason_code,
+              null,
+              config.mouse_buttons.reason,
+            )
+          : undefined
+      }
     />
   );
 

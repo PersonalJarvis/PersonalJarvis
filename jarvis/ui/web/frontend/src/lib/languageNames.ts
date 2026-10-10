@@ -45,8 +45,8 @@ const FALLBACK_NAMES: Readonly<Record<string, string>> = {
 /**
  * Curated order for the short language band shown above the complete list.
  *
- * The product's three interface languages lead, followed by Chinese and other
- * frequently selected European languages. Every backend language remains
+ * The product's interface languages lead (English, German, Spanish, Chinese and
+ * Portuguese), followed by other frequently selected European languages. Every backend language remains
  * available in the complete list below it.
  */
 export const COMMON_LANGUAGE_CODES: readonly string[] = [
@@ -54,9 +54,9 @@ export const COMMON_LANGUAGE_CODES: readonly string[] = [
   "de",
   "es",
   "zh",
+  "pt",
   "fr",
   "it",
-  "pt",
   "nl",
   "pl",
   "sv",
@@ -92,7 +92,8 @@ function displayNamesFor(uiLanguage: string): Intl.DisplayNames | null {
   if (cached !== undefined) return cached;
   let instance: Intl.DisplayNames | null = null;
   try {
-    instance = new Intl.DisplayNames([uiLanguage], { type: "language" });
+    // A bare "pt" means Brazilian Portuguese in CLDR; the app's Portuguese is European.
+    instance = new Intl.DisplayNames([uiLanguage === "pt" ? "pt-PT" : uiLanguage], { type: "language" });
   } catch {
     // No Intl.DisplayNames (very old runtime, or an unsupported locale): the
     // fallback table and the raw code still produce something readable.

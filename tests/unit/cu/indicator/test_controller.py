@@ -149,7 +149,7 @@ def test_hint_table_covers_every_supported_locale() -> None:
 
     supported = {
         resolve_output_language(pin, "", "", default="en")
-        for pin in ("de", "en", "es")
+        for pin in ("de", "en", "es", "pt")
     }
     assert supported == set(_ESC_HINTS.keys())
     assert all(hint.strip() for hint in _ESC_HINTS.values())

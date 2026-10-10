@@ -25,6 +25,7 @@ import { VOICE_STATES } from "@/store/events";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Loc = Record<string, unknown>;
 
@@ -32,6 +33,7 @@ const LOCALES = [
   ["en", en],
   ["de", de],
   ["es", es],
+  ["pt", pt],
 ] as const;
 
 function valueAt(locale: Loc, path: string): unknown {
@@ -77,7 +79,7 @@ describe("voice state parity (supervisor enum <-> UI)", () => {
     expect(missing).toEqual([]);
   });
 
-  it("every voice state has a label in en/de/es", () => {
+  it("every voice state has a label in every locale", () => {
     for (const state of VOICE_STATES) expectTranslated(`voice_state.${state}`);
   });
 
@@ -94,7 +96,7 @@ describe("provider state chip parity", () => {
     expect(Object.keys(PROVIDER_STATE_CHIPS).length).toBeGreaterThan(4);
   });
 
-  it("every chip has a label in en/de/es", () => {
+  it("every chip has a label in every locale", () => {
     for (const chip of Object.values(PROVIDER_STATE_CHIPS)) {
       expectTranslated(chip.key);
     }
@@ -102,7 +104,7 @@ describe("provider state chip parity", () => {
 });
 
 describe("realtime transport issue parity", () => {
-  it("every client-side transport blocker has a label in en/de/es", () => {
+  it("every client-side transport blocker has a label in every locale", () => {
     for (const issue of REALTIME_TRANSPORT_ISSUES) {
       expectTranslated(realtimeTransportIssueKey(issue));
     }
@@ -135,6 +137,6 @@ describe("realtime status copy", () => {
   ] as const;
 
   for (const key of KEYS) {
-    it(`${key} exists in en/de/es`, () => expectTranslated(key));
+    it(`${key} exists in every locale`, () => expectTranslated(key));
   }
 });

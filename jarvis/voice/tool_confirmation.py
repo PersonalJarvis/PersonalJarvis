@@ -22,11 +22,11 @@ from __future__ import annotations
 
 from jarvis.core.turn_language import DEFAULT_LOCALE, normalize_language_tag
 
-_PHRASE_LANGS: frozenset[str] = frozenset({"de", "en", "es"})
+_PHRASE_LANGS: frozenset[str] = frozenset({"de", "en", "es", "pt"})
 
 
 def _phrase_lang(language: str | None) -> str:
-    """Normalize a language tag to a phrase key ("de"/"en"/"es"), else default."""
+    """Normalize a language tag to a phrase key ("de"/"en"/"es"/"pt"), else default."""
     code = normalize_language_tag(language)
     return code if code in _PHRASE_LANGS else DEFAULT_LOCALE
 
@@ -43,16 +43,19 @@ _TOOL_QUESTIONS: dict[str, dict[str, str]] = {
         "de": "Soll ich die E-Mail wirklich senden? Sag ja oder nein.",
         "en": "Do you really want me to send the email? Say yes or no.",
         "es": "¿Quieres que envíe el correo de verdad? Di sí o no.",
+        "pt": "Queres mesmo que envie o email? Diz sim ou não.",
     },
     "gmail_rest": {
         "de": "Soll ich die E-Mail wirklich senden? Sag ja oder nein.",
         "en": "Do you really want me to send the email? Say yes or no.",
         "es": "¿Quieres que envíe el correo de verdad? Di sí o no.",
+        "pt": "Queres mesmo que envie o email? Diz sim ou não.",
     },
     "call-contact": {
         "de": "Soll ich den Anruf wirklich starten? Sag ja oder nein.",
         "en": "Do you really want me to place the call? Say yes or no.",
         "es": "¿Quieres que haga la llamada de verdad? Di sí o no.",
+        "pt": "Queres mesmo que faça a chamada? Diz sim ou não.",
     },
 }
 
@@ -60,6 +63,7 @@ _GENERIC_QUESTION: dict[str, str] = {
     "de": "Soll ich das wirklich ausführen? Sag ja oder nein.",
     "en": "Do you really want me to do that? Say yes or no.",
     "es": "¿Quieres que lo haga de verdad? Di sí o no.",
+    "pt": "Queres mesmo que faça isso? Diz sim ou não.",
 }
 
 
@@ -75,6 +79,8 @@ _IMPACT_QUESTIONS: dict[str, dict[str, str]] = {
                "Do you really want me to run it? Say yes or no."),
         "es": ("Cuidado, este comando borraría algo ({commands}). "
                "¿Quieres que lo ejecute de verdad? Di sí o no."),
+        "pt": ("Cuidado, este comando apagaria algo ({commands}). "
+               "Queres mesmo que o execute? Diz sim ou não."),
     },
     "modify": {
         "de": ("Dieser Befehl würde etwas auf dem Computer verändern "
@@ -83,6 +89,8 @@ _IMPACT_QUESTIONS: dict[str, dict[str, str]] = {
                "({commands}). Do you want me to run it? Say yes or no."),
         "es": ("Este comando cambiaría algo en el equipo ({commands}). "
                "¿Quieres que lo ejecute? Di sí o no."),
+        "pt": ("Este comando alteraria algo no computador ({commands}). "
+               "Queres que o execute? Diz sim ou não."),
     },
     "read": {
         "de": ("Dieser Befehl liest nur Daten ({commands}). "
@@ -91,6 +99,8 @@ _IMPACT_QUESTIONS: dict[str, dict[str, str]] = {
                "Do you want me to run it? Say yes or no."),
         "es": ("Este comando solo lee datos ({commands}). "
                "¿Quieres que lo ejecute? Di sí o no."),
+        "pt": ("Este comando só lê dados ({commands}). "
+               "Queres que o execute? Diz sim ou não."),
     },
 }
 
@@ -136,26 +146,31 @@ _OUTCOME: dict[str, dict[str, str]] = {
         "de": "Erledigt.",
         "en": "Done.",
         "es": "Listo.",
+        "pt": "Feito.",
     },
     "vetoed": {
         "de": "Okay, lass ich.",
         "en": "Okay, leaving it.",
         "es": "Vale, lo dejo.",
+        "pt": "Ok, deixo estar.",
     },
     "timeout": {
         "de": "Hab keine Antwort gehört, ich lass es.",
         "en": "No answer heard, leaving it.",
         "es": "No te he oído, lo dejo.",
+        "pt": "Não ouvi resposta, deixo estar.",
     },
     "failed": {
         "de": "Das hat nicht geklappt.",
         "en": "That didn't work.",
         "es": "Eso no funcionó.",
+        "pt": "Isso não funcionou.",
     },
     "unclear": {
         "de": "Sag bitte einfach ja oder nein.",
         "en": "Please just say yes or no.",
         "es": "Di simplemente sí o no, por favor.",
+        "pt": "Diz só sim ou não, por favor.",
     },
     # Nobody could be asked at all — an unattended run (a scheduled workflow,
     # a cron job, a one-shot CLI call) reached a consequential tool. Says why
@@ -168,6 +183,8 @@ _OUTCOME: dict[str, dict[str, str]] = {
               "So I did not do it.",
         "es": "Eso necesita tu aprobación y aquí nadie puede darla. "
               "Así que no lo hice.",
+        "pt": "Isso precisa da tua aprovação e aqui ninguém a pode dar. "
+              "Por isso não o fiz.",
     },
 }
 
@@ -182,7 +199,7 @@ def format_confirm_outcome(
 
     ``kind`` ∈ {"done", "vetoed", "timeout", "failed", "unclear"}. ``tool_name``
     is accepted for future tool-specific wording; the current phrasing is generic
-    but always non-empty (AD-OE6) and covers de/en/es.
+    but always non-empty (AD-OE6) and covers de/en/es/pt.
 
     ``detail`` is appended only on ``kind="failed"``: a confirmed action that
     fails with a bare "that didn't work" gives the user nothing to correct
