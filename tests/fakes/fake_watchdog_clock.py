@@ -18,6 +18,13 @@ class ScriptedWatchdogClock:
     def call_soon_threadsafe(self, callback: Callable[[], None]) -> None:
         self._pending.append(callback)
 
+    def is_running(self) -> bool:
+        # A stalled loop is still running; it is stuck inside one callback.
+        return True
+
+    def is_closed(self) -> bool:
+        return False
+
     def is_set(self) -> bool:
         return self._index == len(self._ticks)
 
