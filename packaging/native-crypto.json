@@ -20,13 +20,13 @@
       "target": "macos-x86_64",
       "filename": "cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl",
       "sha256": "bb9df0f60294d8608d909a39c750238b48b03f51e2c8df8b2a029000a565c0d8",
-      "url": "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl"
+      "url": "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-macosx_13_0_x86_64.whl"
     },
     {
       "target": "windows-arm64",
       "filename": "cryptography-50.0.2-cp311-abi3-win_arm64.whl",
       "sha256": "88b0a2dac04700ebef175acd16ac8929b5cdce0110155982ccaf26f568cadc81",
-      "url": "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-win_arm64.whl"
+      "url": "https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/files/cryptography-50.0.2-cp311-abi3-win_arm64.whl"
     }
   ]
 }

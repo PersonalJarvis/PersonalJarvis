@@ -1,4 +1,4 @@
---find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/
+--find-links https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/cryptography/
 
 aiofiles==25.1.0 \
     --hash=sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2 \

@@ -71,7 +71,7 @@ this should close before that happens.
 feed:
 
 ```
-https://personaljarvis.github.io/marketplace/rules.json
+https://dodaios.github.io/marketplace/rules.json
 ```
 
 It carries the data-driven half — limits, patterns, reserved names, the

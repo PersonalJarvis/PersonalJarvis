@@ -23,7 +23,7 @@ from urllib.parse import urldefrag, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "packaging" / "native-crypto.json"
-PUBLISH_ROOT = "https://personaljarvis.github.io/PersonalJarvis/native-crypto"
+PUBLISH_ROOT = "https://dodaios.github.io/Dodaios/native-crypto"
 PLATFORMS = {
     "macos-x86_64": "macosx_13_0_x86_64",
     "windows-arm64": "win_arm64",

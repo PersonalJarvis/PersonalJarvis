@@ -217,12 +217,19 @@ class CommunityIndex(_Tolerant):
         return kept
 
 
+#: Former GitHub Pages addresses of the public registry. Pages does not follow
+#: a repository or organization rename, so a config that saved one of these
+#: reads the current deployment instead of a dead host.
+_RETIRED_INDEX_URLS = frozenset({"https://personaljarvis.github.io/marketplace/index.json"})
+
+
 def index_url() -> str:
     """The configured index URL (empty string = community section disabled)."""
-    from jarvis.core.config import load_config
+    from jarvis.core.config import MarketplaceConfig, load_config
 
     try:
-        return str(load_config().marketplace.community_index_url).strip()
+        url = str(load_config().marketplace.community_index_url).strip()
+        return MarketplaceConfig().community_index_url if url in _RETIRED_INDEX_URLS else url
     except Exception:  # noqa: BLE001 - config trouble must not kill browsing
         logger.warning("community index: could not read config, using default")
         from jarvis.core.config import MarketplaceConfig
