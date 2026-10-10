@@ -1,7 +1,7 @@
 # Personal Jarvis — verifying one-liner for Windows (Wave 3 supply-chain).
 #
 # Usage:
-#   irm https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.ps1 | iex
+#   irm https://github.com/Dodaios/Dodaios/releases/download/<TAG>/install-verify.ps1 | iex
 #
 # Wave 3 demands 3-of-3 independent trust axes — all must validate or the
 # verifier refuses to hand off to install.ps1:
@@ -51,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 
 # ------------------------------------------------------------------- pins
 $EXPECTED_REPO = "$env:JARVIS_OFFICIAL_REPO_SLUG"
-if (-not $EXPECTED_REPO) { $EXPECTED_REPO = 'PersonalJarvis/PersonalJarvis' }
+if (-not $EXPECTED_REPO) { $EXPECTED_REPO = 'Dodaios/Dodaios' }
 if ($EXPECTED_REPO -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
     throw 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug'
 }

@@ -76,6 +76,9 @@ class TestTargetIsPublic:
     def test_origin_with_public_url_blocks(self):
         # Even if the remote is *named* origin, a public URL must be caught.
         assert gate.target_is_public(
+            "origin", "https://github.com/Dodaios/Dodaios.git"
+        )
+        assert gate.target_is_public(
             "origin", "https://github.com/PersonalJarvis/PersonalJarvis.git"
         )
 

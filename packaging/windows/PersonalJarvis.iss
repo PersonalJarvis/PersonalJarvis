@@ -44,7 +44,7 @@
 
 #define AppName "Personal Jarvis"
 #define AppPublisher "Personal Jarvis"
-#define AppUrl "https://github.com/PersonalJarvis/PersonalJarvis"
+#define AppUrl "https://github.com/Dodaios/Dodaios"
 #define GuiExeName "PersonalJarvis.exe"
 #define CliExeName "jarvis.exe"
 #define UserDataDirDisplay "%LOCALAPPDATA%\Jarvis"

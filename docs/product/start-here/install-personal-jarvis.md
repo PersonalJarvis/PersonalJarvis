@@ -62,7 +62,7 @@ manual installs do not show the in-app update button.
 2. Run the official installer:
 
    ```powershell
-   irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+   irm https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.ps1 | iex
    ```
 
 3. Approve any offer to add Python or Git. The installer checks again and
@@ -77,10 +77,10 @@ manual installs do not show the in-app update button.
 
    ```bash
    # Desktop on macOS or Linux
-   curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.sh | bash
 
    # Headless Linux
-   curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash -s -- --headless
+   curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.sh | bash -s -- --headless
    ```
 
 3. Confirm the installation and review any prerequisite or Linux desktop-
@@ -89,8 +89,8 @@ manual installs do not show the in-app update button.
    application menu. Headless installs print a local browser address.
 
 > [!note] These commands download the current public installer. Review the
-> [Windows source](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/install.ps1)
-> or [macOS and Linux source](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/install/install.sh)
+> [Windows source](https://github.com/Dodaios/Dodaios/blob/main/install/install.ps1)
+> or [macOS and Linux source](https://github.com/Dodaios/Dodaios/blob/main/install/install.sh)
 > first if you want to inspect it.
 
 ## Install the Isolated PyPI Package

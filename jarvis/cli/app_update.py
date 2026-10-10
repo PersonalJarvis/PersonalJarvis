@@ -56,11 +56,11 @@ _PROBE_TIMEOUT_S = 300.0
 _SERVICE_HANDBACK_S = 60.0
 
 _ONE_LINER_WINDOWS = (
-    "irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/"
+    "irm https://raw.githubusercontent.com/Dodaios/Dodaios/main/"
     "install/install.ps1 | iex"
 )
 _ONE_LINER_POSIX = (
-    "curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/"
+    "curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/"
     "install/install.sh | bash"
 )
 

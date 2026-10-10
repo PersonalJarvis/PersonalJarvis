@@ -2,7 +2,7 @@
 # Personal Jarvis — verifying one-liner (Wave 3 supply-chain).
 #
 # The user runs:
-#   curl -fsSL https://github.com/PersonalJarvis/PersonalJarvis/releases/download/<TAG>/install-verify.sh | bash
+#   curl -fsSL https://github.com/Dodaios/Dodaios/releases/download/<TAG>/install-verify.sh | bash
 #
 # Wave 3 demands 3-of-3 independent trust axes — all must validate or the
 # verifier refuses to hand off to install.sh:
@@ -67,7 +67,7 @@ set -euo pipefail
 
 # Owning repo (for the OIDC identity regex). The override supports an official
 # repository move while keeping the current identity as the fail-closed default.
-readonly DEFAULT_OFFICIAL_REPO_SLUG="PersonalJarvis/PersonalJarvis"
+readonly DEFAULT_OFFICIAL_REPO_SLUG="Dodaios/Dodaios"
 EXPECTED_REPO="${JARVIS_OFFICIAL_REPO_SLUG:-$DEFAULT_OFFICIAL_REPO_SLUG}"
 if [[ ! "$EXPECTED_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     printf 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug\n' >&2

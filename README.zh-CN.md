@@ -1,7 +1,7 @@
 <h1 align="center">Personal Jarvis</h1>
 
 <p align="center">
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.md">English</a> ·
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/README.md">English</a> ·
   <strong>简体中文</strong>
 </p>
 
@@ -12,15 +12,15 @@
 
 <p align="center">
   <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI" src="https://img.shields.io/pypi/v/personal-jarvis?labelColor=0A0A0A&amp;color=F7F7F4" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
+  <a href="https://github.com/Dodaios/Dodaios/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Dodaios/Dodaios/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-F7F7F4?labelColor=0A0A0A&amp;logo=discord&amp;logoColor=white" /></a>
 </p>
 
 <p align="center">
   <a href="#安装">安装</a> ·
   <a href="https://personaljarvis.ai">官网</a> ·
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md">文档</a> ·
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md">文档</a> ·
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
   <a href="https://x.com/PersonalJarvis">X</a>
 </p>
@@ -71,7 +71,7 @@ Personal Jarvis 不是又一个聊天窗口。它是一款桌面应用，把 AI 
 - **解放双手。** 在智能体打字的同时和 Jarvis 说话；它会按呼号把你的任务转达给对应的窗格。
 - **随时接管。** 每个窗格都是一个真正的终端，你可以直接在里面输入。
 
-[Agentic IDE 指南 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md)
+[Agentic IDE 指南 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/agentic-ide.md)
 
 ## 一支持续工作的智能体团队
 
@@ -83,9 +83,9 @@ Personal Jarvis 不是又一个聊天窗口。它是一款桌面应用，把 AI 
 - **它们交回真正的成果。** 文件、报告和计划都会出现在“产出物”中，每一次工具调用都清晰可见。
 - **较长的行动在隔离环境中运行。** 编程行动在独立的 git worktree 中进行，可以拆分成并行的工作者，并在你看到结果前通过审查。
 
-[智能体指南 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md) ·
-[智能体如何学习 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/agent-society/self-learning.md) ·
-[例程 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md)
+[智能体指南 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/jarvis-agents.md) ·
+[智能体如何学习 →](https://github.com/Dodaios/Dodaios/blob/main/docs/agent-society/self-learning.md) ·
+[例程 →](https://github.com/Dodaios/Dodaios/blob/main/docs/routines.md)
 
 ## 和你的电脑说话
 
@@ -96,8 +96,8 @@ Personal Jarvis 不是又一个聊天窗口。它是一款桌面应用，把 AI 
 - **电话通话**使用你自己的号码：给 Jarvis 打电话，或者在你批准后让它替你给别人打电话。
 - **本地语音**可完全离线运行；云端语音为可选项。
 
-[语音指南 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md) ·
-[听写 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md)
+[语音指南 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/voice-conversations.md) ·
+[听写 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/dictation.md)
 
 ## 连接一切
 
@@ -107,10 +107,10 @@ Personal Jarvis 不是又一个聊天窗口。它是一款桌面应用，把 AI 
 - **渠道。** 通过 Telegram 和 Discord 联系 Jarvis。
 - **你自己的脚本。** `jarvis` CLI 和本地 API 让其他程序——以及其他智能体——拥有和你一样的控制能力。
 
-[插件 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md) ·
-[MCP →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md) ·
-[CLI →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/cli-connections.md) ·
-[Jarvis CLI →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md)
+[插件 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/plugins.md) ·
+[MCP →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/mcp-connections.md) ·
+[CLI →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/cli-connections.md) ·
+[Jarvis CLI →](https://github.com/Dodaios/Dodaios/blob/main/docs/jarvis-cli.md)
 
 ## 控制权在你手里
 
@@ -118,32 +118,32 @@ Personal Jarvis 不是又一个聊天窗口。它是一款桌面应用，把 AI 
 每次运行都会被记录，让你清楚看到到底发生了什么。密钥保存在操作系统的凭据存储中。
 除非你连接了需要联网的服务，否则任何数据都不会离开你的电脑。
 
-[安全与审批 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md) ·
-[隐私与本地数据 →](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md)
+[安全与审批 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md) ·
+[隐私与本地数据 →](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md)
 
 ## 安装
 
 **Windows — PowerShell**
 
 ```powershell
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.ps1 | iex
 ```
 
 **macOS 和 Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.sh | bash
 ```
 
 安装程序会检查 Python 3.11+ 和 Git，提示安装缺少的组件，注册桌面启动器并打开应用。
 再次运行即可更新现有安装。语言、唤醒词和模型都在应用内设置。
 
-**桌面版下载：** [Windows](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Setup-x64.exe) ·
-[macOS（Apple 芯片）](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-arm64.dmg) ·
-[macOS（Intel）](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg) ·
-[Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
+**桌面版下载：** [Windows](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-Setup-x64.exe) ·
+[macOS（Apple 芯片）](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-macOS-arm64.dmg) ·
+[macOS（Intel）](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-macOS-x64.dmg) ·
+[Linux AppImage](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
 
-> **Windows：** SignPath Foundation 开源项目批准后，Windows 安装程序将按照[代码签名政策（Code signing policy）](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/code-signing-policy.md)签名。Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+> **Windows：** SignPath Foundation 开源项目批准后，Windows 安装程序将按照[代码签名政策（Code signing policy）](https://github.com/Dodaios/Dodaios/blob/main/docs/code-signing-policy.md)签名。Free code signing provided by SignPath.io, certificate by SignPath Foundation.
 
 > **macOS：** 磁盘映像尚未经过 Apple 公证，因此首次启动时需要前往
 > **系统设置 > 隐私与安全性 > 仍要打开**（macOS 15；在 macOS 14 及更早版本上可以右键点按 > 打开）。
@@ -151,9 +151,9 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 
 **服务器：** 运行 `pip install personal-jarvis` 和 `jarvis serve`，然后在浏览器中打开
 `http://localhost:47821`。远程使用麦克风需要 HTTPS。
-参见[无界面部署指南](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md)。
+参见[无界面部署指南](https://github.com/Dodaios/Dodaios/blob/main/docs/headless-vps-deployment.md)。
 在 Intel macOS 和 Windows ARM64 上手动用 pip/pipx 安装时，还需要配置
-[原生软件包索引](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package)；
+[原生软件包索引](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package)；
 安装程序会自动完成这项配置。
 
 **你需要**一个 API 密钥、一个订阅或一个本地模型。使用语音时最好有麦克风。不需要 GPU。
@@ -174,17 +174,17 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 
 文档目前为英文。
 
-[快速开始](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md) · [应用导览](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/desktop-app-tour.md) · [语音](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md) · [听写](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md) · [Agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) · [智能体](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md) · [电脑操控](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md) · [服务商](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md) · [本地模型](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md) · [插件](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md) · [MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md) · [记忆](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md) · [CLI](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md) · [服务器](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md) · [架构](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md) · [故障排查](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md)
+[快速开始](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/first-run-setup.md) · [应用导览](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/desktop-app-tour.md) · [语音](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/voice-conversations.md) · [听写](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/dictation.md) · [Agentic IDE](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/agentic-ide.md) · [智能体](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/jarvis-agents.md) · [电脑操控](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/computer-use.md) · [服务商](https://github.com/Dodaios/Dodaios/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md) · [本地模型](https://github.com/Dodaios/Dodaios/blob/main/docs/product/personalize-and-connect/local-ai-providers.md) · [插件](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/plugins.md) · [MCP](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/mcp-connections.md) · [记忆](https://github.com/Dodaios/Dodaios/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md) · [CLI](https://github.com/Dodaios/Dodaios/blob/main/docs/jarvis-cli.md) · [服务器](https://github.com/Dodaios/Dodaios/blob/main/docs/headless-vps-deployment.md) · [架构](https://github.com/Dodaios/Dodaios/blob/main/docs/architecture-overview.md) · [故障排查](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md)
 
 ## 参与贡献
 
-可以从一个 [good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 和[10 分钟完成你的第一次贡献](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes)开始。问题和想法请发到 [Discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions)，安全问题请参阅 [SECURITY.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md)。
+可以从一个 [good first issue](https://github.com/Dodaios/Dodaios/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) 和[10 分钟完成你的第一次贡献](https://github.com/Dodaios/Dodaios/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes)开始。问题和想法请发到 [Discussions](https://github.com/Dodaios/Dodaios/discussions)，安全问题请参阅 [SECURITY.md](https://github.com/Dodaios/Dodaios/blob/main/SECURITY.md)。
 
-如果你是协助维护本仓库的 AI 智能体，请先阅读 [`AGENTS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/AGENTS.md)。
+如果你是协助维护本仓库的 AI 智能体，请先阅读 [`AGENTS.md`](https://github.com/Dodaios/Dodaios/blob/main/AGENTS.md)。
 
-如果 Personal Jarvis 对你有用，**点一个 Star 能帮助更多人发现它。** 赞助者名单见 [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md)。
-贡献者名单见[英文 README](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.md#contribute)。
+如果 Personal Jarvis 对你有用，**点一个 Star 能帮助更多人发现它。** 赞助者名单见 [SPONSORS.md](https://github.com/Dodaios/Dodaios/blob/main/SPONSORS.md)。
+贡献者名单见[英文 README](https://github.com/Dodaios/Dodaios/blob/main/README.md#contribute)。
 
 ## 许可证
 
-[Apache 2.0](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE)。1.6.0 及更早的版本保留其原来的 MIT 许可证。参见 [NOTICE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE) 和[商标指南](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md)。
+[Apache 2.0](https://github.com/Dodaios/Dodaios/blob/main/LICENSE)。1.6.0 及更早的版本保留其原来的 MIT 许可证。参见 [NOTICE](https://github.com/Dodaios/Dodaios/blob/main/NOTICE) 和[商标指南](https://github.com/Dodaios/Dodaios/blob/main/TRADEMARK.md)。

@@ -37,7 +37,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = "PersonalJarvis/PersonalJarvis"
+REPO = "Dodaios/Dodaios"
 README = Path(__file__).resolve().parents[2] / "README.md"
 
 START = "<!-- contributors:start -->"
