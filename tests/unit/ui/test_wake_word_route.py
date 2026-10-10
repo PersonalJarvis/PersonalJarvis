@@ -102,7 +102,7 @@ def test_put_without_pipeline_reports_restart_required() -> None:
 def test_get_wake_language_reports_pin_effective_and_options() -> None:
     body = _client().get("/api/settings/wake-language").json()
     assert body["language"] == "auto"
-    assert body["options"] == ["auto", "de", "en", "es"]
+    assert body["options"] == ["auto", "de", "en", "es", "pt"]
     # With no pin and no stt/ui signal the cascade lands on the default.
     assert body["effective_language"] == "en"
 

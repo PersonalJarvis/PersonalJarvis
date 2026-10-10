@@ -30,15 +30,96 @@ from jarvis.core.review.spawns import ReviewerSpawner, WorkerSpawner
 from jarvis.core.review.state import PipelineOutcome, PipelineResult
 from jarvis.harness.manager import HarnessManager
 
-# AD-14: voice phrases are hardcoded here and byte-exact matched in the
-# smoke tests. Changes require a plan update.
-VOICE_HOLDING_PHRASE_DE = "Lass mich kurz an der Aufgabe arbeiten."  # i18n-allow: German TTS phrase
-VOICE_OUTCOME_TEMPLATES_DE = {
-    "success": "Erledigt — {summary}",  # i18n-allow: German TTS phrase
-    "cap_fired": "Mein bestes Ergebnis liegt vor, mit einer Einschränkung: {top_issue}",  # i18n-allow: German TTS phrase
-    "fail": "Das funktioniert so nicht — {summary}",  # i18n-allow: German TTS phrase
-    "precheck_fail": "Die Aufgabe ist zu kurz oder unklar — versuch's nochmal mit mehr Kontext.",  # i18n-allow: German TTS phrase
+# AD-14: voice phrases are hardcoded here (never generated, never mutable via
+# voice/config) and byte-exact matched in the smoke tests. Each phrase exists
+# once per supported reply language; the German wording is the original AD-14
+# text and stays unchanged. The tool speaks the turn's output language
+# (``ctx.config["output_language"]``, decided once per turn by
+# ``jarvis/core/turn_language.py``), else the ambient answer language.
+VOICE_HOLDING_PHRASES: dict[str, str] = {
+    "de": "Lass mich kurz an der Aufgabe arbeiten.",  # i18n-allow: German TTS phrase
+    "en": "Let me work on that task for a moment.",
+    "es": "Déjame trabajar un momento en la tarea.",
+    "pt": "Deixa-me trabalhar um pouco na tarefa.",
 }
+VOICE_OUTCOME_TEMPLATES: dict[str, dict[str, str]] = {
+    "de": {
+        "success": "Erledigt — {summary}",  # i18n-allow: German TTS phrase
+        "cap_fired": "Mein bestes Ergebnis liegt vor, mit einer Einschränkung: {top_issue}",  # i18n-allow: German TTS phrase
+        "fail": "Das funktioniert so nicht — {summary}",  # i18n-allow: German TTS phrase
+        "precheck_fail": "Die Aufgabe ist zu kurz oder unklar — versuch's nochmal mit mehr Kontext.",  # i18n-allow: German TTS phrase
+    },
+    "en": {
+        "success": "Done — {summary}",
+        "cap_fired": "Here is my best result, with one caveat: {top_issue}",
+        "fail": "That does not work like this — {summary}",
+        "precheck_fail": "The task is too short or unclear — try again with more context.",
+    },
+    "es": {
+        "success": "Hecho — {summary}",
+        "cap_fired": "Aquí está mi mejor resultado, con una salvedad: {top_issue}",
+        "fail": "Así no funciona — {summary}",
+        "precheck_fail": (
+            "La tarea es demasiado corta o poco clara — vuelve a intentarlo con más contexto."
+        ),
+    },
+    "pt": {
+        "success": "Feito — {summary}",
+        "cap_fired": "Aqui está o meu melhor resultado, com uma ressalva: {top_issue}",
+        "fail": "Assim não funciona — {summary}",
+        "precheck_fail": (
+            "A tarefa é demasiado curta ou pouco clara — tenta outra vez com mais contexto."
+        ),
+    },
+}
+#: Fallback fillers when the reviewer left no summary / issue to quote.
+VOICE_FALLBACK_FILLERS: dict[str, dict[str, str]] = {
+    "de": {
+        "success": "fertig",  # i18n-allow: German TTS phrase fallback
+        "cap_fired": "kleine Restbedenken",  # i18n-allow: German TTS phrase fallback
+        "fail": "Architektur-Defekt",  # i18n-allow: German TTS phrase fallback
+    },
+    "en": {
+        "success": "finished",
+        "cap_fired": "a few minor remaining concerns",
+        "fail": "an architectural defect",
+    },
+    "es": {
+        "success": "terminado",
+        "cap_fired": "algunas pequeñas dudas pendientes",
+        "fail": "un defecto de arquitectura",
+    },
+    "pt": {
+        "success": "concluído",
+        "cap_fired": "algumas pequenas dúvidas pendentes",
+        "fail": "um defeito de arquitetura",
+    },
+}
+
+# Back-compat aliases for callers that imported the German-only names.
+VOICE_HOLDING_PHRASE_DE = VOICE_HOLDING_PHRASES["de"]
+VOICE_OUTCOME_TEMPLATES_DE = VOICE_OUTCOME_TEMPLATES["de"]
+
+
+def _voice_language(ctx: Any) -> str:
+    """The turn's output language for the spoken phrases (de/en/es/pt).
+
+    ``ctx.config["output_language"]`` as the tool-use loop stamps it wins;
+    without one, the ambient answer language (reply pin, else the default
+    locale). This layer never re-derives a language from the task text.
+    """
+    config = getattr(ctx, "config", None)
+    value = ""
+    if isinstance(config, dict):
+        value = str(config.get("output_language") or "").strip().lower()
+    if not value:
+        try:
+            from jarvis.voice.action_phrases import resolve_ambient_language  # noqa: PLC0415
+
+            value = resolve_ambient_language()
+        except Exception:  # noqa: BLE001 — a spoken fallback beats a crash on the tool path
+            value = "en"
+    return value if value in VOICE_HOLDING_PHRASES else "en"
 
 
 class DispatchWithReviewTool:
@@ -181,7 +262,7 @@ class DispatchWithReviewTool:
     async def execute(
         self, args: dict[str, Any], ctx: ExecutionContext
     ) -> ToolResult:
-        del ctx  # ExecutionContext not currently needed (Phase-8.4 scope)
+        language = _voice_language(ctx)
         task = (args.get("task") or "").strip()
         rubric_id = args.get("rubric_id") or "default"
         # max_iterations as a per-run override; otherwise the ctor default.
@@ -208,7 +289,7 @@ class DispatchWithReviewTool:
         pipeline = self._ensure_pipeline()
         # AD-14: holding phrase ONCE per run — before the await pipeline.run().
         # Bus publish is best-effort; if no bus is injected, no side effect.
-        await self._announce_holding_phrase()
+        await self._announce_holding_phrase(language)
         try:
             result = await pipeline.run(
                 task,
@@ -236,9 +317,9 @@ class DispatchWithReviewTool:
                 error=f"{type(exc).__name__}: {exc}",
             )
 
-        return self._serialize_result(result)
+        return self._serialize_result(result, language)
 
-    async def _announce_holding_phrase(self) -> None:
+    async def _announce_holding_phrase(self, language: str = "en") -> None:
         """AD-14: publish the voice holding phrase once per run.
 
         Bus publish never fails hard — if no bus is injected, it's a no-op.
@@ -250,9 +331,9 @@ class DispatchWithReviewTool:
         try:
             await self._bus.publish(
                 AnnouncementRequested(
-                    text=VOICE_HOLDING_PHRASE_DE,
+                    text=VOICE_HOLDING_PHRASES.get(language, VOICE_HOLDING_PHRASES["en"]),
                     priority="normal",
-                    language="de",
+                    language=language,
                 )
             )
         except Exception:  # noqa: BLE001, S110 — the voice side effect must not crash
@@ -262,7 +343,9 @@ class DispatchWithReviewTool:
     # Result-Serialization
     # ------------------------------------------------------------------
 
-    def _serialize_result(self, result: PipelineResult) -> ToolResult:
+    def _serialize_result(
+        self, result: PipelineResult, language: str = "en"
+    ) -> ToolResult:
         # `success` includes cap-fire (best-of) — the user gets a result.
         # PRECHECK_FAIL and FAIL are hard errors.
         success = result.outcome in (
@@ -279,7 +362,7 @@ class DispatchWithReviewTool:
 
         # AD-14: voice outcome phrase in the output. The brain renders this
         # as TTS after the tool call has completed.
-        voice_phrase = self._build_voice_outcome_phrase(result)
+        voice_phrase = self._build_voice_outcome_phrase(result, language)
 
         output: dict[str, Any] = {
             "run_id": result.run_id,
@@ -324,34 +407,38 @@ class DispatchWithReviewTool:
         return ToolResult(success=success, output=output, error=error)
 
     @staticmethod
-    def _build_voice_outcome_phrase(result: PipelineResult) -> str:
-        """AD-14: outcome phrase based on PipelineOutcome.
+    def _build_voice_outcome_phrase(
+        result: PipelineResult, language: str = "en"
+    ) -> str:
+        """AD-14: outcome phrase based on PipelineOutcome, in ``language``.
 
         Templates are hardcoded (Plan-§Forbidden: no mutation via
         voice/config). Tests match byte-exact on the phrase prefixes.
         """
+        templates = VOICE_OUTCOME_TEMPLATES.get(language, VOICE_OUTCOME_TEMPLATES["en"])
+        fillers = VOICE_FALLBACK_FILLERS.get(language, VOICE_FALLBACK_FILLERS["en"])
         outcome = result.outcome
         if outcome is PipelineOutcome.SUCCESS:
             summary = (
                 result.final_verdict.summary
                 if result.final_verdict is not None
-                else "fertig"  # i18n-allow: German TTS phrase fallback
+                else fillers["success"]
             )
-            return VOICE_OUTCOME_TEMPLATES_DE["success"].format(summary=summary)
+            return templates["success"].format(summary=summary)
         if outcome is PipelineOutcome.CAP_FIRED:
-            top_issue = "kleine Restbedenken"  # i18n-allow: German TTS phrase fallback
+            top_issue = fillers["cap_fired"]
             if result.final_verdict is not None:
                 if result.final_verdict.issues:
                     top_issue = result.final_verdict.issues[0].description
                 else:
                     top_issue = result.final_verdict.summary
-            return VOICE_OUTCOME_TEMPLATES_DE["cap_fired"].format(top_issue=top_issue)
+            return templates["cap_fired"].format(top_issue=top_issue)
         if outcome is PipelineOutcome.FAIL:
             summary = (
                 result.final_verdict.summary
                 if result.final_verdict is not None
-                else "Architektur-Defekt"  # i18n-allow: German TTS phrase fallback
+                else fillers["fail"]
             )
-            return VOICE_OUTCOME_TEMPLATES_DE["fail"].format(summary=summary)
+            return templates["fail"].format(summary=summary)
         # PRECHECK_FAIL
-        return VOICE_OUTCOME_TEMPLATES_DE["precheck_fail"]
+        return templates["precheck_fail"]

@@ -744,15 +744,15 @@ function HowPublishingWorks({ t }: { t: Translate }) {
         <div className="mt-2 overflow-x-auto">
           <pre className="rounded-md border border-border bg-background p-3 font-mono text-micro text-foreground">
             {`my-plugin/
-├── plugin.json                  ← required: name, description, version
-├── mcp.json                     ← the server your plugin talks to (optional)
-├── skills/                      ← instructions that ship with it (optional)
+├── plugin.json                  ← ${t("marketplace.studio_layout_plugin_json")}
+├── mcp.json                     ← ${t("marketplace.studio_layout_mcp_json")}
+├── skills/                      ← ${t("marketplace.studio_layout_skills")}
 │   └── my-skill/SKILL.md
 └── io.github.personaljarvis/
-    └── usage-card.md            ← when the assistant should use it (optional)
+    └── usage-card.md            ← ${t("marketplace.studio_layout_usage_card")}
 
 my-skill/
-└── SKILL.md                     ← a standalone skill: one file, YAML frontmatter first`}
+└── SKILL.md                     ← ${t("marketplace.studio_layout_skill_md")}`}
           </pre>
           <p className="mt-2 text-micro text-muted-foreground">
             {t("marketplace.studio_how_layout_note")}
@@ -1155,7 +1155,7 @@ function DraftForm({
               <input
                 value={draft.title}
                 onChange={(e) => set({ title: e.target.value })}
-                placeholder="My Skill"
+                placeholder={t("marketplace.studio_f_title_placeholder")}
                 className={inputCls(errorFor("title").length > 0)}
               />
             </Field>
@@ -1181,7 +1181,7 @@ function DraftForm({
               <input
                 value={draft.categories}
                 onChange={(e) => set({ categories: e.target.value })}
-                placeholder="writing, research"
+                placeholder={t("marketplace.studio_f_categories_placeholder")}
                 className={inputCls(false)}
               />
             </Field>
@@ -1367,7 +1367,7 @@ function CardPreview({ draft, t }: { draft: Draft; t: Translate }) {
     }
     let displayName = draft.name.trim();
     let description = "";
-    let category = "Community";
+    let category = t("marketplace.studio_preview_category");
     try {
       const manifest = JSON.parse(draft.plugin_json_text || "{}") as {
         description?: string;
@@ -1601,7 +1601,7 @@ function PublishedCard({
         {live ? (
           <p className="flex items-center gap-2 text-sm text-foreground">
             <Check className="h-4 w-4 text-muted-foreground" />
-            {fill(t("marketplace.studio_done_live"), { name: result.name, version: result.version })}
+            {fill(t("marketplace.studio_done_live_package"), { package: result.name, version: result.version })}
           </p>
         ) : waitedOut ? (
           <p className="text-xs text-muted-foreground">{t("marketplace.studio_done_waited_out")}</p>

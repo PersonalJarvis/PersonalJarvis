@@ -11,7 +11,7 @@
 import { useEffect, useMemo } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
 import { AdditiveBlending, MeshBasicMaterial, MeshStandardMaterial, RepeatWrapping, type Texture } from "three";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import { cachedCanvasTexture } from "./canvasMaterials";
 import { DeskInstances, type DeskTone } from "./DeskInstances";
@@ -287,7 +287,7 @@ function slatMaterial(width: number): MeshStandardMaterial {
 }
 
 /** Brass letters on a transparent ground: the department's name, and "Studio 0n" in small caps under it. */
-function drawLetters(label: string, number: number, ctx: CanvasRenderingContext2D, w: number, h: number): void {
+function drawLetters(label: string, caption: string, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.clearRect(0, 0, w, h);
   const tracked = (text: string, font: string, y: number, spacing: number, fill: string | CanvasGradient) => {
     ctx.font = font;
@@ -320,15 +320,15 @@ function drawLetters(label: string, number: number, ctx: CanvasRenderingContext2
   tracked(name.toUpperCase(), "600 100px Georgia, 'Times New Roman', serif", 86, 12, gold);
   ctx.fillStyle = CODING_SCENE.brass;
   ctx.fillRect(w / 2 - 70, 156, 140, 3);
-  tracked(`STUDIO ${String(number).padStart(2, "0")}`, "600 36px system-ui, -apple-system, 'Segoe UI', sans-serif", 194, 12, "#ecdcb9");
+  tracked(caption, "600 36px system-ui, -apple-system, 'Segoe UI', sans-serif", 194, 12, "#ecdcb9");
 }
 
 const letterMaterials = new Map<string, MeshStandardMaterial>();
-function letterMaterial(label: string, number: number): MeshStandardMaterial {
-  const key = `${number}:${label}`;
+function letterMaterial(label: string, caption: string): MeshStandardMaterial {
+  const key = `${caption}:${label}`;
   let material = letterMaterials.get(key);
   if (!material) {
-    const map = cachedCanvasTexture(`coding:letters:${key}`, LETTERS.w, LETTERS.h, (ctx, w, h) => drawLetters(label, number, ctx, w, h));
+    const map = cachedCanvasTexture(`coding:letters:${key}`, LETTERS.w, LETTERS.h, (ctx, w, h) => drawLetters(label, caption, ctx, w, h));
     material = new MeshStandardMaterial({
       color: map ? "#ffffff" : CODING_SCENE.brass, map, transparent: true, alphaTest: 0.3, roughness: 0.35, metalness: 0.3,
       // Lit by the picture light above: a faint glow keeps the brass readable in any light.
@@ -383,6 +383,8 @@ function StudioWall({ label, number, width, position, accent }: {
   const plateW = Math.min(3.2, width * 0.52);
   const plateH = (plateW * LETTERS.h) / LETTERS.w;
   const ledgeX = width / 2 - 0.9;
+  const t = useT();
+  const caption = fill(t("society.office.studio_n"), { number: String(number).padStart(2, "0") });
   return (
     <group position={position}>
       <Box size={[width, WALL_H, 0.1]} position={[0, WALL_H / 2, -0.02]} material={STUDIO_MAT.frame} />
@@ -394,7 +396,7 @@ function StudioWall({ label, number, width, position, accent }: {
       <mesh position={[0, 1.36, 0.035]} material={washMaterial()}>
         <planeGeometry args={[plateW * 1.1, 0.6]} />
       </mesh>
-      <mesh position={[0, 1.34, 0.04]} material={letterMaterial(label, number)}>
+      <mesh position={[0, 1.34, 0.04]} material={letterMaterial(label, caption)}>
         <planeGeometry args={[plateW, plateH]} />
       </mesh>
       {/* The brass picture light on two short arms, its lit underside facing the letters. */}

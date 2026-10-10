@@ -211,6 +211,8 @@ _META_PREFIX_RE: Final[re.Pattern[str]] = re.compile(
     r"|der (?:korrigierte|formatierte) text\b"  # i18n-allow: DE meta-preamble
     r"|aqu\u00ed (?:est\u00e1|tienes|te dejo)\b"
     r"|el texto (?:corregido|formateado)\b"
+    r"|aqui (?:está|tens|fica)\b"  # i18n-allow: PT meta-preamble
+    r"|o texto (?:corrigido|formatado)\b"  # i18n-allow: PT meta-preamble
     r")",
     re.IGNORECASE,
 )
@@ -310,6 +312,28 @@ _COMMON_WORDS_BASE: Final[dict[str, frozenset[str]]] = {
         "todo", "todos", "tras", "tuvo", "unos", "usted", "vale", "vamos",  # i18n-allow
         "verdad", "veces",  # i18n-allow
     }),
+    "pt": frozenset({  # i18n-allow: European Portuguese frequency data (§1 list #3)
+        "acho", "agora", "ainda", "algo", "alguma", "algumas", "algum",  # i18n-allow
+        "alguns", "ali", "antes", "aqui", "assim", "até", "atrás",  # i18n-allow
+        "bastante", "bem", "boa", "bom", "cada", "certo", "claro", "coisa",  # i18n-allow
+        "coisas", "começar", "como", "contra", "dentro", "depois",  # i18n-allow
+        "desde", "dessa", "desse", "deste", "desta", "dizer", "disse",  # i18n-allow
+        "durante", "ela", "elas", "ele", "eles", "embora", "enquanto",  # i18n-allow
+        "então", "entre", "essa", "essas", "esse", "esses", "esta",  # i18n-allow
+        "está", "estas", "estão", "estava", "estamos", "estar",  # i18n-allow
+        "este", "estes", "estou", "exatamente", "fazer", "favor", "feito",  # i18n-allow
+        "fica", "ficar", "forma", "fora", "grande", "isso", "isto", "já",  # i18n-allow
+        "lugar", "mais", "mesmo", "mesma", "melhor", "menos", "minha",  # i18n-allow
+        "muito", "muita", "muitos", "muitas", "nada", "ninguém", "nossa",  # i18n-allow
+        "nosso", "nunca", "obrigado", "obrigada", "onde", "ontem", "outra",  # i18n-allow
+        "outras", "outro", "outros", "para", "parece", "parte", "pelo",  # i18n-allow
+        "pela", "pelos", "pelas", "pode", "podem", "poder", "posso", "pois",  # i18n-allow
+        "porque", "portanto", "pouco", "pronto", "quando", "quanto", "quase",  # i18n-allow
+        "quer", "quero", "realmente", "sempre", "sido", "só", "sobre",  # i18n-allow
+        "talvez", "também", "tanto", "tarde", "tem", "temos", "tenho",  # i18n-allow
+        "ter", "tipo", "toda", "todas", "todo", "todos", "tudo", "vamos",  # i18n-allow
+        "vezes", "verdade", "você", "amanhã", "hoje",  # i18n-allow
+    }),
 }
 
 # Spoken number words are common vocabulary AND explicitly licensed to vanish:
@@ -353,6 +377,17 @@ _NUMBER_WORDS: Final[dict[str, frozenset[str]]] = {
         "noventa", "cien", "ciento", "mil", "mill\u00f3n", "millones",  # i18n-allow
         "primero", "segundo", "tercero", "quinto", "sexto", "séptimo",  # i18n-allow
         "octavo", "noveno", "décimo", "medio", "cuarto", "docena",  # i18n-allow
+    }),
+    "pt": frozenset({  # i18n-allow: Portuguese number words (§1 list #3)
+        "zero", "um", "uma", "dois", "duas", "três", "quatro", "cinco",  # i18n-allow
+        "seis", "sete", "oito", "nove", "dez", "onze", "doze", "treze",  # i18n-allow
+        "catorze", "quinze", "dezasseis", "dezassete", "dezoito", "dezanove",  # i18n-allow
+        "vinte", "trinta", "quarenta", "cinquenta", "sessenta", "setenta",  # i18n-allow
+        "oitenta", "noventa", "cem", "cento", "mil", "milhão",  # i18n-allow
+        "milhões", "primeiro", "primeira", "segundo", "segunda",  # i18n-allow
+        "terceiro", "terceira", "quarto", "quarta", "quinto", "sexto",  # i18n-allow
+        "sétimo", "oitavo", "nono", "décimo", "primeiramente",  # i18n-allow
+        "meio", "metade", "dúzia",  # i18n-allow
     }),
 }
 
@@ -402,6 +437,13 @@ _FORMAT_COMMAND_WORDS: Final[dict[str, frozenset[str]]] = {
         "raya", "comillas", "paréntesis", "parentesis", "párrafo", "parrafo",  # i18n-allow
         "línea", "linea", "viñeta", "vineta", "salto", "nueva", "nuevo",  # i18n-allow
         "siguiente",  # i18n-allow
+    }),
+    "pt": frozenset({  # i18n-allow: Portuguese spoken commands (§1 list #3)
+        "ponto", "pontos", "vírgula", "virgula", "interrogação",  # i18n-allow
+        "interrogacao", "exclamação", "exclamacao", "hífen",  # i18n-allow
+        "hifen", "travessão", "aspas", "parênteses", "parenteses",  # i18n-allow
+        "parágrafo", "paragrafo", "linha", "marcador", "marcadores",  # i18n-allow
+        "nova", "novo", "seguinte", "reticências", "reticencias", "barra",  # i18n-allow
     }),
 }
 
@@ -454,6 +496,13 @@ _QUANTITY_WORDS: Final[dict[str, frozenset[str]]] = {
         "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte",  # i18n-allow
         "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta",  # i18n-allow
         "noventa", "cien", "ciento", "mil", "millón", "millones",  # i18n-allow
+    }),
+    "pt": frozenset({  # i18n-allow: Portuguese quantity words (§1 list #3)
+        "zero", "dois", "duas", "três", "quatro", "cinco", "seis", "sete",  # i18n-allow
+        "oito", "nove", "dez", "onze", "doze", "treze", "catorze", "quinze",  # i18n-allow
+        "dezasseis", "dezassete", "dezoito", "dezanove", "vinte", "trinta",  # i18n-allow
+        "quarenta", "cinquenta", "sessenta", "setenta", "oitenta", "noventa",  # i18n-allow
+        "cem", "cento", "mil", "milhão", "milhões",  # i18n-allow
     }),
 }
 
@@ -535,6 +584,19 @@ _ESSENTIAL_WORDS: Final[dict[str, frozenset[str]]] = {
         "debería", "deberían", "tiene", "tienen", "tengo", "tienes",  # i18n-allow
         "no", "nunca", "jamás", "nada", "nadie", "ninguno", "ninguna",  # i18n-allow
         "ni", "sin",  # i18n-allow
+    }),
+    "pt": frozenset({  # i18n-allow: European Portuguese grammar data (§1 list #3)
+        "é", "são", "sou", "és", "somos", "era", "eram", "eras",  # i18n-allow
+        "foi", "foram", "fui", "seja", "sejam", "fosse",  # i18n-allow
+        "está", "estão", "estou", "estás", "estamos", "estava",  # i18n-allow
+        "estavam", "esteve", "estiveram",  # i18n-allow
+        "há", "havia", "haja", "tem", "têm", "tenho", "tens", "temos",  # i18n-allow
+        "tinha", "tinham",  # i18n-allow
+        "pode", "podem", "posso", "podes", "podemos", "podia",  # i18n-allow
+        "poderia", "poderiam", "deve", "devem", "devo", "deves",  # i18n-allow
+        "deveria", "deveriam", "vai", "vão", "vou", "vais",  # i18n-allow
+        "não", "nunca", "jamais", "nada", "ninguém", "nenhum", "nenhuma",  # i18n-allow
+        "nem", "sem",  # i18n-allow
     }),
 }
 

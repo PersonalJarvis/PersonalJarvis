@@ -1,5 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
+import { translate } from "@/i18n";
+
 // ----------------------------------------------------------------------
 // Types — analog jarvis/docs/schema.py DocFrontmatter
 // ----------------------------------------------------------------------
@@ -97,6 +99,14 @@ export const DIATAXIS_LABELS: Record<DocDiataxis, string> = {
   unclassified: "Unclassified",
 };
 
+/** Section id for docs without one; displayed through `docSectionLabel`. */
+export const OTHER_DOC_SECTION = "Other";
+
+/** Display name of a docs section (the fallback section is translated). */
+export function docSectionLabel(name: string): string {
+  return name === OTHER_DOC_SECTION ? translate("docs.section_other") : name;
+}
+
 export interface DocSection {
   name: string;
   order: number;
@@ -110,7 +120,7 @@ export function buildDocSections(
   const bySection = new Map<string, DocSection>();
   for (const kind of DIATAXIS_ORDER) {
     for (const doc of grouped?.[kind] ?? []) {
-      const name = doc.section || "Other";
+      const name = doc.section || OTHER_DOC_SECTION;
       const existing = bySection.get(name);
       if (existing) {
         existing.order = Math.min(existing.order, doc.section_order);

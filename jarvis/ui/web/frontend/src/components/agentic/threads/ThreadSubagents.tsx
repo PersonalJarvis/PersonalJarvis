@@ -4,6 +4,7 @@ import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import type { SubagentStatus, ToolBlock, TurnItem } from "@/components/agentchat/reduce";
 import { traceDuration } from "@/components/agentchat/traceEntries";
 import { cn } from "@/lib/utils";
+import { fill, translate, useT } from "@/i18n";
 import { shortCount, subagentCounts, subagentEntry, type SubagentEntry } from "./subagents";
 
 /**
@@ -19,11 +20,12 @@ import { shortCount, subagentCounts, subagentEntry, type SubagentEntry } from ".
  */
 export const OpenSubagent = createContext<((id: string) => void) | null>(null);
 
+/** Locale keys of each state's word, translated where rendered. */
 const STATUS_WORD: Record<SubagentStatus, string> = {
-  running: "Working",
-  done: "Done",
-  failed: "Failed",
-  stopped: "Stopped",
+  running: "ide_threads.sub_status_running",
+  done: "ide_threads.sub_status_done",
+  failed: "ide_threads.sub_status_failed",
+  stopped: "ide_threads.sub_status_stopped",
 };
 
 /** A sub-agent's state at a glance: working, waiting for the person, or how it ended. */
@@ -54,9 +56,10 @@ function firstLine(text: string): string {
 
 /** "4 tools · 23.4k tokens · 12s" — what the sub-agent spent so far. */
 function SubagentMeta({ entry }: { entry: SubagentEntry }) {
+  const t = useT();
   const parts: string[] = [];
-  if (entry.toolUses) parts.push(`${entry.toolUses} ${entry.toolUses === 1 ? "tool" : "tools"}`);
-  if (entry.tokens) parts.push(`${shortCount(entry.tokens)} tokens`);
+  if (entry.toolUses) parts.push(fill(t(entry.toolUses === 1 ? "ide_threads.tools_one" : "ide_threads.tools_other"), { count: entry.toolUses }));
+  if (entry.tokens) parts.push(fill(t("ide_threads.tokens"), { count: shortCount(entry.tokens) }));
   const running = entry.status === "running";
   const duration = !running && entry.durationMs ? traceDuration(entry.durationMs) : "";
   if (duration) parts.push(duration);
@@ -70,12 +73,14 @@ function SubagentMeta({ entry }: { entry: SubagentEntry }) {
 /** The line under a card's title: what it does now, else how it ended. */
 function statusLine(entry: SubagentEntry): string {
   if (entry.status === "running") {
-    if (entry.waiting) return "Waiting for your approval";
-    return entry.activity || (entry.block.subagent?.lastTool ? `Using ${entry.block.subagent.lastTool}` : "Working");
+    if (entry.waiting) return translate("ide_threads.waiting_approval");
+    return entry.activity || (entry.block.subagent?.lastTool
+      ? fill(translate("ide_threads.using_tool"), { tool: entry.block.subagent.lastTool })
+      : translate(STATUS_WORD.running));
   }
-  if (entry.status === "failed") return firstLine(entry.summary) || "Failed";
-  if (entry.status === "stopped") return "Stopped before it answered";
-  return firstLine(entry.summary) || "Finished";
+  if (entry.status === "failed") return firstLine(entry.summary) || translate(STATUS_WORD.failed);
+  if (entry.status === "stopped") return translate("ide_threads.stopped_before_answer");
+  return firstLine(entry.summary) || translate("ide_threads.finished");
 }
 
 /**
@@ -84,6 +89,7 @@ function statusLine(entry: SubagentEntry): string {
  * opened, a click opens it.
  */
 export function SubagentCard({ block, turn }: { block: ToolBlock; turn: TurnItem }) {
+  const t = useT();
   const open = useContext(OpenSubagent);
   const entry = useMemo(() => subagentEntry(block, turn), [block, turn]);
   const running = entry.status === "running";
@@ -91,12 +97,12 @@ export function SubagentCard({ block, turn }: { block: ToolBlock; turn: TurnItem
   const body = <SubagentCardBody entry={entry} running={running} />;
   if (!open) return <div data-testid="thread-subagent-card" data-status={entry.status} className={card}>{body}</div>;
   return <button type="button" onClick={() => open(entry.id)} data-testid="thread-subagent-card" data-status={entry.status}
-    aria-label={`Open sub-agent ${entry.title}, ${STATUS_WORD[entry.status].toLowerCase()}`}
+    aria-label={fill(t("ide_threads.open_subagent"), { title: entry.title, status: t(STATUS_WORD[entry.status]).toLowerCase() })}
     className={cn(card, "transition-colors hover:border-border-strong hover:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}>
     {body}
     <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground transition-colors group-hover/agent:text-foreground">
       <MessageSquare aria-hidden className="h-3.5 w-3.5" />
-      <span className="hidden sm:inline">Open</span>
+      <span className="hidden sm:inline">{t("ide_git.open")}</span>
       <ChevronRight aria-hidden className="h-3.5 w-3.5" />
     </span>
   </button>;
@@ -127,10 +133,10 @@ function SubagentCardBody({ entry, running }: { entry: SubagentEntry; running: b
 /** "3 sub-agents · 2 working · 1 waiting" — the switcher's own count. */
 export function subagentSummary(entries: readonly SubagentEntry[]): string {
   const counts = subagentCounts(entries);
-  const parts = [`${counts.total} ${counts.total === 1 ? "sub-agent" : "sub-agents"}`];
-  if (counts.running) parts.push(`${counts.running} working`);
-  if (counts.waiting) parts.push(`${counts.waiting} waiting`);
-  if (counts.failed) parts.push(`${counts.failed} failed`);
+  const parts = [fill(translate(counts.total === 1 ? "ide_threads.subagents_one" : "ide_threads.subagents_other"), { count: counts.total })];
+  if (counts.running) parts.push(fill(translate("ide_threads.count_working"), { count: counts.running }));
+  if (counts.waiting) parts.push(fill(translate("ide_threads.count_waiting"), { count: counts.waiting }));
+  if (counts.failed) parts.push(fill(translate("ide_threads.count_failed"), { count: counts.failed }));
   return parts.join(" · ");
 }
 
@@ -144,6 +150,7 @@ export function SubagentSwitcher({ entries, openId, onOpen }: {
   openId: string | null;
   onOpen: (id: string | null) => void;
 }) {
+  const t = useT();
   const strip = useRef<HTMLDivElement | null>(null);
   // The open tab stays in view when the list is wider than the column.
   useEffect(() => {
@@ -155,12 +162,12 @@ export function SubagentSwitcher({ entries, openId, onOpen }: {
     "flex h-7 max-w-[15rem] shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
     active ? "bg-secondary text-foreground-strong" : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
   );
-  return <nav aria-label="Sub-agents" data-testid="thread-subagent-switcher"
+  return <nav aria-label={t("ide_threads.subagents_aria")} data-testid="thread-subagent-switcher"
     className="flex min-w-0 items-center gap-2 border-b border-border/70 bg-background px-3 py-1.5">
     <div ref={strip} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <button type="button" aria-current={openId === null} onClick={() => onOpen(null)} className={tab(openId === null)} data-testid="thread-subagent-main">
         <MessageSquare aria-hidden className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">Main thread</span>
+        <span className="truncate">{t("ide_threads.main_thread")}</span>
       </button>
       <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />
       {entries.map((entry) => <button key={entry.id} type="button" aria-current={openId === entry.id} onClick={() => onOpen(entry.id)}
@@ -184,6 +191,7 @@ export function SubagentHeader({ entry, path, onOpen }: {
   path: readonly SubagentEntry[];
   onOpen: (id: string | null) => void;
 }) {
+  const t = useT();
   const [taskOpen, setTaskOpen] = useState(false);
   const long = entry.prompt.length > 280 || entry.prompt.split("\n").length > 5;
   const parent = path.length > 1 ? path[path.length - 2] : null;
@@ -192,7 +200,7 @@ export function SubagentHeader({ entry, path, onOpen }: {
       <button type="button" onClick={() => onOpen(parent ? parent.id : null)} data-testid="thread-subagent-back"
         className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <ArrowLeft aria-hidden className="h-4 w-4" />
-        <span>{parent ? parent.title : "Main thread"}</span>
+        <span>{parent ? parent.title : t("ide_threads.main_thread")}</span>
       </button>
     </div>
     <div className="flex min-w-0 items-start gap-3">
@@ -207,29 +215,29 @@ export function SubagentHeader({ entry, path, onOpen }: {
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <SubagentMark status={entry.status} waiting={entry.waiting} />
-            {entry.waiting && entry.status === "running" ? "Waiting for your approval" : STATUS_WORD[entry.status]}
+            {entry.waiting && entry.status === "running" ? t("ide_threads.waiting_approval") : t(STATUS_WORD[entry.status])}
           </span>
-          {entry.background && <><span aria-hidden>·</span><span>In the background</span></>}
+          {entry.background && <><span aria-hidden>·</span><span>{t("ide_threads.in_background")}</span></>}
           <span aria-hidden>·</span>
           <SubagentMeta entry={entry} />
         </div>
       </div>
     </div>
-    {entry.prompt && <section aria-label="Task" className="rounded-xl border border-border bg-card px-3 py-2.5">
-      <div className="mb-1 text-xs font-medium text-muted-foreground">Task from {parent ? parent.title : "the main agent"}</div>
+    {entry.prompt && <section aria-label={t("ide_threads.task")} className="rounded-xl border border-border bg-card px-3 py-2.5">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">{fill(t("ide_threads.task_from"), { parent: parent ? parent.title : t("ide_threads.the_main_agent") })}</div>
       <div className={cn("relative text-sm leading-6 text-foreground-secondary [overflow-wrap:anywhere]", long && !taskOpen && "max-h-32 overflow-hidden")}>
         <div className="prose prose-neutral max-w-none text-sm dark:prose-invert prose-p:my-1 prose-p:text-foreground-secondary prose-li:text-foreground-secondary"><ChatMarkdown text={entry.prompt} /></div>
         {long && !taskOpen && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-card to-transparent" />}
       </div>
       {long && <button type="button" aria-expanded={taskOpen} onClick={() => setTaskOpen(!taskOpen)}
         className="mt-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        {taskOpen ? "Show less" : "Show the whole task"}
+        {taskOpen ? t("ide_threads.show_less") : t("ide_threads.show_whole_task")}
       </button>}
     </section>}
     {!entry.streamed && <p className="text-xs text-muted-foreground" data-testid="thread-subagent-unstreamed">
       {entry.status === "running"
-        ? "This agent's CLI does not stream a sub-agent's steps. Its answer shows here when it finishes."
-        : "This agent's CLI reported only the task and the answer, not the sub-agent's steps."}
+        ? t("ide_threads.unstreamed_running")
+        : t("ide_threads.unstreamed_done")}
     </p>}
   </div>;
 }

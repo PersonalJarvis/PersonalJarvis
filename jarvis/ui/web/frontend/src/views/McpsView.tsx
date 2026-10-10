@@ -38,6 +38,7 @@ import { FileCard, type CardFile } from "@/components/extensions/FileCard";
 import { useEventStore } from "@/store/events";
 import { robustCopy } from "@/lib/clipboard";
 import { fill, useT } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 
 // ---------------------------------------------------------------------------
 // Wire types — mirror /api/mcps
@@ -141,12 +142,23 @@ export function McpsView() {
 
   const importClaude = useMutation({
     mutationFn: () =>
-      postJson<{ ok: boolean; count: number; added: string[]; note: string }>(
+      postJson<{
+        ok: boolean;
+        count: number;
+        added: string[];
+        note: string;
+        // Stable code + fill-ins for `note` (jarvis/mcp/state.py).
+        note_code?: string;
+        note_params?: Record<string, string>;
+      }>(
         "/api/mcps/import-claude-desktop",
       ),
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ["mcps"] });
-      pushToast(res.count > 0 ? "success" : "info", res.note);
+      pushToast(
+        res.count > 0 ? "success" : "info",
+        backendMessage(t, "mcps_view.import_note", res.note_code, res.note_params, res.note),
+      );
     },
     onError: (err) => {
       pushToast("error", `${t("mcps_view.import_failed")}: ${(err as Error).message}`);
@@ -169,7 +181,7 @@ export function McpsView() {
           "success",
           vars.enable
             ? t("mcps_toast.connected").replace("{0}", vars.name)
-            : `${vars.name} ${t("mcps_view.disconnected").toLowerCase()}`,
+            : t("mcps_toast.disconnected").replace("{0}", vars.name),
         );
       } else if (res.error) {
         pushToast("error", `${vars.name}: ${res.error}`);
@@ -208,7 +220,7 @@ export function McpsView() {
       qc.invalidateQueries({ queryKey: ["mcps"] });
       setConfirmRemove(null);
       if (selected === name) setSelected(null);
-      pushToast("success", fill(t("mcps_view.removed"), { name }));
+      pushToast("success", fill(t("mcps_toast.removed"), { server: name }));
     },
     onError: (err, name) => {
       pushToast("error", `${name}: ${(err as Error).message}`);
@@ -696,7 +708,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
       try {
         parsed = JSON.parse(editing);
       } catch (err) {
-        throw new Error(`JSON syntax: ${(err as Error).message}`);
+        throw new Error(`${t("mcps_view.json_syntax")}: ${(err as Error).message}`);
       }
       return postJson<{ ok: boolean; servers: number }>(
         "/api/mcps/config/raw",

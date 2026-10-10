@@ -6,7 +6,8 @@ import type { JournalKind, JournalLine, TurnPhase } from "@/lib/deckState";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
 import { DeckCard } from "@/components/deck/DeckCard";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 /**
  * The deck's terminal — the session log.
@@ -57,7 +58,7 @@ export function fmtMs(ms: number): string {
 }
 
 export function fmtClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(ms).toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 /** "quiet for 3 min" — coarse on purpose; a second-by-second count would fidget. */

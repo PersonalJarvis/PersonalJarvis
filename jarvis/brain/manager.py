@@ -1613,7 +1613,48 @@ def _extract_cli_error_line(stderr: str) -> str:
     return chosen.strip()[:200]
 
 
-def _cli_failure_reason(output: Any, error: str | None, *, german: bool) -> str:
+# Spoken CLI-failure readbacks; placeholders {cause} / {code}.
+_CLI_FAILURE_PHRASES: dict[str, dict[str, str]] = {
+    "de": {
+        "cause": "Der Befehl ist fehlgeschlagen: {cause}",  # i18n-allow: German TTS
+        "code": "Der Befehl ist mit Fehlercode {code} fehlgeschlagen.",  # i18n-allow
+        "bare": "Der Befehl ist fehlgeschlagen.",  # i18n-allow: German TTS
+    },
+    "en": {
+        "cause": "The command failed: {cause}",
+        "code": "The command failed with exit code {code}.",
+        "bare": "The command failed.",
+    },
+    "es": {
+        "cause": "El comando ha fallado: {cause}",  # i18n-allow: Spanish TTS
+        "code": "El comando ha fallado con el código de error {code}.",  # i18n-allow
+        "bare": "El comando ha fallado.",  # i18n-allow: Spanish TTS
+    },
+    "pt": {
+        "cause": "O comando falhou: {cause}",  # i18n-allow: PT TTS
+        "code": "O comando falhou com o código de erro {code}.",  # i18n-allow: PT TTS
+        "bare": "O comando falhou.",  # i18n-allow: PT TTS
+    },
+}
+
+# Spoken reply when a recovered tool ran but produced nothing speakable.
+_NOTHING_FOUND_PHRASE: dict[str, str] = {
+    "de": "Dazu habe ich nichts gefunden.",  # i18n-allow: spoken German TTS
+    "en": "I couldn't find anything on that.",
+    "es": "No he encontrado nada sobre eso.",  # i18n-allow: Spanish TTS
+    "pt": "Não encontrei nada sobre isso.",  # i18n-allow: PT TTS
+}
+
+# Navigation fast-path acknowledgement; placeholder {label}.
+_NAVIGATION_ACK: dict[str, str] = {
+    "de": "Öffne {label}.",  # i18n-allow: German TTS
+    "en": "Opening {label}.",
+    "es": "Abriendo {label}.",  # i18n-allow: Spanish TTS
+    "pt": "A abrir {label}.",  # i18n-allow: PT TTS
+}
+
+
+def _cli_failure_reason(output: Any, error: str | None, *, language: str) -> str:
     """Honest spoken readback for a FAILED ``cli_<name>`` call.
 
     The user must never hear a bare ``exit 1`` (the CLI tool's ``error`` field)
@@ -1630,19 +1671,17 @@ def _cli_failure_reason(output: Any, error: str | None, *, german: bool) -> str:
         ec = output.get("exit_code")
         if isinstance(ec, int):
             exit_code = ec
+    phrases = _CLI_FAILURE_PHRASES.get(language, _CLI_FAILURE_PHRASES["en"])
     cause = _extract_cli_error_line(stderr)
     if cause:
-        de = f"Der Befehl ist fehlgeschlagen: {cause}"  # i18n-allow: German TTS
-        return de if german else f"The command failed: {cause}"
+        return phrases["cause"].format(cause=cause)
     if exit_code is None and error:
         m = re.search(r"exit\s+(-?\d+)", error)
         if m:
             exit_code = int(m.group(1))
     if exit_code is not None:
-        de = f"Der Befehl ist mit Fehlercode {exit_code} fehlgeschlagen."  # i18n-allow: German TTS
-        return de if german else f"The command failed with exit code {exit_code}."
-    de = "Der Befehl ist fehlgeschlagen."  # i18n-allow: German TTS
-    return de if german else "The command failed."
+        return phrases["code"].format(code=exit_code)
+    return phrases["bare"]
 
 
 def _evidence_answer_is_unverified(
@@ -7331,10 +7370,8 @@ class BrainManager:
             )
             return None
         label = section.replace("-", " ").title()
-        is_de = bool(re.search(r"[äöüÄÖÜß]", user_text)) or bool(  # i18n-allow
-            re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)  # i18n-allow
-        )
-        return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
+        lang = self._spoken_reply_language(user_text)
+        return _NAVIGATION_ACK.get(lang, _NAVIGATION_ACK["en"]).format(label=label)
 
     def _agentic_ide_owns_turn(self, user_text: str) -> bool:
         """True when this turn belongs to the open coding workspace.
@@ -9115,7 +9152,11 @@ class BrainManager:
         if self._tool_executor is None:
             return None
 
-        plan = match_local_action(user_text, live_tool_names=self._live_tool_names())
+        plan = match_local_action(
+            user_text,
+            lang=self._spoken_reply_language(user_text),
+            live_tool_names=self._live_tool_names(),
+        )
         if plan is None:
             return None
 
@@ -10261,17 +10302,34 @@ class BrainManager:
         except Exception as exc:  # noqa: BLE001
             log.warning("voice-confirm cancel failed: %s", exc)
 
+    def _spoken_reply_language(self, user_text: str) -> str:
+        """Language for a fixed spoken phrase this manager renders itself.
+
+        Resolved through the SAME call the router and every other spoken layer
+        make (``resolve_output_language`` with the pin, this turn's detected
+        language, the conversation stickiness and ``DEFAULT_LOCALE``), so a
+        canned phrase can never speak a different language than the reply
+        (AGENTS.md: the output language is decided once per turn).
+        """
+        # getattr: lightweight managers built without __init__ (fakes, early
+        # boot paths) carry no turn state yet — that simply means "none known".
+        return resolve_output_language(
+            self._reply_language,
+            getattr(self, "_turn_detected_lang", ""),
+            user_text or "",
+            default=DEFAULT_LOCALE,
+            conversation_language=getattr(self, "_conversation_language", ""),
+        )
+
     def _spawn_ack_language(self, user_text: str) -> str:
         """Resolve the language for the spoken spawn acknowledgement.
 
-        A pinned reply language (``brain.reply_language`` = de/en) wins;
-        otherwise detect from the user's words. The spawn-announcement
-        composer supports de/en only (ack-brain convention), so an "es"
-        pin falls through to detection like "auto" does.
+        A pinned reply language (``brain.reply_language``, any supported
+        language) wins; otherwise detect from the user's words. The
+        spawn-announcement composer speaks every supported reply language;
+        undetectable text falls back to English, never German.
         """
-        if self._reply_language in ("de", "en"):
-            return self._reply_language
-        return "de" if _looks_german(user_text) else "en"
+        return self._spoken_reply_language(user_text)
 
     def _build_history_hints(
         self,
@@ -10537,7 +10595,7 @@ class BrainManager:
                     _cli_failure_reason(
                         result.output,
                         result.error,
-                        german=_looks_german(user_text),
+                        language=self._spoken_reply_language(user_text),
                     )
                 )
             return await self._honest_failure_readback(
@@ -10558,11 +10616,8 @@ class BrainManager:
             return spoken
         # Tool ran but produced nothing speakable (e.g. an empty search). Give a
         # real spoken sentence, never silence and never the failure phrase.
-        return (
-            "Dazu habe ich nichts gefunden."  # i18n-allow: spoken German TTS
-            if _looks_german(user_text)
-            else "I couldn't find anything on that."
-        )
+        lang = self._spoken_reply_language(user_text)
+        return _NOTHING_FOUND_PHRASE.get(lang, _NOTHING_FOUND_PHRASE["en"])
 
     def _cancel_all_background_tasks(self) -> int:
         """Cancels all running background Jarvis-Agent tasks.
@@ -11347,7 +11402,9 @@ class BrainManager:
         # gate → None) is untouched.
         if self._skill_turn_match is not None:
             _gate_plan = match_local_action(
-                user_text, live_tool_names=self._live_tool_names()
+                user_text,
+                lang=self._spoken_reply_language(user_text),
+                live_tool_names=self._live_tool_names(),
             )
             _claiming = _gate_plan is not None and _gate_plan.mode in (
                 LocalActionMode.DIRECT,

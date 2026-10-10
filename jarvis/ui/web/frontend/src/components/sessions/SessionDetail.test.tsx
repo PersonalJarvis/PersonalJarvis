@@ -23,6 +23,8 @@ const TRANSLATIONS: Record<string, string> = {
 };
 
 vi.mock("@/i18n", () => ({
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)),
   translate: (key: string) => TRANSLATIONS[key] ?? key,
   useT: () => (key: string) => TRANSLATIONS[key] ?? key,
   useUiLanguage: () => "en",

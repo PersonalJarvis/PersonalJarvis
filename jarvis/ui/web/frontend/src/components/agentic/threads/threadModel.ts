@@ -1,6 +1,7 @@
 import type { AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
 import { createAgentChatStore, type ProviderOption } from "@/store/agentChat";
+import { fill, translate } from "@/i18n";
 
 /**
  * The pure half of the IDE's thread layout: which project a thread belongs
@@ -19,7 +20,7 @@ export type ThreadStatus = "approval" | "running" | "unseen" | "idle";
 
 /** What a thread is called in the list and its header. */
 export function threadTitle(session: Pick<AgentChatSession, "title" | "cli_title"> | null | undefined): string {
-  return session?.cli_title?.trim() || session?.title?.trim() || "New thread";
+  return session?.cli_title?.trim() || session?.title?.trim() || translate("ide_threads.new_thread");
 }
 
 /** A path in one comparable spelling: forward slashes, no trailing slash, case folded on drive paths. */
@@ -124,14 +125,14 @@ export function threadAgents(options: readonly ProviderOption[]): ProviderOption
 /** "now", "5m", "3h", "2d", "4w" — how long ago, the way a dense list says it. */
 export function shortAge(ms: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
-  if (seconds < 60) return "now";
+  if (seconds < 60) return translate("ide_threads.age_now");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return fill(translate("ide_threads.age_minutes"), { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
+  if (hours < 24) return fill(translate("ide_threads.age_hours"), { count: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  return `${Math.floor(days / 7)}w`;
+  if (days < 7) return fill(translate("ide_threads.age_days"), { count: days });
+  return fill(translate("ide_threads.age_weeks"), { count: Math.floor(days / 7) });
 }
 
 /** The last folder name of a path — what a branch-less checkout is called. */

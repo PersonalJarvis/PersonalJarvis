@@ -141,7 +141,16 @@
     "studio_done_waited_out": "Still not in the feed after several minutes — open the pull request above to see what its checks say.",
     "studio_done_watching": "Watching the live feed until your package appears — usually a few minutes.",
     "studio_done_share_heading": "Share it",
-    "studio_done_share_note": "Anyone can run this now — it resolves your listing from the public registry."
+    "studio_done_share_note": "Anyone can run this now — it resolves your listing from the public registry.",
+    "studio_layout_plugin_json": "required: name, description, version",
+    "studio_layout_mcp_json": "the server your plugin talks to (optional)",
+    "studio_layout_skills": "instructions that ship with it (optional)",
+    "studio_layout_usage_card": "when the assistant should use it (optional)",
+    "studio_layout_skill_md": "a standalone skill: one file, YAML frontmatter first",
+    "studio_f_title_placeholder": "My Skill",
+    "studio_f_categories_placeholder": "writing, research",
+    "studio_preview_category": "Community",
+    "studio_done_live_package": "Live — {package} v{version} is in the marketplace now."
   },
   "custom_connector": {
     "dialog_title": "Add a plugin",

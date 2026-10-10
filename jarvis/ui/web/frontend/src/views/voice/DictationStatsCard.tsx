@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 
 import type { DictationStats } from "@/hooks/useDictation";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 
 /**
@@ -171,7 +172,7 @@ function lastDays(byDay: DictationStats["by_day"], count: number): DayBar[] {
     const key = localKey(cursor);
     out.push({
       date: key,
-      label: cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      label: cursor.toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), { month: "short", day: "numeric" }),
       words: words.get(key) ?? 0,
     });
     cursor.setDate(cursor.getDate() + 1);
@@ -188,7 +189,7 @@ function localKey(date: Date): string {
 /** Locale-grouped integer; a non-finite server value degrades to a dash. */
 function formatCount(value: number): string {
   if (!Number.isFinite(value)) return "—";
-  return Math.round(value).toLocaleString();
+  return Math.round(value).toLocaleString(localeForUiLanguage(useI18nStore.getState().ui));
 }
 
 /**
@@ -198,7 +199,7 @@ function formatCount(value: number): string {
 function formatCompact(value: number): string {
   if (!Number.isFinite(value)) return "—";
   if (Math.abs(value) < 10_000) return formatCount(value);
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(localeForUiLanguage(useI18nStore.getState().ui), {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);

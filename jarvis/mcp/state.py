@@ -250,7 +250,31 @@ def remove_server(name: str) -> bool:
 # Claude Desktop import
 # ----------------------------------------------------------------------
 
+#: Every ``note_code`` :func:`import_claude_desktop_coded` returns. The desktop
+#: UI translates each one (``mcps_view.import_note.<code>``);
+#: ``tests/unit/ui/test_backend_message_codes.py`` keeps both sides in step.
+CLAUDE_DESKTOP_IMPORT_NOTE_CODES: tuple[str, ...] = (
+    "appdata_missing",
+    "config_not_found",
+    "invalid_json",
+    "not_readable",
+    "no_servers",
+    "imported",
+    "imported_with_skipped",
+)
+
+
 def import_claude_desktop() -> tuple[int, list[str], str]:
+    """Import ``mcpServers`` from the Claude Desktop config: ``(count, added, note)``.
+
+    ``note`` is an English sentence; :func:`import_claude_desktop_coded` also
+    returns its stable code and fill-in values for a translated UI.
+    """
+    count, added, note, _code, _params = import_claude_desktop_coded()
+    return count, added, note
+
+
+def import_claude_desktop_coded() -> tuple[int, list[str], str, str, dict[str, str]]:
     """Import ``mcpServers`` from the Claude Desktop config into our mcp.json.
 
     Path: ``%APPDATA%/Claude/claude_desktop_config.json`` (Windows).
@@ -260,27 +284,37 @@ def import_claude_desktop() -> tuple[int, list[str], str]:
     """
     appdata = os.environ.get("APPDATA")
     if not appdata:
-        return (0, [], "APPDATA variable not set.")
+        return (0, [], "APPDATA variable not set.", "appdata_missing", {})
     src = Path(appdata) / "Claude" / "claude_desktop_config.json"
     if not src.exists():
         return (
             0,
             [],
             f"Claude Desktop config not found at {src}.",
+            "config_not_found",
+            {"path": str(src)},
         )
 
     try:
         raw = json.loads(src.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         # Line and column let the user fix their own file.
-        return (0, [], f"Config is not valid JSON (line {exc.lineno}, column {exc.colno}).")
+        return (
+            0,
+            [],
+            f"Config is not valid JSON (line {exc.lineno}, column {exc.colno}).",
+            "invalid_json",
+            {"line": str(exc.lineno), "column": str(exc.colno)},
+        )
     except OSError:
         log.warning("Claude Desktop config not readable: %s", src, exc_info=True)
-        return (0, [], "Config not readable. Details are in the Jarvis log.")
+        return (
+            0, [], "Config not readable. Details are in the Jarvis log.", "not_readable", {}
+        )
 
     claude_servers = raw.get("mcpServers", {})
     if not isinstance(claude_servers, dict) or not claude_servers:
-        return (0, [], "No mcpServers found in the Claude Desktop config.")
+        return (0, [], "No mcpServers found in the Claude Desktop config.", "no_servers", {})
 
     added: list[str] = []
     skipped: list[str] = []
@@ -307,9 +341,13 @@ def import_claude_desktop() -> tuple[int, list[str], str]:
         _write_mcp_json(cfg)
 
     note = f"{len(added)} new servers imported"
+    params = {"added": str(len(added))}
+    code = "imported"
     if skipped:
         note += f", {len(skipped)} skipped (already exist)"
-    return (len(added), added, note + ".")
+        params["skipped"] = str(len(skipped))
+        code = "imported_with_skipped"
+    return (len(added), added, note + ".", code, params)
 
 
 # ----------------------------------------------------------------------

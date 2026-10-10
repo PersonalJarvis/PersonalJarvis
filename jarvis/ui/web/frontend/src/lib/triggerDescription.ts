@@ -1,3 +1,5 @@
+import { uiLocale } from "@/lib/boardInsights";
+
 /** Seconds as the coarsest unit that stays a whole number: "6 h", "30 min". */
 function humanEvery(seconds: number): string {
   if (seconds % 86_400 === 0) return `${seconds / 86_400} d`;
@@ -11,7 +13,7 @@ function clockFromIso(value: unknown): string {
   if (typeof value !== "string") return "";
   const at = new Date(value);
   if (Number.isNaN(at.getTime())) return "";
-  return at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return at.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 /**
@@ -41,10 +43,10 @@ export function describeTrigger(trigger: unknown, t: (key: string) => string = (
     const time = String(raw.local_time ?? "");
     const zone = String(raw.timezone ?? "");
     const weekdays = Array.isArray(raw.weekdays) ? raw.weekdays.map((day: number) =>
-      new Date(Date.UTC(2024, 0, 1 + day)).toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })).join(", ") : "";
+      new Date(Date.UTC(2024, 0, 1 + day)).toLocaleDateString(uiLocale(), { weekday: "short", timeZone: "UTC" })).join(", ") : "";
     const filters = [weekdays, Array.isArray(raw.month_days) && raw.month_days.length ? `[${raw.month_days.join(", ")}]` : "",
       Array.isArray(raw.months) && raw.months.length ? raw.months.map((month: number) =>
-        new Date(Date.UTC(2024, month - 1, 1)).toLocaleDateString(undefined, { month: "short", timeZone: "UTC" })).join(", ") : ""].filter(Boolean).join(" · ");
+        new Date(Date.UTC(2024, month - 1, 1)).toLocaleDateString(uiLocale(), { month: "short", timeZone: "UTC" })).join(", ") : ""].filter(Boolean).join(" · ");
     return `${filters ? `${filters} · ${time}` : t("society.card.sched_every_day_at").replace("{0}", time)} · ${zone}`;
   }
   if (kind === "every" && typeof raw.interval_seconds === "number") {

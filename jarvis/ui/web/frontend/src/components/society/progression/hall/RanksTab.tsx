@@ -7,6 +7,7 @@
  */
 import { useMemo } from "react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import type { RankTier } from "../levelCatalog";
 import { rankAt } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
@@ -20,6 +21,7 @@ const TIERS: readonly RankTier[] = ["enlisted", "nco", "officer", "general"];
 
 export function RanksTab({ who }: { who: HallWho }) {
   const t = useT();
+  const locale = useRunLocale();
   const titles = useProgression((s) => s.snapshot?.titles[who.kind] ?? NO_TITLES);
   const curve = useProgression((s) => s.snapshot?.levelXp ?? NO_CURVE);
   const subject = useProgression((s) => s.subjects[who.subjectId]);
@@ -60,7 +62,7 @@ export function RanksTab({ who }: { who: HallWho }) {
                     <strong>{t(`society.level.title.${rung.rank}`)}</strong>
                     <span className="hall-rank-grade">{rung.grade}</span>
                     <em>{reached ? t("society.hall.rank_from").replace("{0}", String(rung.level))
-                      : `${t("society.hall.rank_from").replace("{0}", String(rung.level))} · ${t("society.hall.xp_needed").replace("{0}", missing.toLocaleString())}`}</em>
+                      : `${t("society.hall.rank_from").replace("{0}", String(rung.level))} · ${t("society.hall.xp_needed").replace("{0}", missing.toLocaleString(locale))}`}</em>
                   </li>
                 );
               })}

@@ -424,6 +424,22 @@ async def post_test(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
+# Self-test transcript fed to the brain, and the canned spoken fallback, per
+# call language (de/en/es/pt; any other code uses English).
+_SELFTEST_TRANSCRIPT: dict[str, str] = {
+    "de": "Hallo Jarvis, funktioniert das Telefon?",  # i18n-allow: German voice input
+    "en": "Hello Jarvis, is the phone working?",
+    "es": "Hola Jarvis, ¿funciona el teléfono?",  # i18n-allow: Spanish voice input
+    "pt": "Olá Jarvis, o telefone está a funcionar?",  # i18n-allow: PT voice input
+}
+_SELFTEST_FALLBACK: dict[str, str] = {
+    "de": "Ja, das Telefon funktioniert. Ich höre dich klar und deutlich.",  # i18n-allow
+    "en": "Yes, the phone works. I can hear you loud and clear.",
+    "es": "Sí, el teléfono funciona. Te oigo alto y claro.",  # i18n-allow: Spanish TTS
+    "pt": "Sim, o telefone funciona. Ouço-te alto e bom som.",  # i18n-allow: PT TTS
+}
+
+
 @router.post("/selftest")
 async def post_selftest(request: Request) -> JSONResponse:
     """Run a fixed utterance through STT->Brain->TTS shape (no PSTN call).
@@ -434,13 +450,15 @@ async def post_selftest(request: Request) -> JSONResponse:
     env), we fall back to a deterministic echo so the button still proves the
     transcode + framing path. STT-on-a-WAV-fixture is a separate slow test.
     """
-    transcript = "Hallo Jarvis, funktioniert das Telefon?"
     response_text = ""
     audio_bytes = 0
     error: str | None = None
 
     cfg = _resolve_cfg(request)
     language_code = getattr(getattr(cfg, "tts", None), "language_code", "de-DE") or "de-DE"
+    short_lang = language_code.lower().split("-")[0]
+    phrase_lang = short_lang if short_lang in _SELFTEST_TRANSCRIPT else "en"
+    transcript = _SELFTEST_TRANSCRIPT[phrase_lang]
 
     # Brain
     try:
@@ -459,7 +477,7 @@ async def post_selftest(request: Request) -> JSONResponse:
         error = f"brain: {internal_error('selftest brain call', exc, logger=log)}"
 
     if not response_text:
-        response_text = "Ja, das Telefon funktioniert. Ich höre dich klar und deutlich."  # i18n-allow: canned voice-output fallback, synthesized via TTS below
+        response_text = _SELFTEST_FALLBACK[phrase_lang]
 
     # Scrub + TTS -> count synthesized bytes after transcode to Twilio mu-law.
     try:
@@ -467,9 +485,7 @@ async def post_selftest(request: Request) -> JSONResponse:
         from jarvis.plugins.tts import build_tts_from_config
         from jarvis.telephony.audio import tts_pcm_to_twilio_ulaw
 
-        spoken = scrub_for_voice(
-            response_text, language="en" if language_code.lower().startswith("en") else "de"
-        ).cleaned
+        spoken = scrub_for_voice(response_text, language=phrase_lang).cleaned
         tts = build_tts_from_config(cfg.tts) if cfg is not None else None
         if tts is not None:
             async for chunk in tts.synthesize(spoken, language_code=language_code):

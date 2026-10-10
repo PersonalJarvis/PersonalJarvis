@@ -16,6 +16,9 @@ ROUTINE_REQUESTS = [
     "Remind me every Monday to pay rent",
     "dame un resumen cada mañana a las ocho",  # i18n-allow
     "Erstelle eine Routine für den Gmail Agenten",  # i18n-allow
+    "dá-me um resumo todas as manhãs às oito",  # i18n-allow
+    "Lembra-me todas as segundas de pagar a renda",  # i18n-allow
+    "podes resumir os meus emails todos os dias",  # i18n-allow
 ]
 
 NOT_ROUTINE = [
@@ -24,6 +27,8 @@ NOT_ROUTINE = [
     "Wie kann ich jeden Tag um 8 ein Briefing bekommen?",  # i18n-allow
     "Was steht heute im Kalender?",  # i18n-allow
     "Erstelle einen Skill, der mir jeden Morgen um 6 die Mails vorliest",  # i18n-allow
+    "Eu corro todas as manhãs",  # i18n-allow
+    "Como posso receber um relatório todos os dias?",  # i18n-allow
 ]
 
 

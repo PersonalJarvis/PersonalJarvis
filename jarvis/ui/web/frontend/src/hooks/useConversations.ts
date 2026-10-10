@@ -14,6 +14,7 @@ import {
   resumeConversation,
   startNewVoiceRun,
 } from "@/lib/chatsApi";
+import { translate } from "@/i18n";
 
 /** How often the history list is re-read while a poller is mounted. */
 export const CONVERSATIONS_REFRESH_MS = HISTORY_REFRESH_MS;
@@ -36,7 +37,7 @@ function waitForVoiceIdle(): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       unsubscribe();
-      reject(new Error("The voice call has not ended yet. Please try again."));
+      reject(new Error(translate("voice.call_not_ended")));
     }, 10_000);
     const unsubscribe = useEventStore.subscribe((state) => {
       if (state.voiceState !== "idle") return;
@@ -126,7 +127,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
         traces = detailToTraces(detail);
       } catch (error) {
         if (generation === selectionGeneration) {
-          useEventStore.getState().pushToast("error", error instanceof Error ? error.message : "Could not open conversation");
+          useEventStore.getState().pushToast("error", error instanceof Error ? error.message : translate("sidebar.open_conversation_failed"));
         }
       } finally {
         if (generation === selectionGeneration) useHomeStore.setState({ voiceSelectionPending: false });

@@ -62,7 +62,8 @@ import {
 import { FileTree, MarkdownBody, ModeButton } from "@/components/extensions/FileCard";
 import { cn } from "@/lib/utils";
 import { robustCopy } from "@/lib/clipboard";
-import { fill, translate, useT, useUiLanguage } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { PRODUCT_NAME } from "@/lib/branding";
 import {
   useSkillsList,
@@ -599,7 +600,7 @@ function SkillRow({
   onDelete: () => void;
 }) {
   const t = useT();
-  const locale = useUiLanguage();
+  const locale = useRunLocale();
   const broken = isBrokenDraft(skill);
   const on = isSkillOn(skill.state);
   const selectable = selectionMode && !skill.is_builtin;
@@ -759,7 +760,7 @@ function SelectionToolbar({
         {t("skills_view.select_hint")}
       </span>
       <span className="ml-auto text-xs text-muted-foreground">
-        {checkedCount} {t("skills_view.selected")}
+        {fill(t("skills_view.selected_count"), { count: checkedCount })}
       </span>
       <Button
         size="sm"
@@ -1368,7 +1369,7 @@ function AdminPassDialog({
             if (e.key === "Escape") onCancel();
           }}
           className="mt-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-border-strong"
-          placeholder="Password"
+          placeholder={t("skills_view.password_placeholder")}
         />
         {errorHint && (
           <p className="mt-2 text-xs text-destructive">{errorHint}</p>
@@ -1514,14 +1515,15 @@ function EmptyList() {
 
 interface LinkFieldSpec {
   key: "homepage_url" | "source_url" | "docs_url";
+  /** Translation key, translated where rendered. */
   label: string;
   icon: typeof Home;
 }
 
 const LINK_FIELDS: LinkFieldSpec[] = [
-  { key: "homepage_url", label: "Homepage", icon: Home },
-  { key: "source_url", label: "Source", icon: Github },
-  { key: "docs_url", label: "Docs", icon: BookOpen },
+  { key: "homepage_url", label: "skills_view.link_homepage", icon: Home },
+  { key: "source_url", label: "skills_view.link_source", icon: Github },
+  { key: "docs_url", label: "skills_view.link_docs", icon: BookOpen },
 ];
 
 function SkillLinks({
@@ -1531,6 +1533,7 @@ function SkillLinks({
   frontmatter: Record<string, unknown> | null;
   health: Partial<Record<"homepage_url" | "source_url" | "docs_url", LinkHealthEntry | null>> | null;
 }) {
+  const t = useT();
   if (!frontmatter) return null;
   const visible = LINK_FIELDS.filter((f) => Boolean(frontmatter[f.key]));
   if (visible.length === 0) return null;
@@ -1550,7 +1553,7 @@ function SkillLinks({
             title={url}
           >
             <Icon className="h-3 w-3 text-muted-foreground" />
-            <span className="max-w-[180px] truncate">{f.label}</span>
+            <span className="max-w-[180px] truncate">{t(f.label)}</span>
             <LinkHealthChip entry={h} />
             <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
           </a>
@@ -1563,11 +1566,11 @@ function SkillLinks({
 function LinkHealthChip({ entry }: { entry: LinkHealthEntry | null }) {
   const t = useT();
   const { color, label } = useMemo(() => {
-    if (!entry) return { color: "bg-muted-foreground/40", label: "not checked" };
-    if (entry.status === 0) return { color: "bg-destructive", label: "no network" };
+    if (!entry) return { color: "bg-muted-foreground/40", label: t("skills_view.link_not_checked") };
+    if (entry.status === 0) return { color: "bg-destructive", label: t("skills_view.link_no_network") };
     if (entry.ok) return { color: "bg-muted-foreground", label: `HTTP ${entry.status}` };
     return { color: "bg-destructive", label: `HTTP ${entry.status}` };
-  }, [entry]);
+  }, [entry, t]);
   const stale = entry && !entry.fresh;
   return (
     <span

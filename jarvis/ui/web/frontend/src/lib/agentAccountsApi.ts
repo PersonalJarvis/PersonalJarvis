@@ -3,6 +3,7 @@
 // everywhere because WebView2 will happily serve a stale account list — and a
 // stale one here is worse than elsewhere: it would show the wrong plan as the
 // active one right after the user switched.
+import { fill, translate } from "@/i18n";
 
 /**
  * Which coding CLI a subscription belongs to — the backend's registry id.
@@ -144,7 +145,7 @@ async function detail(res: Response): Promise<string> {
   } catch {
     /* fall through */
   }
-  return `request failed: ${res.status}`;
+  return fill(translate("shell_errors.request_failed_status"), { status: res.status });
 }
 
 async function send<T>(url: string, init: RequestInit): Promise<T> {

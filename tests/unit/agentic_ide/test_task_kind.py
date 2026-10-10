@@ -20,23 +20,34 @@ from jarvis.agentic_ide.task_kind import (
         ("add a retry to the upload path", KIND_IMPLEMENT),
         ("baue einen Retry in den Upload-Pfad ein", KIND_IMPLEMENT),  # i18n-allow
         ("implementa un reintento en la subida", KIND_IMPLEMENT),
+        ("adiciona uma nova tentativa ao envio", KIND_IMPLEMENT),  # i18n-allow
+        ("cria um ficheiro de configuração", KIND_IMPLEMENT),  # i18n-allow
+        ("apaga a pasta temporária", KIND_IMPLEMENT),  # i18n-allow
         ("refactor the session registry", KIND_IMPLEMENT),
         ("fix the crash on an empty folder", KIND_IMPLEMENT),
         # review
         ("review the ranking pipeline", KIND_REVIEW),
         ("mach ein Code-Review der Ranking-Pipeline", KIND_REVIEW),  # i18n-allow
         ("revisa el pipeline de ranking", KIND_REVIEW),
+        ("revê o pipeline de ranking", KIND_REVIEW),  # i18n-allow
+        ("avalia a qualidade do código", KIND_REVIEW),  # i18n-allow
         ("audit the credential storage for leaks", KIND_REVIEW),
         # investigate
         ("find out why the wake word stopped firing", KIND_INVESTIGATE),
         # i18n-allow: German utterance under test
         ("finde heraus warum das Wake-Wort nicht mehr auslöst", KIND_INVESTIGATE),  # i18n-allow
         ("averigua por qué falla el arranque", KIND_INVESTIGATE),
+        ("porque é que o arranque falha", KIND_INVESTIGATE),  # i18n-allow
+        ("porque nao arranca o servidor", KIND_INVESTIGATE),  # i18n-allow
+        ("descobre porque o ficheiro some", KIND_INVESTIGATE),  # i18n-allow
         ("debug the stalled prompt submission", KIND_INVESTIGATE),
         # question
         ("how does the file index rank candidates", KIND_QUESTION),
         ("wie funktioniert der File-Index", KIND_QUESTION),
         ("qué hace el índice de archivos", KIND_QUESTION),
+        ("o que faz o índice de ficheiros", KIND_QUESTION),  # i18n-allow
+        ("como funciona o índice de ficheiros", KIND_QUESTION),  # i18n-allow
+        ("onde fica a configuração", KIND_QUESTION),  # i18n-allow
         ("explain the fallback chain", KIND_QUESTION),
     ],
 )

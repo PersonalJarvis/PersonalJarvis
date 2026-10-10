@@ -6,7 +6,8 @@ import { countWords, type CaptureState } from "@/lib/deckState";
 import { DeckCard } from "@/components/deck/DeckCard";
 import { HudGauge, HudLamp } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 /**
  * The deck's signal cards — the picture and the numbers.
@@ -40,7 +41,7 @@ const FRAME_RETRIES = 3;
 const FRAME_RETRY_MS = 400;
 
 function fmtClock(ms: number): string {
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function CaptureCard({ className }: { className?: string }) {

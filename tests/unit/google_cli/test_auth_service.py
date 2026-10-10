@@ -69,6 +69,9 @@ def test_status_connected(tmp_path, monkeypatch):
     assert st.cli_kind == "gemini"
     assert st.user_email == "user@example.com"
     assert "google subscription" in st.message.lower()
+    assert st.message_code == "connected_subscription_email"
+    assert st.message_params["email"] == "user@example.com"
+    assert st.to_dict()["message_code"] == "connected_subscription_email"
 
 
 def test_status_not_installed(monkeypatch):

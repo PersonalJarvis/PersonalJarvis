@@ -14,7 +14,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import type { SessionState } from "@/lib/agenticIdeApi";
 const api = vi.hoisted(() => ({ transfer: vi.fn(), move: vi.fn(), toast: vi.fn(), layout: vi.fn() }));
 vi.mock("@/lib/agenticIdeApi", () => ({ transferTerminal: api.transfer, moveTerminal: api.move, fetchWorkspaceLayout: api.layout }));
-vi.mock("@/store/events", () => ({ useEventStore: (select: (state: unknown) => unknown) => select({ pushToast: api.toast }) }));
+vi.mock("@/store/events", () => ({ useEventStore: Object.assign(
+  (select: (state: unknown) => unknown) => select({ pushToast: api.toast }),
+  { getState: () => ({ pushToast: api.toast, assistantName: "Jarvis" }) },
+) }));
 vi.mock("./AgenticTerminal", () => ({ AgenticTerminal: (props: {
   name: string;
   onArrangeStart?: (event: React.PointerEvent) => void;

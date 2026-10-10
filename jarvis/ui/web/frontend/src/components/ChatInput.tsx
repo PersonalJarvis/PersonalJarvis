@@ -227,7 +227,7 @@ export function ChatInput() {
           type="button"
           onClick={send}
           disabled={!canSend}
-          aria-label="Send"
+          aria-label={t("agent_chat.send")}
           data-testid="composer-send"
           className={cn(
             // --primary is a fill and this is the one place in the composer

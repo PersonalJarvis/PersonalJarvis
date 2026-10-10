@@ -476,7 +476,7 @@ salience=1-5 (how central the fact is to the user's own life).
   cannot recover a fact the wiki never stored.
 
 Explicit persistence requests are binding across all supported conversation
-languages (English, German, and Spanish):
+languages (English, German, Spanish, and European Portuguese):
 - When the user asks Jarvis to remember, note, save, record, or add something
   to the wiki AND separately discloses a supported fact, elevate that fact.
   The primary decision MUST be "add" or "update" unless the exact fact already
@@ -484,7 +484,8 @@ languages (English, German, and Spanish):
   by the USER EVIDENCE excerpt. A near-term or dated plan is still durable
   enough when the user explicitly asks to keep it.
 - Examples include "Remember that I travel tomorrow", "Notiere, dass ich
-  morgen reise", and "Recuerda que viajo mañana". Persist only the disclosed
+  morgen reise", "Recuerda que viajo mañana", and "Lembra-te de que viajo
+  amanhã". Persist only the disclosed
   fact; the persistence directive itself is control syntax, not wiki content.
 - For an explicit persistence request, do not choose "noop" merely because
   the fact is near-term, ordinary, phrased as a request, or belongs on an

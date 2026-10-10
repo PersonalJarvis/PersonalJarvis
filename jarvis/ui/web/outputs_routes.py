@@ -367,10 +367,12 @@ async def _terminal_outcome_details(
         event_type = str(event_type)
         if event_type == "MissionApproved":
             language = output_language.lower().split("-", 1)[0]
+            # de/en have their own field; every other language reads the
+            # dispatch-language summary (es/pt missions) when one exists.
             preferred_summary = {
                 "de": payload.get("summary_de"),
                 "en": payload.get("summary_en"),
-            }.get(language)
+            }.get(language, payload.get("summary_local"))
             return {
                 "terminal_event": event_type,
                 "terminal_reason": None,

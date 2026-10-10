@@ -20,6 +20,7 @@
  */
 import { useEffect, useMemo, useRef } from "react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useCompanionPet } from "../../companion/companionPetStore";
 import type { SocietyAgent } from "../../data";
 import type { ToyLook } from "../../office/toyFigureModel";
@@ -91,6 +92,7 @@ const TAB_ICON: Record<HallTab, string> = {
 
 function OverviewTab({ who }: { who: HallWho }) {
   const t = useT();
+  const locale = useRunLocale();
   const open = useProgression((s) => s.openPanel);
   const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
   const rules = useProgression((s) => s.snapshot?.rules ?? NO_RULES);
@@ -117,7 +119,7 @@ function OverviewTab({ who }: { who: HallWho }) {
             <span>
               <strong>{t(`society.level.title.${promoRank}`)}</strong>
               <em>{RANK_INFO[promoRank].grade} · {t("society.level.locked_at").replace("{0}", String(promotion.level))}</em>
-              <span className="hall-promotion-xp">{t("society.hall.xp_needed").replace("{0}", xpToReach(curve, subject?.xp ?? 0, promotion.level).toLocaleString())}</span>
+              <span className="hall-promotion-xp">{t("society.hall.xp_needed").replace("{0}", xpToReach(curve, subject?.xp ?? 0, promotion.level).toLocaleString(locale))}</span>
             </span>
           </button>
         ) : <p className="hall-hint">{t("society.hall.top_title")}</p>}

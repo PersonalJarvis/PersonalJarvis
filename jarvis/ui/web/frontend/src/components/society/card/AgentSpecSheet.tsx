@@ -38,6 +38,7 @@ import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useComputers } from "@/hooks/useComputers";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { cn } from "@/lib/utils";
@@ -163,9 +164,9 @@ function DescriptionEditor({ agent }: { agent: SocietyAgent }) {
   );
 }
 
-function formatDate(ms: number | null, fallback: string): string {
+function formatDate(ms: number | null, fallback: string, locale: string): string {
   if (ms === null) return fallback;
-  return new Date(ms).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(ms).toLocaleDateString(locale, { day: "2-digit", month: "short", year: "numeric" });
 }
 
 /** "in 3 h", "in 2 d", "now" — from an epoch in ms. */
@@ -216,6 +217,7 @@ export interface AgentSpecSheetProps {
 
 export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetProps) {
   const t = useT();
+  const locale = useRunLocale();
   const assistantName = useEventStore((s) => s.assistantName);
   const displayName = societyDisplayName(agent, assistantName);
   const capabilities = useSocietyCapabilities();
@@ -381,7 +383,7 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
 
           <section className="grid grid-cols-2 gap-2">
             <Plate label={t("society.card.place")} value={t(`society.checkpoint.${agent.checkpoint}`)} />
-            <Plate label={t("society.card.created")} value={formatDate(agent.createdMs, "—")} />
+            <Plate label={t("society.card.created")} value={formatDate(agent.createdMs, "—", locale)} />
           </section>
 
           <section>
@@ -450,7 +452,7 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
               <Plate label={t("society.card.cost")} value={`$${agent.stats.totalCostUsd.toFixed(2)}`} />
               <Plate
                 label={t("society.card.last_active")}
-                value={formatDate(agent.stats.lastActiveMs, t("society.card.never"))}
+                value={formatDate(agent.stats.lastActiveMs, t("society.card.never"), locale)}
               />
             </div>
           </section>

@@ -22,7 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useT } from "@/i18n";
+import { translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   MISSION_STATE_BADGE,
@@ -85,7 +85,7 @@ function buildTree(
 }
 
 function shortPrompt(p: string): string {
-  if (!p) return "(no prompt)";
+  if (!p) return translate("mission_tree.no_prompt");
   return p.length > 48 ? p.slice(0, 47) + "…" : p;
 }
 

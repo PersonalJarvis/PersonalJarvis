@@ -124,7 +124,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
             className="mt-1 truncate font-mono text-foreground/90"
             title={worker.model}
           >
-            {worker.model || "(unknown model)"}
+            {worker.model || t("jarvis_agent_panel.unknown_model")}
           </div>
         </div>
         <span
@@ -140,7 +140,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
       </div>
 
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-micro">
-        <dt className="text-muted-foreground">Cost</dt>
+        <dt className="text-muted-foreground">{t("jarvis_agent_panel.cost")}</dt>
         <dd
           data-testid="jarvis-agent-cost"
           className="font-mono text-foreground/80 tabular-nums"
@@ -153,7 +153,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           )}
         </dd>
 
-        <dt className="text-muted-foreground">State-Dir</dt>
+        <dt className="text-muted-foreground">{t("jarvis_agent_panel.state_dir")}</dt>
         <dd className="flex items-center gap-1 min-w-0">
           <span
             data-testid="jarvis-agent-state-dir"
@@ -174,7 +174,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           )}
         </dd>
 
-        <dt className="text-muted-foreground">Logfile</dt>
+        <dt className="text-muted-foreground">{t("jarvis_agent_panel.log_file")}</dt>
         <dd className="flex items-center gap-1 min-w-0">
           <span
             data-testid="jarvis-agent-log-path"

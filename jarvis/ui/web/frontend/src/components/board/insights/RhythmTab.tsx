@@ -12,6 +12,7 @@ import {
   weekdayTotals,
   weeklyTotals,
   wordsOf,
+  uiLocale,
 } from "@/lib/boardInsights";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import {
@@ -19,7 +20,8 @@ import {
   HEAT_LEVEL_CLASS,
   InsightCard,
 } from "@/components/board/insights/primitives";
-import { useT, useUiLanguage } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 const WEEKS_SHOWN = 26;
@@ -37,7 +39,7 @@ export function RhythmTab({ data }: { data: BoardInsights }) {
 }
 
 function useWeekdayNames(style: "short" | "long") {
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   return useMemo(() => {
     const fmt = new Intl.DateTimeFormat(lang, { weekday: style });
     return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(2024, 0, 1 + i)));
@@ -50,7 +52,7 @@ function hourLabel(hour: number, lang: string): string {
 
 function PunchCard({ data }: { data: BoardInsights }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const shortDays = useWeekdayNames("short");
   const longDays = useWeekdayNames("long");
   const punch = data.punch_card;
@@ -92,7 +94,7 @@ function PunchCard({ data }: { data: BoardInsights }) {
                 total={weekdays[weekday]}
                 highlight={weekday === topDay}
                 describe={(hour, value) =>
-                  `${longDays[weekday]}, ${hourLabel(hour, lang)} — ${value.toLocaleString()}`
+                  `${longDays[weekday]}, ${hourLabel(hour, lang)} — ${value.toLocaleString(uiLocale())}`
                 }
               />
             ))}
@@ -145,14 +147,14 @@ function PunchRow({
           <span className={cn("block h-6 w-full rounded-[4px]", HEAT_LEVEL_CLASS[level(value)])} />
         </QuickTooltip>
       ))}
-      <span className="text-right text-xs tabular-nums text-muted-foreground">{total.toLocaleString()}</span>
+      <span className="text-right text-xs tabular-nums text-muted-foreground">{total.toLocaleString(uiLocale())}</span>
     </>
   );
 }
 
 function WeeklyVolumeCard({ data }: { data: BoardInsights }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const weeks = weeklyTotals(data.days, WEEKS_SHOWN, 8);
   const max = Math.max(1, ...weeks.map((w) => w.words));
   const best = weeks.reduce((b, w) => (w.words > b ? w.words : b), 0);
@@ -162,7 +164,7 @@ function WeeklyVolumeCard({ data }: { data: BoardInsights }) {
     <InsightCard testId="board-weekly-volume">
       <CardTitleRow
         title={t("board_insights.weekly.title")}
-        fact={best > 0 ? t("board_insights.weekly.best").replace("{0}", best.toLocaleString()) : undefined}
+        fact={best > 0 ? t("board_insights.weekly.best").replace("{0}", best.toLocaleString(uiLocale())) : undefined}
       >
         <p className="mt-1 text-sm text-muted-foreground">{t("board_insights.weekly.subtitle")}</p>
       </CardTitleRow>
@@ -170,8 +172,8 @@ function WeeklyVolumeCard({ data }: { data: BoardInsights }) {
         {weeks.map((week, i) => {
           const date = week.start ? new Date(`${week.start}T00:00:00`) : null;
           const tip = `${week.start ? formatDay(week.start, lang) : ""} — ${t("board_insights.weekly.tooltip")
-            .replace("{0}", week.words.toLocaleString())
-            .replace("{1}", week.agentSessions.toLocaleString())}`;
+            .replace("{0}", week.words.toLocaleString(uiLocale()))
+            .replace("{1}", week.agentSessions.toLocaleString(uiLocale()))}`;
           return (
             <QuickTooltip key={i} content={tip} side="top" className="flex h-full flex-1 flex-col justify-end">
               <div
@@ -194,7 +196,7 @@ function WeeklyVolumeCard({ data }: { data: BoardInsights }) {
 
 function RecordsCard({ data }: { data: BoardInsights }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const totalWords = data.dictation.words + data.voice.user_words;
   const { previous, next } = milestoneProgress(totalWords);
   const progress = next > previous ? (totalWords - previous) / (next - previous) : 0;
@@ -209,13 +211,13 @@ function RecordsCard({ data }: { data: BoardInsights }) {
         <RecordRow
           icon={Award}
           label={t("board_insights.records.best_words")}
-          value={bestWords ? bestWords.value.toLocaleString() : "—"}
+          value={bestWords ? bestWords.value.toLocaleString(uiLocale()) : "—"}
           sub={bestWords ? formatDay(bestWords.date, lang) : undefined}
         />
         <RecordRow
           icon={Bot}
           label={t("board_insights.records.best_agents")}
-          value={bestAgents ? bestAgents.value.toLocaleString() : "—"}
+          value={bestAgents ? bestAgents.value.toLocaleString(uiLocale()) : "—"}
           sub={bestAgents ? formatDay(bestAgents.date, lang) : undefined}
         />
         <RecordRow
@@ -226,7 +228,7 @@ function RecordsCard({ data }: { data: BoardInsights }) {
         <RecordRow
           icon={CalendarDays}
           label={t("board_insights.records.active_days")}
-          value={data.streak.active_days.toLocaleString()}
+          value={data.streak.active_days.toLocaleString(uiLocale())}
           sub={
             data.streak.first_day
               ? t("board_insights.records.since").replace("{0}", formatDay(data.streak.first_day, lang))
@@ -237,10 +239,10 @@ function RecordsCard({ data }: { data: BoardInsights }) {
       <div className="mt-auto pt-5">
         <div className="mb-2 flex items-baseline justify-between gap-3 text-sm">
           <span className="font-medium text-foreground-strong">
-            {t("board_insights.records.next_milestone").replace("{0}", next.toLocaleString())}
+            {t("board_insights.records.next_milestone").replace("{0}", next.toLocaleString(uiLocale()))}
           </span>
           <span className="tabular-nums text-muted-foreground">
-            {t("board_insights.records.to_go").replace("{0}", Math.max(0, next - totalWords).toLocaleString())}
+            {t("board_insights.records.to_go").replace("{0}", Math.max(0, next - totalWords).toLocaleString(uiLocale()))}
           </span>
         </div>
         <div className="h-2 overflow-hidden rounded-full bg-sheen/[0.06]">
@@ -248,7 +250,7 @@ function RecordsCard({ data }: { data: BoardInsights }) {
         </div>
         {todayWords > 0 && (
           <p className="mt-2 text-xs text-muted-foreground">
-            {t("board_insights.records.today").replace("{0}", todayWords.toLocaleString())}
+            {t("board_insights.records.today").replace("{0}", todayWords.toLocaleString(uiLocale()))}
           </p>
         )}
       </div>

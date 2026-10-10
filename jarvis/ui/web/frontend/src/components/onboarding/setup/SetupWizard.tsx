@@ -16,6 +16,7 @@ import { useAutostart } from "@/hooks/useAutostart";
 import { useKeybinds, validateCombo } from "@/hooks/useHotkey";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, setUiLanguage, useT, useUiLanguage, type UiLanguage } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -480,7 +481,17 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
     setWakeNote(null);
     try {
       const result = await setWakeActivation(next);
-      if (!result.persisted && result.message) setWakeNote(result.message);
+      if (!result.persisted && result.message) {
+        setWakeNote(
+          backendMessage(
+            t,
+            "settings_view.wake_word.msg",
+            result.message_code,
+            null,
+            result.message,
+          ),
+        );
+      }
       else if (result.restart_required) setWakeNote(t("first_run.voice.after_restart"));
     } catch (e) {
       setListening(!next);

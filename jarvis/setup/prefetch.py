@@ -120,8 +120,8 @@ def prefetch_all(
         )
 
     # Any-word wake model (vosk_kws): the full desktop installer runs BEFORE
-    # onboarding knows whether the user will choose English, German, or Spanish,
-    # so it caches every supported language. The internal headless/base path
+    # onboarding knows whether the user will choose English, German, Spanish or
+    # Portuguese, so it caches every supported language. The internal headless/base path
     # keeps its configured language to preserve the small-server floor.
     languages: tuple[str | None, ...]
     if all_wake_languages:

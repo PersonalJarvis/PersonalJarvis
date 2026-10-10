@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { InsightsDay } from "@/hooks/useBoardInsights";
-import { actionsOf, calendarWeeks, intensityLevels, wordsOf } from "@/lib/boardInsights";
+import { actionsOf, calendarWeeks, intensityLevels, wordsOf, uiLocale } from "@/lib/boardInsights";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { HEAT_LEVEL_CLASS } from "@/components/board/insights/primitives";
-import { useT, useUiLanguage } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /** Weeks shown at once; the arrows page through the rest of the year. */
@@ -17,7 +18,7 @@ const PAGE_WEEKS = 22;
  */
 export function StreakCalendar({ days }: { days: readonly InsightsDay[] }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const weeks = useMemo(() => calendarWeeks(days), [days]);
   const level = useMemo(() => intensityLevels(days.map(actionsOf)), [days]);
   const lastStart = Math.max(0, weeks.length - PAGE_WEEKS);
@@ -45,11 +46,11 @@ export function StreakCalendar({ days }: { days: readonly InsightsDay[] }) {
       return `${dayLabel(day.date)} — ${t("board_insights.calendar.nothing")}`;
     }
     const parts = [
-      t("board_insights.calendar.started").replace("{0}", actions.toLocaleString()),
+      t("board_insights.calendar.started").replace("{0}", actions.toLocaleString(uiLocale())),
     ];
     const words = wordsOf(day);
     if (words > 0) {
-      parts.push(t("board_insights.calendar.words").replace("{0}", words.toLocaleString()));
+      parts.push(t("board_insights.calendar.words").replace("{0}", words.toLocaleString(uiLocale())));
     }
     return `${dayLabel(day.date)} — ${parts.join(" · ")}`;
   };

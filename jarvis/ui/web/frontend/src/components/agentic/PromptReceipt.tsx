@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, HelpCircle, X } from "lucide-react";
 import { fetchLastPrompt } from "@/lib/agenticIdeApi";
+import { fill, translate, useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage, useRunLocale } from "@/components/runs/format";
 
 /**
  * Visible proof that a pane was handed a prompt — drawn by the app, never by
@@ -92,18 +94,21 @@ export interface PromptReceiptProps {
 /** "just now" / "3 min ago" — short enough for a one-line receipt. */
 export function agoLabel(deliveredAt: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - deliveredAt * 1000) / 1000));
-  if (seconds < 10) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 10) return translate("ide_panes.receipt.just_now");
+  if (seconds < 60) return fill(translate("ide_panes.recap.ago_seconds"), { count: seconds });
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return fill(translate("ide_panes.recap.ago_minutes"), { count: minutes });
   const hours = Math.round(minutes / 60);
-  return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+  return hours === 1
+    ? translate("ide_panes.receipt.ago_hour_one")
+    : fill(translate("ide_panes.receipt.ago_hours_other"), { count: hours });
 }
 
 /** The clock time it landed — the detail that can be checked against a memory. */
 export function clockLabel(deliveredAt: number): string {
   try {
-    return new Date(deliveredAt * 1000).toLocaleTimeString(undefined, {
+    const locale = localeForUiLanguage(useI18nStore.getState().ui);
+    return new Date(deliveredAt * 1000).toLocaleTimeString(locale, {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -122,6 +127,8 @@ export function PromptReceipt({
   submitted,
   onDismiss,
 }: PromptReceiptProps) {
+  const t = useT();
+  const locale = useRunLocale();
   const [gone, setGone] = useState(false);
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -195,7 +202,7 @@ export function PromptReceipt({
       if (!mounted.current) return;
       // The excerpt is still on screen, so this degrades to "you can see the
       // opening but not the rest" rather than to an empty box.
-      setLoadError(err instanceof Error ? err.message : "The full prompt could not be read.");
+      setLoadError(err instanceof Error ? err.message : translate("ide_panes.receipt.load_failed"));
     }
   }, [full, terminal, workspaceId]);
 
@@ -210,14 +217,14 @@ export function PromptReceipt({
     submitted === true
       ? {
           icon: <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
-          label: "Prompt sent",
-          note: "the agent took it and started",
+          label: t("ide_panes.receipt.sent"),
+          note: t("ide_panes.receipt.sent_note"),
         }
       : submitted === false
         ? {
             icon: <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-foreground" />,
-            label: "Prompt typed, not started",
-            note: "it is sitting in this pane's input box — press Enter here to run it",
+            label: t("ide_panes.receipt.typed"),
+            note: t("ide_panes.receipt.typed_note"),
           }
         : {
             icon: <HelpCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
@@ -226,8 +233,8 @@ export function PromptReceipt({
             // reading a bare "Prompt sent" would quietly upgrade "could not
             // confirm it started" into "it started" — the exact overstatement
             // this component exists to stop.
-            label: "Prompt sent — start could not be confirmed",
-            note: "it went to the pane; the agent's start could not be confirmed",
+            label: t("ide_panes.receipt.unconfirmed"),
+            note: t("ide_panes.receipt.unconfirmed_note"),
           };
 
   const clock = clockLabel(at);
@@ -263,7 +270,7 @@ export function PromptReceipt({
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
           aria-expanded={open}
           data-testid="prompt-receipt-toggle"
-          title={`Read exactly what was sent to ${terminal}`}
+          title={fill(t("ide_panes.receipt.read_title"), { pane: terminal })}
         >
           <span className="shrink-0 truncate text-micro font-medium text-foreground">
             {verdict.label}
@@ -288,7 +295,7 @@ export function PromptReceipt({
           type="button"
           onClick={onDismiss}
           className="btn-ghost h-6 w-6 shrink-0 p-0"
-          aria-label={`Dismiss the delivery receipt for ${terminal}`}
+          aria-label={fill(t("ide_panes.receipt.dismiss"), { pane: terminal })}
           data-testid="prompt-receipt-dismiss"
         >
           <X className="h-3 w-3" />
@@ -301,7 +308,7 @@ export function PromptReceipt({
           already said. */}
       {submitted === false && !open && (
         <p className="px-2 pb-1.5 text-micro text-muted-foreground">
-          {verdict.note} · click to read what was sent
+          {verdict.note} · {t("ide_panes.receipt.click_to_read")}
         </p>
       )}
 
@@ -316,12 +323,19 @@ export function PromptReceipt({
           </pre>
           <p className="mt-1.5 text-micro text-muted-foreground">
             {full === null && !loadError
-              ? `Opening of ${chars.toLocaleString()} characters — reading the rest…`
+              ? fill(t("ide_panes.receipt.loading_rest"), { count: chars.toLocaleString(locale) })
               : loadError
-                ? `Showing the opening only — ${loadError}`
-                : `${chars.toLocaleString()} characters, delivered to ${terminal}${
-                    clock ? ` at ${clock}` : ""
-                  }.`}
+                ? fill(t("ide_panes.receipt.opening_only"), { error: loadError })
+                : clock
+                  ? fill(t("ide_panes.receipt.delivered_at"), {
+                      count: chars.toLocaleString(locale),
+                      pane: terminal,
+                      clock,
+                    })
+                  : fill(t("ide_panes.receipt.delivered"), {
+                      count: chars.toLocaleString(locale),
+                      pane: terminal,
+                    })}
           </p>
         </div>
       )}

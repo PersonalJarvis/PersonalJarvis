@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderPlus, Loader2, Plus, X } from "lucide-react";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { CustomCliDialog } from "@/components/agentic/CustomCliDialog";
 import { ProjectConnectDialog } from "@/components/agentic/ProjectConnectDialog";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
@@ -45,11 +45,12 @@ import {
 const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
 const SPLIT_DIRECTION_KEY = "jarvis.agenticIde.splitDirection";
 
-const SPLIT_DIRECTIONS: { id: PaneSplitDirection; label: string; hint: string; Icon: typeof SplitRightIcon }[] = [
-  { id: "right", label: "Right", hint: "Open the new agent to the right of the pane", Icon: SplitRightIcon },
-  { id: "down", label: "Down", hint: "Open the new agent below the pane", Icon: SplitBelowIcon },
-  { id: "left", label: "Left", hint: "Open the new agent to the left of the pane", Icon: SplitLeftIcon },
-  { id: "above", label: "Up", hint: "Open the new agent above the pane", Icon: SplitAboveIcon },
+/** Each direction's words are locale keys (`ide_view.split_<key>…`), translated where rendered. */
+const SPLIT_DIRECTIONS: { id: PaneSplitDirection; key: string; Icon: typeof SplitRightIcon }[] = [
+  { id: "right", key: "right", Icon: SplitRightIcon },
+  { id: "down", key: "down", Icon: SplitBelowIcon },
+  { id: "left", key: "left", Icon: SplitLeftIcon },
+  { id: "above", key: "up", Icon: SplitAboveIcon },
 ];
 
 const isSplitDirection = (value: unknown): value is PaneSplitDirection =>
@@ -331,7 +332,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [action, activateFromTree, installed, projects, session?.id]);
 
   const connect = async (projectPath: string, projectName?: string) => {
-    if (!projectPath) throw new Error("Choose a folder for this project.");
+    if (!projectPath) throw new Error(t("ide_view.choose_folder"));
     const project = await openProject(projectPath, projectName);
     const listing = await fetchIdeProjects();
     setProjects(listing.projects);
@@ -346,7 +347,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const notify = useCallback((message: string) => pushToast("success", message), [pushToast]);
 
   const createWorkspace = () => void run(async () => {
-    if (!workspaceProject || workspaceAgents.length === 0 || workspaceAgents.some((agent) => !agent)) throw new Error("Choose an installed coding agent for every session.");
+    if (!workspaceProject || workspaceAgents.length === 0 || workspaceAgents.some((agent) => !agent)) throw new Error(t("ide_view.choose_agent_every"));
     storeRunOn(workspaceProject.id, workspaceComputer);
     // "Automatic" settles on one machine now, by the shares set under Settings, Computers.
     const runsOn = workspaceComputer === RUN_ON_AUTO ? await computersApi.pickPlacement() : workspaceComputer;
@@ -379,7 +380,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const openWorktreeWorkspace = (path: string, branch: string) => void run(async () => {
     const computerId = session ? workspaceRunsOn(session.terminals) : null;
     const agent = (computerId ? codingAgents : installed)[0]?.name;
-    if (!agent) throw new Error("Connect a coding agent in CLIs to continue.");
+    if (!agent) throw new Error(t("ide_view.connect_agent_clis"));
     setState(await startIdeSession(path, [{ agent }], {
       projectId: session?.project_id ?? undefined, name: branch || undefined,
       computerId: computerId ?? undefined, onMessage: notify,
@@ -387,7 +388,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   });
   const newWorktreeWorkspace = () => {
     const project = projects.find((entry) => entry.id === session?.project_id);
-    if (!project) { pushToast("error", "This workspace belongs to no connected project."); return; }
+    if (!project) { pushToast("error", t("ide_view.no_project")); return; }
     setWorkspaceProject(project); setWorkspaceName(""); setWorkspaceAgents([installed[0]?.name ?? ""]);
     setWorkspaceGit({ mode: "new_worktree", branch: "", base: "" });
     setWorkspaceComputer(session ? workspaceRunsOn(session.terminals) : storedRunOn(project.id));
@@ -502,7 +503,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const openWorkspaces = state?.workspaces ?? [];
   const goToWorkspace = (index: number) => {
     const target = openWorkspaces[index];
-    if (!target) { pushToast("info", `There is no workspace ${index + 1}.`); return; }
+    if (!target) { pushToast("info", fill(t("ide_view.no_workspace_n"), { number: index + 1 })); return; }
     if (target.id !== session?.id) void activateFromTree(target.id);
   };
   const runHotkey = (hotkey: IdeHotkeyAction): void => {
@@ -564,10 +565,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const closeTarget: CloseTarget | null = !closeRequest ? null
     : closeRequest.kind === "terminal"
       ? { kind: "terminal", name: closeRequest.terminal.name, agent: closeRequest.terminal.agent, displayName: closeRequest.terminal.display_name }
-      : { kind: "workspace", name: session?.name ?? session?.project.name ?? "workspace",
+      : { kind: "workspace", name: session?.name ?? session?.project.name ?? t("ide_view.workspace_fallback"),
         agents: (session?.terminals ?? []).map((terminal) => ({ agent: terminal.agent, displayName: terminal.display_name })) };
 
-  if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading projects…</div>;
+  if (state === null) return <div data-testid="agentic-ide-loading" className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("ide_view.loading_projects")}</div>;
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
@@ -597,9 +598,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
-        <h1 className="text-lg font-medium">{projects.some((project) => !project.scratch && !project.archived) ? "Choose a workspace" : "Connect a project"}</h1>
-        <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
-        <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
+        <h1 className="text-lg font-medium">{projects.some((project) => !project.scratch && !project.archived) ? t("ide_view.choose_workspace") : t("ide_threads.connect_a_project")}</h1>
+        <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? t("ide_view.select_workspace_hint") : t("ide_view.connect_folder_hint")}</p>
+        <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">{t("ide_threads.connect_folder")}</button>
       </div>}
       </div>
       <CodeEditorStage workspaceId={ideWorkspace?.id ?? null} workspacePath={ideWorkspace?.path ?? ""} stagedPane={stagedPane} />
@@ -622,11 +623,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"
       role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAgentPicker(null); }}>
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Add coding agent"
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("ide_view.add_agent")}
         className="w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}{session && <> · {session.terminals.length} {session.terminals.length === 1 ? "agent" : "agents"}</>}</p></div>
-          <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
+          <div><h2 className="text-base font-semibold">{t("ide_view.add_agent")}</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}{session && <> · {fill(t(session.terminals.length === 1 ? "ide_view.agents_one" : "ide_view.agents_other"), { count: session.terminals.length })}</>}</p></div>
+          <button type="button" aria-label={t("common.close")} onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
 
         {session && <div className="mb-4"><GitCheckoutPicker folder={session.folder} value={agentGit} onChange={setAgentGit} disabled={busy} context="agent" /></div>}
@@ -636,29 +637,29 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           const anchorTerminal = session.terminals.find((terminal) => terminal.name === splitAnchor);
           return <div className="mb-4 space-y-2.5 rounded-xl border border-border bg-muted/40 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-medium text-foreground">Where should it open?</span>
+              <span className="text-xs font-medium text-foreground">{t("ide_view.where_open")}</span>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span>Next to</span>
-                <BrandedSelect ariaLabel="Split next to" value={splitAnchor} disabled={busy} onValueChange={setSplitAnchor}
+                <span>{t("ide_view.next_to")}</span>
+                <BrandedSelect ariaLabel={t("ide_view.split_next_to")} value={splitAnchor} disabled={busy} onValueChange={setSplitAnchor}
                   className="h-7 w-auto min-w-[11rem] px-2 py-1 text-xs font-medium"
                   options={[
                     ...session.terminals.map((terminal) => ({ value: terminal.name, label: `${terminal.name} · ${terminal.display_name}` })),
-                    { value: "", label: "Automatic even grid" },
+                    { value: "", label: t("ide_view.auto_grid") },
                   ]} />
               </div>
             </div>
-            {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">
+            {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label={t("ide_view.split_direction")}>
               {SPLIT_DIRECTIONS.map((item) => {
                 const checked = effectiveDirection === item.id;
-                return <button key={item.id} type="button" role="radio" aria-checked={checked} aria-label={`Split ${item.label.toLowerCase()}`}
-                  disabled={busy} title={item.hint}
+                return <button key={item.id} type="button" role="radio" aria-checked={checked} aria-label={t(`ide_view.split_${item.key}_aria`)}
+                  disabled={busy} title={t(`ide_view.split_${item.key}_hint`)}
                   onClick={() => { setSplitDirection(item.id); storeSplitDirection(item.id); }}
                   className={cn("flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
                     checked ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/40" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
-                  <item.Icon className="h-4 w-4" /><span>{item.label}</span>
+                  <item.Icon className="h-4 w-4" /><span>{t(`ide_view.split_${item.key}`)}</span>
                 </button>;
               })}
-            </div> : <p className="text-xs text-muted-foreground">The new agent joins the grid and every pane gets an equal share.</p>}
+            </div> : <p className="text-xs text-muted-foreground">{t("ide_view.joins_grid")}</p>}
           </div>;
         })()}
 
@@ -685,8 +686,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           </button>
         </div>
         {busy && agentComputer && <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Copying the folder and starting the agent there. Large folders take a minute.</p>}
-        {agentChoices.length === 0 && <p className="text-sm text-muted-foreground">Connect a coding agent in CLIs to continue.</p>}
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />{t("ide_view.copying_starting")}</p>}
+        {agentChoices.length === 0 && <p className="text-sm text-muted-foreground">{t("ide_view.connect_agent_clis")}</p>}
       </section>
     </div>}
 
@@ -699,12 +700,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     {projectDialog && <ProjectConnectDialog onClose={() => setProjectDialog(false)} onConnect={connect} />}
 
     {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setWorkspaceProject(null); }}>
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" aria-busy={busy}
+      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("ide_projects.new_workspace")} aria-busy={busy}
         className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <header className="shrink-0 px-6 pb-5 pt-6 sm:px-8 sm:pt-7">
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold tracking-tight">New workspace</h2>
-            <button type="button" aria-label="Close" disabled={busy} onClick={() => setWorkspaceProject(null)}
+            <h2 className="text-xl font-semibold tracking-tight">{t("ide_projects.new_workspace")}</h2>
+            <button type="button" aria-label={t("common.close")} disabled={busy} onClick={() => setWorkspaceProject(null)}
               className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
           </div>
           <p className="mt-1 truncate text-sm text-muted-foreground" title={workspaceProject.path}>
@@ -712,29 +713,29 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
           </p>
         </header>
         <div className="min-h-0 space-y-6 overflow-y-auto px-6 pb-6 sm:px-8">
-          <label className="block text-xs font-medium text-muted-foreground">Name (optional)
+          <label className="block text-xs font-medium text-muted-foreground">{t("ide_view.name_optional")}
             <input value={workspaceName} disabled={busy} onChange={(event) => setWorkspaceName(event.target.value)}
-              placeholder="Workspace" className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
+              placeholder={t("ide_view.workspace_placeholder")} className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
           </label>
           <WorkspaceAgentSetup agents={workspaceChoices} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} />
           <GitCheckoutPicker folder={workspaceProject.path} value={workspaceGit} onChange={setWorkspaceGit} disabled={busy} context="workspace" />
           <RunOnPicker value={workspaceComputer} onChange={setWorkspaceComputer} disabled={busy} allowAuto />
         </div>
         <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/20 px-6 py-4 sm:px-8">
-          <span className="text-xs text-muted-foreground" aria-live="polite">{workspaceAgents.length} {workspaceAgents.length === 1 ? "session" : "sessions"} · {new Set(workspaceAgents.filter(Boolean)).size} {new Set(workspaceAgents.filter(Boolean)).size === 1 ? "agent" : "agents"}</span>
+          <span className="text-xs text-muted-foreground" aria-live="polite">{fill(t(workspaceAgents.length === 1 ? "ide_view.sessions_one" : "ide_view.sessions_other"), { count: workspaceAgents.length })} · {fill(t(new Set(workspaceAgents.filter(Boolean)).size === 1 ? "ide_view.agents_one" : "ide_view.agents_other"), { count: new Set(workspaceAgents.filter(Boolean)).size })}</span>
           <div className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setWorkspaceProject(null)} className="rounded-lg px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
+            <button type="button" disabled={busy} onClick={() => setWorkspaceProject(null)} className="rounded-lg px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">{t("common.cancel")}</button>
             <button type="button" disabled={busy || workspaceAgents.length === 0 || workspaceAgents.some((name) => !workspaceChoices.some((agent) => agent.name === name))}
-              onClick={createWorkspace} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy ? (workspaceComputer ? "Copying the folder…" : "Starting…") : "Create workspace"}</button>
+              onClick={createWorkspace} className="rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy ? (workspaceComputer ? t("ide_view.copying_folder") : t("ide_view.starting")) : t("ide_projects.create_workspace")}</button>
           </div>
         </footer>
       </section>
     </div>}
     {renameOpen && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setRenameOpen(false); }}>
-      <form data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Rename workspace" onSubmit={(event) => { event.preventDefault(); saveWorkspaceName(); }} className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
-        <h2 className="mb-4 text-sm font-semibold">Rename workspace</h2>
-        <label className="block text-xs text-muted-foreground">Workspace name<input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
-        <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setRenameOpen(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">Cancel</button><button type="submit" disabled={busy || !renameValue.trim()} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Save</button></div>
+      <form data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("ide_projects.rename_workspace")} onSubmit={(event) => { event.preventDefault(); saveWorkspaceName(); }} className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-2xl">
+        <h2 className="mb-4 text-sm font-semibold">{t("ide_projects.rename_workspace")}</h2>
+        <label className="block text-xs text-muted-foreground">{t("ide_view.workspace_name")}<input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground" /></label>
+        <div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setRenameOpen(false)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent">{t("common.cancel")}</button><button type="submit" disabled={busy || !renameValue.trim()} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">{t("common.save")}</button></div>
       </form>
     </div>}
   </div>;

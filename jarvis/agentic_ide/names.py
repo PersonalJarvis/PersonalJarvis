@@ -255,6 +255,24 @@ _NUMBER_WORDS: dict[str, int] = {
     "dieciocho": 18,
     "diecinueve": 19,
     "veinte": 20,
+    # European Portuguese ("tres", "cinco", "seis", "catorce"... shared with
+    # Spanish stay above). "um"/"uma" are left out: they are the indefinite
+    # article too, under the rule stated at the top of this table.
+    "dois": 2,
+    "duas": 2,
+    "três": 3,  # i18n-allow: input vocabulary
+    "quatro": 4,
+    "sete": 7,
+    "oito": 8,
+    "nove": 9,
+    "dez": 10,
+    "onze": 11,
+    "treze": 13,
+    "catorze": 14,
+    "dezasseis": 16,
+    "dezassete": 17,
+    "dezoito": 18,
+    "dezanove": 19,
 }
 
 # Ordinals, for "the third terminal". Spelled out in FULL rather than as stems
@@ -324,6 +342,21 @@ _ORDINAL_PLAIN: dict[str, int] = {
     "décimo": 10,
     "decima": 10,
     "décima": 10,
+    # European Portuguese forms the Spanish list above does not already spell
+    "primeiro": 1,
+    "primeira": 1,
+    "terceiro": 3,
+    "terceira": 3,
+    "quarto": 4,
+    "quarta": 4,
+    "setimo": 7,
+    "sétimo": 7,  # i18n-allow: input vocabulary
+    "setima": 7,
+    "sétima": 7,  # i18n-allow: input vocabulary
+    "oitavo": 8,
+    "oitava": 8,
+    "nono": 9,
+    "nona": 9,
 }
 
 _ORDINAL_WORDS: dict[str, int] = {
@@ -343,10 +376,10 @@ _LAST_WORDS: frozenset[str] = frozenset(
 
 #: How a person says the noun. Matches the German compound too ("Terminalfenster")
 #: without needing a second pattern.
-_PANE_NOUN = r"(?:terminals?|terminales|panes?|tabs?|fenster)"
+_PANE_NOUN = r"(?:terminals?|terminales|terminais|panes?|tabs?|fenster|painel)"
 
-#: An article in front of the noun or the ordinal, all three locales.
-_ARTICLE = r"(?:der|die|das|den|dem|des|the|el|la|los|las)"  # i18n-allow: input vocabulary
+#: An article in front of the noun or the ordinal, every supported locale.
+_ARTICLE = r"(?:der|die|das|den|dem|des|the|el|la|los|las|o|a|os|as)"  # i18n-allow: input vocab
 
 _NUMBER_WORD_ALT = "|".join(sorted((re.escape(w) for w in _NUMBER_WORDS), key=len, reverse=True))
 _ORDINAL_ALT = "|".join(sorted((re.escape(w) for w in _ORDINAL_WORDS), key=len, reverse=True))

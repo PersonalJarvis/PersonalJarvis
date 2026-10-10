@@ -28,7 +28,7 @@ log = logging.getLogger("jarvis.wake.model_fetch")
 
 _BASE_URL = "https://alphacephei.com/vosk/models/"
 # DEFAULT_LOCALE fallback (jarvis/core/turn_language.py) kept as a literal so this
-# module needs no heavy import; supported app languages are en/de/es.
+# module needs no heavy import; supported app languages are en/de/es/pt.
 _DEFAULT_LANG = "en"
 
 
@@ -54,6 +54,13 @@ VOSK_MODELS: dict[str, VoskModelSpec] = {
     "es": VoskModelSpec(
         "vosk-model-small-es-0.42.zip",
         "09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f",
+    ),
+    # Pinned 2026-10-10 (32,453,112 bytes). The only small Portuguese model
+    # alphacephei publishes; it ships the legacy flat layout (final.mdl at the
+    # model root, no am/ or conf/), which _lang_dir_has_model accepts.
+    "pt": VoskModelSpec(
+        "vosk-model-small-pt-0.3.zip",
+        "6e1ce909032e1afa7a88e68a3d628ecafff302bdf195befab308826c395e93b7",
     ),
 }
 
@@ -117,17 +124,27 @@ def _models_root(data_dir: str | None) -> Path:
     return Path(base) / "wake_models" / "vosk"
 
 
+def _is_model_dir(cand: Path) -> bool:
+    """Same markers as ``wake_constants._is_vosk_model_dir`` -- do not diverge.
+
+    ``am/`` or ``conf/model.conf`` is the current Vosk layout; a root-level
+    ``final.mdl`` is the legacy flat layout (e.g. vosk-model-small-pt-0.3),
+    which the Vosk runtime still loads.
+    """
+    return (
+        (cand / "am").is_dir()
+        or (cand / "conf" / "model.conf").is_file()
+        or (cand / "final.mdl").is_file()
+    )
+
+
 def _lang_dir_has_model(lang_dir: Path) -> bool:
     """Mirrors resolve_vosk_model_path's own "is this a model dir" check."""
     if not lang_dir.is_dir():
         return False
-    if (lang_dir / "am").is_dir() or (lang_dir / "conf" / "model.conf").is_file():
+    if _is_model_dir(lang_dir):
         return True
-    return any(
-        (sub / "am").is_dir() or (sub / "conf" / "model.conf").is_file()
-        for sub in lang_dir.iterdir()
-        if sub.is_dir()
-    )
+    return any(_is_model_dir(sub) for sub in lang_dir.iterdir() if sub.is_dir())
 
 
 def vosk_model_present(language: str | None, *, data_dir: str | None = None) -> bool:

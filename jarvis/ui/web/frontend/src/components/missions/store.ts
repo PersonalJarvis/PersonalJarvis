@@ -8,6 +8,8 @@
  */
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
+
+import { translate } from "@/i18n";
 import type {
   CriticVerdictReady,
   EventEnvelope,
@@ -108,7 +110,7 @@ export const useMissionsStore = create<MissionsStore>()(
               ...missions,
               [env.mission_id]: {
                 id: env.mission_id,
-                prompt: "(unknown)",
+                prompt: translate("mission_tree.unknown_prompt"),
                 state: newState,
                 language: "de",
                 created_ms: env.ts_ms,

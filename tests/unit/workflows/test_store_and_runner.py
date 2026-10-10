@@ -594,3 +594,54 @@ async def test_runner_harness_dispatch_reaches_the_attached_manager(
         ("jarvis_agent", "bring the window to the front", True)
     ]
     assert run["steps"][0]["output"] == "window focused"
+
+
+# ----------------------------------------------------------------------
+# Speak-step language
+# ----------------------------------------------------------------------
+
+
+def test_speak_step_language_defaults_to_auto() -> None:
+    assert SpeakStep(text="hi").language == "auto"
+
+
+@pytest.mark.parametrize(
+    ("pinned", "expected"),
+    [("auto", "pt"), ("", "pt"), ("es", "es"), ("de", "de")],
+)
+async def test_speak_step_follows_ambient_language_unless_pinned(
+    store: WorkflowStore,
+    monkeypatch: pytest.MonkeyPatch,
+    pinned: str,
+    expected: str,
+) -> None:
+    """An unpinned speak step speaks the ambient answer language at run time;
+    an explicit language on the persisted step still wins."""
+    import asyncio
+
+    from jarvis.core.events import AnnouncementRequested
+    from jarvis.workflows import runner as runner_module
+
+    monkeypatch.setattr(runner_module, "resolve_ambient_language", lambda: "pt")
+    bus = EventBus()
+    spoken: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, spoken.append)
+    runner = WorkflowRunner(store=store, bus=bus, brain=FakeBrain())
+
+    wf = WorkflowDef(
+        name="Speak",
+        trigger=ManualTrigger(),
+        steps=(SpeakStep(text="hello", language=pinned),),
+    )
+    wid = await store.upsert_workflow(wf)
+    run_id = await runner.trigger(wid)
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        run = await store.get_run(run_id)
+        if run and run["state"] == "completed":
+            break
+    else:
+        pytest.fail("Run did not finish within 500ms")
+
+    announcements = [e for e in spoken if e.text == "hello"]
+    assert [e.language for e in announcements] == [expected]

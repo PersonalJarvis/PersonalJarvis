@@ -26,7 +26,7 @@ import { FileTypeIcon } from "@/components/agentic/sidePanel/explorer/FileTypeIc
 import { absoluteWorkspacePath } from "@/components/agentic/sidePanel/explorer/explorerApi";
 import { ThreadMenuHeading, ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
 import { checkDisk, discardFile, languageName, reopenWithEncoding, revertFile, saveAll, saveFile, setLineEnding } from "./editorModels";
-import { ENCODINGS, encodingLabel } from "./encodings";
+import { ENCODINGS, encodingLabel, encodingOptionLabel } from "./encodings";
 import { QuickOpen } from "./QuickOpen";
 import { restoreWorkspace } from "./editorPersistence";
 import { SEARCH_FOCUS_EVENT } from "@/components/agentic/sidePanel/search/SearchPanel";
@@ -573,7 +573,7 @@ function StatusBar({ fileKey }: { fileKey: string }) {
             {ENCODINGS.map((entry) => (
               <ThreadMenuItem
                 key={`save-${entry.id}`}
-                label={entry.label}
+                label={encodingOptionLabel(entry)}
                 selected={file.encoding === entry.id}
                 onSelect={() => {
                   setMenu(null);
@@ -586,7 +586,7 @@ function StatusBar({ fileKey }: { fileKey: string }) {
             {ENCODINGS.map((entry) => (
               <ThreadMenuItem
                 key={`reopen-${entry.id}`}
-                label={entry.label}
+                label={encodingOptionLabel(entry)}
                 disabled={file.dirty}
                 onSelect={() => {
                   setMenu(null);

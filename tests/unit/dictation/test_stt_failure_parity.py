@@ -37,7 +37,7 @@ _DICTATION_TS = _FRONTEND / "hooks" / "useDictation.ts"
 _HISTORY_GROUP_TSX = _FRONTEND / "views" / "voice" / "DictationHistoryGroup.tsx"
 _LOCALES = _FRONTEND / "i18n" / "locales"
 
-SUPPORTED_LOCALES = ("de", "en", "es")
+SUPPORTED_LOCALES = ("de", "en", "es", "pt")
 
 #: The live 429 the maintainer was shown, verbatim from the log. Kept as a
 #: literal so the classifier is pinned against a REAL provider error rather than

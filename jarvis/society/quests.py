@@ -36,6 +36,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from jarvis.missions.events import MISSION_LANGUAGES
 from jarvis.missions.ids import uuid7_str
 
 from .capabilities import CapabilityRow
@@ -502,7 +503,7 @@ class Quests:
             "quest_id": quest_id,
             "title": quest.title,
         }
-        if lang in ("de", "en"):
+        if lang in MISSION_LANGUAGES:
             payload["lang"] = lang
         await self._set(
             quest,

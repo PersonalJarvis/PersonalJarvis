@@ -11,6 +11,7 @@ import {
 
 import {
   buildDocSections,
+  docSectionLabel,
   useDocsGrouped,
   type DocSection,
   type DocNavSummary,
@@ -134,7 +135,7 @@ export function DocsOverview({ onSelect, onOpenSearch }: Props) {
                         {doc.title}
                       </span>
                       <span className="mt-0.5 block truncate text-sm text-muted-foreground">
-                        {sectionBySlug.get(doc.slug)}
+                        {docSectionLabel(sectionBySlug.get(doc.slug) ?? "")}
                       </span>
                     </span>
                     <ArrowRight
@@ -294,7 +295,7 @@ function TopicCard({
           <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
         <h3 className="text-lg font-semibold text-foreground-strong">
-          {section.name}
+          {docSectionLabel(section.name)}
         </h3>
       </div>
       <ul className="mt-4 flex-1 space-y-px">

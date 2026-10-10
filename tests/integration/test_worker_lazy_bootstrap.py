@@ -117,7 +117,12 @@ async def test_post_hoc_set_mission_manager_makes_tool_functional() -> None:
     # main's _build_mission_prompt enriches the prompt with the interpreted
     # action ("build"), so assert containment rather than an exact raw match.
     assert "build hello world" in call.kwargs["prompt"]
-    assert call.kwargs["language"] == "de"
+    # A turn with no language follows the ambient answer language (reply pin,
+    # then locale) instead of a hard-coded German default.
+    from jarvis.missions.events import coerce_mission_language
+    from jarvis.voice.action_phrases import resolve_ambient_language
+
+    assert call.kwargs["language"] == coerce_mission_language(resolve_ambient_language())
     assert call.kwargs["source_actor"] == "hauptjarvis"
 
 

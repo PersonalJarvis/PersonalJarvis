@@ -524,10 +524,12 @@ class TaskRunner:
         # scrub_for_voice before TTS synthesizes it. Defense-in-depth: workflow
         # definitions could have brain-generated text as a speak action without
         # the skill author explicitly calling the filter.
-        # Language: action has an optional .language; otherwise default "de".
+        # Language: the action's optional .language; otherwise the ambient
+        # answer language (reply-language pin, then the default locale).
         from jarvis.brain.output_filter import scrub_for_voice
+        from jarvis.voice.action_phrases import resolve_ambient_language
 
-        speak_lang = getattr(action, "language", None) or "de"
+        speak_lang = getattr(action, "language", None) or resolve_ambient_language()
         scrubbed = scrub_for_voice(text, language=speak_lang)
         if scrubbed.actions:
             log.info(

@@ -64,7 +64,8 @@ import {
 import { AwaitingTurn, MessengerTurn, type MemoryLink } from "@/components/agentchat/MessengerTurn";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
@@ -767,10 +768,11 @@ export function Transcript({
 
 function TimeStamp({ ms }: { ms: number }) {
   const t = useT();
+  const locale = useRunLocale();
   const date = new Date(ms);
   const today = new Date().toDateString() === date.toDateString();
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const day = today ? t("society.chat.today") : date.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+  const time = date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  const day = today ? t("society.chat.today") : date.toLocaleDateString(locale, { day: "2-digit", month: "short" });
   return <p className="my-4 text-center text-[11px] text-muted-foreground">{`${day} ${time}`}</p>;
 }
 
@@ -843,7 +845,7 @@ export function NoticeLine({ item }: { item: NoticeItem }) {
 }
 
 /** One human-readable line per proposal kind, read off the typed payload. */
-function proposalDetail(kind: string, payload: Record<string, unknown>): string {
+function proposalDetail(kind: string, payload: Record<string, unknown>, t: (key: string) => string): string {
   const list = (v: unknown): string => (Array.isArray(v) ? v.map(String).join(", ") : "");
   switch (kind) {
     case "rule":
@@ -859,8 +861,8 @@ function proposalDetail(kind: string, payload: Record<string, unknown>): string 
     }
     case "approval_rule": {
       const parts: string[] = [];
-      if (list(payload.require_approval)) parts.push(`ask first: ${list(payload.require_approval)}`);
-      if (list(payload.always_allow)) parts.push(`always allow: ${list(payload.always_allow)}`);
+      if (list(payload.require_approval)) parts.push(fill(t("society.chat.proposal_ask_first"), { tools: list(payload.require_approval) }));
+      if (list(payload.always_allow)) parts.push(fill(t("society.chat.proposal_always_allow"), { tools: list(payload.always_allow) }));
       return parts.join(" · ");
     }
     case "focus":
@@ -892,7 +894,7 @@ function ProposalCard({ item }: { item: NoticeItem }) {
   const summary = String(item.data.summary ?? item.text);
   const reason = String(item.data.reason ?? "");
   const payload = (item.data.payload ?? {}) as Record<string, unknown>;
-  const detail = proposalDetail(kind, payload);
+  const detail = proposalDetail(kind, payload, t);
   const outcome = item.text.includes("\n") ? item.text.slice(item.text.indexOf("\n") + 1) : "";
   // A team offer is a pick list: everyone is proposed, the person keeps the
   // ones they want and the picked names ride along in the decision's note.

@@ -18,7 +18,7 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { WorkspaceTerminal } from "@/components/workspace/WorkspaceTerminal";
 import {
   fetchWorkspaceAgents,
@@ -326,14 +326,14 @@ function InstallPanel({
         <WorkspaceTerminal
           paneKey={`install-${name}`}
           installName={name}
-          title={`install ${name}`}
+          title={fill(t("install_terminal.pane_title"), { package: name })}
           /* A package manager can be silent for several seconds, and an
              empty black pane is how that reads. Dim, because it is this
              app talking rather than the installer. */
           banner={
             command
               ? `\x1b[2m$ ${command}\x1b[0m`
-              : `\x1b[2mStarting the installer for ${display}…\x1b[0m`
+              : `\x1b[2m${fill(t("install_terminal.starting"), { package: display })}\x1b[0m`
           }
         />
       </div>
@@ -531,7 +531,7 @@ function AgentCard({
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
-            aria-label="decrease"
+            aria-label={t("install_agents.decrease")}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-border hover:border-primary/40 disabled:opacity-30"
             disabled={count <= 0}
             onClick={onDec}
@@ -541,7 +541,7 @@ function AgentCard({
           <span className="w-8 text-center font-mono text-base font-semibold">{count}</span>
           <button
             type="button"
-            aria-label="increase"
+            aria-label={t("install_agents.increase")}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-border hover:border-primary/40 disabled:opacity-30"
             disabled={!canInc}
             onClick={onInc}
@@ -557,7 +557,7 @@ function AgentCard({
           </button>
           <button
             type="button"
-            aria-label="re-check"
+            aria-label={t("install_agents.recheck")}
             className="flex h-9 w-9 items-center justify-center rounded-lg border border-border hover:border-primary/40"
             onClick={onRecheck}
           >

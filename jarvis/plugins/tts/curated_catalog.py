@@ -59,6 +59,8 @@ _VOICE_GENDERS: dict[str, str] = {
     # Inworld
     "Josef": MASCULINE, "Dennis": MASCULINE, "Diego": MASCULINE,
     "Johanna": FEMININE, "Ashley": FEMININE, "Lupita": FEMININE,
+    "Leonor": FEMININE,   # pt-PT
+    "Heitor": MASCULINE,  # pt-BR
     # ElevenLabs curated prebuilt voices (ids; all masculine)
     "onwK4e9ZLuTAKqWW03F9": MASCULINE,  # Daniel
     "JBFqnCBsd6RMkjVDRZzb": MASCULINE,  # George
@@ -110,10 +112,11 @@ def _v(voice_id: str, language: str = MULTILINGUAL) -> VoiceEntry:
 class ModelEntry:
     """One vetted model on the allowlist.
 
-    ``languages`` lists the first-class languages (de/en/es) the model covers
-    well — the premium models cover far more, but these three are what Jarvis
-    guarantees. ``status`` is ``"allowed"`` (selectable), ``"provisional"``
-    (integrated but not yet eval-passed, hidden from the default picker), or
+    ``languages`` lists the first-class languages (de/en/es/pt) the model
+    covers well — the premium models cover far more, but these are what Jarvis
+    guarantees. ``pt`` is listed only where the vendor documents Portuguese.
+    ``status`` is ``"allowed"`` (selectable), ``"provisional"`` (integrated
+    but not yet eval-passed, hidden from the default picker), or
     ``"unlisted"`` (kept for provenance, never selectable).
     """
 
@@ -144,7 +147,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="inworld",
         model_id="inworld-tts-2",
         quality_tier="S",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="realtime",
         streaming=True,
         voices=(
@@ -154,13 +157,17 @@ _CATALOG: tuple[ModelEntry, ...] = (
             _v("Ashley", "en"),
             _v("Diego", "es"),
             _v("Lupita", "es"),
+            # Leonor is a European Portuguese voice; Heitor is Brazilian and
+            # only the masculine alternative (no masculine pt-PT voice exists).
+            _v("Leonor", "pt"),
+            _v("Heitor", "pt"),
         ),
     ),
     ModelEntry(
         family="cartesia",
         model_id="sonic-3.5",
         quality_tier="S",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="realtime",
         streaming=True,
     ),
@@ -168,7 +175,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="gemini-flash-tts",
         model_id="gemini-3.1-flash-tts-preview",
         quality_tier="S",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="standard",  # ~300-500 ms, chunked (no true WS streaming)
         streaming=True,
         voices=tuple(
@@ -187,7 +194,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="elevenlabs",
         model_id="eleven_flash_v2_5",
         quality_tier="A",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="realtime",
         streaming=True,
         voices=(
@@ -202,7 +209,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="grok-voice",
         model_id="grok-voice-tts-1.0",
         quality_tier="A",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="realtime",
         streaming=True,
         voices=tuple(
@@ -220,7 +227,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="openrouter",
         model_id="google/gemini-3.1-flash-tts-preview",
         quality_tier="S",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="standard",
         streaming=True,
     ),
@@ -228,10 +235,12 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="openrouter",
         model_id="x-ai/grok-voice-tts-1.0",
         quality_tier="A",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="realtime",
         streaming=True,
     ),
+    # No "pt": Microsoft's public MAI-Voice-2 pages give a language count but
+    # no list we could verify, and the curated voices cover no Portuguese.
     ModelEntry(
         family="openrouter",
         model_id="microsoft/mai-voice-2",
@@ -247,7 +256,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         family="openrouter",
         model_id="mistralai/voxtral-mini-tts-2603",
         quality_tier="A",
-        languages=("de", "en", "es"),
+        languages=("de", "en", "es", "pt"),
         latency_class="standard",
         streaming=True,
     ),

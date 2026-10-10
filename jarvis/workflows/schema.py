@@ -105,13 +105,18 @@ class SpeakStep(BaseModel):
 
     If the TTS pipeline is running, the text is spoken. Otherwise
     the event stays in the flight recorder and the step counts as successful.
+
+    ``language`` pins the spoken language of the step. ``"auto"`` (the
+    default) or an empty value follows the ambient answer language when the
+    step runs (``brain.reply_language`` pin, else the default locale), so a
+    workflow created without a language never speaks a hardcoded one.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["speak"] = "speak"
     label: str = Field(default="", max_length=128)
     text: str = Field(min_length=1, max_length=4096)
     priority: Literal["normal", "interrupt"] = "normal"
-    language: str = Field(default="de", max_length=8)
+    language: str = Field(default="auto", max_length=8)
 
 
 class ToolCallStep(BaseModel):

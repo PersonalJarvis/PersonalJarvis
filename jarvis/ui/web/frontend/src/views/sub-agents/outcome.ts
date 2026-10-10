@@ -22,6 +22,7 @@
 import type {
   CriticVerdictReady,
   EventEnvelope,
+  MissionApproved,
   MissionFailed,
   WorkerCorrectionRequired,
   WorkerKilled,
@@ -200,6 +201,23 @@ export function classifyNote(note: string): {
   return { kind: "narration", tool: null, text: trimmed };
 }
 
+/**
+ * The approval summary in `language`: de/en have their own fields, any other
+ * language (es/pt) reads `summary_local`. Falls back to en, then de. With no
+ * known language the en summary is preferred.
+ */
+export function pickApprovedSummary(
+  p: Pick<MissionApproved, "summary_de" | "summary_en" | "summary_local">,
+  language: string | null,
+): string {
+  const lang = (language || "").toLowerCase().split(/[-_]/)[0];
+  let preferred: string | undefined;
+  if (lang === "de") preferred = p.summary_de;
+  else if (lang === "en" || !lang) preferred = p.summary_en;
+  else preferred = p.summary_local;
+  return preferred || p.summary_en || p.summary_de || "";
+}
+
 function iterationOf(workerId: string | null | undefined): number | null {
   if (!workerId) return null;
   const m = /::iter(\d+)$/.exec(workerId);
@@ -301,7 +319,7 @@ export function deriveOutcome(
       }
       case "MissionApproved":
         out.terminal = "approved";
-        out.summary = (language === "de" ? p.summary_de : p.summary_en) || p.summary_en || p.summary_de || null;
+        out.summary = pickApprovedSummary(p, language) || null;
         out.result_uri = p.result_uri || null;
         out.wall_ms = p.wall_ms || null;
         if (p.tokens_used) out.tokens_used = Math.max(out.tokens_used, p.tokens_used);
@@ -366,10 +384,13 @@ export function buildStory(events: EventEnvelope[]): StoryEntry[] {
     verdict: null as CriticVerdictReady | null,
   });
 
+  // The mission's dispatch language, so the approval line reads its summary.
+  let missionLanguage: string | null = null;
   for (const env of events) {
     const p = env.payload;
     switch (p.event_type) {
       case "MissionDispatched":
+        missionLanguage = p.language || null;
         push(env, { ...base(env), kind: "dispatched", tone: "neutral", text: "", meta: { language: p.language } });
         break;
       case "MissionPlanReady":
@@ -472,7 +493,7 @@ export function buildStory(events: EventEnvelope[]): StoryEntry[] {
           ...base(env),
           kind: "approved",
           tone: TERMINAL_TONE.approved,
-          text: p.summary_en || p.summary_de || "",
+          text: pickApprovedSummary(p, missionLanguage),
           meta: {},
         });
         break;

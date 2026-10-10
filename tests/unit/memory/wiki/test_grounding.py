@@ -106,6 +106,8 @@ def test_non_attitude_fact_families_stay_untouched() -> None:
         "Ich spiele jeden Samstag Golf mit meinen Freunden.",  # i18n-allow: input vocabulary under test
         "Ich bin sehr gerne draussen auf Golfplaetzen unterwegs.",  # i18n-allow: input vocabulary under test
         "Juego al golf cada sabado con mis amigos.",
+        "Jogo golfe todos os sábados com os meus amigos.",  # i18n-allow: pt input under test
+        "Costumo ir ao campo de golfe com os amigos.",  # i18n-allow: input vocabulary under test
     ],
 )
 def test_multilingual_behavioral_reports_classify_behavioral(evidence: str) -> None:
@@ -120,6 +122,28 @@ def test_multilingual_topic_question_stays_blocked() -> None:
         "The user is interested in Monaco.",
         "Erzaehl mir was ueber Monaco?",  # i18n-allow: input vocabulary under test
         subjects=(_USER, "monaco"),
+    ) is None
+
+
+def test_portuguese_topic_question_stays_blocked() -> None:
+    assert _classify(
+        "The user is interested in Monaco.",
+        "O que há para ver no Mónaco?",  # i18n-allow: input vocabulary under test
+        subjects=(_USER, "monaco"),
+    ) is None
+
+
+def test_portuguese_explicit_interest_classifies_explicit() -> None:
+    assert _classify(
+        "The user loves golf.",
+        "Adoro jogar golfe com os meus amigos.",  # i18n-allow: input vocabulary under test
+    ) == "explicit"
+
+
+def test_portuguese_negative_interest_does_not_ground_a_positive_claim() -> None:
+    assert _classify(
+        "The user likes golf.",
+        "Não gosto de golfe.",  # i18n-allow: input vocabulary under test
     ) is None
 
 
@@ -140,6 +164,8 @@ def test_cessation_habit_claim_classifies_explicit() -> None:
         "Ich spiele nicht mehr Golf.",  # i18n-allow: input vocabulary under test
         "Ich habe mit Golf aufgehoert.",  # i18n-allow: input vocabulary under test
         "Ya no juego al golf.",
+        "Já não jogo golfe.",  # i18n-allow: input vocabulary under test
+        "Deixei de jogar golfe no ano passado.",  # i18n-allow: input vocabulary under test
     ],
 )
 def test_multilingual_cessation_claims_classify_explicit(evidence: str) -> None:

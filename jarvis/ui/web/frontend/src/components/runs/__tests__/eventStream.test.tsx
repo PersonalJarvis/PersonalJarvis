@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 
 vi.mock("@/i18n", () => ({
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)),
   useT: () => (k: string) => k,
   useUiLanguage: () => "en",
 }));

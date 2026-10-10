@@ -19,6 +19,7 @@
  * error zero on every dpr; a `transform` moves only the painted pixels (which
  * the snapshot still captures), so the chip never flashes on screen.
  */
+import { translate } from "@/i18n";
 
 // The dark theme's --primary. Hardcoded rather than read from the token
 // because the chip is painted onto its own near-black ground (below) and
@@ -28,7 +29,7 @@ const TITLE_MAX = 64;
 
 function truncate(title: string): string {
   const clean = title.replace(/\s+/g, " ").trim();
-  if (!clean) return "Mission";
+  if (!clean) return translate("shell_labels.mission");
   return clean.length > TITLE_MAX ? clean.slice(0, TITLE_MAX - 1) + "…" : clean;
 }
 

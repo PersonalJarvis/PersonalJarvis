@@ -92,7 +92,8 @@ function displayNamesFor(uiLanguage: string): Intl.DisplayNames | null {
   if (cached !== undefined) return cached;
   let instance: Intl.DisplayNames | null = null;
   try {
-    instance = new Intl.DisplayNames([uiLanguage], { type: "language" });
+    // A bare "pt" means Brazilian Portuguese in CLDR; the app's Portuguese is European.
+    instance = new Intl.DisplayNames([uiLanguage === "pt" ? "pt-PT" : uiLanguage], { type: "language" });
   } catch {
     // No Intl.DisplayNames (very old runtime, or an unsupported locale): the
     // fallback table and the raw code still produce something readable.

@@ -7,6 +7,7 @@
  * sends a template of its own to publish, so what leaves the machine is
  * exactly what the server's scrubber let through.
  */
+import { fill, translate } from "@/i18n";
 
 export type ShareFindingKind = "secret" | "email" | "path" | "phone" | "address";
 
@@ -115,7 +116,7 @@ async function readError(res: Response): Promise<ShareError> {
   };
   const detail = body.detail;
   if (typeof detail === "string") return new ShareError(detail, res.status);
-  const message = detail?.error ?? detail?.detail ?? `Request failed (${res.status})`;
+  const message = detail?.error ?? detail?.detail ?? fill(translate("common.request_failed"), { status: res.status });
   return new ShareError(message, res.status, detail?.field ?? null);
 }
 

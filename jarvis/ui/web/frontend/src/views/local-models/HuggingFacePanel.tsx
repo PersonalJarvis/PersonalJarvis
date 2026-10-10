@@ -43,7 +43,8 @@ import {
   type HfSort,
   type ModelPullProgress,
 } from "@/hooks/useLocalModels";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -98,7 +99,7 @@ type PullState = { progress: ModelPullProgress | null; error: string | null };
 
 export function HuggingFacePanel({ providerId }: { providerId: string }) {
   const t = useT();
-  const locale = useUiLanguage();
+  const locale = useRunLocale();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
 
   const enabledQuery = useHfEnabled(providerId);

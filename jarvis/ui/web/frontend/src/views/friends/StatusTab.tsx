@@ -36,7 +36,7 @@ export function StatusTab() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           {t("status_tab.intro_part1")} {assistantName}{" "}
-          {t("status_tab.intro_part2")} <strong>minimal</strong>{" "}
+          {t("status_tab.intro_part2")} <strong>{t("permission_matrix.profile_minimal")}</strong>{" "}
           {t("status_tab.intro_part3")}
         </p>
       </div>
@@ -153,18 +153,18 @@ function ProfileLegend() {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
       <ProfileCard
-        name="minimal"
+        name={t("permission_matrix.profile_minimal")}
         subline={t("status_tab.profile_minimal_subline")}
         description={t("status_tab.profile_minimal_desc")}
         isDefault
       />
       <ProfileCard
-        name="standard"
+        name={t("permission_matrix.profile_standard")}
         subline={t("status_tab.profile_standard_subline")}
         description={t("status_tab.profile_standard_desc")}
       />
       <ProfileCard
-        name="detailed"
+        name={t("permission_matrix.profile_detailed")}
         subline={t("status_tab.profile_detailed_subline")}
         description={t("status_tab.profile_detailed_desc")}
       />
@@ -183,6 +183,7 @@ function ProfileCard({
   description: string;
   isDefault?: boolean;
 }) {
+  const t = useT();
   return (
     <div className="rounded-lg border border-border bg-card/40 p-4">
       <div className="flex items-center justify-between">
@@ -191,7 +192,7 @@ function ProfileCard({
         </span>
         {isDefault && (
           <span className="rounded-full border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wider text-primary">
-            default
+            {t("status_tab.default_badge")}
           </span>
         )}
       </div>

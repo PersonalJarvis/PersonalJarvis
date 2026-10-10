@@ -15,6 +15,7 @@
  *    a bug in the other.
  */
 import type { CostRole, CostSurface, PriceSource } from "@/hooks/useCosts";
+import { uiLocale } from "@/lib/boardInsights";
 
 /** One hue per role — the chart stack, the legend and the tables share it. */
 export const ROLE_COLORS: Record<CostRole, string> = {
@@ -80,16 +81,14 @@ export function formatMoney(usd: number, eurPerUsd: number, currency: "usd" | "e
   const value = currency === "eur" ? usd * eurPerUsd : usd;
   const symbol = currency === "eur" ? "€" : "$";
   const abs = Math.abs(value);
-  // One convention for the whole amount. The decimals below have always been
-  // written with a dot, while grouping followed the reader's locale — which
-  // on a German machine put "$0.60/day · $17.433" on one line, the same
-  // character meaning a decimal point in one number and a thousands
-  // separator in the next. The symbol is already written in the leading
-  // position these separators belong to, so the grouping follows suit.
-  if (abs === 0) return `${symbol}0.00`;
-  if (abs < 0.01) return `${symbol}${value.toFixed(4)}`;
-  if (abs < 100) return `${symbol}${value.toFixed(2)}`;
-  return `${symbol}${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+  // One convention for the whole amount: decimals AND grouping follow the
+  // UI language, so one line never mixes a decimal dot with a grouping dot.
+  const digits = abs === 0 ? 2 : abs < 0.01 ? 4 : abs < 100 ? 2 : 0;
+  const number = new Intl.NumberFormat(uiLocale(), {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+  return `${symbol}${number}`;
 }
 
 /** Compact token counts: 1 240 → 1.2k, 12 823 750 → 12.8M. */
@@ -113,7 +112,7 @@ export function formatTokens(n: number): string {
 }
 
 export function formatExact(n: number): string {
-  return n.toLocaleString();
+  return n.toLocaleString(uiLocale());
 }
 
 export function formatShare(share: number): string {
@@ -127,22 +126,22 @@ export function formatBucketTick(key: string, bucket: "day" | "hour"): string {
   const d = new Date(bucket === "hour" ? `${key}:00` : `${key}T00:00:00`);
   if (Number.isNaN(d.getTime())) return key;
   return bucket === "hour"
-    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    ? d.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString(uiLocale(), { day: "numeric", month: "short" });
 }
 
 export function formatBucketFull(key: string, bucket: "day" | "hour"): string {
   const d = new Date(bucket === "hour" ? `${key}:00` : `${key}T00:00:00`);
   if (Number.isNaN(d.getTime())) return key;
   return bucket === "hour"
-    ? d.toLocaleString(undefined, {
+    ? d.toLocaleString(uiLocale(), {
         weekday: "short",
         day: "numeric",
         month: "short",
         hour: "2-digit",
         minute: "2-digit",
       })
-    : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    : d.toLocaleDateString(uiLocale(), { weekday: "short", day: "numeric", month: "short" });
 }
 
 /**
@@ -175,7 +174,7 @@ export function relativeDay(date: string): "today" | "yesterday" | "" {
 export function formatDayLong(date: string): string {
   const d = new Date(`${date}T00:00:00`);
   if (Number.isNaN(d.getTime())) return date;
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString(uiLocale(), {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -187,18 +186,18 @@ export function formatDayLong(date: string): string {
 export function formatDayShort(date: string): string {
   const d = new Date(`${date}T00:00:00`);
   if (Number.isNaN(d.getTime())) return date;
-  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return d.toLocaleDateString(uiLocale(), { weekday: "short", day: "numeric", month: "short" });
 }
 
 /** "09:53" — a clock time, for the window a day's work actually ran in. */
 export function formatClock(ms: number): string {
   if (!ms) return "—";
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatTimestamp(ms: number): string {
   if (!ms) return "—";
-  return new Date(ms).toLocaleString(undefined, {
+  return new Date(ms).toLocaleString(uiLocale(), {
     day: "2-digit",
     month: "short",
     hour: "2-digit",

@@ -8,9 +8,16 @@ Veto keeps priority over confirm (safety bias, Plan-§AP-12).
 """
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
-from jarvis.voice.echo_confirmation import classify_response
+from jarvis.core.self_mod.pending import PendingMutation
+from jarvis.voice.echo_confirmation import (
+    classify_response,
+    format_confirmation,
+    format_outcome,
+)
 
 
 @pytest.mark.parametrize(
@@ -54,3 +61,39 @@ def test_para_is_not_a_veto() -> None:
 
 def test_portuguese_unknown_when_no_pattern() -> None:
     assert classify_response("a lua está bonita", language="pt") == "unknown"
+
+
+def _pending(path: str = "tts.speed", old: object = False, new: object = True) -> PendingMutation:
+    return PendingMutation(
+        id=uuid4(), path=path, old_value=old, new_value=new,
+        needs_confirmation=True, risk_tier="ask", requires_restart=False,
+        applied=False, backup_path=None, description="Modo rápido (hot-reload)",  # i18n-allow
+    )
+
+
+def test_portuguese_echo_question() -> None:
+    assert format_confirmation(_pending(), language="pt") == (
+        "Entendido — Modo rápido muda de desligado para ligado. Confirmas?"  # i18n-allow
+    )
+
+
+def test_portuguese_sensitive_echo_question_hides_the_value() -> None:
+    text = format_confirmation(_pending(path="api_key", new="sk-secret"), language="pt")
+    assert "sk-secret" not in text
+    assert text.endswith("para um valor novo. Confirmas?")  # i18n-allow
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        ("applied", "Pronto — Modo rápido agora é ligado."),  # i18n-allow
+        ("vetoed", "Está bem, deixo estar."),  # i18n-allow
+        ("timeout", "Não ouvi resposta, vou cancelar. A definição fica em desligado."),
+    ],
+)
+def test_portuguese_outcomes(kind: str, expected: str) -> None:
+    assert format_outcome(kind, _pending(), language="pt") == expected  # type: ignore[arg-type]
+
+
+def test_unknown_language_outcome_speaks_english() -> None:
+    assert format_outcome("vetoed", _pending(), language="fr") == "Okay, leaving it."

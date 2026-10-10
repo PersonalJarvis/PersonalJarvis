@@ -49,6 +49,7 @@ import {
   User,
   X,
 } from "lucide-react";
+import { fill, translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import type { RecapReason, RecapSource } from "@/lib/agenticIdeApi";
 import { PANE_BRAND } from "./terminalThemes";
@@ -75,44 +76,45 @@ export const MAX_DETAIL = 2000;
  * wrote it and how long ago, and repeating that in a sentence is noise.
  */
 const WHY: Partial<Record<RecapReason, string>> = {
-  pinned: "You wrote this. It stays until you reset it.",
-  cli_title: "The agent in this pane named its session itself.",
-  disabled:
-    "Model recaps are switched off, so this is read from the pane's own output.",
-  not_started: "Nothing is running in this pane yet, so there is nothing to summarize.",
-  warming:
-    "Too little output so far to summarize — this line is read from the pane's own output.",
-  working: "A summary is being written now. This line is read from the pane's own output.",
-  queued:
-    "Waiting its turn to be summarized. This line is read from the pane's own output.",
-  unavailable:
-    "No model could summarize this pane, so this line is read from its own output.",
+  pinned: "ide_panes.recap.why.pinned",
+  cli_title: "ide_panes.recap.why.cli_title",
+  disabled: "ide_panes.recap.why.disabled",
+  not_started: "ide_panes.recap.why.not_started",
+  warming: "ide_panes.recap.why.warming",
+  working: "ide_panes.recap.why.working",
+  queued: "ide_panes.recap.why.queued",
+  unavailable: "ide_panes.recap.why.unavailable",
 };
 
 /** What the footer badge says about who wrote the sentence above it. */
 function credit(source: RecapSource, writer: string): { label: string; icon: JSX.Element } {
   if (source === "user")
-    return { label: "Written by you", icon: <User className="h-3 w-3" /> };
+    return { label: translate("ide_panes.recap.credit.user"), icon: <User className="h-3 w-3" /> };
   if (source === "cli")
     return {
-      label: writer ? `Named by ${writer}` : "Named by the agent",
+      label: writer
+        ? fill(translate("ide_panes.recap.credit.cli_named"), { writer })
+        : translate("ide_panes.recap.credit.cli"),
       icon: <Terminal className="h-3 w-3" />,
     };
   if (source === "model")
     return {
-      label: writer ? `Summarized by ${writer}` : "Summarized by a model",
+      label: writer
+        ? fill(translate("ide_panes.recap.credit.model_named"), { writer })
+        : translate("ide_panes.recap.credit.model"),
       icon: <Sparkles className="h-3 w-3" />,
     };
-  return { label: "Read from the output", icon: <Terminal className="h-3 w-3" /> };
+  return { label: translate("ide_panes.recap.credit.heuristic"), icon: <Terminal className="h-3 w-3" /> };
 }
 
 /** "34s ago" / "6 min ago" — the same wording the backend uses for idle time. */
 function ago(at: number): string {
   if (!at) return "";
   const seconds = Math.max(0, Math.round(Date.now() / 1000 - at));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  return `${Math.floor(seconds / 3600)} h ago`;
+  if (seconds < 60) return fill(translate("ide_panes.recap.ago_seconds"), { count: seconds });
+  if (seconds < 3600)
+    return fill(translate("ide_panes.recap.ago_minutes"), { count: Math.floor(seconds / 60) });
+  return fill(translate("ide_panes.recap.ago_hours"), { count: Math.floor(seconds / 3600) });
 }
 
 interface Anchor {
@@ -187,6 +189,7 @@ export function PaneRecap({
   onClear,
   onRefresh,
 }: PaneRecapProps) {
+  const t = useT();
   const lineRef = useRef<HTMLButtonElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
@@ -305,7 +308,7 @@ export function PaneRecap({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? tipId : undefined}
-        aria-label={`What ${name} is doing`}
+        aria-label={fill(t("ide_panes.recap.what_doing"), { pane: name })}
         data-testid={`pane-recap-${name}`}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => {
@@ -339,7 +342,7 @@ export function PaneRecap({
             ref={cardRef}
             id={tipId}
             role="dialog"
-            aria-label={`What ${name} is doing`}
+            aria-label={fill(t("ide_panes.recap.what_doing"), { pane: name })}
             data-testid={`pane-recap-card-${name}`}
             data-placement={anchor.placement}
             onMouseDown={(e) => e.stopPropagation()}
@@ -381,7 +384,7 @@ export function PaneRecap({
               </span>
               <button
                 type="button"
-                aria-label="Close"
+                aria-label={t("common.close")}
                 data-testid={`pane-recap-close-${name}`}
                 onClick={close}
                 className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -423,12 +426,12 @@ export function PaneRecap({
                     {body}
                   </p>
                 )}
-                {WHY[reason] && (
+                {WHY[reason] !== undefined && (
                   <p
                     className="border-l-2 border-primary/45 bg-primary/[0.035] px-3 py-2 text-micro text-muted-foreground"
                     data-testid={`pane-recap-why-${name}`}
                   >
-                    {WHY[reason]}
+                    {t(WHY[reason] ?? "")}
                     {note && <span className="mt-1 block opacity-70">{note}</span>}
                   </p>
                 )}
@@ -456,7 +459,7 @@ export function PaneRecap({
                 <span className="flex shrink-0 items-center gap-1.5">
                   {onSave && (
                     <CardAction
-                      label="Write it yourself"
+                      label={t("ide_panes.recap.write_yourself")}
                       testId={`pane-recap-card-edit-${name}`}
                       onClick={() => {
                         setEditing(true);
@@ -467,7 +470,7 @@ export function PaneRecap({
                   )}
                   {source === "user" && onClear ? (
                     <CardAction
-                      label="Back to the automatic recap"
+                      label={t("ide_panes.recap.back_to_auto")}
                       testId={`pane-recap-reset-${name}`}
                       busy={busy === "clear"}
                       onClick={() => void run("clear", onClear)}
@@ -477,7 +480,7 @@ export function PaneRecap({
                   ) : (
                     onRefresh && (
                       <CardAction
-                        label="Summarize this pane again"
+                        label={t("ide_panes.recap.summarize_again")}
                         testId={`pane-recap-refresh-${name}`}
                         busy={busy === "refresh"}
                         onClick={() => void run("refresh", onRefresh)}
@@ -552,6 +555,7 @@ function RecapEditor({
   onSave: (headline: string, detail: string) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [line, setLine] = useState(headline);
   const [body, setBody] = useState(detail);
   const firstRef = useRef<HTMLInputElement | null>(null);
@@ -578,13 +582,13 @@ function RecapEditor({
     <div className="flex flex-col gap-2">
       <label className="flex flex-col gap-1">
         <span className="text-micro text-muted-foreground">
-          Header line
+          {t("ide_panes.recap.header_line")}
         </span>
         <input
           ref={firstRef}
           value={line}
           maxLength={MAX_HEADLINE}
-          placeholder="What this pane is for"
+          placeholder={t("ide_panes.recap.header_placeholder")}
           data-testid={`pane-recap-input-${name}`}
           onChange={(e) => setLine(e.target.value)}
           onKeyDown={onKeyDown}
@@ -593,13 +597,14 @@ function RecapEditor({
       </label>
       <label className="flex flex-col gap-1">
         <span className="text-micro text-muted-foreground">
-          The longer version <span className="opacity-60">— optional</span>
+          {t("ide_panes.recap.longer")}{" "}
+          <span className="opacity-60">{t("ide_panes.recap.optional")}</span>
         </span>
         <textarea
           value={body}
           rows={4}
           maxLength={MAX_DETAIL}
-          placeholder="Where the work stands, what is outstanding…"
+          placeholder={t("ide_panes.recap.detail_placeholder")}
           data-testid={`pane-recap-detail-input-${name}`}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={onKeyDown}
@@ -611,8 +616,8 @@ function RecapEditor({
           {/* An empty header line is how you clear a hand-written recap, and
               saying so beats a disabled Save nobody can explain. */}
           {line.trim()
-            ? "⌘/Ctrl + Enter to save"
-            : "Save with an empty line to go back to the automatic recap"}
+            ? t("ide_panes.recap.save_hint")
+            : t("ide_panes.recap.save_empty_hint")}
         </span>
         <span className="flex items-center gap-1.5">
           <button
@@ -621,7 +626,7 @@ function RecapEditor({
             data-testid={`pane-recap-cancel-${name}`}
             className="rounded-md px-2 py-1 text-micro text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -631,7 +636,7 @@ function RecapEditor({
             className="flex items-center gap-1 rounded-md bg-foreground/70 px-2.5 py-1.5 text-micro font-semibold text-primary-foreground transition-[filter] hover:brightness-95 disabled:opacity-50"
           >
             {saving && <Loader2 className="h-3 w-3 animate-spin" />}
-            Save
+            {t("common.save")}
           </button>
         </span>
       </div>

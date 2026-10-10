@@ -963,6 +963,7 @@ function ScriptsCard({ scripts }: { scripts: TelephonyScript[] }) {
 }
 
 function ScriptRow({ script }: { script: TelephonyScript }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
 
@@ -991,7 +992,7 @@ function ScriptRow({ script }: { script: TelephonyScript }) {
           type="button"
           onClick={() => void copy()}
           className="shrink-0 text-muted-foreground transition-colors hover:text-primary"
-          title="Copy command"
+          title={t("telephony_view.copy_command")}
         >
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         </button>

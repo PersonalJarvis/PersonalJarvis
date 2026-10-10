@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/i18n", () => ({
+  useUiLanguage: () => "en",
   useT: () => (key: string) => key,
   fill: (template: string, vars: Record<string, string | number>) =>
     `${template}${Object.values(vars).join("|")}`,

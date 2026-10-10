@@ -115,7 +115,7 @@ const CHOICES = {
   target: ["auto", "insert", "chat"],
   insert_method: ["clipboard", "type"],
   paste_chord: ["auto", "ctrl_v", "ctrl_shift_v", "shift_insert"],
-  language: ["auto", "de", "en", "es"],
+  language: ["auto", "de", "en", "es", "pt"],
 };
 
 /**

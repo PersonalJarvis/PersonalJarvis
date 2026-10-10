@@ -535,6 +535,7 @@ function ListField({
   errors?: (string | null)[];
   hints?: (string | null)[];
 }) {
+  const t = useT();
   return (
     <div className="space-y-1">
       <span className="text-meta text-muted-foreground">
@@ -561,7 +562,7 @@ function ListField({
               <button
                 type="button"
                 onClick={() => onChange(values.filter((_, j) => j !== i) || [])}
-                aria-label="remove"
+                aria-label={t("contacts.remove")}
                 className="shrink-0 rounded-md border border-border px-2 text-muted-foreground hover:border-destructive/50 hover:text-destructive"
               >
                 <X className="h-3.5 w-3.5" />

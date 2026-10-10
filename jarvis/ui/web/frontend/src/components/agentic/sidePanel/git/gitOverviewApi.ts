@@ -6,6 +6,7 @@
  * are three separate facts on purpose — passing checks never mean "merged".
  */
 
+import { fill, translate } from "@/i18n";
 import type { DiffHunk } from "../explorer/explorerApi";
 
 export type PullRequestState = "draft" | "open" | "queued" | "merged" | "closed";
@@ -111,7 +112,7 @@ export class GitOverviewError extends Error {
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
-    let message = `Request failed (${res.status}).`;
+    let message = fill(translate("ide_panes.request_failed"), { status: res.status });
     let detail: unknown;
     try {
       detail = ((await res.json()) as { detail?: unknown }).detail;

@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { equippedFor, rewardRoad, type SlotChoice } from "../cosmetics";
 import { RANK_INFO, rankAt, slotOf, type RankId, type RewardId, type Slot } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
@@ -45,6 +46,7 @@ export function roadSteps(road: readonly RewardRow[], titles: readonly { level: 
 
 export function RewardsTab({ who }: { who: HallWho }) {
   const t = useT();
+  const locale = useRunLocale();
   const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
   const titles = useProgression((s) => s.snapshot?.titles[who.kind] ?? NO_TITLES);
   const curve = useProgression((s) => s.snapshot?.levelXp ?? NO_CURVE);
@@ -140,7 +142,7 @@ export function RewardsTab({ who }: { who: HallWho }) {
               </span>
             </div>
           )}
-          {!open && <p className="hall-detail-missing">{t("society.hall.reward_missing").replace("{0}", missing.toLocaleString())}</p>}
+          {!open && <p className="hall-detail-missing">{t("society.hall.reward_missing").replace("{0}", missing.toLocaleString(locale))}</p>}
           {reward && open && (
             worn
               ? <span className="hall-detail-worn">{t("society.hall.wearing_now")}</span>

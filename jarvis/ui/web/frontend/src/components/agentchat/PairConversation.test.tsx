@@ -5,7 +5,7 @@ import { PairConversation, PairConversationBoundary, pairMessages } from "./Pair
 import { InternalMessageBubble } from "./InternalMessageBubble";
 import { EMPTY_TIMELINE, reduceEvent } from "./reduce";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useI18nStore: { getState: () => ({ ui: "en" }) } }));
 vi.mock("@/hooks/useStickToBottom", () => ({ useStickToBottom: () => ({ rootRef: { current: null }, contentRef: { current: null }, atEnd: true, jumpToEnd: () => {}, follow: () => {} }) }));
 function envelope(seq: number, from: string, to: string | null, text = `Message ${seq}`): SocietyEnvelope {
   return { seq, event_id: `m${seq}`, msg_type: "SAY", from_agent: from, to_agent: to, trace_id: "trace", parent_event_id: null, ts_ms: seq * 1000, cost_usd: 0, payload: { text } };

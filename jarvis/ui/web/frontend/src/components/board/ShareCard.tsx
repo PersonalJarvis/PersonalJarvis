@@ -2,6 +2,7 @@ import { forwardRef, type CSSProperties } from "react";
 
 import { REPO_LABEL, type ShareStats } from "@/lib/shareImage";
 import { useT } from "@/i18n";
+import { uiLocale } from "@/lib/boardInsights";
 
 // ── Palette ───────────────────────────────────────────────────────────
 // A JARVIS-style HUD readout: bright instrument lines on deep ink, a quiet
@@ -32,7 +33,7 @@ export const ShareCard = forwardRef<HTMLDivElement, ShareCardProps>(
     ref,
   ) {
     const t = useT();
-    const nf = (n: number) => n.toLocaleString();
+    const nf = (n: number) => n.toLocaleString(uiLocale());
     const SEGMENTS = 28;
     const filled = Math.max(2, Math.min(SEGMENTS, Math.round((longestStreak / 30) * SEGMENTS)));
 

@@ -26,6 +26,7 @@ import { CommandActivityLayer } from "@/components/CommandActivityLayer";
 import { AppshotEditorHost } from "@/components/appshot/AppshotEditorHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
 import { useMacWindowCloseFallback } from "@/lib/macWindowClose";
+import { useT } from "@/i18n";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
   layout table and the keybind hook — none of which anything needs before
@@ -107,6 +108,7 @@ export function SectionStage({
 }
 
 export default function App() {
+  const t = useT();
   /*
     `?` opens the shortcut overlay. Registered here rather than per view so it
     works everywhere, and guarded by shouldOpenShortcutOverlay so it never eats
@@ -366,7 +368,7 @@ export default function App() {
             onDoubleClick={sidebar.reset}
             onNudge={sidebar.nudge}
             active={sidebar.isResizing}
-            title="Drag to resize the sidebar — double-click to reset"
+            title={t("sidebar.resize_hint")}
           />
         </>
       )}

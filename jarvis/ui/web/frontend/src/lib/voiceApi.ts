@@ -1,5 +1,6 @@
 // REST client for the voice orb. Plain same-origin fetch (mirrors
 // agenticIdeApi), `no-store` so a WebView cannot answer with yesterday's state.
+import { fill, translate } from "@/i18n";
 
 export interface VoiceCallAnswer {
   armed: boolean;
@@ -27,8 +28,8 @@ async function post<T>(path: string): Promise<T> {
     }
     const message =
       res.status === 503
-        ? "Voice is not running on this computer."
-        : detail || `Voice request failed (${res.status}).`;
+        ? translate("voice.not_running_here")
+        : detail || fill(translate("voice.request_failed"), { status: res.status });
     throw Object.assign(new Error(message), { status: res.status }) as VoiceRequestError;
   }
   return (await res.json()) as T;

@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 
 vi.mock("@/i18n", () => ({
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)),
   useT: () => (k: string) => k,
   useUiLanguage: () => "en",
 }));
@@ -30,10 +32,10 @@ describe("RunTurnCard", () => {
   it("shows the conversation, the triggered capabilities and the system trace inline", () => {
     const { container } = render(<RunTurnCard turn={turn} />);
     const text = container.textContent ?? "";
-    expect(text).toContain("Turn 1");
+    expect(text).toContain("run_inspector.turn 1");
     expect(text).toContain("Open Discord please");   // user block
     expect(text).toContain("On it, Boss.");          // jarvis block
-    expect(text).toContain("Computer-Use");          // triggered agent badge
+    expect(text).toContain("run_inspector.feature_computer_use"); // triggered agent badge
     expect(text).toContain("search_web");            // triggered tool chip
     expect(text).toContain("exit 5");                // system output in "what happened"
     // raw state-machine churn is filtered out of the readable trace

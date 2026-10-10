@@ -305,7 +305,7 @@ export function RunNotes({ run, className }: { run: OutputSummary; className?: s
       {run.summary && (
         <section className="rounded-xl border border-border bg-card/40 p-3">
           <div className="mb-1 text-micro font-semibold uppercase tracking-wide text-muted-foreground">
-            Summary
+            {t("visualization.summary")}
           </div>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
             <LinkifiedText text={run.summary} />

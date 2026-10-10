@@ -98,7 +98,8 @@ MetaKind = Literal["authoring", "lifecycle"]
 _ARTIFACT_NOUN = (
     r"(?:skills?|\w*routinen?|automatisierung(?:en)?|automations?|"  # i18n-allow: speech vocab
     r"workflows?|abl[äa]uf\w*|f[äa]higkeit(?:en)?|"  # i18n-allow: speech vocab
-    r"rutinas?|automatizaci[óo]n(?:es)?|flujos?)"  # i18n-allow: speech vocab
+    r"rutinas?|automatizaci[óo]n(?:es)?|flujos?|"  # i18n-allow: speech vocab
+    r"rotinas?|automatiza[çc](?:[ãa]o|[õo]es)|fluxos?)"  # i18n-allow: speech vocab
 )
 _ARTIFACT_NOUN_RE = re.compile(rf"\b{_ARTIFACT_NOUN}\b", re.IGNORECASE)
 
@@ -118,7 +119,10 @@ _VERB_STEMS = (
     r"add\w*|defin\w*|author\w*|develop\w*|program\w*|turn\w*|"
     # Spanish
     r"cre\w*|constru\w*|haz|hac\w*|escrib\w*|gener\w*|dise[ñn]\w*|"  # i18n-allow: speech vocab
-    r"a[ñn]ad\w*|agreg\w*|configur\w*"  # i18n-allow: speech vocab
+    r"a[ñn]ad\w*|agreg\w*|configur\w*|"  # i18n-allow: speech vocab
+    # European Portuguese
+    r"cria\w*|crie\w*|constr[óo]i\w*|faz|fa[çc]a\w*|escrev\w*|gera|gerar|gere|"  # i18n-allow
+    r"desenh\w*|adicion\w*|acrescent\w*"  # i18n-allow: speech vocab
 )
 
 # Shape A — an indefinite or "new" article ahead of the noun. Up to two words
@@ -129,12 +133,29 @@ _GAP_STOP = (
     r"meiner|meine|meinen|meines|deiner|deine|seiner|ihrer|"  # i18n-allow: speech vocab
     r"unserer|aller|der|des|dieser|jener|"  # i18n-allow: speech vocab
     r"my|your|his|her|our|their|of|the|these|those|all|"
-    r"de|mis|tus|sus|los|las|del"  # i18n-allow: speech vocab
+    r"de|mis|tus|sus|los|las|del|"  # i18n-allow: speech vocab
+    r"meus|minhas|teus|tuas|seus|suas|os|as|dos|das|do|da|"  # i18n-allow: speech vocab
+    # German definite articles: "eine Liste über die skills" is ABOUT skills.  # i18n-allow: example
+    r"die|den|dem|das"  # i18n-allow: speech vocab
 )
 _INDEFINITE_NOUN_RE = re.compile(
     r"\b(?:ein(?:e|en|es)?|neue[nrs]?|a|an|another|new|"  # i18n-allow: speech vocab
-    r"un|una|nuevo|nueva|otro|otra)\s+"  # i18n-allow: speech vocab
+    r"un|una|nuevo|nueva|otro|otra|uma|novo|nova)\s+"  # i18n-allow: speech vocab
     rf"(?:(?!(?:{_GAP_STOP})\b)[\w-]+\s+){{0,2}}{_ARTIFACT_NOUN}\b",
+    re.IGNORECASE,
+)
+
+# The Portuguese masculine article "um" is also a German preposition ("…, um
+# Skills zu aktivieren" = "in order to enable skills"), so it counts as an  # i18n-allow: example
+# article only when a Portuguese-only request verb shares the utterance
+# ("cria um skill", "faz-me um workflow que …").  # i18n-allow: example
+_PT_UM_NOUN_RE = re.compile(
+    rf"\bum\s+(?:(?!(?:{_GAP_STOP})\b)[\w-]+\s+){{0,2}}{_ARTIFACT_NOUN}\b",
+    re.IGNORECASE,
+)
+_PT_ONLY_VERB_RE = re.compile(
+    r"\b(?:cria\w*|crie\w*|constr[óo]i\w*|construir|faz|fazer|"  # i18n-allow: speech vocab
+    r"fa[çc]a\w*|escrev\w*|adicion\w*|acrescent\w*)\b",  # i18n-allow: speech vocab
     re.IGNORECASE,
 )
 
@@ -158,7 +179,10 @@ _NOUN_THEN_VERB_RE = re.compile(
     # Spanish present / infinitive forms only — ``crea\w*`` would swallow the
     # English "created" and ``gener\w*`` the English "generated".
     r"crea(?:r|s|mos|n|ndo)?|constru(?:ir|ye|yes|yamos|yen|yendo|ya)?|"  # i18n-allow: speech vocab
-    r"gener(?:a|ar|as|amos|an|ando|e|es)?|escrib\w*|dise[ñn]\w*"  # i18n-allow: speech vocab
+    r"gener(?:a|ar|as|amos|an|ando|e|es)?|escrib\w*|dise[ñn]\w*|"  # i18n-allow: speech vocab
+    # European Portuguese present / infinitive forms, past participles left out
+    r"cria(?:r|s|mos|m|ndo)?|constr[óo]i(?:r|s)?|construir|"  # i18n-allow: speech vocab
+    r"escrev(?:e|er|es|emos|em)|gera(?:r|s)?"  # i18n-allow: speech vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -167,9 +191,10 @@ _NOUN_THEN_VERB_RE = re.compile(
 # indefinite glue between ("erstell mir mal skill morgenroutine", "create skill
 # …", "haz un skill"). Definite articles are NOT glue: "mach DEN skill aus".  # i18n-allow: example
 _VERB_THEN_NOUN_RE = re.compile(
-    rf"\b(?:{_VERB_STEMS})\s+"
+    rf"\b(?:{_VERB_STEMS})(?:-(?:me|nos))?\s+"
     r"(?:(?:mir|me|uns|us|bitte|please|doch|mal|jetzt|now|schnell|"  # i18n-allow: speech vocab
-    r"quick(?:ly)?|einen?|neuen?|new|a|an|un|una|nuevo|nueva|otro|otra)"  # i18n-allow: speech vocab
+    r"quick(?:ly)?|einen?|neuen?|new|a|an|un|una|nuevo|nueva|otro|otra|"  # i18n-allow: speech vocab
+    r"uma|novo|nova|outra|agora|j[áa]|por\s+favor)"  # i18n-allow: speech vocab
     r"\s+){0,4}"
     rf"{_ARTIFACT_NOUN}\b",
     re.IGNORECASE,
@@ -189,7 +214,8 @@ _LIFECYCLE_VERB_RE = re.compile(
     r"schalt\w*|"  # i18n-allow: speech vocab
     r"disable\w*|enable\w*|delete\w*|remove\w*|show\w*|turn\s+(?:on|off)|"
     r"switch\s+(?:on|off)|"
-    r"desactiv\w*|activ\w*|elimin\w*|borr\w*|muestr\w*|mostrar|quit\w*"  # i18n-allow: speech vocab
+    r"desactiv\w*|activ\w*|elimin\w*|borr\w*|muestr\w*|mostrar|quit\w*|"  # i18n-allow: speech vocab
+    r"desativ\w*|ativ\w*|apag\w*|mostr\w*|desliga\w*|liga\w*"  # i18n-allow: speech vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -232,6 +258,10 @@ def is_skill_authoring_request(utterance: str) -> bool:
             _INDEFINITE_NOUN_RE.search(utterance)
             or _NOUN_THEN_VERB_RE.search(utterance)
             or _VERB_THEN_NOUN_RE.search(utterance)
+            or (
+                _PT_UM_NOUN_RE.search(utterance) is not None
+                and _PT_ONLY_VERB_RE.search(utterance) is not None
+            )
         )
     except Exception:  # noqa: BLE001 — detection must never break a turn
         return False

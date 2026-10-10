@@ -10,6 +10,7 @@ import type {
 
 import { openTerminalTarget } from "@/lib/agenticIdeApi";
 import { openExternalUrl } from "@/lib/openExternal";
+import { translate } from "@/i18n";
 
 /**
  * Raised for a Ctrl/Cmd-clicked local path before the OS opener runs. A
@@ -66,7 +67,7 @@ export function isTerminalPath(value: string): boolean {
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
-    : "Could not open that terminal path.";
+    : translate("shell_errors.open_terminal_path_failed");
 }
 
 /**

@@ -47,6 +47,7 @@
  * re-parented and so never unmounts (see the header of `./layout`).
  */
 import type { Positioned } from "./layout";
+import { fill, translate } from "@/i18n";
 
 /** Smallest a pane may be dragged to, on either axis. */
 export const MIN_SEAM_PANE_PX = 120;
@@ -218,7 +219,10 @@ export function paneLayout<T extends Sized>(
           after: panes[pane].name,
           groupWeight: stackTotal,
           axisFraction: 1,
-          label: `Drag to resize ${panes[stack[slot - 1]].name} and ${panes[pane].name}`,
+          label: fill(translate("ide_panes.seam.resize_pair"), {
+            before: panes[stack[slot - 1]].name,
+            after: panes[pane].name,
+          }),
         });
       }
       stackCursor += share;
@@ -237,7 +241,7 @@ export function paneLayout<T extends Sized>(
         after: index,
         groupWeight: columnTotal,
         axisFraction: 1,
-        label: "Drag to resize these two columns of terminals",
+        label: translate("ide_panes.seam.resize_columns"),
       });
     }
     xCursor += width;

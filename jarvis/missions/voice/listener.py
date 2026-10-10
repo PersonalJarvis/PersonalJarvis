@@ -38,7 +38,7 @@ from ..events import (
     WorkerCorrectionRequired,
     WorkerKilled,
 )
-from .readback import Lang, MissionReadback, render_capacity_wait
+from .readback import Lang, MissionReadback, approved_summary, render_capacity_wait
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ class MissionVoiceListener:
 
         if isinstance(payload, MissionApproved):
             return self._readback.render_approved(
-                summary=payload.summary_de if lang == "de" else payload.summary_en,
+                summary=approved_summary(payload, lang),
                 language=lang,
             )
 

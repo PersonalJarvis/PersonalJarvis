@@ -3,6 +3,7 @@
  * person says them ("today", "3 days ago") and the ledger's timestamps.
  */
 import type { UiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 const DAY_MS = 86_400_000;
 
@@ -27,9 +28,9 @@ export function relativeDay(ms: number | null, lang: UiLanguage, now: number = D
   };
   const days = Math.round((startOf(now) - startOf(ms)) / DAY_MS);
   if (days >= 0 && days <= 30) {
-    return new Intl.RelativeTimeFormat(lang, { numeric: "auto" }).format(-days, "day");
+    return new Intl.RelativeTimeFormat(localeForUiLanguage(lang), { numeric: "auto" }).format(-days, "day");
   }
-  return new Date(ms).toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" });
+  return new Date(ms).toLocaleDateString(localeForUiLanguage(lang), { day: "numeric", month: "short", year: "numeric" });
 }
 
 /** A time of day for an entry from today, else the relative day. */
@@ -37,7 +38,7 @@ export function whenShort(ms: number | null, lang: UiLanguage, now: number = Dat
   if (ms === null) return null;
   const sameDay = new Date(ms).toDateString() === new Date(now).toDateString();
   if (sameDay) {
-    return new Date(ms).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" });
+    return new Date(ms).toLocaleTimeString(localeForUiLanguage(lang), { hour: "2-digit", minute: "2-digit" });
   }
   return relativeDay(ms, lang, now);
 }
@@ -50,6 +51,6 @@ export function newest(times: readonly (number | null | undefined)[]): number | 
 
 /** `key_one` for exactly one, `key_other` otherwise, with `{0}` filled in. */
 export function plural(t: (key: string) => string, key: string, count: number, lang?: UiLanguage): string {
-  const n = lang ? count.toLocaleString(lang) : String(count);
+  const n = lang ? count.toLocaleString(localeForUiLanguage(lang)) : String(count);
   return t(`${key}_${count === 1 ? "one" : "other"}`).replace("{0}", n);
 }

@@ -272,7 +272,8 @@
       "resident_unknown": "{total} in total — graphics memory unknown",
       "resident_context": "Context (estimate)",
       "resident_context_short": "context",
-      "resident_reserve": "Speech in/out reserve"
+      "resident_reserve": "Speech in/out reserve",
+      "server_no_answer": "The server at {url} does not answer."
     },
     "installed": {
       "title": "Installed models",

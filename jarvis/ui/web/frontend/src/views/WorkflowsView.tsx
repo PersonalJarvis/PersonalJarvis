@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { translate, useT } from "@/i18n";
+import { fill, translate, useT } from "@/i18n";
 import {
   useDeleteWorkflow,
   useRunDetail,
@@ -40,6 +40,7 @@ import {
   type WorkflowRun,
   type WorkflowRunStep,
 } from "@/hooks/useWorkflows";
+import { uiLocale } from "@/lib/boardInsights";
 
 // ---------------------------------------------------------------------
 // Icons by step kind
@@ -54,9 +55,9 @@ const STEP_ICON: Record<string, typeof Clock> = {
   telegram_send: Send,
 };
 
-// Most step labels are proper nouns / loanwords (Brain, Harness, Tool, Shell,
-// Telegram) and stay as-is across locales; only "speak" carries a translatable
-// verb, resolved through the one i18n accessor.
+// Most step labels are proper nouns / loanwords (Brain, Harness, Shell,
+// Telegram) and stay as-is across locales; "speak" and "tool" are words and
+// resolve through the one i18n accessor.
 function stepLabel(kind: string): string {
   switch (kind) {
     case "brain_prompt":
@@ -66,7 +67,7 @@ function stepLabel(kind: string): string {
     case "speak":
       return translate("workflows_view.step_speak");
     case "tool_call":
-      return "Tool";
+      return translate("workflows_view.step_tool");
     case "shell_cmd":
       return "Shell";
     case "telegram_send":
@@ -92,7 +93,7 @@ export function WorkflowsView() {
     <div className="flex h-full flex-col">
       <ViewHeader
         icon={<Workflow className="h-4 w-4 text-primary" />}
-        title="Workflows"
+        title={t("workflows_view.title")}
         subtitle={t("workflows_view.subtitle")}
         right={
           <Button
@@ -171,7 +172,7 @@ function DashboardStats({
     <div className="flex items-center gap-4 border-b border-border px-6 py-3">
       <StatBadge
         icon={<Workflow className="h-3.5 w-3.5" />}
-        label="Workflows"
+        label={t("workflows_view.title")}
         value={String(summary?.total ?? 0)}
       />
       <StatBadge
@@ -287,7 +288,7 @@ function WorkflowCard({
             <LastRunBadge workflow={workflow} />
             {workflow.created_by === "seed" && (
               <Badge variant="outline" className="text-micro">
-                Seed
+                {t("workflows_view.seed_badge")}
               </Badge>
             )}
           </div>
@@ -296,7 +297,14 @@ function WorkflowCard({
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>
-              {workflow.step_count} Step{workflow.step_count === 1 ? "" : "s"}
+              {fill(
+                t(
+                  workflow.step_count === 1
+                    ? "workflows_view.step_count_one"
+                    : "workflows_view.step_count_other",
+                ),
+                { count: workflow.step_count },
+              )}
             </span>
             <NextRunLabel ns={workflow.next_run_at_ns} />
             {workflow.tags.length > 0 && (
@@ -392,7 +400,7 @@ function WorkflowDetailBody({ workflowId }: { workflowId: string }) {
     <div className="space-y-4 border-t border-border bg-background/30 px-5 py-4">
       <div>
         <div className="mb-2 text-micro uppercase tracking-wider text-muted-foreground">
-          Steps ({steps.length})
+          {fill(t("workflows_view.steps_heading"), { count: steps.length })}
         </div>
         <ol className="space-y-1.5">
           {steps.map((s, idx) => {
@@ -467,9 +475,20 @@ function RunRow({ run }: { run: WorkflowRun }) {
           {formatShortTime(run.started_at_ns)}
         </span>
         <Badge variant="outline" className="text-micro">
-          {run.state === "missed" ? t("workflows_view.run_missed") : run.state}
+          {run.state === "missed"
+            ? t("workflows_view.run_missed")
+            : run.state === "completed" ||
+                run.state === "failed" ||
+                run.state === "running" ||
+                run.state === "pending"
+              ? t(`workflows_view.run_state_${run.state}`)
+              : run.state}
         </Badge>
-        <span className="text-muted-foreground">{run.trigger}</span>
+        <span className="text-muted-foreground">
+          {run.trigger === "manual" || run.trigger === "cron" || run.trigger === "event"
+            ? t(`workflows_view.trigger_${run.trigger}`)
+            : run.trigger}
+        </span>
         {run.state === "missed" ? (
           <span className="ml-auto line-clamp-1 text-muted-foreground">
             {t("workflows_view.run_missed_hint")}
@@ -527,6 +546,7 @@ function RunStepsDetail({ runId }: { runId: string }) {
 // ---------------------------------------------------------------------
 
 function TriggerBadge({ workflow }: { workflow: WorkflowSummary }) {
+  const t = useT();
   if (workflow.trigger_type === "cron") {
     return (
       <Badge
@@ -540,7 +560,7 @@ function TriggerBadge({ workflow }: { workflow: WorkflowSummary }) {
   }
   return (
     <Badge variant="secondary" className="text-micro">
-      Manual
+      {t("workflows_view.trigger_manual")}
     </Badge>
   );
 }
@@ -576,6 +596,7 @@ function LastRunBadge({ workflow }: { workflow: WorkflowSummary }) {
 }
 
 function NextRunLabel({ ns }: { ns: number | null }) {
+  const t = useT();
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setTick((x) => x + 1), 5000);
@@ -586,7 +607,7 @@ function NextRunLabel({ ns }: { ns: number | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     <span className="text-muted-foreground" title={formatAbsolute(ns)} key={tick}>
       <Clock className="mr-1 inline h-3 w-3" />
-      Next in {formatFutureDelta(ns)}
+      {fill(t("workflows_view.next_in"), { delta: formatFutureDelta(ns) })}
     </span>
   );
 }
@@ -636,7 +657,7 @@ function formatDelta(ns: number): string {
 function formatShortTime(ns: number): string {
   try {
     const d = new Date(ns / 1e6);
-    return d.toLocaleTimeString();
+    return d.toLocaleTimeString(uiLocale());
   } catch {
     return "—";
   }
@@ -644,7 +665,7 @@ function formatShortTime(ns: number): string {
 
 function formatAbsolute(ns: number): string {
   try {
-    return new Date(ns / 1e6).toLocaleString();
+    return new Date(ns / 1e6).toLocaleString(uiLocale());
   } catch {
     return "—";
   }

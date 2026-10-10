@@ -4,6 +4,7 @@
  */
 import type { ReactNode } from "react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { levelFraction } from "../cosmetics";
 import { LevelRing, XpBar } from "../LevelHud";
 import { RANK_INFO, rankAt, rankOf, type RankId } from "../levelCatalog";
@@ -95,6 +96,7 @@ export function RewardCard({ reward, kind, level, onClick, pressed, badge, xpMis
   reward: RewardRow; kind: "person" | "pet"; level: number; onClick?: () => void; pressed?: boolean; badge?: string; xpMissing?: number;
 }) {
   const t = useT();
+  const locale = useRunLocale();
   const titles = useProgression((s) => s.snapshot?.titles[kind] ?? NO_TITLES);
   const at = reward.levels[kind] ?? 0;
   const open = level >= at;
@@ -109,7 +111,7 @@ export function RewardCard({ reward, kind, level, onClick, pressed, badge, xpMis
         </span>
         <span className="hall-card-state" data-open={open || undefined}>
           {badge ?? (open ? t("society.hall.unlocked") : xpMissing !== undefined
-            ? `${t("society.level.locked_at").replace("{0}", String(at))} · ${t("society.hall.xp_needed").replace("{0}", xpMissing.toLocaleString())}`
+            ? `${t("society.level.locked_at").replace("{0}", String(at))} · ${t("society.hall.xp_needed").replace("{0}", xpMissing.toLocaleString(locale))}`
             : t("society.level.locked_at").replace("{0}", String(at)))}
         </span>
       </span>

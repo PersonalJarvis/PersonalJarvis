@@ -5,6 +5,7 @@
 // for a live IDE session. What the two share is the RESULT: an entry created
 // here shows up in `fetchIdeAgents()` on the next read, because the backend puts
 // it in the same registry the shipped CLIs live in.
+import { fill, translate } from "@/i18n";
 
 export interface CustomCli {
   /** Stable registry key. Never changes, not even on a rename. */
@@ -60,7 +61,7 @@ async function detail(res: Response): Promise<string> {
   } catch {
     /* fall through */
   }
-  return `request failed: ${res.status}`;
+  return fill(translate("shell_errors.request_failed_status"), { status: res.status });
 }
 
 async function send<T>(url: string, init?: RequestInit): Promise<T> {

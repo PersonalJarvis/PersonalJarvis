@@ -9,6 +9,7 @@
  * Vertex service-account JSON, not an AI Studio key" at type-time prevents that
  * whole class of mix-up. It only ever HINTS; it never blocks a save.
  */
+import { fill, translate } from "@/i18n";
 
 export type KeyFormatKind =
   // `AIza` — works on AI Studio, refused by Vertex (measured 2026-08-17).
@@ -40,6 +41,11 @@ export interface KeyFormatHint {
   note?: string;
 }
 
+/** "<Provider> API key" in the UI language; the provider name is a brand. */
+function apiKeyLabel(provider: string): string {
+  return fill(translate("apikeys_view.key_format_api_key"), { provider });
+}
+
 /**
  * Best-effort classification of a pasted credential by its shape. Returns
  * `null` for blank input. Prefix order matters: the more specific `sk-ant-` /
@@ -53,20 +59,20 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   if (v.startsWith("{") && /"type"\s*:\s*"service_account"/.test(v)) {
     return {
       kind: "vertex-service-account",
-      label: "Vertex AI service account",
-      note: "This is a Vertex AI service-account file, not an AI Studio key — it bills a separate Google Cloud project.",
+      label: translate("apikeys_view.key_format_vertex_sa"),
+      note: translate("apikeys_view.key_format_vertex_sa_note"),
     };
   }
-  if (/^sk-ant-/.test(v)) return { kind: "anthropic", label: "Anthropic API key" };
-  if (/^sk-or-/.test(v)) return { kind: "openrouter", label: "OpenRouter API key" };
-  if (/^nvapi-/.test(v)) return { kind: "nvidia", label: "NVIDIA API key" };
-  if (/^sk_car_/.test(v)) return { kind: "cartesia", label: "Cartesia API key" };
+  if (/^sk-ant-/.test(v)) return { kind: "anthropic", label: apiKeyLabel("Anthropic") };
+  if (/^sk-or-/.test(v)) return { kind: "openrouter", label: apiKeyLabel("OpenRouter") };
+  if (/^nvapi-/.test(v)) return { kind: "nvidia", label: apiKeyLabel("NVIDIA") };
+  if (/^sk_car_/.test(v)) return { kind: "cartesia", label: apiKeyLabel("Cartesia") };
   // ElevenLabs keys start with `sk_` (tested AFTER the more specific `sk_car_`
   // so Cartesia wins its own prefix). Older 32-char hex keys fall through to
   // "unknown" — harmless, since the hint never blocks a save.
-  if (/^sk_/.test(v)) return { kind: "elevenlabs", label: "ElevenLabs API key" };
-  if (/^gsk_/.test(v)) return { kind: "groq", label: "Groq API key" };
-  if (/^xai-/.test(v)) return { kind: "xai", label: "xAI (Grok) API key" };
+  if (/^sk_/.test(v)) return { kind: "elevenlabs", label: apiKeyLabel("ElevenLabs") };
+  if (/^gsk_/.test(v)) return { kind: "groq", label: apiKeyLabel("Groq") };
+  if (/^xai-/.test(v)) return { kind: "xai", label: apiKeyLabel("xAI (Grok)") };
   // AIza is the classic Google API-key prefix, used by AI Studio AND by a
   // Google Cloud API key restricted to aiplatform.googleapis.com. Which one it
   // is depends on the project it was created in, not on the string, so the slot
@@ -79,8 +85,8 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   if (/^AIza/.test(v)) {
     return {
       kind: "google-aistudio",
-      label: "Google AI Studio key",
-      note: "This shape works on Google AI Studio. Vertex AI refuses it — Vertex takes only an express-mode key (AQ.) or a Cloud project via [google].vertex_project.",
+      label: translate("apikeys_view.key_format_aistudio"),
+      note: translate("apikeys_view.key_format_aistudio_note"),
     };
   }
   // AQ. is issued by BOTH Google AI Studio and Vertex AI express mode — the
@@ -90,12 +96,12 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
   if (/^AQ\./.test(v)) {
     return {
       kind: "google-express",
-      label: "Google API key (AI Studio or Vertex express)",
-      note: "AI Studio and Vertex AI express keys share this format — the card you save it under decides the endpoint, and for a Gemini card Jarvis detects it automatically.",
+      label: translate("apikeys_view.key_format_google_express"),
+      note: translate("apikeys_view.key_format_google_express_note"),
     };
   }
-  if (/^sk-/.test(v)) return { kind: "openai", label: "OpenAI API key" };
-  return { kind: "unknown", label: "Unrecognized key format" };
+  if (/^sk-/.test(v)) return { kind: "openai", label: apiKeyLabel("OpenAI") };
+  return { kind: "unknown", label: translate("apikeys_view.key_format_unknown") };
 }
 
 /**

@@ -209,7 +209,7 @@ def test_callback_capable_engine_yields_incremental_audio(
 def test_voices_cover_every_supported_reply_language() -> None:
     """The catalog must not leave a supported language mute.
 
-    ``[brain].reply_language`` offers de/en/es, and the resolver can land on any
+    ``[brain].reply_language`` offers de/en/es/pt, and the resolver can land on any
     of them per turn. A missing voice there is not a gap in a nice-to-have — it
     is the assistant going silent mid-conversation.
     """
@@ -217,7 +217,7 @@ def test_voices_cover_every_supported_reply_language() -> None:
 
     languages = {SHERPA_BUNDLES[v].language for v in PIPER_DEFAULT_VOICES}
 
-    assert {"de", "en", "es"} <= languages
+    assert {"de", "en", "es", "pt"} <= languages
 
 
 def test_default_voices_share_one_speaker_profile() -> None:

@@ -1946,11 +1946,21 @@ def _smalltalk_fallback_for_non_substantive(prompt: str, lang: str) -> str | Non
         "wie geht",
         "how are you",
         "how's it going",
+        "qué tal",  # i18n-allow: Spanish wellbeing marker
+        "cómo estás",  # i18n-allow: Spanish wellbeing marker
+        "como estas",  # i18n-allow: Spanish wellbeing marker
+        "como estás",  # i18n-allow: PT wellbeing marker
+        "tudo bem",  # i18n-allow: PT wellbeing marker
     )
     if not any(marker in low for marker in wellbeing_markers):
         return None
-    if _phrase_lang(lang) == "de":
+    phrase_lang = _phrase_lang(lang)
+    if phrase_lang == "de":
         return "Mir geht's gut, Ruben. Was machen wir als Naechstes?"
+    if phrase_lang == "es":
+        return "Estoy bien. ¿Qué hacemos ahora?"  # i18n-allow: Spanish TTS
+    if phrase_lang == "pt":
+        return "Estou bem. O que fazemos a seguir?"  # i18n-allow: PT TTS
     return "I'm good, Ruben. What's next?"
 
 
@@ -17023,8 +17033,8 @@ class SpeechPipeline:
                 # These are *runtime* bilingual output strings (not artifacts),
                 # so they stay bilingual per the voice-output policy.
                 spoken_phrases: dict[str, dict[str, str]] = {
-                    "incomplete": {"de": "Mhm?", "en": "Mhm?"},
-                    "abort": {"de": "Okay.", "en": "Okay."},
+                    "incomplete": {"de": "Mhm?", "en": "Mhm?", "es": "¿Mhm?", "pt": "Hum?"},
+                    "abort": {"de": "Okay.", "en": "Okay.", "es": "Vale.", "pt": "Ok."},
                 }
                 lang_key = _phrase_lang(lang)
                 phrase = spoken_phrases.get(kind, {}).get(lang_key, "Mhm?")

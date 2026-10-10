@@ -15,7 +15,8 @@
 import { useMemo, useState } from "react";
 import { Database, HardDrive, Layers, MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   ActionMenu,
   Cell,
@@ -236,7 +237,7 @@ function DeleteDrawer({
 
 export function InventoryPanel({ providerId }: InventoryPanelProps) {
   const t = useT();
-  const locale = useUiLanguage();
+  const locale = useRunLocale();
   const k = (key: string) => t(`local_models.inventory.${key}`);
 
   const inventory = useInventory(providerId);

@@ -312,12 +312,30 @@ async def test_ordinary_requests_cost_no_model_call(book: JarvisNotebook) -> Non
         "Das ist falsch, der Termin ist am Freitag",  # i18n-allow
         "We are preparing the launch for November",
         "Ich plane nächstes Jahr nach Lissabon zu ziehen",  # i18n-allow
+        "A minha filha começa a escola na próxima semana",  # i18n-allow
+        "Trabalho como carpinteiro em Braga",  # i18n-allow
+        "Chama-me Rubi, por favor",  # i18n-allow
+        "Isso está errado, a reunião é na sexta",  # i18n-allow
+        "Prefiro respostas curtas",  # i18n-allow
     ],
 )
 def test_personal_turns_are_picked(text: str) -> None:
     from jarvis.memory.learning.signals import has_signal
 
     assert has_signal(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Abre o ficheiro de configuração",  # i18n-allow
+        "Qual é o tempo para amanhã?",  # i18n-allow
+    ],
+)
+def test_portuguese_requests_are_not_picked(text: str) -> None:
+    from jarvis.memory.learning.signals import has_signal
+
+    assert not has_signal(text)
 
 
 async def test_one_call_per_conversation_sees_only_the_picked_turns(

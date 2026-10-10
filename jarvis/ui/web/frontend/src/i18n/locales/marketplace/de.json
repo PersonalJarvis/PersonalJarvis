@@ -141,7 +141,16 @@
     "studio_done_waited_out": "Nach mehreren Minuten noch nicht im Feed — öffne den Pull Request oben und sieh nach, was die Prüfungen sagen.",
     "studio_done_watching": "Beobachte den Live-Feed, bis dein Paket erscheint — meist ein paar Minuten.",
     "studio_done_share_heading": "Weitergeben",
-    "studio_done_share_note": "Das kann jetzt jeder ausführen — es löst deinen Eintrag aus der öffentlichen Registry auf."
+    "studio_done_share_note": "Das kann jetzt jeder ausführen — es löst deinen Eintrag aus der öffentlichen Registry auf.",
+    "studio_layout_plugin_json": "Pflicht: name, description, version",
+    "studio_layout_mcp_json": "der Server, mit dem dein Plugin spricht (optional)",
+    "studio_layout_skills": "Anweisungen, die mitgeliefert werden (optional)",
+    "studio_layout_usage_card": "wann der Assistent es nutzen soll (optional)",
+    "studio_layout_skill_md": "ein eigenständiger Skill: eine Datei, YAML-Frontmatter zuerst",
+    "studio_f_title_placeholder": "Mein Skill",
+    "studio_f_categories_placeholder": "schreiben, recherche",
+    "studio_preview_category": "Community",
+    "studio_done_live_package": "Live — {package} v{version} ist jetzt im Marketplace."
   },
   "custom_connector": {
     "dialog_title": "Plugin hinzufügen",

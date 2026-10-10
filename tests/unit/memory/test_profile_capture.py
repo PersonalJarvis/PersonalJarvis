@@ -55,6 +55,19 @@ POSITIVE: tuple[tuple[str, str, str, object], ...] = (
     ("I hate it when people are vague.", "values", "pet_peeves", None),
     ("Gib mir Feedback bitte immer direkt.", "relationship", "feedback_pref", "direct"),
     ("Stör mich nicht, wenn ich fokussiert bin.", "work_style", "focus_mode", "deep-work"),
+    # European Portuguese
+    ("Chamo-me Ruben.", "identity", "name", "Ruben"),  # i18n-allow
+    ("O meu nome é Ruben Lütke.", "identity", "name", "Ruben Lütke"),  # i18n-allow
+    ("Chama-me só Chefe.", "identity", "preferred_address", "Chefe"),  # i18n-allow
+    ("Os meus pronomes são ele/dele.", "identity", "pronouns", "ele/dele"),  # i18n-allow
+    ("O meu fuso horário é Europe/Lisbon.", "identity", "timezone", "Europe/Lisbon"),  # i18n-allow
+    ("Também falo espanhol.", "identity", "languages", "es"),  # i18n-allow
+    ("Fala comigo em português.", "identity", "primary_language", "pt"),  # i18n-allow
+    ("Sem emojis, por favor.", "communication", "emoji_ok", False),  # i18n-allow
+    ("Sê direto comigo.", "communication", "directness", "direct"),  # i18n-allow
+    ("Sê breve.", "communication", "verbosity", "short"),  # i18n-allow
+    ("Trata-me por tu.", "communication", "formality", "casual"),  # i18n-allow
+    ("Odeio quando as pessoas são vagas.", "values", "pet_peeves", None),  # i18n-allow
 )
 
 
@@ -100,6 +113,11 @@ NEGATIVE: tuple[str, ...] = (
     "Ich brauche noch Milch.",
     "Der Termin ist um drei.",
     "Hallo, wie geht es dir?",
+    "Como te chamas?",  # i18n-allow
+    "O meu irmão chama-se Jonas.",  # i18n-allow
+    "Chama-me mais tarde.",  # i18n-allow
+    "Abre o navegador.",  # i18n-allow
+    "Qual é o meu fuso horário?",  # i18n-allow
 )
 
 

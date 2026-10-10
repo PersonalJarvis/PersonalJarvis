@@ -28,6 +28,7 @@
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useT } from "@/i18n";
 
 import type { CuratedModel, PermissionModeOption } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
@@ -209,6 +210,7 @@ export function AgentPickerMenu({
    */
   onInstalled?: (agent: string, installed: boolean) => void;
 }) {
+  const t = useT();
   const first = agents.find((a) => a.installed);
   const [placement, setPlacement] = useState<FixedPlacement | null>(null);
   /*
@@ -372,7 +374,7 @@ export function AgentPickerMenu({
                 nothing the button does not. */}
             {!agent.installed && !installable && (
               <span className="shrink-0 text-micro font-medium text-muted-foreground">
-                {agent.kind === "shell" ? "no shell here" : "not installed"}
+                {agent.kind === "shell" ? t("ide_panes.picker.no_shell") : t("ide_panes.picker.not_installed")}
               </span>
             )}
           </button>
@@ -392,7 +394,7 @@ export function AgentPickerMenu({
                      tokens, so it follows light and dark. */
                   className="my-0.5 shrink-0 self-center rounded-md border border-border px-2 py-1 text-micro font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-primary/10"
                 >
-                  Install
+                  {t("ide_panes.picker.install")}
                 </button>
               )}
             </div>

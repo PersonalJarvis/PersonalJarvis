@@ -44,9 +44,15 @@ DEFAULT_MODEL = "inworld-tts-2"
 DEFAULT_VOICE_DE = "Josef"
 DEFAULT_VOICE_EN = "Dennis"
 DEFAULT_VOICE_ES = "Diego"
+# European Portuguese. Every pt-PT voice in the Inworld catalog is feminine
+# (Leonor, Madalena, Matilde); the masculine Portuguese voices (Heitor, Murilo)
+# are Brazilian. The accent is what a pt-PT listener hears first, so the
+# European voice wins over keeping the masculine pattern; set
+# [tts.inworld].voice_pt = "Heitor" to trade the accent for the speaker profile.
+DEFAULT_VOICE_PT = "Leonor"
 
 # BCP-47 tags Inworld expects. Jarvis' turn resolver already emits de-DE/en-US/
-# es-ES, but a bare "de" is normalized up so the field is always well-formed.
+# es-ES/pt-PT, but a bare "de" is normalized up so the field is always well-formed.
 _BCP47 = {"de": "de-DE", "en": "en-US", "es": "es-ES", "pt": "pt-PT"}
 
 # DE letters are part of the sentence-boundary match set on the next line.
@@ -74,7 +80,7 @@ def _normalize_language(code: str | None) -> str | None:
 
     ``None``/``auto`` → ``None`` (omit the field → Inworld auto-detects from the
     text). A bare two-letter code or a BCP-47 tag is mapped to the canonical
-    de-DE/en-US/es-ES; an unknown tag is passed through untouched.
+    de-DE/en-US/es-ES/pt-PT; an unknown tag is passed through untouched.
     """
     if not code:
         return None
@@ -107,6 +113,7 @@ class InworldTTS:
         default_voice_de: str = DEFAULT_VOICE_DE,
         default_voice_en: str = DEFAULT_VOICE_EN,
         default_voice_es: str = DEFAULT_VOICE_ES,
+        default_voice_pt: str = DEFAULT_VOICE_PT,
         model: str = DEFAULT_MODEL,
         language: str = "auto",
         chunk_by_sentence: bool = True,
@@ -118,6 +125,7 @@ class InworldTTS:
             "de": default_voice_de or DEFAULT_VOICE_DE,
             "en": default_voice_en or DEFAULT_VOICE_EN,
             "es": default_voice_es or DEFAULT_VOICE_ES,
+            "pt": default_voice_pt or DEFAULT_VOICE_PT,
         }
         self._language = language
         _loc = (language or "").lower().split("-", 1)[0]
@@ -292,6 +300,7 @@ class InworldTTS:
             self._voice_by_lang.get("de"),
             self._voice_by_lang.get("en"),
             self._voice_by_lang.get("es"),
+            self._voice_by_lang.get("pt"),
         ):
             if v and v not in seen:
                 seen.append(v)

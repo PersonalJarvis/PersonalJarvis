@@ -28,6 +28,7 @@ import { AppshotLibrary } from "@/views/AppshotLibrary";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
+import { useRunLocale } from "@/components/runs/format";
 
 /**
  * Appshots — show the assistant the window you are working in.
@@ -166,7 +167,8 @@ function LatestPreview({
   onEdit: () => void;
 }) {
   const t = useT();
-  const time = new Date(shot.taken_at * 1000).toLocaleTimeString([], {
+  const runLocale = useRunLocale();
+  const time = new Date(shot.taken_at * 1000).toLocaleTimeString(runLocale, {
     hour: "2-digit",
     minute: "2-digit",
   });

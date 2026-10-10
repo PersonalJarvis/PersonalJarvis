@@ -67,6 +67,7 @@ import {
 } from "@/hooks/useClis";
 import { fill, translate, useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
+import { uiLocale } from "@/lib/boardInsights";
 
 // ---------------------------------------------------------------------------
 // Status vocabulary
@@ -110,7 +111,7 @@ function formatRelativeTime(ts: number | null): string {
 }
 
 function formatDateTime(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, {
+  return new Date(ts).toLocaleString(uiLocale(), {
     day: "2-digit", month: "2-digit", year: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
@@ -159,7 +160,7 @@ export function ClisView() {
 
   const columns: Column[] = [
     { id: "name", label: t("clis_view.col_name") },
-    { id: "version", label: "Version", width: "96px" },
+    { id: "version", label: t("clis_view.col_version"), width: "96px" },
     { id: "status", label: t("clis_view.col_status"), width: "150px" },
     { id: "activity", label: t("clis_view.col_activity"), width: "136px" },
   ];
@@ -622,7 +623,7 @@ function CliDetailPage({
               <DetailPanel title={t("clis_view.section_binary")}>
                 <FactRows
                   rows={[
-                    { label: "Binary", value: <Mono>{data.binary_name}</Mono> },
+                    { label: t("clis_view.fact_binary"), value: <Mono>{data.binary_name}</Mono> },
                     {
                       label: t("clis_view.kv_path"),
                       value: data.binary_path ? (
@@ -631,7 +632,7 @@ function CliDetailPage({
                         <span className="text-muted-foreground">{t("clis_view.not_found")}</span>
                       ),
                     },
-                    { label: "Version", value: data.version ?? "—" },
+                    { label: t("clis_view.col_version"), value: data.version ?? "—" },
                     { label: t("clis_view.auth_mode_short"), value: <Mono>{data.auth_mode}</Mono> },
                     { label: t("clis_view.field_category"), value: data.category },
                   ]}
@@ -641,9 +642,9 @@ function CliDetailPage({
               <DetailPanel title={t("clis_view.section_commands")}>
                 <FactRows
                   rows={[
-                    { label: "Check", value: <Mono>{data.check_command}</Mono> },
+                    { label: t("clis_view.cmd_check"), value: <Mono>{data.check_command}</Mono> },
                     {
-                      label: "Login",
+                      label: t("clis_view.cmd_login"),
                       value: data.login_command ? <Mono>{data.login_command}</Mono> : "",
                     },
                     {
@@ -651,7 +652,7 @@ function CliDetailPage({
                       value: data.status_command ? <Mono>{data.status_command}</Mono> : "",
                     },
                     {
-                      label: "Logout",
+                      label: t("clis_view.cmd_logout"),
                       value: data.logout_command ? <Mono>{data.logout_command}</Mono> : "",
                     },
                   ]}
@@ -1240,7 +1241,7 @@ function CustomCliWizard({ onClose }: { onClose: () => void }) {
               placeholder={t("clis_view.what_does_cli_do")} />
             <TextField label={t("clis_view.field_category")} val={form.category}
               onChange={(v) => setForm({ ...form, category: v })}
-              placeholder="cloud / git / payments / other" />
+              placeholder={t("clis_view.category_placeholder")} />
             <TextField label={t("clis_view.field_homepage_url")} val={form.homepage}
               onChange={(v) => setForm({ ...form, homepage: v })}
               placeholder="https://..." />

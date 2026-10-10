@@ -176,6 +176,20 @@ def test_smalltalk_fallback_is_german_for_whisper_language_name() -> None:
     assert "geht's gut" in answer, answer  # the German variant, not "I'm good"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "lang", "expected"),
+    [
+        ("como estás?", "portuguese", "Estou bem. O que fazemos a seguir?"),  # i18n-allow
+        ("tudo bem contigo?", "pt", "Estou bem. O que fazemos a seguir?"),  # i18n-allow
+        ("¿qué tal estás?", "spanish", "Estoy bien. ¿Qué hacemos ahora?"),  # i18n-allow
+    ],
+)
+def test_smalltalk_fallback_speaks_spanish_and_portuguese(
+    prompt: str, lang: str, expected: str
+) -> None:
+    assert _smalltalk_fallback_for_non_substantive(prompt, lang) == expected
+
+
 @pytest.mark.asyncio
 async def test_english_speaker_still_gets_english_phrases() -> None:
     # Regression guard: the fix must not over-rotate — a genuinely English

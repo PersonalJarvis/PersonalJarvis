@@ -19,11 +19,12 @@ export const RESOURCE_KINDS: ResourceKind[] = [
   "agents",
 ];
 
+/** Translation keys for each resource kind; translate where rendered. */
 export const RESOURCE_LABELS: Record<ResourceKind, string> = {
-  references: "References",
-  scripts: "Scripts",
-  assets: "Assets",
-  agents: "Agents",
+  references: "skills_view.resource_references",
+  scripts: "skills_view.resource_scripts",
+  assets: "skills_view.resource_assets",
+  agents: "skills_view.resource_agents",
 };
 
 /** Where an installed skill came from. Null for one the owner wrote. */

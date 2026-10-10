@@ -11,7 +11,8 @@ import { rankAgents } from "@/components/layout/SidebarAgents";
 import { AgentSwatch } from "@/components/society/AgentSwatch";
 import { useSocietyRoster } from "@/components/society/data";
 import { useBoardInsights, type BoardInsights } from "@/hooks/useBoardInsights";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { useEventStore } from "@/store/events";
 import { agentLabel, chatProviderLabel, formatDay } from "@/lib/boardInsights";
@@ -24,7 +25,7 @@ const FAVOURITES_MAX = 8;
 
 export function FavoriteAgents() {
   const t = useT();
-  const ui = useUiLanguage();
+  const ui = useRunLocale();
   const assistantName = useEventStore((s) => s.assistantName);
   const roster = useSocietyRoster();
 
@@ -147,7 +148,7 @@ export function profileFacts(data: BoardInsights, t: (key: string) => string, ui
 
 export function InsightList() {
   const t = useT();
-  const ui = useUiLanguage();
+  const ui = useRunLocale();
   const insights = useBoardInsights();
   const rows = insights.data ? profileFacts(insights.data, t, ui) : [];
 

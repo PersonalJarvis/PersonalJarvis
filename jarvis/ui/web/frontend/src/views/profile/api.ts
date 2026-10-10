@@ -12,6 +12,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useEventStore } from "@/store/events";
 import type { ClusterId } from "@/views/profile/ledger";
+import { translate } from "@/i18n";
 
 // ----------------------------------------------------------------------
 // Response shapes — mirror jarvis/ui/web/profile_routes.py
@@ -78,7 +79,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   const res = await fetch(url, init);
   if (!res.ok) {
     if (res.status === 503) {
-      const data = await res.json().catch(() => ({ detail: "Profile system not ready." }));
+      const data = await res.json().catch(() => ({ detail: translate("profile_view.system_not_ready") }));
       const err = new Error(data.detail ?? `HTTP ${res.status}`) as HttpError;
       err.status = 503;
       throw err;

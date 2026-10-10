@@ -11,6 +11,8 @@
  * user presses Publish, so an author can inspect the prefilled form first.
  */
 
+import { fill, translate } from "@/i18n";
+
 export interface PackageSkill {
   name: string;
   skill_md: string;
@@ -247,21 +249,24 @@ export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
       if (typeof manifest.version === "string") draft.version = manifest.version;
       if (typeof manifest.description === "string") draft.description = manifest.description;
     } catch {
-      warnings.push("plugin.json is not valid JSON — fix it before publishing.");
+      warnings.push(translate("plugins_package.plugin_json_invalid"));
     }
     draft.mcp_json_text = await read(byPath("mcp.json"));
     draft.usage_card = await read(byPath("io.github.personaljarvis/usage-card.md"));
     if (!draft.mcp_json_text) {
-      warnings.push(
-        "No mcp.json found — fine when the auth block points at a hosted MCP server or the package is skills-only.",
-      );
+      warnings.push(translate("plugins_package.no_mcp_json"));
     } else {
       const missingType = mcpServersMissingType(draft.mcp_json_text);
       if (missingType.length > 0) {
         warnings.push(
-          `mcp.json server${missingType.length === 1 ? "" : "s"} ` +
-            `${missingType.map((n) => `"${n}"`).join(", ")} missing "type" — the store requires ` +
-            `"type": "streamable-http" | "stdio" | "sse" on every server.`,
+          fill(
+            translate(
+              missingType.length === 1
+                ? "plugins_package.missing_type_one"
+                : "plugins_package.missing_type_other",
+            ),
+            { servers: missingType.map((n) => `"${n}"`).join(", ") },
+          ),
         );
       }
     }
@@ -269,7 +274,7 @@ export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
       const m = /^skills\/([^/]+)\/SKILL\.md$/.exec(f.path);
       if (!m) continue;
       if (draft.skills.length >= 10) {
-        warnings.push("More than 10 bundled skills — the store accepts at most 10.");
+        warnings.push(translate("plugins_package.too_many_skills"));
         break;
       }
       draft.skills.push({ name: m[1], skill_md: await read(f) });
@@ -281,11 +286,7 @@ export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
   const skillFile =
     byPath("SKILL.md") ?? files.find((f) => f.path.endsWith("/SKILL.md")) ?? undefined;
   if (!skillFile) {
-    throw new Error(
-      "No plugin.json and no SKILL.md found — a package folder needs one of the two at its " +
-        "top level. A single file works too when it is named SKILL.md or starts with YAML " +
-        "frontmatter (---).",
-    );
+    throw new Error(translate("plugins_package.nothing_found"));
   }
   draft.skill_md = await read(skillFile);
   const fm = frontmatterValues(draft.skill_md);
@@ -298,7 +299,7 @@ export async function folderToDraft(input: NamedFile[]): Promise<FolderDraft> {
     (draft.name ? draft.name.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "");
   if (fm.category) draft.categories = fm.category;
   if (!draft.skill_md.startsWith("---")) {
-    warnings.push("SKILL.md does not start with YAML frontmatter (---) — the store requires it.");
+    warnings.push(translate("plugins_package.no_frontmatter"));
   }
   return draft;
 }

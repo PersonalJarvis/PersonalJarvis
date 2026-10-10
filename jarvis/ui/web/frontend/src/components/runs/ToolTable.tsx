@@ -13,7 +13,7 @@ import { useState } from "react";
 import { Check, ChevronDown, ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import type { ToolCall } from "./types";
@@ -99,10 +99,10 @@ export function ToolTable({ tools }: { tools: ToolCall[] }) {
               <Badge variant={tool.success ? "success" : "destructive"} className="shrink-0">
                 <span className="font-mono tabular-nums">
                   {tool.exit_code != null
-                    ? `exit ${tool.exit_code}`
+                    ? fill(t("run_inspector.tools.exit_code"), { code: tool.exit_code })
                     : tool.success
-                      ? "ok"
-                      : "fail"}
+                      ? t("run_inspector.tools.ok")
+                      : t("run_inspector.tools.fail")}
                 </span>
               </Badge>
             </button>

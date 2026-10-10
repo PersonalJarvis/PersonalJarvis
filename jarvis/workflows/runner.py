@@ -519,11 +519,16 @@ class WorkflowRunner:
         input_data: dict[str, Any],
     ) -> str:
         text = _expand_template(step.text, outputs, input_data)
+        language = str(step.language or "").strip().lower()
+        if language in ("", "auto"):
+            # No pinned language: follow the ambient answer language at run
+            # time (reply pin, else the default locale), never a fixed one.
+            language = resolve_ambient_language()
         await self._bus.publish(
             AnnouncementRequested(
                 text=text,
                 priority=step.priority,
-                language=step.language,
+                language=language,
                 source_layer="workflows.runner",
             )
         )

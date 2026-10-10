@@ -9,6 +9,8 @@ import asyncio
 from pathlib import Path
 from uuid import uuid4
 
+from jarvis.core.bus import EventBus
+from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import ExecutionContext
 from jarvis.core.review.audit import ReviewAudit
 from jarvis.core.review.checks import (
@@ -24,7 +26,12 @@ from jarvis.core.review.verdict import (
     ReviewStatus,
     ReviewVerdict,
 )
-from jarvis.plugins.tool.dispatch_with_review import DispatchWithReviewTool
+from jarvis.plugins.tool.dispatch_with_review import (
+    VOICE_FALLBACK_FILLERS,
+    VOICE_HOLDING_PHRASES,
+    VOICE_OUTCOME_TEMPLATES,
+    DispatchWithReviewTool,
+)
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -165,6 +172,74 @@ def test_execute_success_returns_tool_result(tmp_path: Path) -> None:
     assert result.output["final_artifact"] == "produced artifact"
     assert result.output["final_verdict"]["status"] == "pass"
     assert result.output["final_verdict"]["score"] == 0.95
+
+
+def test_voice_phrase_tables_cover_every_reply_language() -> None:
+    from jarvis.core.turn_language import _REPLY_PINS
+
+    for table in (VOICE_HOLDING_PHRASES, VOICE_OUTCOME_TEMPLATES, VOICE_FALLBACK_FILLERS):
+        assert set(table) == set(_REPLY_PINS)
+    keys = set(VOICE_OUTCOME_TEMPLATES["en"])
+    for lang, templates in VOICE_OUTCOME_TEMPLATES.items():
+        assert set(templates) == keys, lang
+        assert "{summary}" in templates["success"]
+        assert "{top_issue}" in templates["cap_fired"]
+        assert "{summary}" in templates["fail"]
+
+
+def test_execute_speaks_the_turn_output_language(tmp_path: Path) -> None:
+    """The holding phrase and the completion phrase follow
+    ``ctx.config["output_language"]`` (pt here), never a fixed German."""
+    bus = EventBus()
+    captured: list[AnnouncementRequested] = []
+
+    async def _on_announce(event: AnnouncementRequested) -> None:
+        captured.append(event)
+
+    bus.subscribe(AnnouncementRequested, _on_announce)
+    audit = ReviewAudit(path=tmp_path / "review.log")
+    tool = DispatchWithReviewTool(
+        bus=bus,
+        runs_root=tmp_path / "runs",
+        audit_log_path=tmp_path / "review.log",
+        pipeline=_make_pipeline_with_pass(audit),
+    )
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="escreve um script",  # i18n-allow: simulated Portuguese user turn
+        config={"output_language": "pt"},
+        memory_read=None,
+    )
+
+    result = asyncio.run(
+        tool.execute(
+            {"task": "write a python script that prints hello world"},
+            ctx,
+        )
+    )
+
+    assert [e.text for e in captured] == [VOICE_HOLDING_PHRASES["pt"]]
+    assert captured[0].language == "pt"
+    assert result.output["voice_completion_phrase"] == "Feito — all good"
+
+
+def test_execute_unknown_output_language_falls_back_to_english(tmp_path: Path) -> None:
+    audit = ReviewAudit(path=tmp_path / "review.log")
+    tool = DispatchWithReviewTool(
+        runs_root=tmp_path / "runs",
+        audit_log_path=tmp_path / "review.log",
+        pipeline=_make_pipeline_with_pass(audit),
+    )
+    ctx = ExecutionContext(
+        trace_id=uuid4(),
+        user_utterance="x",
+        config={"output_language": "xx"},
+        memory_read=None,
+    )
+    result = asyncio.run(
+        tool.execute({"task": "write a python script that prints hello world"}, ctx)
+    )
+    assert result.output["voice_completion_phrase"] == "Done — all good"
 
 
 def test_execute_cap_fired_returns_warnings(tmp_path: Path) -> None:

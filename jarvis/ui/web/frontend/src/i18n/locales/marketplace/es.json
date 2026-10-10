@@ -141,7 +141,16 @@
     "studio_done_waited_out": "Tras varios minutos sigue sin aparecer en el feed: abre el pull request de arriba para ver qué dicen sus comprobaciones.",
     "studio_done_watching": "Vigilando el feed en vivo hasta que aparezca tu paquete; suelen ser unos minutos.",
     "studio_done_share_heading": "Compártelo",
-    "studio_done_share_note": "Cualquiera puede ejecutar esto ahora: resuelve tu entrada desde el registro público."
+    "studio_done_share_note": "Cualquiera puede ejecutar esto ahora: resuelve tu entrada desde el registro público.",
+    "studio_layout_plugin_json": "obligatorio: name, description, version",
+    "studio_layout_mcp_json": "el servidor con el que habla tu plugin (opcional)",
+    "studio_layout_skills": "instrucciones que se incluyen con él (opcional)",
+    "studio_layout_usage_card": "cuándo debe usarlo el asistente (opcional)",
+    "studio_layout_skill_md": "un skill independiente: un archivo, con el frontmatter YAML al principio",
+    "studio_f_title_placeholder": "Mi skill",
+    "studio_f_categories_placeholder": "escritura, investigación",
+    "studio_preview_category": "Comunidad",
+    "studio_done_live_package": "En vivo — {package} v{version} ya está en el marketplace."
   },
   "custom_connector": {
     "dialog_title": "Añadir un plugin",

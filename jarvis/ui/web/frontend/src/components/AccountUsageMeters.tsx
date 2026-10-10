@@ -26,7 +26,8 @@
 
 import { Gauge } from "lucide-react";
 
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import type { AccountUsage, UsageWindow } from "@/lib/agentAccountsApi";
 import { cn } from "@/lib/utils";
 
@@ -201,7 +202,7 @@ export function AccountUsageMeters({
           // The whole point of this line: a cached weekly figure for an idle
           // seat can be days old, and it is the number a subscription is picked
           // on. The exact timestamp is one hover away.
-          title={usage.as_of ? new Date(usage.as_of * 1000).toLocaleString() : undefined}
+          title={usage.as_of ? new Date(usage.as_of * 1000).toLocaleString(localeForUiLanguage(useI18nStore.getState().ui)) : undefined}
         >
           <span
             aria-hidden="true"

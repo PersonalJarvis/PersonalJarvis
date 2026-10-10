@@ -23,6 +23,7 @@
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
 import { appZoomChordMatches } from "@/lib/appZoom";
 import { parseChord } from "@/lib/quickSwitchChord";
+import { fill, translate } from "@/i18n";
 
 export type PaneDirection = "left" | "right" | "up" | "down";
 
@@ -294,33 +295,33 @@ export function modeBar(
     return {
       badge: step.label.toUpperCase(),
       hints: [
-        { keys: ["→"], label: "right" }, { keys: ["←"], label: "left" }, { keys: ["↑"], label: "above" },
-        { keys: ["↓"], label: "below" }, { keys: ["Enter"], label: "even grid" }, { keys: ["⌫"], label: "back" },
+        { keys: ["→"], label: translate("ide_hotkeys.bar.right") }, { keys: ["←"], label: translate("ide_hotkeys.bar.left") }, { keys: ["↑"], label: translate("ide_hotkeys.bar.above") },
+        { keys: ["↓"], label: translate("ide_hotkeys.bar.below") }, { keys: ["Enter"], label: translate("ide_hotkeys.bar.even_grid") }, { keys: ["⌫"], label: translate("ide_hotkeys.bar.back") },
       ],
     };
   }
   if (step.menu === "workspace") {
     return {
-      badge: "WORKSPACE",
+      badge: translate("ide_hotkeys.badge.workspace"),
       hints: [
-        { keys: ["N"], label: "new" }, { keys: ["T"], label: "worktree" }, { keys: ["R"], label: "rename" },
-        { keys: ["Q"], label: "close" }, { keys: ["G"], label: "git" }, { keys: ["O"], label: "options" },
-        { keys: ["P"], label: "connect folder" }, { keys: ["←→"], label: "switch" }, { keys: ["⌫"], label: "back" },
+        { keys: ["N"], label: translate("ide_hotkeys.bar.new") }, { keys: ["T"], label: translate("ide_hotkeys.bar.worktree") }, { keys: ["R"], label: translate("ide_hotkeys.bar.rename") },
+        { keys: ["Q"], label: translate("ide_hotkeys.bar.close") }, { keys: ["G"], label: translate("ide_hotkeys.bar.git") }, { keys: ["O"], label: translate("ide_hotkeys.bar.options") },
+        { keys: ["P"], label: translate("ide_hotkeys.bar.connect_folder") }, { keys: ["←→"], label: translate("ide_hotkeys.bar.switch") }, { keys: ["⌫"], label: translate("ide_hotkeys.bar.back") },
       ],
     };
   }
-  if (step.menu === "help") return { badge: "KEYS", hints: [{ keys: ["any key"], label: "back" }] };
+  if (step.menu === "help") return { badge: translate("ide_hotkeys.badge.keys"), hints: [{ keys: [translate("ide_hotkeys.bar.any_key")], label: translate("ide_hotkeys.bar.back") }] };
   return {
-    badge: "PREFIX",
+    badge: translate("ide_hotkeys.badge.prefix"),
     hints: [
       ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: agent.label })),
-      { keys: ["V", "-"], label: "split" },
-      { keys: ["←↑→↓"], label: "move" },
-      { keys: ["Z"], label: "zoom" },
-      { keys: ["Q"], label: "close" },
-      { keys: ["W"], label: "workspaces" },
-      { keys: ["?"], label: "all keys" },
-      { keys: [...leaderCaps], label: `send ${leaderCaps.join("+")}` },
+      { keys: ["V", "-"], label: translate("ide_hotkeys.bar.split") },
+      { keys: ["←↑→↓"], label: translate("ide_hotkeys.bar.move") },
+      { keys: ["Z"], label: translate("ide_hotkeys.bar.zoom") },
+      { keys: ["Q"], label: translate("ide_hotkeys.bar.close") },
+      { keys: ["W"], label: translate("ide_hotkeys.bar.workspaces") },
+      { keys: ["?"], label: translate("ide_hotkeys.bar.all_keys") },
+      { keys: [...leaderCaps], label: fill(translate("ide_hotkeys.bar.send_leader"), { keys: leaderCaps.join("+") }) },
     ],
   };
 }
@@ -337,65 +338,65 @@ export function hotkeyHints(
 ): HotkeyHintGroup[] {
   if (step.menu === "direction") {
     return [{
-      title: `Open ${step.label}`,
+      title: fill(translate("ide_hotkeys.help.open_agent"), { agent: step.label }),
       hints: [
-        { keys: ["→"], label: "To the right" },
-        { keys: ["←"], label: "To the left" },
-        { keys: ["↑"], label: "Above" },
-        { keys: ["↓"], label: "Below" },
-        { keys: ["Enter"], label: "Even grid" },
+        { keys: ["→"], label: translate("ide_hotkeys.help.to_right") },
+        { keys: ["←"], label: translate("ide_hotkeys.help.to_left") },
+        { keys: ["↑"], label: translate("ide_hotkeys.help.above") },
+        { keys: ["↓"], label: translate("ide_hotkeys.help.below") },
+        { keys: ["Enter"], label: translate("ide_hotkeys.help.even_grid") },
       ],
     }];
   }
   if (step.menu === "workspace") {
     return [{
-      title: "Workspace",
+      title: translate("ide_hotkeys.help.group_workspace"),
       hints: [
-        { keys: ["N"], label: "New workspace" },
-        { keys: ["T"], label: "New worktree workspace" },
-        { keys: ["R"], label: "Rename workspace" },
-        { keys: ["Q"], label: "Close workspace" },
-        { keys: ["G"], label: "Git panel" },
-        { keys: ["O"], label: "Workspace options" },
-        { keys: ["P"], label: "Connect a project folder" },
-        { keys: ["←", "→"], label: "Previous / next workspace" },
-        { keys: ["1–9"], label: "Go to workspace 1–9" },
+        { keys: ["N"], label: translate("ide_hotkeys.help.new_workspace") },
+        { keys: ["T"], label: translate("ide_hotkeys.help.new_worktree_workspace") },
+        { keys: ["R"], label: translate("ide_hotkeys.help.rename_workspace") },
+        { keys: ["Q"], label: translate("ide_hotkeys.help.close_workspace") },
+        { keys: ["G"], label: translate("ide_hotkeys.help.git_panel") },
+        { keys: ["O"], label: translate("ide_hotkeys.help.workspace_options") },
+        { keys: ["P"], label: translate("ide_hotkeys.help.connect_folder") },
+        { keys: ["←", "→"], label: translate("ide_hotkeys.help.prev_next_workspace") },
+        { keys: ["1–9"], label: translate("ide_hotkeys.help.go_to_workspace_n") },
       ],
     }];
   }
   return [
     {
-      title: "New pane",
+      title: translate("ide_hotkeys.help.group_new_pane"),
       hints: [
-        ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: `${agent.label}, then an arrow` })),
-        { keys: ["V"], label: "Split right, same agent" },
-        { keys: ["-"], label: "Split below, same agent" },
-        { keys: ["+"], label: "Choose agent…" },
+        ...agents.map((agent) => ({ keys: [agent.key.toUpperCase()], label: fill(translate("ide_hotkeys.help.agent_then_arrow"), { agent: agent.label }) })),
+        { keys: ["V"], label: translate("ide_hotkeys.help.split_right_same") },
+        { keys: ["-"], label: translate("ide_hotkeys.help.split_below_same") },
+        { keys: ["+"], label: translate("ide_hotkeys.help.choose_agent") },
       ],
     },
     {
-      title: "Panes",
+      title: translate("ide_hotkeys.help.group_panes"),
       hints: [
-        { keys: ["←↑→↓"], label: "Focus neighbor" },
-        { keys: ["Shift", "←↑→↓"], label: "Swap with neighbor" },
-        { keys: ["Z"], label: "Maximize / restore" },
-        { keys: ["R"], label: "Rename pane" },
-        { keys: ["F"], label: "Fork pane" },
-        { keys: ["Q"], label: "Close pane" },
-        { keys: ["E"], label: "Even out layout" },
+        { keys: ["←↑→↓"], label: translate("ide_hotkeys.help.focus_neighbor") },
+        { keys: ["Shift", "←↑→↓"], label: translate("ide_hotkeys.help.swap_neighbor") },
+        { keys: ["Z"], label: translate("ide_hotkeys.help.maximize_restore") },
+        { keys: ["R"], label: translate("ide_hotkeys.help.rename_pane") },
+        { keys: ["F"], label: translate("ide_hotkeys.help.fork_pane") },
+        { keys: ["Q"], label: translate("ide_hotkeys.help.close_pane") },
+        { keys: ["E"], label: translate("ide_hotkeys.help.even_layout") },
       ],
     },
     {
-      title: "Workspaces",
+      title: translate("ide_hotkeys.help.group_workspaces"),
       hints: [
-        { keys: ["W"], label: "Workspace menu…" },
-        { keys: ["1–9"], label: "Go to workspace" },
-        { keys: ["N", "P"], label: "Next / previous workspace" },
-        { keys: ["Shift", "N"], label: "New workspace" },
-        { keys: ["Shift", "W"], label: "Rename workspace" },
-        { keys: ["Shift", "D"], label: "Close workspace" },
-        { keys: ["M"], label: "Voice bubble" },
-        { keys: [...leaderCaps], label: `Send ${leaderCaps.join("+")} to the pane` },
+        { keys: ["W"], label: translate("ide_hotkeys.help.workspace_menu") },
+        { keys: ["1–9"], label: translate("ide_hotkeys.help.go_to_workspace") },
+        { keys: ["N", "P"], label: translate("ide_hotkeys.help.next_prev_workspace") },
+        { keys: ["Shift", "N"], label: translate("ide_hotkeys.help.new_workspace") },
+        { keys: ["Shift", "W"], label: translate("ide_hotkeys.help.rename_workspace") },
+        { keys: ["Shift", "D"], label: translate("ide_hotkeys.help.close_workspace") },
+        { keys: ["M"], label: translate("agentic_grid.voice_bubble.button_label") },
+        { keys: [...leaderCaps], label: fill(translate("ide_hotkeys.help.send_leader"), { keys: leaderCaps.join("+") }) },
       ],
     },
   ];

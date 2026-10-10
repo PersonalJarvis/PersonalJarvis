@@ -278,3 +278,12 @@ async def test_declining_telephone_hangup_does_not_arm_a_later_yes():
     for _ in range(3):
         await _drive_one_utterance(session)
         assert not session.ended
+
+
+def test_portuguese_call_greets_and_falls_back_in_portuguese() -> None:
+    session = _make_session(_Sink(), language_code="pt-PT")
+    assert session._lang_short() == "pt"
+    assert session._default_greeting() == "Olá, em que posso ajudar?"  # i18n-allow
+    assert session._fallback_phrase() == "Desculpa, não percebi. Podes repetir?"  # i18n-allow
+    session.assistant_name = "Nova"
+    assert session._default_greeting() == "Olá, sou Nova. Em que posso ajudar?"  # i18n-allow

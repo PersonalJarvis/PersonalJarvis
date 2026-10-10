@@ -529,7 +529,9 @@ export interface KeybindsConfig {
    * degrades through the backend's own honest message on save. The moment the
    * field appears, the picker hides the buttons and shows ``reason`` instead.
    */
-  mouse_buttons?: { supported: boolean; reason?: string };
+  // `reason_code` names `reason` stably (jarvis/trigger/hotkey.py
+  // MOUSE_HOTKEY_REASONS) so the picker can show it in the UI language.
+  mouse_buttons?: { supported: boolean; reason?: string; reason_code?: string };
 }
 
 /** Result of a successful PUT /api/settings/keybinds. */

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fill, translate } from "@/i18n";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
 import { BROWSER_PROFILE_CHANGED_EVENT } from "@/lib/browserProfiles";
@@ -118,7 +119,7 @@ export function useBrowserView(agentId: string, enabled = true) {
       };
       image.onerror = () => {
         decodeBusy = false;
-        if (!disposed) setState((s) => ({ ...s, error: "Browser image could not be decoded" }));
+        if (!disposed) setState((s) => ({ ...s, error: translate("society.browser_live.error_image") }));
       };
       image.src = "data:image/jpeg;base64," + frame.data;
     };
@@ -263,7 +264,7 @@ export function useBrowserView(agentId: string, enabled = true) {
               setState((s) => ({ ...s, error: event.error }));
             }
           } catch {
-            setState((s) => ({ ...s, error: "Browser stream returned invalid data" }));
+            setState((s) => ({ ...s, error: translate("society.browser_live.error_stream") }));
           }
         };
         ws.onclose = (event) => {
@@ -290,7 +291,7 @@ export function useBrowserView(agentId: string, enabled = true) {
       } catch (error) {
         if (disposed) return;
         setState((s) => ({ ...s, connected: false,
-          error: error instanceof Error ? error.message : "Browser connection failed" }));
+          error: error instanceof Error ? error.message : translate("society.browser_live.error_connect") }));
         cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
       }
     };
@@ -327,8 +328,8 @@ export function useBrowserView(agentId: string, enabled = true) {
     if (op === "cancel") {
       void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/cancel",
         { method: "POST", headers: { "X-Jarvis-Stop-Chat": "1" } }).then((res) => {
-          if (!res.ok) setState((s) => ({ ...s, error: "Browser stop failed: " + res.status }));
-        }).catch(() => setState((s) => ({ ...s, error: "Browser stop could not connect" })));
+          if (!res.ok) setState((s) => ({ ...s, error: fill(translate("society.browser_live.error_stop"), { status: res.status }) }));
+        }).catch(() => setState((s) => ({ ...s, error: translate("society.browser_live.error_stop_unreachable") })));
       return;
     }
     if (socket.current?.readyState !== WebSocket.OPEN) return;
@@ -349,7 +350,7 @@ export function useBrowserView(agentId: string, enabled = true) {
     if (["click", "scroll", "text", "key"].includes(op)
       && (!manual.current || (loginCapability.current && !loginMode.current))) {
       if (inputs.current.length >= 128) {
-        setState((s) => ({ ...s, error: "Waiting for browser control; input queue is full" }));
+        setState((s) => ({ ...s, error: translate("society.browser_live.error_queue_full") }));
         return;
       }
       inputs.current.push({ op, args });
@@ -381,7 +382,7 @@ export function useBrowserView(agentId: string, enabled = true) {
       body: JSON.stringify({ approve: allow }),
     });
     if (!response.ok) {
-      setState((s) => ({ ...s, error: "Approval " + response.status }));
+      setState((s) => ({ ...s, error: fill(translate("society.browser_live.error_approval"), { status: response.status }) }));
     } else setState((s) => ({ ...s, approval: undefined }));
   }, [state.approval]);
   return { canvas, state, control, approve };

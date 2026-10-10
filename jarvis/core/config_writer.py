@@ -1975,7 +1975,7 @@ def set_brain_provider_defaults(
 _TTS_DEFAULTS: dict[str, dict[str, str]] = {
     "inworld": {
         # Inworld reads its per-language voices from the [tts.inworld] subtable
-        # (voice_de/voice_en/voice_es), NOT [tts].voice_de — same pattern as
+        # (voice_de/voice_en/voice_es/voice_pt), NOT [tts].voice_de — same pattern as
         # Cartesia. The scalar voice_de/voice_en are placeholders never consumed
         # by the Inworld factory path. [tts].model is ignored too (the model
         # comes from [tts.inworld].model or the plugin default inworld-tts-2), so
@@ -2078,13 +2078,15 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         # and picks the matching installed voice per turn. Inheriting a
         # predecessor's pinned "de-DE" would therefore hard-wire every answer to
         # the German voice, including the ones the resolver decided to speak in
-        # English or Spanish — the runtime-language doctrine broken by a leftover
+        # English, Spanish or Portuguese — the runtime-language doctrine broken by a leftover
         # config value rather than by any code. "auto" keeps the decision where
         # it belongs.
         #
-        # The voices are the two the installer actually fetches
-        # (PIPER_DEFAULT_VOICES in jarvis/speech/local_models.py). They are named
-        # rather than left blank so switching away from a cloud provider does not
+        # The installer fetches one voice per reply language — German,
+        # English, Spanish and Portuguese (PIPER_DEFAULT_VOICES in
+        # jarvis/speech/local_models.py); the German and English ones fill the
+        # two voice keys below, and the plugin finds the others by language.
+        # They are named rather than left blank so switching away from a cloud provider does not
         # leave "Charon" sitting in the block: the resolver tolerates an unknown
         # name, but the settings screen would keep showing a voice this provider
         # cannot speak with. There is no [tts].model concept for Piper.
@@ -2112,6 +2114,7 @@ _VOICES_FOR_PROVIDER: dict[str, frozenset[str]] = {
             "vits-piper-en_US-amy-medium",
             "vits-piper-es_ES-davefx-medium",
             "vits-piper-es_ES-sharvard-medium",
+            "vits-piper-pt_PT-tugao-medium",
         }
     ),
     "gemini-flash-tts": frozenset(

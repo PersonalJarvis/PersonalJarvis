@@ -23,6 +23,7 @@ from .event_store import MissionEventStore
 from .events import (
     EventEnvelope,
     MissionDispatched,
+    MissionLanguage,
     MissionStateChanged,
     now_ms,
 )
@@ -125,7 +126,7 @@ class MissionManager:
         self,
         *,
         prompt: str,
-        language: Literal["de", "en"] = "de",
+        language: MissionLanguage = "de",
         source_actor: SourceActor = "hauptjarvis",
         priority: int = 0,
         parent_mission_id: str | None = None,

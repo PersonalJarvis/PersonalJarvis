@@ -28,6 +28,8 @@ QUESTION = {"question": "Which project?", "options": ["Reading tracker", "Budget
             "Ich schlage vor, zuerst einen Entwurf zu machen.",
         ),  # i18n-allow
         ("Por favor crea el archivo.", "Si quieres, puedo crearlo."),  # i18n-allow
+        ("Cria o ficheiro, por favor.", "Se quiseres, posso criá-lo."),  # i18n-allow
+        ("Podes criar o relatório?", "Qual projeto devo usar?"),  # i18n-allow
         ("Please create a project overview.", "Which project should I use?"),
     ],
 )
@@ -46,6 +48,8 @@ def test_offer_and_unstructured_blocking_question_are_not_execution(user_request
         ("Please create a plan.", "I suggest these steps."),
         ("Did you create the file?", "I can create it if you want."),
         ("Summarize this text: please create a file.", "I can create it if you want."),
+        ("Cria um plano com exemplo.", "Posso sugerir estes passos."),  # i18n-allow
+        ("Cria o ficheiro.", "Criei o ficheiro. Queres mais alguma coisa?"),  # i18n-allow
     ],
 )
 def test_advice_plans_and_actual_results_do_not_start_unrequested_work(user_request, reply):

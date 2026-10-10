@@ -174,31 +174,45 @@ async def test_already_running_kind_uses_its_own_pool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_spanish_turn_uses_pool_and_skips_llm() -> None:
-    """An 'es' turn has no native persona — it must serve the curated Spanish
-    pool directly and never spend an LLM round-trip that would only reject."""
-    provider = _FakeProvider(reply="LLM must not run for an es turn.")
+async def test_spanish_turn_uses_llm_with_spanish_directive() -> None:
+    """An 'es' turn runs the flash LLM with the Spanish output directive."""
+    reply = "Un Nova-Agent está revisando tu correo en segundo plano."  # i18n-allow
+    provider = _FakeProvider(reply=reply)
     composer = _composer(provider)
     out = await composer.compose(
-        utterance="Por favor, revisa mi correo en busca de facturas.",
+        utterance="Por favor, revisa mi correo en busca de facturas.",  # i18n-allow
         language="es",
     )
-    assert out in _rendered(_FALLBACK_SPAWN["es"])
-    assert provider.calls == [], "es turn must skip the de/en-persona LLM path"
+    assert out == reply
+    assert len(provider.calls) == 1
+    assert "Spanish" in provider.calls[0]["persona_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_portuguese_turn_uses_pool_and_skips_llm() -> None:
-    """A 'pt' turn has no native persona either: it serves the curated
-    European Portuguese pool directly, with no LLM round-trip."""
-    provider = _FakeProvider(reply="LLM must not run for a pt turn.")
+async def test_portuguese_turn_uses_llm_with_pt_pt_directive() -> None:
+    """A 'pt' turn runs the flash LLM with the European Portuguese directive."""
+    reply = "Um Nova-Agent está a ver o teu correio em segundo plano."  # i18n-allow
+    provider = _FakeProvider(reply=reply)
     composer = _composer(provider)
     out = await composer.compose(
-        utterance="Por favor, vê o meu correio à procura de faturas.",
+        utterance="Por favor, vê o meu correio à procura de faturas.",  # i18n-allow
+        language="pt",
+    )
+    assert out == reply
+    assert len(provider.calls) == 1
+    assert "European Portuguese" in provider.calls[0]["persona_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_portuguese_completion_claim_falls_back_to_pt_pool() -> None:
+    """A pt completion claim is a lie at spawn time: the pt pool speaks."""
+    provider = _FakeProvider(reply="O Nova-Agent já está feito com o teu correio.")  # i18n-allow
+    composer = _composer(provider)
+    out = await composer.compose(
+        utterance="Por favor, vê o meu correio à procura de faturas.",  # i18n-allow
         language="pt",
     )
     assert out in _rendered(_FALLBACK_SPAWN["pt"])
-    assert provider.calls == [], "pt turn must skip the de/en-persona LLM path"
 
 
 def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
@@ -210,6 +224,10 @@ def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
         ("en", _FALLBACK_SPAWN["en"]),
         ("de", _FALLBACK_ALREADY_RUNNING["de"]),
         ("en", _FALLBACK_ALREADY_RUNNING["en"]),
+        ("es", _FALLBACK_SPAWN["es"]),
+        ("pt", _FALLBACK_SPAWN["pt"]),
+        ("es", _FALLBACK_ALREADY_RUNNING["es"]),
+        ("pt", _FALLBACK_ALREADY_RUNNING["pt"]),
     ):
         for phrase in pool:
             spoken = phrase.replace("{agent}", BRAND)

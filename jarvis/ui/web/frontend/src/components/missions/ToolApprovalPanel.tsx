@@ -19,7 +19,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useT, useUiLanguage } from "@/i18n";
+import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import type {
   MissionToolApprovalDecision,
@@ -61,7 +62,7 @@ export function ToolApprovalPanel({
   query: ApprovalQuery;
 }) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const queryClient = useQueryClient();
   const approvals = query.data?.approvals ?? [];
   const [confirmingTraceId, setConfirmingTraceId] = useState<string | null>(

@@ -13,6 +13,8 @@
  * LinkedIn is sourced from the simple-icons npm package via jsDelivr because the
  * cdn.simpleicons.org endpoint 404s for it.
  */
+import { translate } from "@/i18n";
+
 export interface BrandDef {
   /** Display name for the platform dropdown. */
   label: string;
@@ -80,7 +82,7 @@ export const PLATFORM_OPTIONS: readonly string[] = [
 export function platformLabel(platform: string): string {
   const brand = BRANDS[platform.toLowerCase()];
   if (brand) return brand.label;
-  if (platform === "website") return "Website / Other";
+  if (platform === "website") return translate("socials.website_other");
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 

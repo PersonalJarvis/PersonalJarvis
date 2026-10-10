@@ -243,18 +243,32 @@ def _vosk_models_root() -> Path:
     return Path(base) / "wake_models" / "vosk"
 
 
+def _is_vosk_model_dir(cand: Path) -> bool:
+    """True when ``cand`` itself is an extracted Vosk model.
+
+    ``am/`` or ``conf/model.conf`` marks the current layout; a root-level
+    ``final.mdl`` marks the legacy flat layout (vosk-model-small-pt-0.3),
+    which the Vosk runtime still loads.
+    """
+    return (
+        (cand / "am").is_dir()
+        or (cand / "conf" / "model.conf").is_file()
+        or (cand / "final.mdl").is_file()
+    )
+
+
 def _vosk_model_dir(cand: Path) -> Path | None:
     """The extracted model dir inside a language folder, or None.
 
-    A folder counts as a model when it carries Vosk's ``am/`` subdir or a
-    ``conf/model.conf`` (top-level or one level down, so both an extracted
-    ``vosk-model-small-de-0.15/`` inside the lang folder and a flattened
-    layout resolve).
+    A folder counts as a model when it carries one of the
+    ``_is_vosk_model_dir`` markers (top-level or one level down, so both an
+    extracted ``vosk-model-small-de-0.15/`` inside the lang folder and a
+    flattened layout resolve).
     """
-    if (cand / "am").is_dir() or (cand / "conf" / "model.conf").is_file():
+    if _is_vosk_model_dir(cand):
         return cand
     for sub in sorted(p for p in cand.iterdir() if p.is_dir()):
-        if (sub / "am").is_dir() or (sub / "conf" / "model.conf").is_file():
+        if _is_vosk_model_dir(sub):
             return sub
     return None
 

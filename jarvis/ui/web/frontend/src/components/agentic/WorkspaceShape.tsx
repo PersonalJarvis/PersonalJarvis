@@ -35,6 +35,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 import { IconButton } from "./controls";
 import {
   WORKABLE_COLS,
@@ -241,6 +242,7 @@ export function CountStepper({
   max: number;
   onChange: (next: number) => void;
 }) {
+  const t = useT();
   const [draft, setDraft] = useState(String(count));
 
   useEffect(() => setDraft(String(count)), [count]);
@@ -257,11 +259,11 @@ export function CountStepper({
         htmlFor="workspace-terminal-count"
         className="font-mono text-micro font-medium text-muted-foreground"
       >
-        Exact count · type a number
+        {t("workspace_launcher.shape.exact_count")}
       </label>
       <div className="flex h-11 items-stretch overflow-hidden rounded-control border border-border bg-background transition-colors focus-within:border-primary/70 focus-within:ring-2 focus-within:ring-primary/15">
         <IconButton
-          label="Use one fewer terminal"
+          label={t("workspace_launcher.shape.one_fewer")}
           disabled={count <= 1}
           onClick={() => set(count - 1)}
           className="h-full w-11 rounded-none border-r border-border"
@@ -282,7 +284,7 @@ export function CountStepper({
             autoComplete="off"
             spellCheck={false}
             value={draft}
-            aria-label="Number of terminals"
+            aria-label={t("workspace_launcher.shape.count_aria")}
             aria-describedby="workspace-terminal-count-max"
             data-testid="terminal-count-value"
             onFocus={(event) => event.currentTarget.select()}
@@ -340,7 +342,7 @@ export function CountStepper({
           </span>
         </label>
         <IconButton
-          label="Use one more terminal"
+          label={t("workspace_launcher.shape.one_more")}
           disabled={count >= max}
           onClick={() => set(count + 1)}
           className="h-full w-11 rounded-none border-l border-border"
@@ -376,6 +378,7 @@ export function CountTrack({
   max: number;
   onChange: (next: number) => void;
 }) {
+  const t = useT();
   const ticks = useMemo(() => countTicks(max), [max]);
   const span = Math.max(1, max - 1);
 
@@ -387,7 +390,7 @@ export function CountTrack({
         max={max}
         step={1}
         value={count}
-        aria-label="Number of terminals"
+        aria-label={t("workspace_launcher.shape.count_aria")}
         data-testid="terminal-count-range"
         onChange={(event) => onChange(Number(event.currentTarget.value))}
         className="h-1 w-full cursor-pointer accent-primary"
@@ -406,7 +409,7 @@ export function CountTrack({
             key={n}
             type="button"
             aria-pressed={count === n}
-            aria-label={`Use ${n} terminals`}
+            aria-label={fill(t("workspace_launcher.shape.use_n"), { count: n })}
             onClick={() => onChange(n)}
             style={{ left: `${((n - 1) / span) * 100}%` }}
             className={cn(
@@ -636,6 +639,7 @@ function Readout({
   workspaceWidthPx: number;
   fontSize: number;
 }) {
+  const t = useT();
   // By COLUMNS rather than the raw count, so the sentence can never describe a
   // different workspace from the stage above it.
   const paneWidth = paneWidthAt(columns, workspaceWidthPx);
@@ -659,21 +663,20 @@ function Readout({
    */
   let condition: string;
   if (paneWidth === 0) {
-    condition = "All on one screen.";
+    condition = t("workspace_launcher.shape.all_on_screen");
   } else if (perPane > 0 && perPane < WORKABLE_COLS) {
     // The one case worth spelling out, as advice: these panes come out narrow.
-    condition =
-      `All on one screen, about ${perPane} columns each — narrow for an ` +
-      `agent's output. This window fits ${affordable} across comfortably at ` +
-      `text size ${fontSize}; maximize a pane to read it full size.`;
+    condition = fill(t("workspace_launcher.shape.columns_narrow"), {
+      columns: perPane,
+      affordable,
+      size: fontSize,
+    });
   } else if (perPane > 0) {
-    condition = `All on one screen, about ${perPane} columns each.`;
+    condition = fill(t("workspace_launcher.shape.columns_each"), { columns: perPane });
   } else if (comfortable) {
-    condition = `All on one screen, about ${formatPx(paneWidth)} px each.`;
+    condition = fill(t("workspace_launcher.shape.px_each"), { px: formatPx(paneWidth) });
   } else {
-    condition = `All on one screen, about ${formatPx(
-      paneWidth,
-    )} px each — narrow for an agent's output. Maximize a pane to read it full size.`;
+    condition = fill(t("workspace_launcher.shape.px_narrow"), { px: formatPx(paneWidth) });
   }
 
   return (
@@ -683,7 +686,7 @@ function Readout({
       className="text-xs leading-relaxed text-muted-foreground"
     >
       <span className="font-mono tabular-nums text-foreground">
-        {columns} across
+        {fill(t("workspace_launcher.shape.across"), { columns })}
       </span>{" "}
       · {condition}
     </p>

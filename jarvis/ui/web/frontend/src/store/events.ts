@@ -251,6 +251,49 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   "agentic-ide-classic": "Terminal grid",
   marketplace: "Marketplace",
 };
+/**
+ * i18n keys for `SECTION_LABELS`, for user-facing readbacks (the voice-navigation
+ * toast). Translate at render/call time; the English table above stays the
+ * search alias source for the quick switcher.
+ */
+export const SECTION_LABEL_KEYS: Record<SectionId, string> = {
+  chats: "nav.chats",
+  agents: "nav.agents",
+  skills: "nav.skills",
+  plugins: "nav.plugins",
+  docs: "nav.docs",
+  mcps: "nav.mcps",
+  sessions: "nav.sessions",
+  costs: "nav.costs",
+  clis: "nav.clis",
+  "cli-test-hub": "nav.cli_test_hub",
+  board: "nav.board",
+  languages: "nav.languages",
+  profile: "nav.profile",
+  memory: "nav.memory",
+  apikeys: "nav.apikeys",
+  computers: "nav.computers",
+  settings: "nav.settings",
+  telephony: "nav.telephony",
+  "telephony-setup": "shell_sections.telephony_setup",
+  socials: "nav.socials",
+  taskbar: "nav.taskbar",
+  feedback: "nav.feedback",
+  "agent-instructions": "shell_sections.agent_instructions",
+  appshots: "nav.appshots",
+  shortcuts: "nav.shortcuts",
+  pets: "nav.pets",
+  dictionary: "nav.dictionary",
+  dictation: "nav.dictation",
+  "voice-shortcuts": "shell_sections.voice_shortcuts",
+  "voice-language": "shell_sections.voice_language",
+  "voice-api-keys": "shell_sections.voice_api_keys",
+  visualization: "shell_sections.visualization",
+  "agentic-ide": "nav.agentic_ide",
+  "chat-workspace": "nav.chat_workspace",
+  "agentic-ide-classic": "quick_switch.terminal_grid",
+  marketplace: "nav.marketplace",
+};
 
 export interface EventItem {
   id: string;

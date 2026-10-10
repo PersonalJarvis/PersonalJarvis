@@ -272,7 +272,8 @@
       "resident_unknown": "{total} no total — memória gráfica desconhecida",
       "resident_context": "Contexto (estimativa)",
       "resident_context_short": "contexto",
-      "resident_reserve": "Reserva para fala de entrada/saída"
+      "resident_reserve": "Reserva para fala de entrada/saída",
+      "server_no_answer": "O servidor em {url} não responde."
     },
     "installed": {
       "title": "Modelos instalados",

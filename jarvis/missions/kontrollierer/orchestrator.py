@@ -114,6 +114,7 @@ from ..worker_runtime.workspace import materialize_worker_contract
 from ..workers.base import WorkerProtocol
 from .decomposer import MissionDecomposer, MissionPlan, Step
 from .deliverable import (
+    MISSION_COMPLETED_PHRASES,
     build_deliverable_summary,
     build_delivered_summary,
     deliver_to_user_folder,
@@ -4284,6 +4285,17 @@ class Kontrollierer:
             or build_deliverable_summary(mission_dir, language="en")
             or "Mission completed."
         )
+        # es/pt (every dispatch language besides de/en) get their own spoken
+        # summary, so the readback never falls back to the English one.
+        summary_local = ""
+        mission_language = await self._mission_language(mission_id)
+        if mission_language not in ("de", "en"):
+            summary_local = (
+                answer_summary
+                or build_delivered_summary(delivered, language=mission_language)
+                or build_deliverable_summary(mission_dir, language=mission_language)
+                or MISSION_COMPLETED_PHRASES.get(mission_language, "")
+            )
         env = EventEnvelope(
             mission_id=mission_id,
             source_actor="kontrollierer",
@@ -4295,9 +4307,21 @@ class Kontrollierer:
                 wall_ms=0,
                 summary_de=summary_de,
                 summary_en=summary_en,
+                summary_local=summary_local,
             ),
         )
         await self._manager.store.append_and_publish(env)
+
+    async def _mission_language(self, mission_id: str) -> str:
+        """The mission's dispatch language, ``"de"`` when it cannot be read."""
+        try:
+            view = await self._manager.store.get_mission_view(mission_id)
+        except Exception:  # noqa: BLE001 — the readback language is never mission-fatal
+            logger.warning(
+                "could not read the dispatch language of %s", mission_id, exc_info=True
+            )
+            return "de"
+        return str(view[2]) if view else "de"
 
     async def _fail_mission(
         self,

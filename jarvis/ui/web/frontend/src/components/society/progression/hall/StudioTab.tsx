@@ -11,6 +11,7 @@
  */
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { equippedFor, rewardRoad, type SlotChoice } from "../cosmetics";
 import { RANK_INFO, rankAt, SLOTS, slotOf, type RankId, type RewardId, type Slot } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
@@ -38,6 +39,7 @@ export function RankPlate({ name, level, rank }: { name: string; level: number; 
 
 export function StudioTab({ who }: { who: HallWho }) {
   const t = useT();
+  const locale = useRunLocale();
   const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
   const curve = useProgression((s) => s.snapshot?.levelXp ?? NO_CURVE);
   const titles = useProgression((s) => s.snapshot?.titles[who.kind] ?? NO_TITLES);
@@ -73,7 +75,7 @@ export function StudioTab({ who }: { who: HallWho }) {
               <span>
                 <strong>{t(`society.level.reward.${tryRow.rewardId}`)}</strong>
                 <em>{t("society.hall.try_on_line").replace("{0}", String(tryAt))
-                  .replace("{1}", xpToReach(curve, subject?.xp ?? 0, tryAt).toLocaleString())}</em>
+                  .replace("{1}", xpToReach(curve, subject?.xp ?? 0, tryAt).toLocaleString(locale))}</em>
               </span>
               <button type="button" className="hall-button" onClick={() => setTryOn(null)}>{t("society.hall.try_on_back")}</button>
             </div>

@@ -54,11 +54,12 @@ export function RunErrorList({ turns }: { turns: RunTurn[] }) {
 }
 
 function ErrorRow({ entry, turnIdx }: { entry: ErrorEntry; turnIdx?: number }) {
+  const t = useT();
   return (
     <li className="rounded-md border border-destructive/20 bg-destructive/[0.12] px-3 py-2 text-sm">
       <div className="flex flex-wrap items-baseline gap-x-2">
         {turnIdx !== undefined && (
-          <span className="font-medium text-foreground-strong">Turn {turnIdx + 1}</span>
+          <span className="font-medium text-foreground-strong">{t("run_inspector.turn")} {turnIdx + 1}</span>
         )}
         <span className="font-mono font-medium text-destructive">{entry.source}</span>
         {entry.layer && (

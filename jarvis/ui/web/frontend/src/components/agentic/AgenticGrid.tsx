@@ -274,19 +274,19 @@ const VIEW_BUTTONS: ReadonlyArray<{
   view: WorkspaceView;
   testId: string;
   icon: LucideIcon;
-  title: string;
+  titleKey: string;
 }> = [
   {
     view: "grid",
     testId: "agentic-view-mode-grid",
     icon: LayoutGrid,
-    title: "Terminal grid — every pane on screen at once.",
+    titleKey: "agentic_grid.view_buttons.grid_title",
   },
   {
     view: "chat",
     testId: "agentic-view-mode-toggle",
     icon: MessagesSquare,
-    title: "Chat view — read one agent at a time, like a conversation.",
+    titleKey: "agentic_grid.view_buttons.chat_title",
   },
 ];
 
@@ -2308,8 +2308,8 @@ export function AgenticGrid({
           data-testid="agentic-focus-toggle"
           title={
             focusMode
-              ? "Focused coding mode is on — Jarvis answers inside this workspace. Click to leave."
-              : "Turn on focused coding mode — Jarvis answers inside this workspace until you switch back."
+              ? t("agentic_grid.focus_mode.on_title")
+              : t("agentic_grid.focus_mode.off_title")
           }
           className={cn(TOOLBAR_BTN, focusMode && TOOLBAR_BTN_ON)}
         >
@@ -2327,14 +2327,14 @@ export function AgenticGrid({
             `agentic-view-mode-toggle` stays on the chat button: it is the one
             this control used to be, and the tests that press it are about
             chat view rather than about the switch. */}
-        {VIEW_BUTTONS.map(({ view, testId, icon: Icon, title }) => (
+        {VIEW_BUTTONS.map(({ view, testId, icon: Icon, titleKey }) => (
           <button
             key={view}
             type="button"
             data-testid={testId}
             aria-pressed={viewMode === view}
             onClick={() => setViewMode(view)}
-            title={title}
+            title={t(titleKey)}
             className={cn(TOOLBAR_BTN, viewMode === view && TOOLBAR_BTN_ON)}
           >
             <Icon className="h-4 w-4 shrink-0" />
@@ -2501,8 +2501,8 @@ export function AgenticGrid({
               type="button"
               className={cn(TOOLBAR_BTN, "hover:bg-destructive/10 hover:text-destructive")}
               disabled={busy}
-              aria-label="Close workspace"
-              title="Close the workspace and stop every agent in it"
+              aria-label={t("agentic_grid.close_workspace.aria")}
+              title={t("agentic_grid.close_workspace.title")}
             >
               <Power className="h-4 w-4 shrink-0" />
             </button>
@@ -2939,7 +2939,7 @@ export function AgenticGrid({
           ))}
         {session.terminals.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-            <span>Every terminal in this workspace is closed.</span>
+            <span>{t("agentic_grid.empty_workspace.all_closed")}</span>
             {/* `relative` so the picker hangs under the button rather than off
                 the grid canvas. */}
             <div className="relative">
@@ -2952,12 +2952,12 @@ export function AgenticGrid({
                 onClick={() => openTerminal("empty")}
               >
                 <Plus className="h-4 w-4" />
-                Open a terminal
+                {t("agentic_grid.empty_workspace.open_terminal")}
               </button>
               {picking === "empty" && (
                 <AgentPickerMenu
-                  title="Open a terminal — what?"
-                  ariaLabel="What should run in the new terminal?"
+                  title={t("agentic_grid.empty_workspace.picker_title")}
+                  ariaLabel={t("agentic_grid.empty_workspace.picker_aria")}
                   agents={agents ?? []}
                   testId="empty-workspace-agent-menu"
                   itemTestId={(agent) => `empty-workspace-new-${agent}`}
@@ -3451,7 +3451,7 @@ function ConfirmWorkspaceClose({
   busy: boolean;
   onConfirm: () => void;
 }) {
-  const agentLabel = terminalCount === 1 ? "coding agent" : "coding agents";
+  const t = useT();
 
   return (
     <Dialog.Portal>
@@ -3467,16 +3467,22 @@ function ConfirmWorkspaceClose({
         }}
       >
         <Dialog.Title className="font-display text-base font-semibold">
-          Close this workspace?
+          {t("agentic_grid.close_workspace.confirm_title")}
         </Dialog.Title>
         <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-          This stops all {terminalCount} {agentLabel} and closes every terminal session. Anything
-          already written to disk stays.
+          {fill(
+            t(
+              terminalCount === 1
+                ? "agentic_grid.close_workspace.confirm_body_one"
+                : "agentic_grid.close_workspace.confirm_body_other",
+            ),
+            { count: terminalCount },
+          )}
         </Dialog.Description>
         <div className="mt-5 flex items-center justify-end gap-2">
           <Dialog.Close asChild>
             <button type="button" className="btn-ghost" autoFocus disabled={busy}>
-              Keep workspace open
+              {t("agentic_grid.close_workspace.keep")}
             </button>
           </Dialog.Close>
           <button
@@ -3486,7 +3492,7 @@ function ConfirmWorkspaceClose({
             disabled={busy}
             onClick={onConfirm}
           >
-            Close workspace
+            {t("agentic_grid.close_workspace.confirm")}
           </button>
         </div>
       </Dialog.Content>
@@ -3512,11 +3518,12 @@ function ConfirmClose({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const t = useT();
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Close ${name}`}
+      aria-label={fill(t("agentic_grid.close_pane.aria"), { pane: name })}
       data-testid="confirm-close-terminal"
       className="absolute inset-0 z-30 flex items-center justify-center bg-background p-6 backdrop-blur-sm"
       onKeyDown={(e) => {
@@ -3524,14 +3531,15 @@ function ConfirmClose({
       }}
     >
       <div className="w-full max-w-sm rounded-lg bg-popover shadow-float p-5">
-        <h3 className="font-display text-base font-semibold">Close {name}?</h3>
+        <h3 className="font-display text-base font-semibold">
+          {fill(t("agentic_grid.close_pane.title"), { pane: name })}
+        </h3>
         <p className="mt-2 text-sm text-muted-foreground">
-          The coding agent running in this terminal is stopped and its session is gone. Anything it
-          already wrote to disk stays.
+          {t("agentic_grid.close_pane.body")}
         </p>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button type="button" className="btn-ghost" autoFocus disabled={busy} onClick={onCancel}>
-            Keep it open
+            {t("agentic_grid.close_pane.keep")}
           </button>
           <button
             type="button"
@@ -3540,7 +3548,7 @@ function ConfirmClose({
             disabled={busy}
             onClick={onConfirm}
           >
-            Close {name}
+            {fill(t("agentic_grid.close_pane.confirm"), { pane: name })}
           </button>
         </div>
       </div>

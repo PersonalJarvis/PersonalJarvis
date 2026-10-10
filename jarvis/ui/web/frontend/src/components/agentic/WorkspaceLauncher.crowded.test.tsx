@@ -26,6 +26,9 @@ import {
 
 vi.mock("@/i18n", () => ({
   useT: () => (key: string) => key,
+  translate: (key: string) => key,
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (match, name: string) => (name in vars ? String(vars[name]) : match)),
 }));
 
 // Nothing in these tests touches the folder picker, and rendering the real one

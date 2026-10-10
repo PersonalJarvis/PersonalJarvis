@@ -13,7 +13,7 @@ import { useEventStore, type Toast } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { openDownloadedFile, revealInFolder } from "@/lib/fileActions";
 import { canNativeDrag, startNativeFileDrag } from "@/lib/nativeDrag";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 
 const ICON_FOR_KIND = {
   info: Info,
@@ -95,7 +95,7 @@ export function ToastLayer() {
                 {toast.count > 1 && (
                   <span
                     data-testid={`toast-repeat-${toast.count}`}
-                    aria-label={`Repeated ${toast.count} times`}
+                    aria-label={fill(t("common.repeated_times"), { count: toast.count })}
                     className={cn(
                       "mt-px shrink-0 rounded-full border border-current/30 px-1.5 py-px text-micro font-semibold tabular-nums",
                       ACCENT_FOR_KIND[toast.kind],
@@ -121,7 +121,7 @@ export function ToastLayer() {
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => dismiss(toast.id)}
               className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-              aria-label="Dismiss"
+              aria-label={t("common.dismiss")}
             >
               <X className="h-3.5 w-3.5" />
             </button>

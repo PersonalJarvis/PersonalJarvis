@@ -763,8 +763,9 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Speaks on this machine — no API key, no cloud account, nothing "
             "sent anywhere. Piper is the established offline voice engine: "
             "small neural voices that run faster than real time even without a "
-            "graphics card. The download is about 200 MB and brings one voice "
-            "each for German, English and Spanish. The voices sound good rather "
+            "graphics card. The download is about 270 MB and brings one voice "
+            "each for German, English, Spanish and European Portuguese. The "
+            "voices sound good rather "
             "than indistinguishable from a person; a hosted provider is still "
             "the more natural-sounding option."
         ),

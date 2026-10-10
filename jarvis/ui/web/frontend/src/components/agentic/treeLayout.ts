@@ -39,6 +39,8 @@
  * hook posts back (`saveLayoutWeights`) is the same value.
  */
 
+import { fill, translate } from "@/i18n";
+
 /** One pane, referenced by its terminal KEY ("t1") — stable across renames. */
 export interface LayoutLeaf {
   pane: string;
@@ -182,8 +184,8 @@ export function treeLayout(
     node.children.forEach((child, index) => {
       const share = (weights[index] / total) * along;
       if (index > 0) {
-        const before = names.get(lastLeaf(node.children[index - 1])) ?? "the pane before";
-        const after = names.get(firstLeaf(child)) ?? "the pane after";
+        const before = names.get(lastLeaf(node.children[index - 1])) ?? translate("ide_panes.seam.pane_before");
+        const after = names.get(firstLeaf(child)) ?? translate("ide_panes.seam.pane_after");
         seams.push(
           node.direction === "row"
             ? {
@@ -197,7 +199,7 @@ export function treeLayout(
                 boundary: index,
                 groupWeight: total,
                 axisFraction: box.w,
-                label: `Drag to resize ${before} and ${after}`,
+                label: fill(translate("ide_panes.seam.resize_pair"), { before, after }),
               }
             : {
                 id: `${at}:${index}`,
@@ -210,7 +212,7 @@ export function treeLayout(
                 boundary: index,
                 groupWeight: total,
                 axisFraction: box.h,
-                label: `Drag to resize ${before} and ${after}`,
+                label: fill(translate("ide_panes.seam.resize_pair"), { before, after }),
               },
         );
       }

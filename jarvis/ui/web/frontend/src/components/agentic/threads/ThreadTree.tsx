@@ -4,6 +4,8 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { patchAgentChatSession, type AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
@@ -33,15 +35,16 @@ function saveExpansion(value: Record<string, boolean>): void {
 
 /** The quiet mark at a row's end: what the thread is doing, else whose it is. */
 function StatusMark({ status }: { status: ThreadStatus }) {
+  const t = useT();
   if (status === "approval") {
-    return <span role="img" aria-label="Waiting for your approval" title="Waiting for your approval"
+    return <span role="img" aria-label={t("ide_threads.waiting_approval")} title={t("ide_threads.waiting_approval")}
       className="h-2 w-2 shrink-0 rounded-full bg-warning" />;
   }
   if (status === "running") {
-    return <Loader2 role="img" aria-label="Working" className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />;
+    return <Loader2 role="img" aria-label={t("ide_threads.sub_status_running")} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />;
   }
   if (status === "unseen") {
-    return <span role="img" aria-label="New activity" title="New activity" className="h-2 w-2 shrink-0 rounded-full bg-accent" />;
+    return <span role="img" aria-label={t("ide_threads.new_activity")} title={t("ide_threads.new_activity")} className="h-2 w-2 shrink-0 rounded-full bg-accent" />;
   }
   return null;
 }
@@ -55,6 +58,8 @@ function StatusMark({ status }: { status: ThreadStatus }) {
  * "Archived" list under their project, from where they come back.
  */
 export function ThreadTree() {
+  const t = useT();
+  const locale = useRunLocale();
   const projects = useIdeProjectsStore((state) => state.projects);
   const connectProject = useIdeProjectsStore((state) => state.connectProject);
   const toggleVoice = useIdeProjectsStore((state) => state.toggleVoice);
@@ -155,16 +160,16 @@ export function ThreadTree() {
     const running = threads.filter((thread) => thread.running).length;
     return <div key={project.id} className="mb-px" data-testid={`thread-project-${project.id}`}>
       <div className="group relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted">
-        <button type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${project.name}`}
+        <button type="button" aria-expanded={open} aria-label={fill(t(open ? "ide_projects.collapse_named" : "ide_projects.expand_named"), { target: project.name })}
           onClick={() => setProjectOpen(project.id, !open)} title={project.path}
           className="flex min-h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-left text-[15px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {open
             ? <FolderOpen aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
             : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
           <span className="min-w-0 flex-1 truncate">{project.name}</span>
-          {!open && running > 0 && <Loader2 aria-label={`${running} working`} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
+          {!open && running > 0 && <Loader2 aria-label={fill(t("ide_threads.count_working"), { count: running })} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
         </button>
-        <button type="button" aria-label={`New thread in ${project.name}`} title="New thread"
+        <button type="button" aria-label={fill(t("ide_threads.new_thread_in"), { project: project.name })} title={t("ide_threads.new_thread")}
           data-testid={`thread-new-${project.id}`}
           onClick={() => { setProjectOpen(project.id, true); newThread(project.id); }}
           className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -174,7 +179,7 @@ export function ThreadTree() {
       {open && <div className="mb-1 flex flex-col gap-px">
         {draftHere && <div aria-current="page"
           className="flex min-h-8 items-center gap-2 rounded-md bg-muted px-2 pl-8 text-[15px] text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate">New thread</span>
+          <span className="min-w-0 flex-1 truncate">{t("ide_threads.new_thread")}</span>
         </div>}
         {shown.map((session) => {
           const selected = session.session_id === openSessionId && selection.sessionId !== null;
@@ -184,13 +189,13 @@ export function ThreadTree() {
           if (renaming?.sessionId === session.session_id) {
             return <form key={session.session_id} className="flex min-h-8 items-center gap-1 pl-6 pr-1"
               onSubmit={(event) => { event.preventDefault(); void rename(session, renaming.title); }}>
-              <input autoFocus aria-label={`Rename ${threadTitle(session)}`} value={renaming.title} maxLength={120}
+              <input autoFocus aria-label={fill(t("ide_projects.rename_named"), { target: threadTitle(session) })} value={renaming.title} maxLength={120}
                 onChange={(event) => setRenaming({ sessionId: session.session_id, title: event.target.value })}
                 onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setRenaming(null); } }}
                 onBlur={() => void rename(session, renaming.title)}
                 className="min-w-0 flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
-              <button type="submit" aria-label="Save name" className="rounded p-1 text-muted-foreground hover:text-foreground"><Check className="h-4 w-4" /></button>
-              <button type="button" aria-label="Cancel renaming" onMouseDown={(event) => event.preventDefault()} onClick={() => setRenaming(null)}
+              <button type="submit" aria-label={t("ide_threads.save_name")} className="rounded p-1 text-muted-foreground hover:text-foreground"><Check className="h-4 w-4" /></button>
+              <button type="button" aria-label={t("ide_threads.cancel_renaming")} onMouseDown={(event) => event.preventDefault()} onClick={() => setRenaming(null)}
                 className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
             </form>;
           }
@@ -251,7 +256,7 @@ export function ThreadTree() {
                 const neighbour = ids[event.key === "ArrowUp" ? index - 1 : index + 1];
                 if (neighbour) move(project.id, ids, session.session_id, neighbour, event.key === "ArrowUp");
               }}
-              title={`${threadTitle(session)} — drag to reorder, or press Alt plus arrow keys to move`}
+              title={fill(t("ide_projects.drag_hint"), { target: threadTitle(session) })}
               className={cn(
                 "flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-8 pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 selected ? "text-foreground-strong" : "text-foreground",
@@ -270,8 +275,8 @@ export function ThreadTree() {
               "absolute inset-y-0 right-0 flex items-center gap-1 rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity",
               menuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
             )}>
-              <span className="text-xs tabular-nums text-muted-foreground" title={new Date(session.updated_ms).toLocaleString()}>{shortAge(session.updated_ms)}</span>
-              <button type="button" aria-label={`Thread actions for ${threadTitle(session)}`} aria-haspopup="menu" aria-expanded={menuOpen}
+              <span className="text-xs tabular-nums text-muted-foreground" title={new Date(session.updated_ms).toLocaleString(locale)}>{shortAge(session.updated_ms)}</span>
+              <button type="button" aria-label={fill(t("ide_threads.thread_actions_for"), { target: threadTitle(session) })} aria-haspopup="menu" aria-expanded={menuOpen}
                 onClick={(event) => {
                   menuAnchor.current = event.currentTarget;
                   setMenu(menuOpen ? null : { sessionId: session.session_id, projectId: project.id });
@@ -285,18 +290,18 @@ export function ThreadTree() {
         {threads.length > FOLDED_COUNT && <button type="button"
           onClick={() => setShowAll((current) => ({ ...current, [project.id]: !current[project.id] }))}
           className="flex min-h-7 items-center rounded-md pl-8 text-left text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          {showAll[project.id] ? "Show less" : `Show ${threads.length - FOLDED_COUNT} more`}
+          {showAll[project.id] ? t("ide_threads.show_less") : fill(t("ide_threads.show_more"), { count: threads.length - FOLDED_COUNT })}
         </button>}
         {threads.length === 0 && !draftHere && <button type="button" onClick={() => newThread(project.id)}
           className="flex min-h-7 items-center gap-2 rounded-md pl-8 text-left text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <Plus aria-hidden className="h-3.5 w-3.5" />Start a thread
+          <Plus aria-hidden className="h-3.5 w-3.5" />{t("ide_threads.start_thread")}
         </button>}
         {stored.length > 0 && <button type="button" aria-expanded={archiveShown}
           data-testid={`thread-archived-${project.id}`}
           onClick={() => setArchiveOpen((current) => ({ ...current, [project.id]: !archiveShown }))}
           className="flex min-h-7 items-center gap-1 rounded-md pl-8 text-left text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {archiveShown ? <ChevronDown aria-hidden className="h-3.5 w-3.5" /> : <ChevronRight aria-hidden className="h-3.5 w-3.5" />}
-          Archived ({stored.length})
+          {fill(t("ide_threads.archived_count"), { count: stored.length })}
         </button>}
         {archiveShown && stored.map((session) => {
           const selected = session.session_id === openSessionId && selection.sessionId !== null;
@@ -321,7 +326,7 @@ export function ThreadTree() {
               "absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity",
               menuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
             )}>
-              <button type="button" aria-label={`Restore ${threadTitle(session)}`} title="Restore"
+              <button type="button" aria-label={fill(t("ide_threads.restore_named"), { target: threadTitle(session) })} title={t("ide_threads.restore")}
                 onClick={() => restoreThread(session.session_id)}
                 className="rounded p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <ArchiveRestore className="h-3.5 w-3.5" />
@@ -340,46 +345,46 @@ export function ThreadTree() {
 
   return <div data-testid="ide-thread-tree" className="flex-1 px-2 pb-3 pt-2">
     <div className="flex h-8 items-center justify-between gap-2 pl-2 pr-1 text-[15px] font-semibold text-foreground">
-      <span>Threads</span>
+      <span>{t("ide_threads.layout_threads")}</span>
       <div className="flex items-center gap-1">
         <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-3.5 w-3.5" /></button>
-        <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}
+        <button type="button" aria-label={t("ide_projects.connect_title")} title={t("ide_projects.connect_folder_title")} onClick={connectProject}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Plus className="h-3.5 w-3.5" /></button>
       </div>
     </div>
     {visible.some((project) => project.pinned) && <>
-      <div className="px-2 pb-1 pt-3 text-[13px] font-medium text-muted-foreground/80">Pinned</div>
+      <div className="px-2 pb-1 pt-3 text-[13px] font-medium text-muted-foreground/80">{t("ide_projects.pinned")}</div>
       {visible.filter((project) => project.pinned).map(projectRow)}
-      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-4 text-[13px] font-medium text-muted-foreground/80">Other projects</div>}
+      {visible.some((project) => !project.pinned) && <div className="px-2 pb-1 pt-4 text-[13px] font-medium text-muted-foreground/80">{t("ide_projects.other_projects")}</div>}
     </>}
     {visible.filter((project) => !project.pinned).map(projectRow)}
-    {visible.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">Connect a folder to start a project.</p>}
+    {visible.length === 0 && <p className="px-2 py-2 text-[13px] text-muted-foreground">{t("ide_projects.empty")}</p>}
 
     <ThreadPopover anchor={menuAnchor} open={menu !== null && menuSession !== null} onClose={() => { setMenu(null); setConfirmDelete(null); }}
-      label="Thread actions" width={220}>
+      label={t("ide_threads.thread_actions")} width={220}>
       {menu && menuSession && (confirmDelete === menu.sessionId
         ? <div className="p-2">
-          <p className="text-sm text-foreground">Delete this thread?</p>
-          <p className="mt-1 text-xs text-muted-foreground">Its conversation leaves the list. The coding agent's own history stays on disk.</p>
+          <p className="text-sm text-foreground">{t("ide_threads.delete_confirm")}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{t("ide_threads.delete_body")}</p>
           <div className="mt-3 flex justify-end gap-2">
-            <button type="button" onClick={() => setConfirmDelete(null)} className="rounded-md px-2.5 py-1 text-sm text-muted-foreground hover:bg-secondary">Cancel</button>
+            <button type="button" onClick={() => setConfirmDelete(null)} className="rounded-md px-2.5 py-1 text-sm text-muted-foreground hover:bg-secondary">{t("common.cancel")}</button>
             <button type="button" onClick={() => { const id = menu.sessionId; setMenu(null); void remove(id); }}
-              className="rounded-md bg-destructive px-2.5 py-1 text-sm text-destructive-foreground">Delete</button>
+              className="rounded-md bg-destructive px-2.5 py-1 text-sm text-destructive-foreground">{t("common.delete")}</button>
           </div>
         </div>
         : <div role="menu">
-          <ThreadMenuItem icon={<Pencil className="h-3.5 w-3.5" />} label="Rename"
+          <ThreadMenuItem icon={<Pencil className="h-3.5 w-3.5" />} label={t("ide_threads.rename")}
             onSelect={() => { setRenaming({ sessionId: menuSession.session_id, title: threadTitle(menuSession) }); setMenu(null); }} />
-          <ThreadMenuItem icon={<SquarePlus className="h-3.5 w-3.5" />} label="New thread in this project"
+          <ThreadMenuItem icon={<SquarePlus className="h-3.5 w-3.5" />} label={t("ide_threads.new_thread_here")}
             onSelect={() => { newThread(menu.projectId); setMenu(null); }} />
           {menuArchived
-            ? <ThreadMenuItem icon={<ArchiveRestore className="h-3.5 w-3.5" />} label="Restore"
+            ? <ThreadMenuItem icon={<ArchiveRestore className="h-3.5 w-3.5" />} label={t("ide_threads.restore")}
               onSelect={() => { restoreThread(menuSession.session_id); setMenu(null); }} />
-            : <ThreadMenuItem icon={<Archive className="h-3.5 w-3.5" />} label="Archive" disabled={menuBusy}
+            : <ThreadMenuItem icon={<Archive className="h-3.5 w-3.5" />} label={t("ide_threads.archive")} disabled={menuBusy}
               onSelect={() => { archiveThread(menuSession.session_id); setMenu(null); }} />}
           <ThreadMenuSeparator />
-          <ThreadMenuItem icon={<Trash2 className="h-3.5 w-3.5" />} label="Delete" danger disabled={Boolean(menuSession.running)}
+          <ThreadMenuItem icon={<Trash2 className="h-3.5 w-3.5" />} label={t("common.delete")} danger disabled={Boolean(menuSession.running)}
             onSelect={() => setConfirmDelete(menu.sessionId)} />
         </div>)}
     </ThreadPopover>

@@ -34,6 +34,7 @@ import {
 } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 
 interface WorkspaceSettingsProps {
   /** The active subscription per coding CLI, as the backend reports it. */
@@ -54,6 +55,7 @@ export function WorkspaceSettings({
   onStateChanged,
   busy = false,
 }: WorkspaceSettingsProps) {
+  const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const [open, setOpen] = useState(false);
   const chips = switchable(accounts);
@@ -74,7 +76,10 @@ export function WorkspaceSettings({
     if (account?.active_label) {
       pushToast(
         "success",
-        `New ${account.display_name} terminals will use ${account.active_label}.`,
+        fill(t("agent_accounts.workspace.toast_switched"), {
+          agent: account.display_name,
+          account: account.active_label,
+        }),
       );
     }
   };
@@ -91,8 +96,11 @@ export function WorkspaceSettings({
           type="button"
           data-testid={`active-account-${account.agent}`}
           onClick={() => setOpen(true)}
-          title={`New ${account.display_name} terminals open on ${account.active_label}. Panes already running keep theirs. Click to switch.`}
-          aria-label={`Switch which ${account.display_name} subscription new terminals use`}
+          title={fill(t("agent_accounts.workspace.chip_title"), {
+            agent: account.display_name,
+            account: account.active_label ?? "",
+          })}
+          aria-label={fill(t("agent_accounts.workspace.chip_aria"), { agent: account.display_name })}
           className={cn(
             "hidden h-7 max-w-[16rem] items-center gap-1.5 rounded-md bg-secondary px-2 text-micro text-muted-foreground transition-colors xl:flex",
             "hover:bg-secondary hover:text-foreground",
@@ -108,8 +116,8 @@ export function WorkspaceSettings({
           <button
             type="button"
             data-testid="agentic-settings-open"
-            title="Workspace settings — choose which subscription new terminals use"
-            aria-label="Workspace settings"
+            title={t("agent_accounts.workspace.open_title")}
+            aria-label={t("agent_accounts.workspace.title")}
             className={cn(
               "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
               "hover:bg-secondary hover:text-foreground",
@@ -128,17 +136,16 @@ export function WorkspaceSettings({
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div className="min-w-0">
                 <Dialog.Title className="font-display text-base font-semibold">
-                  Workspace settings
+                  {t("agent_accounts.workspace.title")}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-xs text-muted-foreground">
-                  Connect several subscriptions of the same coding CLI and choose
-                  which one powers new agent terminals.
+                  {t("agent_accounts.workspace.description")}
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
                 <button
                   type="button"
-                  aria-label="Close settings"
+                  aria-label={t("agent_accounts.workspace.close")}
                   className="shrink-0 rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
@@ -156,7 +163,7 @@ export function WorkspaceSettings({
                     className="rounded-xl border border-border bg-background px-3 py-2"
                   >
                     <p className="text-micro text-muted-foreground">
-                      {account.display_name} · new terminals
+                      {account.display_name} · {t("agent_accounts.workspace.new_terminals")}
                     </p>
                     <p
                       className="truncate text-sm font-medium"
@@ -170,20 +177,14 @@ export function WorkspaceSettings({
 
               <AgentAccountsPanel
                 onActivate={activate}
-                note={
-                  "Switching applies to every terminal opened from now on, splits " +
-                  "included — the panes you already have keep the account they " +
-                  "started with, so no running agent loses its conversation. Only " +
-                  "a pane whose subscription was chosen deliberately (in the " +
-                  "workspace wizard) passes that choice on when you split it."
-                }
+                note={t("agent_accounts.workspace.note")}
               />
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
               <Dialog.Close asChild>
                 <button type="button" className="btn-ghost" disabled={busy}>
-                  Done
+                  {t("ide_panes.common.done")}
                 </button>
               </Dialog.Close>
             </div>

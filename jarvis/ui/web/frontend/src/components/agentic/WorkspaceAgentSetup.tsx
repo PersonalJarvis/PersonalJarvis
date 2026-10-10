@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import type { AgentStatus } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 import { AgentMark } from "./AgentMark";
 import { MAX_PANES_PER_REQUEST, balancedColumns } from "./workspaceDocking";
 
@@ -16,6 +17,7 @@ interface Props {
 
 /** One launch plan: choose an agent for everyone, then customize individual seats. */
 export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = false, quickCounts = 16 }: Props) {
+  const t = useT();
   const [editingSeat, setEditing] = useState<number | null>(null);
   const editing = editingSeat !== null && editingSeat < sessions.length ? editingSeat : null;
   const firstAgent = agents[0]?.name ?? "";
@@ -49,16 +51,16 @@ export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = fal
   const idle = "border-border bg-background/40 hover:border-foreground/30 hover:bg-muted/60";
 
   return <div className="space-y-6">
-    <section aria-label="Coding agents">
+    <section aria-label={t("workspace_launcher.agent_setup.agents_aria")}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Agent</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("workspace_launcher.agent_setup.agent")}</h3>
         <div className="flex items-center gap-2 text-xs">
           <span className="text-muted-foreground" aria-live="polite">
-            {editing === null ? "Choose for all sessions" : `Editing session ${editing + 1}`}
+            {editing === null ? t("workspace_launcher.agent_setup.choose_all") : fill(t("workspace_launcher.agent_setup.editing"), { number: editing + 1 })}
           </span>
           {editing !== null && <button type="button" disabled={disabled} onClick={() => setEditing(null)}
             className="rounded-md border border-border px-2 py-1 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            All sessions
+            {t("workspace_launcher.agent_setup.all_sessions")}
           </button>}
         </div>
       </div>
@@ -78,22 +80,22 @@ export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = fal
         })}
       </div>
       {agents.length === 0 && <p className="rounded-lg border border-border p-4 text-sm text-muted-foreground">
-        No coding agents available. Connect a coding agent in CLIs to continue.
+        {t("workspace_launcher.agent_setup.none")}
       </p>}
     </section>
 
-    <section aria-label="Number of sessions">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">How many sessions?</h3>
+    <section aria-label={t("workspace_launcher.agent_setup.count_aria")}>
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("workspace_launcher.agent_setup.how_many")}</h3>
       <div className="flex flex-wrap items-center gap-2">
         {Array.from({ length: quickCounts }, (_, index) => index + 1).map((count) => <button
-          key={count} type="button" aria-label={`${count} ${count === 1 ? "session" : "sessions"}`}
+          key={count} type="button" aria-label={fill(t(count === 1 ? "workspace_launcher.agent_setup.sessions_one" : "workspace_launcher.agent_setup.sessions_other"), { count })}
           aria-pressed={sessions.length === count} disabled={disabled || !firstAgent}
           onClick={() => chooseCount(count)}
           className={cn("flex h-11 w-11 items-center justify-center rounded-lg border text-sm font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40", sessions.length === count ? selection : idle)}>
           {count}
         </button>)}
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">More
-          <input type="number" aria-label="Number of sessions" min={1} max={MAX_PANES_PER_REQUEST} value={sessions.length || ""}
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">{t("workspace_launcher.agent_setup.more")}
+          <input type="number" aria-label={t("workspace_launcher.agent_setup.count_aria")} min={1} max={MAX_PANES_PER_REQUEST} value={sessions.length || ""}
             disabled={disabled || !firstAgent}
             onChange={(event) => {
               const count = Math.trunc(Number(event.target.value));
@@ -102,21 +104,25 @@ export function WorkspaceAgentSetup({ agents, sessions, onChange, disabled = fal
             className="h-11 w-16 rounded-lg border border-input bg-background/60 px-2 text-center text-sm font-semibold tabular-nums text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30 disabled:opacity-40" />
         </label>
         <span className="ml-2 text-xs text-muted-foreground">
-          Add more anytime{sessions.length > 1 && <> · opens as {balancedColumns(sessions.length)} × {Math.ceil(sessions.length / balancedColumns(sessions.length))}</>}
+          {t("workspace_launcher.agent_setup.add_more")}
+          {sessions.length > 1 && <> · {fill(t("workspace_launcher.agent_setup.opens_as"), {
+            columns: balancedColumns(sessions.length),
+            rows: Math.ceil(sessions.length / balancedColumns(sessions.length)),
+          })}</>}
         </span>
       </div>
     </section>
 
-    <section aria-label="Session lineup">
+    <section aria-label={t("workspace_launcher.agent_setup.lineup_aria")}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Will launch</h3>
-        <span className="text-xs text-muted-foreground">Click a session to choose a different agent</span>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("workspace_launcher.agent_setup.will_launch")}</h3>
+        <span className="text-xs text-muted-foreground">{t("workspace_launcher.agent_setup.click_hint")}</span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {sessions.map((name, index) => {
           const agent = agents.find((entry) => entry.name === name);
-          const label = agent?.display_name ?? "Choose an agent";
-          return <button key={index} type="button" aria-label={`Edit session ${index + 1}: ${label}`}
+          const label = agent?.display_name ?? t("workspace_launcher.agent_setup.choose_agent");
+          return <button key={index} type="button" aria-label={fill(t("workspace_launcher.agent_setup.edit_session"), { number: index + 1, agent: label })}
             aria-pressed={editing === index} disabled={disabled || !firstAgent}
             onClick={() => setEditing((current) => current === index ? null : index)}
             className={cn("flex min-h-12 min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50", editing === index ? selection : idle)}>

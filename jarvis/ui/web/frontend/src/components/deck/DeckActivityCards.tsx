@@ -27,7 +27,8 @@ import type { RunListItem } from "@/components/runs/types";
 import { DeckCard } from "@/components/deck/DeckCard";
 import { useElementSize } from "@/components/deck/HudFrame";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 /**
  * The deck's activity cards — each one a small window onto a section, fed by
@@ -49,7 +50,7 @@ function outcomeTone(outcome: string): string {
 
 function fmtClock(ms: number): string {
   if (!ms) return "";
-  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(ms).toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "2-digit", minute: "2-digit" });
 }
 
 export function RunsCard({ className }: { className?: string }) {

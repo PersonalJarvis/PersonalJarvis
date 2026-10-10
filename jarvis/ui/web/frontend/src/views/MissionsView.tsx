@@ -126,7 +126,7 @@ export function MissionsView() {
           <div className="flex items-center gap-3">
             <ConnectionBadge connected={connected} />
             <Badge variant="outline" className="font-mono text-micro">
-              {totalCount} total
+              {fill(t("missions_view.total_count"), { count: totalCount })}
             </Badge>
             <Badge
               variant={activeCount > 0 ? "default" : "outline"}
@@ -185,15 +185,15 @@ export function MissionsView() {
               <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="verdicts" className="gap-1.5">
                   <ListChecks className="h-3.5 w-3.5" />
-                  Verdicts
+                  {t("missions_view.tab_verdicts")}
                 </TabsTrigger>
                 <TabsTrigger value="reasoning" className="gap-1.5">
                   <MessageSquareText className="h-3.5 w-3.5" />
-                  Reasoning
+                  {t("missions_view.tab_reasoning")}
                 </TabsTrigger>
                 <TabsTrigger value="plan" className="gap-1.5">
                   <MapIcon className="h-3.5 w-3.5" />
-                  Plan
+                  {t("missions_view.tab_plan")}
                 </TabsTrigger>
                 <TabsTrigger value="jarvis-agent" className="gap-1.5">
                   <Cpu className="h-3.5 w-3.5" />
@@ -250,6 +250,7 @@ export function MissionsView() {
 }
 
 function ConnectionBadge({ connected }: { connected: boolean }) {
+  const t = useT();
   return (
     <span
       className={cn(
@@ -261,11 +262,11 @@ function ConnectionBadge({ connected }: { connected: boolean }) {
     >
       {connected ? (
         <>
-          <Wifi className="h-3 w-3" /> live
+          <Wifi className="h-3 w-3" /> {t("pty_terminal.status_live")}
         </>
       ) : (
         <>
-          <WifiOff className="h-3 w-3" /> offline
+          <WifiOff className="h-3 w-3" /> {t("pty_terminal.status_offline")}
         </>
       )}
     </span>
@@ -356,7 +357,9 @@ function ReasoningPanel() {
                 className="rounded border border-foreground/40 bg-foreground/10 p-2 text-xs"
               >
                 <div className="flex items-center justify-between text-micro uppercase tracking-wider text-foreground">
-                  <span>iter #{p.iteration} → {p.next_model}</span>
+                  <span>
+                    {fill(t("verdict_panel.iteration"), { n: p.iteration })} → {p.next_model}
+                  </span>
                   <span className="font-mono">w{p.worker_id.slice(0, 8)}</span>
                 </div>
                 <p className="mt-1 text-foreground/90">{p.correction_instruction}</p>
@@ -490,7 +493,7 @@ function PlanPanel() {
               className="rounded border border-border/60 bg-card/30 p-2 text-xs"
             >
               <div className="text-micro uppercase tracking-wider text-primary">
-                Step {idx + 1}
+                {fill(t("missions_view.step_n"), { n: idx + 1 })}
               </div>
               <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-micro text-foreground/80">
                 {JSON.stringify(step, null, 2)}

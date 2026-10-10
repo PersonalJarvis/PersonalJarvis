@@ -13,6 +13,8 @@ vi.mock("@/components/agentchat/AgentTimeline", () => ({ AgentTimeline: () => nu
 
 vi.mock("@/i18n", () => ({
   useLocaleChunk: () => {},
+  useUiLanguage: () => "en",
+  useI18nStore: { getState: () => ({ ui: "en" }) },
   useT: () => (key: string) => key.split(".").reduce<unknown>((value, part) => (value as Record<string, unknown>)?.[part], en) ?? key,
 }));
 

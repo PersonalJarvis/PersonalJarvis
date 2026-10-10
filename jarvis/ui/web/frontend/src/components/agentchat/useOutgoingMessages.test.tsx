@@ -6,7 +6,7 @@ import { InternalMessageBubble } from "./InternalMessageBubble";
 import { PairConversationBoundary } from "./PairConversation";
 import type { InternalMessageItem, TimelineItem } from "./reduce";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useI18nStore: { getState: () => ({ ui: "en" }) } }));
 vi.mock("@/hooks/useStickToBottom", () => ({ useStickToBottom: () => ({ rootRef: { current: null }, contentRef: { current: null }, atEnd: true, jumpToEnd: () => {}, follow: () => {} }) }));
 const names = new Map([["jarvis", "Jarvis"], ["nala", "Nala"], ["scout", "Scout"]]);
 function row(seq: number, from = "nala", to: string | null = "jarvis", kind: SocietyEnvelope["msg_type"] = "ANSWER"): SocietyEnvelope {

@@ -78,6 +78,7 @@ import { filterForLocalMode } from "@/lib/localMode";
 import { requestRealtimeTransportOffer } from "@/lib/realtimeTransportIssue";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { backendMessage } from "@/lib/backendMessage";
 
 /**
  * The provider-tier building blocks shared by every screen that lets a user
@@ -1695,7 +1696,7 @@ function ManagedServerPanel({
         if (!next.progress.running) {
           window.clearInterval(timer);
           if (next.progress.phase === "error") {
-            setError(next.progress.error || "install failed");
+            setError(next.progress.error || t("apikeys_view.install_failed_fallback"));
           }
           onChanged();
         }
@@ -1848,7 +1849,7 @@ function ManagedServerPanel({
       const pull = await modelPullStatus("ollama", model);
       if (pull.state === "done") return;
       if (pull.state === "error") {
-        throw new Error(pull.message || "model download failed");
+        throw new Error(pull.message || t("apikeys_view.model_download_failed_fallback"));
       }
       setSetupNote(`${model}: ${Math.round(pull.percent ?? 0)}%`);
       await new Promise((resolve) => window.setTimeout(resolve, 2500));
@@ -2468,7 +2469,7 @@ export function OllamaRuntimePanel({
       if (!next.install.running) {
         window.clearInterval(timer);
         if (next.install.phase === "error") {
-          setError(next.install.error || "install failed");
+          setError(next.install.error || t("apikeys_view.install_failed_fallback"));
         }
         onChanged();
       }
@@ -3323,6 +3324,16 @@ function CodexAuthWidget({
   const loginReady = Boolean(
     status?.connected && (!subscriptionOnly || status.mode === "chatgpt"),
   );
+  const codexStatusMessage =
+    status && typeof status.message === "string"
+      ? backendMessage(
+          t,
+          "apikeys_codex.status_msg",
+          status.message_code,
+          status.message_params,
+          status.message,
+        )
+      : undefined;
   const subscriptionStatusKey = !status
     ? "apikeys_codex.status_loading"
     : status.reason_code && status.reason_code !== "login_required"
@@ -3428,7 +3439,7 @@ function CodexAuthWidget({
           <span className="min-w-0 break-words text-foreground">
             {subscriptionOnly
               ? t("apikeys_codex.connected_chatgpt")
-              : status.message ?? t("apikeys_codex.connected_chatgpt")}
+              : codexStatusMessage ?? t("apikeys_codex.connected_chatgpt")}
           </span>
           {status.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
@@ -3457,7 +3468,7 @@ function CodexAuthWidget({
           <span>
             {subscriptionOnly
               ? t(subscriptionStatusKey)
-              : status?.message ?? t("apikeys_codex.status_loading")}
+              : codexStatusMessage ?? t("apikeys_codex.status_loading")}
           </span>
           {status?.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
@@ -3565,6 +3576,16 @@ function AntigravityAuthWidget({
   const [pending, setPending] = useState<"login" | "logout" | "copy" | null>(null);
   const pushToast = useEventStore((s) => s.pushToast);
   const status = descriptor.antigravity_status;
+  const antigravityStatusMessage =
+    status && typeof status.message === "string"
+      ? backendMessage(
+          t,
+          "apikeys_antigravity.status_msg",
+          status.message_code,
+          status.message_params,
+          status.message,
+        )
+      : undefined;
   const installCommand =
     descriptor.install_hint ?? "curl -fsSL https://antigravity.google/cli/install.sh | bash";
 
@@ -3572,7 +3593,7 @@ function AntigravityAuthWidget({
     setPending("copy");
     try {
       const copied = await robustCopy(installCommand);
-      pushToast(copied ? "success" : "warning", copied ? "Install command copied" : installCommand);
+      pushToast(copied ? "success" : "warning", copied ? t("apikeys_codex.install_command_copied") : installCommand);
     } finally {
       setPending(null);
     }
@@ -3623,7 +3644,7 @@ function AntigravityAuthWidget({
           <span className="min-w-0 break-words text-foreground">
             {status.user_email
               ? t("apikeys_antigravity.connected_as").replace("{0}", status.user_email)
-              : status.message || t("apikeys_antigravity.connected")}
+              : antigravityStatusMessage || t("apikeys_antigravity.connected")}
           </span>
           {status.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
@@ -3637,7 +3658,7 @@ function AntigravityAuthWidget({
             className="ml-auto"
           >
             <LogOut className="h-3.5 w-3.5" />
-            Disconnect
+            {t("apikeys_codex.disconnect")}
           </Button>
         </div>
       </div>
@@ -3649,7 +3670,7 @@ function AntigravityAuthWidget({
     <div className="space-y-3">
       <div className="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center gap-2">
-          <span>{status?.message ?? t("apikeys_antigravity.status_loading")}</span>
+          <span>{antigravityStatusMessage ?? t("apikeys_antigravity.status_loading")}</span>
           {status?.version && (
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{status.version}</code>
           )}
@@ -3663,7 +3684,7 @@ function AntigravityAuthWidget({
           </code>
           <Button size="sm" variant="outline" onClick={handleCopy} disabled={pending === "copy"}>
             {pending === "copy" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            Copy command
+            {t("apikeys_codex.copy_command")}
           </Button>
         </div>
       )}
@@ -3671,12 +3692,12 @@ function AntigravityAuthWidget({
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={handleLogin} disabled={pending !== null || !status?.installed}>
           <LogIn className="h-3.5 w-3.5" />
-          Connect with Google
+          {t("apikeys_antigravity.connect_google")}
         </Button>
         <Button size="sm" variant="outline" asChild>
           <a href="https://antigravity.google" target="_blank" rel="noreferrer">
             <Terminal className="h-3.5 w-3.5" />
-            Install Antigravity
+            {t("apikeys_antigravity.install_antigravity")}
           </a>
         </Button>
       </div>

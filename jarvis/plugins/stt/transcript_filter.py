@@ -182,6 +182,7 @@ PHONETIC_FIXES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "en": (),
     "es": (),
+    "pt": (),
 }
 
 

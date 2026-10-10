@@ -60,6 +60,7 @@ import {
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useLocalModelsAssistantStore } from "./assistantStore";
 import { BrainSwitchCard, SetupProposalCard } from "./SetupProposalCard";
+import { useRunLocale } from "@/components/runs/format";
 
 /** A request from the section: start this mode; `token` makes repeats distinct. */
 export interface AssistantRequest {
@@ -134,6 +135,7 @@ export function AssistantPanel({
   onOpenServerLog?: () => void;
 }) {
   const t = useT();
+  const runLocale = useRunLocale();
   const items = useLocalModelsAssistantStore((s) => s.timeline.items);
   const pendingApprovals = useLocalModelsAssistantStore((s) => s.timeline.pendingApprovals);
   const activeSessionId = useLocalModelsAssistantStore((s) => s.activeSessionId);
@@ -369,7 +371,7 @@ export function AssistantPanel({
               <StatusDot
                 tone={healthTone}
                 label={fill(t("local_models.assistant.last_check"), {
-                  when: checkedAt.toLocaleString(),
+                  when: checkedAt.toLocaleString(runLocale),
                   what: health.reason || t(`local_models.assistant.health_${health.status}`),
                 })}
               />

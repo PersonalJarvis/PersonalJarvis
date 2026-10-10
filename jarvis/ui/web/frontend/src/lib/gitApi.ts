@@ -6,6 +6,7 @@
  * or a worktree). A failed git call rejects with a {@link GitApiError} whose
  * `code` tells the UI which follow-up it can offer (`dirty` → "remove anyway?").
  */
+import { fill, translate } from "@/i18n";
 
 export type GitPrepareMode =
   | "current"
@@ -101,7 +102,7 @@ const BASE = "/api/agentic-ide/git";
 async function failure(res: Response): Promise<GitApiError> {
   // A backend that predates these routes: new code ships as a frontend bundle
   // that reloads on its own, while Python routes load at the next app start.
-  if (res.status === 404) return new GitApiError("Git options load after the next app restart.", "unavailable");
+  if (res.status === 404) return new GitApiError(translate("shell_errors.git_after_restart"), "unavailable");
   try {
     const body = (await res.json()) as { detail?: unknown };
     const detail = body.detail;
@@ -113,7 +114,7 @@ async function failure(res: Response): Promise<GitApiError> {
   } catch {
     // Not JSON (a proxy error page): the status line is all there is to say.
   }
-  return new GitApiError(`Git request failed (${res.status})`, "failed");
+  return new GitApiError(fill(translate("shell_errors.git_request_failed"), { status: res.status }), "failed");
 }
 
 async function post<T>(path: string, body: object): Promise<T> {

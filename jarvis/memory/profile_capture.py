@@ -67,6 +67,10 @@ _NOISE_VALUES: frozenset[str] = frozenset({
     "mal", "auch", "einfach", "bitte", "doch", "so", "wieder", "nochmal",  # i18n-allow
     "gerne", "immer", "jetzt", "kurz", "back", "later", "please", "just",  # i18n-allow
     "again", "now", "me", "you", "it", "that", "this", "es", "das", "dich",  # i18n-allow
+    # European Portuguese: "chama-me mais tarde", "trata-me por tu" (a register,
+    # not a name).
+    "só", "apenas", "mais", "depois", "agora", "já", "logo", "por",  # i18n-allow
+    "favor", "tu", "você", "voce",  # i18n-allow
 })
 
 # Spoken language name -> the code USER.md stores in identity.primary_language
@@ -80,9 +84,15 @@ _LANGUAGE_CODES: dict[str, str] = {
     "italienisch": "it", "italian": "it",  # i18n-allow
     "niederländisch": "nl", "niederlaendisch": "nl", "dutch": "nl",  # i18n-allow
     "portugiesisch": "pt", "portuguese": "pt",  # i18n-allow
+    "português": "pt", "portugues": "pt",  # i18n-allow
     "polnisch": "pl", "polish": "pl",  # i18n-allow
     "türkisch": "tr", "tuerkisch": "tr", "turkish": "tr",  # i18n-allow
     "russisch": "ru", "russian": "ru",  # i18n-allow
+    # The other languages' names as a Portuguese speaker says them.
+    "alemão": "de", "alemao": "de", "inglês": "en", "ingles": "en",  # i18n-allow
+    "espanhol": "es", "francês": "fr", "frances": "fr", "italiano": "it",  # i18n-allow
+    "neerlandês": "nl", "holandês": "nl", "polaco": "pl", "turco": "tr",  # i18n-allow
+    "russo": "ru",  # i18n-allow
 }
 
 _LANG_ALTERNATION = "|".join(sorted(map(re.escape, _LANGUAGE_CODES), key=len, reverse=True))
@@ -171,6 +181,8 @@ _NAME_PATTERNS = (
     _p(r"\bmein name ist\s+(.+)"),  # i18n-allow
     _p(r"\bmy name(?:'s| is)\s+(.+)"),
     _p(r"\bi'?m called\s+(.+)"),
+    _p(r"\bchamo-me\s+(.+)"),  # i18n-allow
+    _p(r"\b(?:o\s+)?meu nome [ée]\s+(.+)"),  # i18n-allow
 )
 
 _ADDRESS_PATTERNS = (
@@ -178,11 +190,15 @@ _ADDRESS_PATTERNS = (
     _p(r"\bdu kannst mich\s+(.+?)\s+nennen"),  # i18n-allow
     _p(r"\bsag(?:e)?\s+(?:einfach\s+|bitte\s+)*(.+?)\s+zu mir"),  # i18n-allow
     _p(r"\bcall me\s+(?:just\s+|simply\s+)*(.+)"),
+    _p(r"\bchama-me\s+(?:s[óo]\s+|apenas\s+)*(.+)"),  # i18n-allow
+    _p(r"\bpodes chamar-me\s+(.+)"),  # i18n-allow
+    _p(r"\btrata-me por\s+(.+)"),  # i18n-allow
 )
 
 _PRONOUN_PATTERNS = (
     _p(r"\bmeine pronomen sind\s+(.+)"),  # i18n-allow
     _p(r"\bmy pronouns are\s+(.+)"),
+    _p(r"\b(?:os\s+)?meus pronomes s[ãa]o\s+(.+)"),  # i18n-allow
 )
 
 _TIMEZONE_PATTERNS = (
@@ -190,6 +206,7 @@ _TIMEZONE_PATTERNS = (
     _p(r"\bich bin in der zeitzone\s+(.+)"),  # i18n-allow
     _p(r"\bmy time\s?zone is\s+(.+)"),
     _p(r"\bi'?m in (?:the )?time\s?zone\s+(.+)"),
+    _p(r"\b(?:o\s+)?meu fuso hor[áa]rio [ée]\s+(.+)"),  # i18n-allow
 )
 
 # A second language the user mentions speaking — appended, never replacing.
@@ -197,6 +214,8 @@ _EXTRA_LANGUAGE_PATTERNS = (
     _p(rf"\bich spreche auch\s+({_LANG_ALTERNATION})\b"),  # i18n-allow
     _p(rf"\bich kann auch\s+({_LANG_ALTERNATION})\b"),  # i18n-allow
     _p(rf"\bi also speak\s+({_LANG_ALTERNATION})\b"),
+    _p(rf"\btamb[ée]m falo\s+({_LANG_ALTERNATION})\b"),  # i18n-allow
+    _p(rf"\bfalo tamb[ée]m\s+({_LANG_ALTERNATION})\b"),  # i18n-allow
 )
 
 # The language the conversation should be held in.
@@ -205,6 +224,9 @@ _PRIMARY_LANGUAGE_PATTERNS = (
     _p(rf"\blass uns\s+({_LANG_ALTERNATION})\s+(?:sprechen|reden)\b"),  # i18n-allow
     _p(rf"\bspeak\s+({_LANG_ALTERNATION})\s+with me\b"),
     _p(rf"\blet'?s speak\s+({_LANG_ALTERNATION})\b"),
+    _p(rf"\bfala\s+(?:em\s+)?({_LANG_ALTERNATION})\s+comigo\b"),  # i18n-allow
+    _p(rf"\bfala\s+comigo\s+em\s+({_LANG_ALTERNATION})\b"),  # i18n-allow
+    _p(rf"\bvamos falar\s+(?:em\s+)?({_LANG_ALTERNATION})\b"),  # i18n-allow
 )
 
 # --- communication ----------------------------------------------------
@@ -217,10 +239,13 @@ _EMOJI_OFF = (
     _p(r"\b(?:lass|lasse)\s+die emojis? weg\b"),  # i18n-allow
     _p(r"\bno emojis?\b"),
     _p(r"\bskip the emojis?\b"),
+    _p(r"\b(?:sem|nada de)\s+emojis?\b"),  # i18n-allow
+    _p(r"\bn[ãa]o (?:uses|ponhas) emojis?\b"),  # i18n-allow
 )
 _EMOJI_ON = (
     _p(r"\bemojis? (?:sind|find(?:e)? ich)\s+(?:ok|okay|gut|super)\b"),  # i18n-allow
     _p(r"\bemojis? are (?:fine|ok|okay|good)\b"),
+    _p(r"\b(?:os\s+)?emojis? (?:s[ãa]o|est[ãa]o)\s+(?:ok|okay|bem|[óo]timos?)\b"),  # i18n-allow
 )
 
 _DIRECTNESS_HIGH = (
@@ -229,6 +254,8 @@ _DIRECTNESS_HIGH = (
     _p(r"\bred(?:e)?\s+nicht um den hei(?:ß|ss)en brei\b"),  # i18n-allow
     _p(r"\bbe (?:blunt|direct) with me\b"),
     _p(r"\bdon'?t sugarcoat\b"),
+    _p(r"\bs[êe]\s+(?:direto|direta)\s+comigo\b"),  # i18n-allow
+    _p(r"\bn[ãa]o\s+(?:andes|estejas)\s+com rodeios\b"),  # i18n-allow
 )
 
 _VERBOSITY_SHORT = (
@@ -237,21 +264,26 @@ _VERBOSITY_SHORT = (
     _p(r"\bkurze antworten\b"),  # i18n-allow
     _p(r"\bkeep (?:it|your answers) (?:short|brief)\b"),
     _p(r"\bbe (?:brief|concise)\b"),
+    _p(r"\bs[êe]\s+(?:breve|conciso|concisa)\b"),  # i18n-allow
+    _p(r"\brespostas curtas\b"),  # i18n-allow
 )
 _VERBOSITY_LONG = (
     _p(r"\berklär(?:e)? mir das ausführlich\b"),  # i18n-allow
     _p(r"\bgib mir (?:immer )?das ganze bild\b"),  # i18n-allow
     _p(r"\bgive me the full picture\b"),
+    _p(r"\bexplica-me (?:isso |isto )?(?:com detalhe|em detalhe|detalhadamente)\b"),  # i18n-allow
 )
 
 _FORMALITY_CASUAL = (
     _p(r"\bduz(?:e)?\s+mich\b"),  # i18n-allow
     _p(r"\bwir k(?:ö|oe)nnen uns duzen\b"),  # i18n-allow
     _p(r"\bkeep it casual\b"),
+    _p(r"\btrata-me por tu\b"),  # i18n-allow
 )
 _FORMALITY_FORMAL = (
     _p(r"\bsiez(?:e)?\s+mich\b"),  # i18n-allow
     _p(r"\bbleib(?:en)? wir beim sie\b"),  # i18n-allow
+    _p(r"\btrata-me por (?:voc[êe]|o senhor|a senhora)\b"),  # i18n-allow
 )
 
 # --- values / relationship / work style -------------------------------
@@ -261,6 +293,8 @@ _PET_PEEVE_PATTERNS = (
     _p(r"\bich hasse es,?\s+wenn\s+(.+)"),  # i18n-allow
     _p(r"\bi hate it when\s+(.+)"),
     _p(r"\bit drives me (?:crazy|nuts) when\s+(.+)"),
+    _p(r"\b(?:odeio|detesto) quando\s+(.+)"),  # i18n-allow
+    _p(r"\birrita-me quando\s+(.+)"),  # i18n-allow
 )
 
 _FEEDBACK_DIRECT = (
@@ -274,6 +308,7 @@ _FOCUS_DEEP = (
     _p(r"\bst(?:ö|oe)r(?:e)? mich nicht,?\s+wenn ich fokussiert bin\b"),  # i18n-allow
     _p(r"\bich arbeite (?:am liebsten )?in langen bl(?:ö|oe)cken\b"),  # i18n-allow
     _p(r"\bdon'?t interrupt my focus\b"),
+    _p(r"\bn[ãa]o me interrompas quando estou concentrad[oa]\b"),  # i18n-allow
 )
 
 

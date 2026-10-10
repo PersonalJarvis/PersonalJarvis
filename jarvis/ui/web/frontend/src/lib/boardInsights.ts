@@ -4,6 +4,8 @@
  * derivations are testable on their own and named in one place.
  */
 import type { BoardInsights, InsightsDay } from "@/hooks/useBoardInsights";
+import { localeForUiLanguage } from "@/components/runs/format";
+import { useI18nStore } from "@/i18n";
 import { prettyProviderName } from "@/lib/prettyProviderName";
 
 /** Things the user started on a day: each dictation, voice session, chat
@@ -204,9 +206,19 @@ export function chatProviderLabel(id: string): string {
   return CHAT_PROVIDER_LABELS[id] ?? prettyProviderName(id);
 }
 
-/** Short form for big counts, in the same locale as `toLocaleString()`. */
+/** The BCP-47 locale of the current UI language, read at call time. */
+export function uiLocale(): string {
+  return localeForUiLanguage(useI18nStore.getState().ui);
+}
+
+/** Thousands-grouped count in the UI language. */
+export function formatCount(n: number): string {
+  return n.toLocaleString(uiLocale());
+}
+
+/** Short form for big counts, in the UI language. */
 export function compactNumber(n: number): string {
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(uiLocale(), {
     notation: n >= 10_000 ? "compact" : "standard",
     maximumFractionDigits: n >= 10_000 ? 1 : 0,
   }).format(n);
@@ -214,11 +226,11 @@ export function compactNumber(n: number): string {
 
 /** `{0}` substitution plus the `_one` plural key convention of the locales. */
 export function plural(t: (k: string) => string, baseKey: string, n: number): string {
-  return t(n === 1 ? `${baseKey}_one` : baseKey).replace("{0}", n.toLocaleString());
+  return t(n === 1 ? `${baseKey}_one` : baseKey).replace("{0}", formatCount(n));
 }
 
 /** A local day as "3 Oct 2026" in the UI language. */
-export function formatDay(iso: string, lang?: string): string {
+export function formatDay(iso: string, lang: string = uiLocale()): string {
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" });

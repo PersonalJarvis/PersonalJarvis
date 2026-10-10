@@ -25,6 +25,7 @@ vi.mock("@/store/events", () => ({
 }));
 
 vi.mock("@/i18n", () => ({
+  useUiLanguage: () => "en",
   // Identity translator: assertions match the keys themselves; fill() appends
   // the variables so placeholders stay visible in the assertions.
   useT: () => (key: string) => key,

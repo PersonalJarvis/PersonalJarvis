@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Clock, Plus, X } from "lucide-react";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { Switch } from "@/components/ui/switch";
 import { cancelAndDeleteTask, cancelTask, fetchTask, runTaskNow, setTaskEnabled } from "@/lib/tasksApi";
 import { describeTrigger, displayRoutineTitle, type LiveRoutine } from "../cardData";
@@ -60,6 +61,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
   agentId: string; routine: LiveRoutine; onClose: () => void;
 }) {
   const t = useT();
+  const locale = useRunLocale();
   const label = (key: string) => t(`society.routine_detail.${key}`);
   const client = useQueryClient();
   const members = routine.members ?? [routine];
@@ -192,7 +194,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
             <button className="flex w-full items-start gap-2 rounded text-left text-[12px] disabled:opacity-70" disabled={pending || !editable || Boolean(draft) || !detail || !timeKinds.includes(detail.trigger_type)} onClick={() => { setEditing({ ...member, trigger: detail?.trigger }); setSchedule(null); }}>
               <Clock size={14} className="mt-0.5 shrink-0" /><span>{describeTrigger(detail?.trigger ?? member.trigger, t)}</span>
             </button>
-            {detail?.due_at_ns && detail.state === "scheduled" ? <p className="pl-5 text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(detail.due_at_ns / 1e6).toLocaleString(undefined, { timeZoneName: "short" })}</p> : null}
+            {detail?.due_at_ns && detail.state === "scheduled" ? <p className="pl-5 text-[11px] text-muted-foreground">{t("society.card.next_run")}: {new Date(detail.due_at_ns / 1e6).toLocaleString(locale, { timeZoneName: "short" })}</p> : null}
             {detail && renderConnection(detail)}
             {index > 0 && <button className="pl-5 text-[11px] text-muted-foreground" disabled={pending || !editable || Boolean(draft)} onClick={() => void act(async () => { await cancelTask(member.id); })}>{label("remove_schedule")}</button>}
           </div>;
@@ -212,7 +214,7 @@ export function AgentRoutineDetail({ agentId, routine, onClose }: {
       <h4 className="text-[11px] text-muted-foreground">{label("history")}</h4>
       {runs.length > 0 && <button type="button" className={button} onClick={() => openRun(runs[0])}>{label("latest_chat")}</button>}
       {ready && runs.length === 0 && <p className="text-[12px] text-muted-foreground">{label("no_runs")}</p>}
-      {runs.map((run) => <button key={run.id} type="button" data-testid={`routine-run-${run.id}`} aria-label={`${label("open_chat")} · ${new Date(run.timestamp).toLocaleString()}`} onClick={() => openRun(run)} className="flex w-full cursor-pointer items-center justify-between gap-2 rounded py-1 text-left text-[12px] hover:bg-secondary focus-visible:outline focus-visible:outline-ring"><time dateTime={new Date(run.timestamp).toISOString()}>{new Date(run.timestamp).toLocaleString()}</time><span className="flex items-center gap-1" title={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)}>
+      {runs.map((run) => <button key={run.id} type="button" data-testid={`routine-run-${run.id}`} aria-label={`${label("open_chat")} · ${new Date(run.timestamp).toLocaleString(locale)}`} onClick={() => openRun(run)} className="flex w-full cursor-pointer items-center justify-between gap-2 rounded py-1 text-left text-[12px] hover:bg-secondary focus-visible:outline focus-visible:outline-ring"><time dateTime={new Date(run.timestamp).toISOString()}>{new Date(run.timestamp).toLocaleString()}</time><span className="flex items-center gap-1" title={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)}>
           {run.status === "completed" ? <Check size={15} className="text-success" aria-label={t("tasks_view.state.completed")} /> : run.status === "failed" || run.status === "cancelled" ? <X size={15} className="text-destructive" aria-label={t(`tasks_view.state.${run.status}`)} /> : <Clock size={15} aria-label={run.status === "legacy" ? label("legacy") : t(`tasks_view.state.${run.status}`)} />}
         </span></button>)}
     </div>

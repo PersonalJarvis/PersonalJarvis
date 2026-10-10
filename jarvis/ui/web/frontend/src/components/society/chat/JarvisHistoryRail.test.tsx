@@ -13,7 +13,7 @@ import { setJarvisCardMode } from "./AgentChatPanel";
 import type { AgentChatSession } from "@/lib/agentChatApi";
 import type { ConversationSummary } from "@/store/events";
 
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useI18nStore: { getState: () => ({ ui: "en" }) } }));
 vi.mock("./AgentChatPanel", () => ({ setJarvisCardMode: vi.fn() }));
 
 class FakeSocket {

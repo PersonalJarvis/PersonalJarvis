@@ -22,9 +22,10 @@ import { useCreateAgentDialog } from "./create/createAgentStore";
 
 import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
 import { useEventStore } from "@/store/events";
+import { translate } from "@/i18n";
 
 import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/figureRecipe";
-import { SAMPLE_ROSTER } from "./mockRoster";
+import { localizeSampleRoster, SAMPLE_ROSTER } from "./mockRoster";
 import { beginRetirement, retirementRunning, retirementStageMounted } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
 
@@ -209,6 +210,12 @@ function paletteFor(figure: FigureRecipe | null): AgentPalette {
   return { primary: p.primary, secondary: p.secondary, accent: p.accent };
 }
 
+/** Provider labels that are words, not brand names: translated when a row is read. */
+const PROVIDER_LABEL_KEYS: Record<string, string> = {
+  ollama: "society.provider_label.ollama",
+  "local-openai": "society.provider_label.local_server",
+};
+
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -218,14 +225,17 @@ const PROVIDER_LABELS: Record<string, string> = {
   groq: "Groq",
   mistral: "Mistral",
   deepseek: "DeepSeek",
-  ollama: "Ollama (local)",
-  "local-openai": "Local server",
   "claude-api": "Anthropic Claude",
   "openai-codex": "OpenAI Codex",
   grok: "xAI Grok",
   openrouter: "OpenRouter",
   nvidia: "NVIDIA NIM",
 };
+
+function providerLabelFor(provider: string): string {
+  const key = PROVIDER_LABEL_KEYS[provider];
+  return key ? translate(key) : PROVIDER_LABELS[provider] ?? provider;
+}
 
 export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
   const tier = row.tier as AgentTier;
@@ -246,7 +256,7 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     description: row.description,
     tier,
     provider: row.provider,
-    providerLabel: row.provider ? (PROVIDER_LABELS[row.provider] ?? row.provider) : "",
+    providerLabel: row.provider ? providerLabelFor(row.provider) : "",
     model: row.model,
     accountId: row.account_id,
     computerId: row.computer_id ?? null,
@@ -303,7 +313,7 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   } catch {
     // Unreachable backend: the sample roster below says so on the rail.
   }
-  const rows = [...SAMPLE_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
+  const rows = [...localizeSampleRoster()].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
   return { agents: rows, sample: true };
 }
 

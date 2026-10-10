@@ -58,6 +58,23 @@ def test_german_use_verb_and_kebab_name() -> None:
     assert decision.source == SOURCE_TRIGGER
 
 
+def test_portuguese_use_verb_resolves() -> None:
+    hit = resolve_explicit_skill_request(
+        "executa o skill morning routine", _REGISTRY  # i18n-allow
+    )
+    assert hit is not None
+    assert hit[0].name == "morning-routine"
+
+
+def test_portuguese_question_about_a_skill_never_runs_it() -> None:
+    assert (
+        resolve_explicit_skill_request(
+            "quando executa o skill deep work mode", _REGISTRY  # i18n-allow
+        )
+        is None
+    )
+
+
 def test_spoken_name_without_hyphens_resolves() -> None:
     hit = resolve_explicit_skill_request(
         "Jarvis, starte den Skill Morning Routine", _REGISTRY  # i18n-allow

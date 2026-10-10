@@ -22,6 +22,7 @@ from jarvis.safety.tool_executor import ToolExecutor
         "Do not delete /tmp/keep-me",
         "Bitte lösche /tmp/keep-me nicht",
         "No borres /tmp/keep-me",
+        "Não apagues /tmp/keep-me",  # i18n-allow: pt voice input
         'The instructions say "delete /tmp/keep-me"',
         "Did you delete /tmp/keep-me?",
         "I deleted /tmp/keep-me yesterday",
@@ -58,6 +59,8 @@ def test_compound_or_ambiguous_shell_keeps_confirmation(command):
         "please remove the file /tmp/keep-me",
         "Bitte lösche die Datei /tmp/keep-me",
         "borra el archivo /tmp/keep-me",
+        "apaga o ficheiro /tmp/keep-me",  # i18n-allow: pt voice input
+        "por favor elimina a pasta /tmp/keep-me",  # i18n-allow: pt voice input
     ],
 )
 def test_exact_single_deletion_is_authorized(utterance):

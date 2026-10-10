@@ -1,5 +1,6 @@
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fill, translate, useT } from "@/i18n";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 
 /** Task lifecycle supplied by the backend. Silence alone never means done. */
@@ -28,7 +29,8 @@ export type PaneActivityState =
 /** The accessible meaning of each activity, and how its icon is drawn. */
 type Look = {
   state: PaneActivityState;
-  label: string;
+  /** i18n key of the state's word. */
+  labelKey: string;
   className: string;
   icon: "spinner" | "dot" | "ring" | "alert" | "beacon" | "check";
   /**
@@ -38,7 +40,7 @@ type Look = {
    */
   glow?: boolean;
   /** The sentence behind the badge, minus the timing clause. */
-  hint: string;
+  hintKey: string;
 };
 
 /**
@@ -52,32 +54,32 @@ type Look = {
  */
 const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
   stopped: {
-    state: "stopped", label: "stopped", className: "text-muted-foreground",
-    icon: "ring", hint: "The task was interrupted.",
+    state: "stopped", labelKey: "ide_panes.activity.label.stopped", className: "text-muted-foreground",
+    icon: "ring", hintKey: "ide_panes.activity.hint.interrupted",
   },
   unknown: {
-    state: "unknown", label: "status unknown", className: "text-muted-foreground",
-    icon: "ring", hint: "No verified task status is available.",
+    state: "unknown", labelKey: "ide_panes.activity.label.status_unknown", className: "text-muted-foreground",
+    icon: "ring", hintKey: "ide_panes.activity.hint.unknown",
   },
   working: {
     state: "working",
-    label: "working",
+    labelKey: "ide_panes.activity.label.working",
     // Life. A status is never --foreground: ink is the colour of everything
     // that is NOT a signal, so a state painted in it reads as a label.
     className: "text-accent",
     icon: "spinner",
-    hint: "Working — the task is still in progress.",
+    hintKey: "ide_panes.activity.hint.working",
   },
   starting: {
     state: "starting",
-    label: "starting",
+    labelKey: "ide_panes.activity.label.starting",
     className: "text-muted-foreground",
     icon: "spinner",
-    hint: "Starting up. Its agent has not taken the pane yet.",
+    hintKey: "ide_panes.activity.hint.starting",
   },
   asking: {
     state: "asking",
-    label: "needs you",
+    labelKey: "ide_panes.activity.label.needs_you",
     // Degraded — the pane is stalled until somebody answers it. It used to be
     // a Tailwind sky blue, which is a literal colour and a fourth hue in a
     // palette that has exactly three.
@@ -90,31 +92,31 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
      * now, so it is the single one allowed to wave.
      */
     icon: "beacon",
-    hint: "Stopped with a question on screen. It is waiting for your answer.",
+    hintKey: "ide_panes.activity.hint.asking",
   },
   exited: {
     state: "exited",
-    label: "exited",
+    labelKey: "ide_panes.activity.label.exited",
     className: "text-muted-foreground",
     icon: "dot",
-    hint: "Its process is gone.",
+    hintKey: "ide_panes.activity.hint.exited",
   },
   failed: {
     state: "failed",
-    label: "failed",
+    labelKey: "ide_panes.activity.label.failed",
     className: "text-destructive",
     icon: "alert",
-    hint: "Its agent could not be started.",
+    hintKey: "ide_panes.activity.hint.failed",
   },
 };
 
 const DONE: Look = {
   state: "done",
-  label: "done",
+  labelKey: "ide_panes.activity.label.done",
   className: "text-accent",
   icon: "check",
   glow: true,
-  hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
+  hintKey: "ide_panes.activity.hint.done",
 };
 
 /**
@@ -127,35 +129,35 @@ const DONE: Look = {
  */
 const IDLE: Look = {
   state: "idle",
-  label: "idle",
+  labelKey: "ide_panes.activity.label.idle",
   className: "text-accent",
   icon: "ring",
-  hint: "Waiting at its prompt. Nothing has been sent to it yet.",
+  hintKey: "ide_panes.activity.hint.idle",
 };
 
 /** The pipe, for the three cases where the pipe is the news. */
 const CONNECTING: Look = {
   state: "starting",
-  label: "starting",
+  labelKey: "ide_panes.activity.label.starting",
   className: "text-muted-foreground",
   icon: "spinner",
-  hint: "Connecting to the pane.",
+  hintKey: "ide_panes.activity.hint.connecting",
 };
 
 const EXITED: Look = {
   state: "exited",
-  label: "exited",
+  labelKey: "ide_panes.activity.label.exited",
   className: "text-muted-foreground",
   icon: "dot",
-  hint: "Its process is gone.",
+  hintKey: "ide_panes.activity.hint.exited",
 };
 
 const BROKEN: Look = {
   state: "error",
-  label: "error",
+  labelKey: "ide_panes.activity.label.error",
   className: "text-destructive",
   icon: "alert",
-  hint: "This pane could not be reached.",
+  hintKey: "ide_panes.activity.hint.error",
 };
 
 /**
@@ -170,10 +172,10 @@ const BROKEN: Look = {
  */
 const CONNECTED: Look = {
   state: "live",
-  label: "live",
+  labelKey: "ide_panes.activity.label.live",
   className: "text-muted-foreground",
   icon: "ring",
-  hint: "Connected.",
+  hintKey: "ide_panes.activity.hint.connected",
 };
 
 function lookFor(
@@ -207,7 +209,7 @@ export function paneActivityLabel(
   activity: PaneActivity = "",
   worked = false,
 ): string {
-  return lookFor(status, activity, worked).label;
+  return translate(lookFor(status, activity, worked).labelKey);
 }
 
 /**
@@ -235,11 +237,13 @@ export function paneActivityState(
  */
 export function durationLabel(since: number, now: number): string {
   const seconds = Math.max(0, Math.round(now / 1000 - since));
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return fill(translate("ide_panes.activity.duration_seconds"), { count: seconds });
   const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return fill(translate("ide_panes.activity.duration_minutes"), { count: minutes });
   const hours = Math.round(minutes / 60);
-  return hours === 1 ? "1 hour" : `${hours} hours`;
+  return hours === 1
+    ? translate("ide_panes.activity.duration_hour_one")
+    : fill(translate("ide_panes.activity.duration_hours_other"), { count: hours });
 }
 
 /**
@@ -313,12 +317,17 @@ export function PaneActivityPill({
   /** Injectable clock, in milliseconds — the tests do not race the wall. */
   now?: number;
 }) {
+  const t = useT();
   const look = lookFor(status, activity, worked);
   // How long it has been in this state, when the backend knows. Only in the
   // tooltip: the badge itself sits in a 64-pixel column beside a call-sign, and
   // a number that changes every second there is movement without information.
   const elapsed = since > 0 ? durationLabel(since, now ?? Date.now()) : "";
-  const title = [look.hint, elapsed && `For ${elapsed}.`, detail]
+  const title = [
+    t(look.hintKey),
+    elapsed && fill(t("ide_panes.activity.for_elapsed"), { elapsed }),
+    detail,
+  ]
     .filter(Boolean)
     .join(" ");
   return (
@@ -331,7 +340,7 @@ export function PaneActivityPill({
         look.className,
       )}
       title={title}
-      aria-label={`${look.label}. ${title}`}
+      aria-label={`${t(look.labelKey)}. ${title}`}
     >
       {/* Keyed by the shape it is changing TO, so a state change replaces the
           icon and plays one short zoom-in — the flip from spinner to dot is

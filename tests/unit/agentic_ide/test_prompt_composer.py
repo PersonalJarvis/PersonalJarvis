@@ -487,6 +487,9 @@ async def test_the_writer_call_disables_thinking() -> None:
         ("Der Fehler ist halt im Cache", "halt"),
         ("Mach das Layout eben und ruhig", "eben"),
         ("Abre este archivo y revisa el router", "este"),
+        ("Corrige o tipo de ficheiro no router", "tipo"),  # i18n-allow
+        ("O build está pronto, corre os testes", "pronto"),  # i18n-allow
+        ("Explica o que quer dizer este erro", "quer dizer"),  # i18n-allow
     ],
 )
 def test_a_content_word_is_never_filtered_out(said: str, must_survive: str) -> None:
@@ -499,3 +502,12 @@ def test_real_hesitation_sounds_are_still_removed() -> None:
     )
     assert "ähm" not in cleaned  # i18n-allow: the German filler under test
     assert "Tests" in cleaned
+
+
+def test_portuguese_hesitation_sounds_are_removed() -> None:
+    cleaned = prompt_composer._clean_speech(
+        "humm corrige ãh os testes do login"  # i18n-allow: pt speech input under test
+    )
+    assert "humm" not in cleaned
+    assert "ãh" not in cleaned  # i18n-allow: the pt filler under test
+    assert "testes" in cleaned  # i18n-allow: pt content word under test

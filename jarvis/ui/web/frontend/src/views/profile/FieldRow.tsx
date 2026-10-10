@@ -18,7 +18,8 @@ import { Check, Pencil, Plus, Quote, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useT, useUiLanguage } from "@/i18n";
+import { useI18nStore, useT, useUiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useFieldEdit, type FieldOp } from "@/views/profile/api";
@@ -41,7 +42,7 @@ type T = (key: string) => string;
 export function readableDate(iso: string): string {
   const d = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return d.toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), { day: "numeric", month: "short", year: "numeric" });
 }
 
 /**

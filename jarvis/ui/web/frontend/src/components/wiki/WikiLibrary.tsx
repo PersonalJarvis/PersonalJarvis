@@ -13,7 +13,8 @@ import { useMemo, useState, type ReactNode } from "react";
 import { ChevronRight, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { useT, useUiLanguage } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
+import { useT } from "@/i18n";
 import type { WikiTreeFolder } from "@/lib/wikiApi";
 import {
   GROUP_LABEL_KEY,
@@ -48,7 +49,7 @@ export function WikiLibrary({
   header,
 }: WikiLibraryProps) {
   const t = useT();
-  const language = useUiLanguage();
+  const language = useRunLocale();
   const [query, setQuery] = useState("");
   const [openGroups, setOpenGroups] = useState<Set<WikiGroupId>>(() => new Set(DEFAULT_OPEN));
 

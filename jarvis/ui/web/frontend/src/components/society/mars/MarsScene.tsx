@@ -138,7 +138,7 @@ function ColonyBlockout({ onSelect, outpostReady, labels }: { onSelect: (id: str
       ))}
       {labels && WORLD.districts.map((district) => (
         <Html key={district.id} center position={[district.center[0], district.center[1] + district.landmark_height + 10, district.center[2]]} zIndexRange={[12, 0]} style={{ pointerEvents: "none" }}>
-          <div className="mars-district-label"><strong>{district.name}</strong><span>{t(district.id === "communications-outpost" && outpostReady ? "society.mars.reference_pending" : "society.mars.district_blockout")}</span></div>
+          <div className="mars-district-label"><strong>{t(`society.mars.district_${district.id}`)}</strong><span>{t(district.id === "communications-outpost" && outpostReady ? "society.mars.reference_pending" : "society.mars.district_blockout")}</span></div>
         </Html>
       ))}
       {labels && <Html center position={[294, 61.8, 74]} zIndexRange={[12, 0]} style={{ pointerEvents: "none" }}>

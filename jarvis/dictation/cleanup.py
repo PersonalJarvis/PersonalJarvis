@@ -95,6 +95,17 @@ FILLER_WORDS: dict[str, tuple[str, ...]] = {
         "ehh", "ehhh", "em", "emm",
         "mm", "mmm", "ajá", "aja",
     ),
+    # European Portuguese: hesitation SOUNDS only. The discourse markers a
+    # Portuguese speaker also leans on ("pois", "tipo", "portanto", "pronto",
+    # "então", "quer dizer") are content words — "o tipo de ficheiro", "está
+    # pronto", "o que quer dizer isto" — and fail the admission rule above.
+    # Bare "hum" stays out for the reason "um" left English: it is an English
+    # content word ("the hum of the fan"); the longer spellings are not.
+    "pt": (  # i18n-allow: speech-recognition input vocabulary (§1 list #3)
+        "humm", "hummm", "ãh", "ãhh", "hã",  # i18n-allow: input vocab
+        "ehh", "ehhh", "emm",
+        "hm", "hmm", "hmmm", "mhm", "mm", "mmm",
+    ),
 }
 
 #: Languages we have curated rules for. Anything else is a documented no-op.
@@ -115,6 +126,9 @@ _LANGUAGE_NAME_TO_CODE: dict[str, str] = {
     "castilian": "es",
     "español": "es",
     "espanol": "es",
+    "portuguese": "pt",
+    "português": "pt",  # i18n-allow: language name
+    "portugues": "pt",
 }
 
 # The ceiling exists to catch BROKEN RULES (a content word that slipped into a

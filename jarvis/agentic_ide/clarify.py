@@ -63,7 +63,8 @@ _ANSWER_MAX_WORDS = 6
 #: Words that only ever mean the coding workspace. Naming a pane, or the act of
 #: handing one work, is the strongest evidence there is.
 _WORKSPACE_NOUN_RE = re.compile(
-    r"\b(?:terminals?|terminales|panes?|workspaces?|"
+    r"\b(?:terminals?|terminales|terminais|panes?|workspaces?|"
+    r"painel|pain[eé]is|"  # i18n-allow: input vocab
     r"arbeitsbereich\w*|instanz\w*|instances?|"  # i18n-allow: input vocab
     r"prompte?\w*|prompting|anprompt\w*|"  # i18n-allow: input vocab
     r"beauftrag\w*|briefe?\w*|briefing)\b",  # i18n-allow: input vocab
@@ -86,8 +87,11 @@ _CODING_WORK_RE = re.compile(
     r"bugs?|fehler\w*|tests?|teste\w*|repo\w*|branch\w*|"  # i18n-allow: input vocab
     r"code\w*|datei\w*|files?|funktion\w*|functions?|"  # i18n-allow: input vocab
     r"pull[\s-]?request|pr\b|"
-    # Spanish work vocabulary, kept level with the other two locales
-    r"arregl\w*|revis\w*|prueba\w*|archivo\w*|rama\w*"
+    # Spanish work vocabulary, kept level with the other locales
+    r"arregl\w*|revis\w*|prueba\w*|archivo\w*|rama\w*|"
+    # European Portuguese work vocabulary, same level as the other locales
+    r"corrig\w*|conserta\w*|ficheiros?|c[oó]digo\w*|ramo\w*|"  # i18n-allow: input vocab
+    r"refatoriz\w*|erros?"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -103,7 +107,8 @@ _HANDOVER_VERB_RE = re.compile(
     r"\b(?:sag\w*|schick\w*|gib|geb\w*|frag\w*|lass\w*|l[aä]sst|"  # i18n-allow: input vocab
     r"beauftrag\w*|[uü]bergib|[uü]bergeb\w*|weiterleit\w*|"  # i18n-allow: input vocab
     r"tell|send|give|ask|hand|forward|assign|let|have|"
-    r"dile|d[ií]gale|env[ií]a|manda|preg[uú]nta|pasa|asigna|encarga)\b",  # i18n-allow: input vocab
+    r"dile|d[ií]gale|env[ií]a|manda|preg[uú]nta|pasa|asigna|encarga|"  # i18n-allow: input vocab
+    r"diz|dizer|pede|pedir|pergunta|passa|atribui|encarrega)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -116,7 +121,8 @@ _HANDOVER_VERB_RE = re.compile(
 _DIRECTIVE_MODAL_RE = re.compile(
     r"\b(?:soll|sollen|sollte|sollten|m[uü]ssen|muss|"  # i18n-allow: input vocab
     r"should|must|shall|"
-    r"deber[ií]an?|debe|deben)\b",  # i18n-allow: input vocab
+    r"deber[ií]an?|debe|deben|"  # i18n-allow: input vocab
+    r"deve|devem|deveria|deveriam|t[eê]m\s+de|tem\s+que)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -134,7 +140,7 @@ _REPORT_QUESTION_RE = re.compile(
     # A progress opener is a status question on its own — "wie weit ist Ellis?"
     # carries no verb of doing at all, and nothing else is ever asked with it.
     r"\b(?:wie\s+weit|wie\s+l[aä]uft|wie\s+steht|how\s+far|"  # i18n-allow: input vocab
-    r"c[oó]mo\s+va)\b|"
+    r"c[oó]mo\s+va|como\s+vai|em\s+que\s+ponto)\b|"  # i18n-allow: input vocab
     r"\bwas\b[^.!?]{0,40}?"  # i18n-allow: input vocab
     r"\b(?:ge)?(?:macht|machen|tut|tun|tan|treibt|treiben|arbeitet|"  # i18n-allow: input vocab
     r"arbeiten|schafft|geschafft|erledigt|rausgefunden|"  # i18n-allow: input vocab
@@ -148,7 +154,12 @@ _REPORT_QUESTION_RE = re.compile(
     r"\b(?:hacen?|haciendo|hecho|hizo|hicieron|va|van|"
     r"encontr\w*|cambi\w*)\b|"
     r"\b(?:est[aá]|est[aá]n)\b[^.!?]{0,30}?\b(?:listo\w*|terminad\w*)\b|"
-    r"\b(?:status|fortschritt|estado|progreso)\b",  # i18n-allow: input vocab
+    r"\b(?:o\s+que|como)\b[^.!?]{0,40}?"  # i18n-allow: input vocab
+    r"\b(?:faz|fazem|fez|fizeram|feito|"  # i18n-allow: input vocab
+    r"descobri\w*|mud\w*|alter\w*)\b|"  # i18n-allow: input vocab
+    r"\b(?:est[aá]|est[aã]o)\b[^.!?]{0,30}?"  # i18n-allow: input vocab
+    r"\b(?:pront[oa]s?|terminad\w*|acabad\w*)\b|"  # i18n-allow: input vocab
+    r"\b(?:status|fortschritt|estado|progreso|progresso)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -274,8 +285,19 @@ _STOPWORDS_ES: tuple[str, ...] = (  # i18n-allow: input vocabulary
     "se", "ser", "si", "sí", "sobre", "solo", "son", "su", "sus", "te",
     "tu", "un", "una", "uno", "y", "ya", "yo",
 )
+_STOPWORDS_PT: tuple[str, ...] = (  # i18n-allow: input vocabulary
+    "a", "agora", "ao", "aos", "aqui", "as", "assim", "com", "como",
+    "da", "das", "de", "diz", "do", "dos", "e", "ela", "ele",
+    "eles", "em", "era", "és", "esse", "essa", "isso", "esta", "este",
+    "está", "estão", "eu", "faz", "foi", "há", "isto", "já", "lhe",
+    "mais", "mas", "me", "meu", "minha", "na", "nas", "no", "nos", "não",
+    "nao", "o", "onde", "os", "ou", "para", "pelo", "pela", "por",
+    "porque", "pode", "podes", "quando", "que", "quê", "quem", "se", "ser",
+    "seu", "sim", "sobre", "só", "sua", "são", "também", "te", "teu",
+    "tu", "um", "uma", "vai", "vou", "é",
+)
 _STOPWORDS: frozenset[str] = frozenset(
-    _STOPWORDS_DE + _STOPWORDS_EN + _STOPWORDS_ES
+    _STOPWORDS_DE + _STOPWORDS_EN + _STOPWORDS_ES + _STOPWORDS_PT
 )
 
 
@@ -319,7 +341,8 @@ def _is_proper_name_position(text: str, start: int, end: int) -> bool:
 #: nothing at all.
 _STATUS_NOUN_RE = re.compile(
     r"\b(?:status|fortschritt\w*|stand|update\w*|progress|"  # i18n-allow: input vocab
-    r"bericht\w*|report\w*|estado|progreso|informe\w*)\b",  # i18n-allow: input vocab
+    r"bericht\w*|report\w*|estado|progreso|informe\w*|"  # i18n-allow: input vocab
+    r"progresso|relat[oó]rio\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -495,7 +518,7 @@ class ClarificationNeeded:
 _ENUMERATION_GAP_RE = re.compile(
     r"^[\s,;&]*+"
     # i18n-allow: input vocabulary — the supported languages' "and"
-    r"(?:(?:und|and|y|e|sowie|plus|as\s+well\s+as|together\s+with|junto\s+con)"
+    r"(?:(?:und|and|y|e|sowie|plus|as\s+well\s+as|together\s+with|junto\s+con|junto\s+com|bem\s+como)"
     r"[\s,;&]*+)?$",
     re.IGNORECASE,
 )

@@ -28,7 +28,8 @@ SECRET_NOUN: Final[re.Pattern[str]] = re.compile(
     r"webhook[\s_-]?urls?|connection[\s_-]?strings?|ssh[\s_-]?keys?|"
     r"\w*token\w*|\w*passwor[dt]\w*|"
     r"kennw[oö]rt\w*|zugangsdaten|anmeldedaten|\w*schl[uü]ssel\w*|"  # i18n-allow
-    r"contrase[nñ]as?|claves?|credenciales)\b"  # i18n-allow
+    r"contrase[nñ]as?|claves?|credenciales|"  # i18n-allow
+    r"palavras?[\s-]passe|senhas?|chaves?|credenciais)\b"  # i18n-allow
     r"|令牌|密钥|密码|凭据|凭证)",  # i18n-allow
     re.I,
 )
@@ -42,6 +43,8 @@ _HAND_OVER: Final[re.Pattern[str]] = re.compile(
     r"hinterleg\w*|eingeben|einf[uü]gen|brauche|ben[oö]tige|hast du|"  # i18n-allow
     r"sicheres?n? (?:eingabe)?feld|"  # i18n-allow
     r"env[ií]a\w*|pega\w*|introduc\w*|necesito|proporciona\w*|compart\w*|ingresa\w*|"  # i18n-allow
+    r"cola\w*|introduz\w*|insere|preciso|precisamos|fornece\w*|partilha\w*|"  # i18n-allow
+    r"d[aá]-me|tens|"  # i18n-allow
     r"por favor)\b"  # i18n-allow
     r"|\?|请|提供|输入|粘贴|需要)",  # i18n-allow
     re.I,
@@ -53,7 +56,9 @@ _VALUE: Final[re.Pattern[str]] = re.compile(
     r"(?:what|which) (?:is|are) (?:your|the)|"
     r"gib|schick\w*|sende|teil\w* mir|nenn\w*|eingeben|einf[uü]gen|wie lautet|"  # i18n-allow
     r"was ist dein\w*|"  # i18n-allow
-    r"env[ií]a\w*|pega\w*|introduc\w*|proporciona\w*|cu[aá]l es (?:tu|la|el))\b"  # i18n-allow
+    r"env[ií]a\w*|pega\w*|introduc\w*|proporciona\w*|cu[aá]l es (?:tu|la|el)|"  # i18n-allow
+    r"cola\w*|introduz\w*|fornece\w*|partilha\w*|d[aá]-me|"  # i18n-allow
+    r"qual [eé] (?:a|o) (?:tua|teu))\b"  # i18n-allow
     r"|请提供|输入|粘贴)",  # i18n-allow
     re.I,
 )
@@ -64,7 +69,9 @@ _STORED: Final[re.Pattern[str]] = re.compile(
     r"(?:stored|saved|set|configured)|"
     r"(?:ist|wurde|sind|wurden) (?:\w+ ){0,3}(?:gespeichert|hinterlegt|gesetzt|"  # i18n-allow
     r"eingerichtet)|"  # i18n-allow
-    r"(?:est[aá]|fue|ya est[aá]) (?:\w+ )?(?:guardad[oa]|almacenad[oa]))\b",  # i18n-allow
+    r"(?:est[aá]|fue|ya est[aá]) (?:\w+ )?(?:guardad[oa]|almacenad[oa])|"  # i18n-allow
+    r"(?:foi|j[aá] est[aá]|ficou) (?:\w+ )?"  # i18n-allow
+    r"(?:guardad[oa]|armazenad[oa]|configurad[oa]))\b",  # i18n-allow
     re.I,
 )
 

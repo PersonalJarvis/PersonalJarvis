@@ -60,6 +60,9 @@ _FILLER_WORDS: frozenset[str] = frozenset({
     "let", "lets", "us", "can", "could", "would", "you",
     # temporal courtesy
     "jetzt", "now", "gleich", "schnell", "für", "fuer", "for", "me", "mich",
+    # European Portuguese courtesy and command glue
+    "olá", "ola", "por", "favor", "obrigado", "obrigada",  # i18n-allow: input vocabulary
+    "podes", "consegues", "agora",  # i18n-allow: input vocabulary
 })
 
 # Penalty applied to a filler-stripped match so a direct (unstripped) hit on

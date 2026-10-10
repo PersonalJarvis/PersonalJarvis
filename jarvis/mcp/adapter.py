@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # no capability", and the deterministic force-spawn dispatched a heavy mission
 # for a plain read-only MCP lookup — before the LLM router ever saw the turn
 # (live realtime voice bug 2026-07-14, trace c82aa1a6). Expanding at
-# registration time keeps ``resolve_intent`` language-equal (de/en/es) per the
+# registration time keeps ``resolve_intent`` language-equal (de/en/es/pt) per the
 # runtime-output-language contract: no supported language may route worse than
 # English.
 _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -45,24 +45,29 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
         *("erstelle", "erstellen", "anlege", "anlegen"),  # i18n-allow: input vocabulary
         *("erzeuge", "erzeugen"),  # i18n-allow: input vocabulary
         *("crea", "crear"),
+        *("cria", "criar", "crie"),  # i18n-allow: pt input vocabulary
     ),
     "delete": (
         *("loesche", "loeschen", "entferne", "entfernen"),  # i18n-allow: input vocabulary
         *("borra", "borrar", "elimina", "eliminar"),
+        *("apaga", "apagar"),  # i18n-allow: pt input vocabulary
     ),
     "update": (
         *("aktualisiere", "aktualisieren"),  # i18n-allow: input vocabulary
         *("actualiza", "actualizar"),
+        *("atualiza", "atualizar"),  # i18n-allow: pt input vocabulary
     ),
     "list": (
         *("liste", "auflisten", "auflistung"),  # i18n-allow: input vocabulary
         *("zeig", "zeige", "zeigt"),  # i18n-allow: input vocabulary (show-family)
         *("lista", "listar", "muestra", "mostrar"),
+        *("mostra",),  # i18n-allow: pt input vocabulary
     ),
     "get": (
         *("hole", "holen", "abrufen", "gib"),  # i18n-allow: input vocabulary
         *("zeig", "zeige", "zeigt"),  # i18n-allow: input vocabulary (show-family)
         *("obten", "obtener", "muestra", "mostrar"),
+        *("obtém", "obtem", "obter", "mostra"),  # i18n-allow: pt input vocabulary
     ),
     "fetch": (
         *("hole", "holen", "abrufen"),  # i18n-allow: input vocabulary
@@ -71,14 +76,17 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
     "read": (
         *("lies", "lese", "lesen", "vorlesen"),  # i18n-allow: input vocabulary
         *("lee",),
+        *("lê", "ler", "leia"),  # i18n-allow: pt input vocabulary
     ),
     "write": (
         *("schreibe", "schreiben"),  # i18n-allow: input vocabulary
         *("escribe", "escribir"),
+        *("escreve", "escrever"),  # i18n-allow: pt input vocabulary
     ),
     "search": (
         *("suche", "suchen", "durchsuche"),  # i18n-allow: input vocabulary
         *("busca", "buscar"),
+        *("pesquisa", "pesquisar", "procura", "procurar"),  # i18n-allow: pt input vocabulary
     ),
     "query": (
         *("abfrage", "abfragen"),  # i18n-allow: input vocabulary
@@ -87,23 +95,28 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
     "insert": (
         *("einfuege", "einfuegen"),  # i18n-allow: input vocabulary
         *("inserta", "insertar"),
+        *("insere", "inserir"),  # i18n-allow: pt input vocabulary
     ),
     "execute": (
         *("ausfuehren", "fuehre"),  # i18n-allow: input vocabulary
         *("ejecuta", "ejecutar"),
+        *("executa", "executar"),  # i18n-allow: pt input vocabulary
     ),
     "run": (
         *("starte", "starten", "ausfuehren"),  # i18n-allow: input vocabulary
         *("inicia", "iniciar"),
+        *("corre", "correr", "executa"),  # i18n-allow: pt input vocabulary
     ),
     "upload": (
         *("hochlade", "hochladen", "lade"),  # i18n-allow: input vocabulary
         *("sube", "subir"),
+        *("carrega", "carregar", "envia"),  # i18n-allow: pt input vocabulary
     ),
     "download": (
         *("herunterlade", "herunterladen"),  # i18n-allow: input vocabulary
         *("runterlade", "runterladen", "lade"),  # i18n-allow: input vocabulary
         *("descarga", "descargar"),
+        *("descarrega", "descarregar", "transfere", "transferir"),  # i18n-allow: pt vocab
     ),
     "publish": (
         *("veroeffentliche", "veroeffentlichen"),  # i18n-allow: input vocabulary
@@ -112,6 +125,7 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
     "schedule": (
         *("plane", "planen", "einplane", "einplanen"),  # i18n-allow: input vocabulary
         *("programa", "programar"),
+        *("agenda", "agendar"),  # i18n-allow: pt input vocabulary
     ),
     "post": (
         *("poste", "posten"),  # i18n-allow: input vocabulary
@@ -120,14 +134,17 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
     "set": (
         *("setze", "setzen"),  # i18n-allow: input vocabulary
         *("configura", "configurar"),
+        *("define", "definir"),  # i18n-allow: pt input vocabulary
     ),
     "add": (
         *("fuege", "hinzufuege", "hinzufuegen"),  # i18n-allow: input vocabulary
         *("agrega", "agregar"),
+        *("adiciona", "adicionar", "acrescenta", "acrescentar"),  # i18n-allow: pt input vocabulary
     ),
     "remove": (
         *("entferne", "entfernen", "loesche", "loeschen"),  # i18n-allow: input vocabulary
         *("quita", "quitar"),
+        *("remove", "remover", "retira", "retirar"),  # i18n-allow: pt input vocabulary
     ),
     "edit": (
         *("bearbeite", "bearbeiten"),  # i18n-allow: input vocabulary
@@ -136,14 +153,17 @@ _VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
     "modify": (
         *("aendere", "aendern"),  # i18n-allow: input vocabulary
         *("modifica", "modificar"),
+        *("altera", "alterar"),  # i18n-allow: pt input vocabulary
     ),
     "retrieve": (
         *("hole", "holen", "abrufen"),  # i18n-allow: input vocabulary
         *("recupera", "recuperar"),
+        *("obtém", "obter"),  # i18n-allow: pt input vocabulary
     ),
     "find": (
         *("finde", "finden", "suche", "suchen"),  # i18n-allow: input vocabulary
         *("encuentra", "encontrar", "busca", "buscar"),
+        *("encontra", "procura", "procurar"),  # i18n-allow: pt input vocabulary
     ),
 }
 

@@ -5,6 +5,7 @@ import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { fetchForkSuggestion, type ForkSuggestion } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
 
 /** The pane a fork is being made of. */
 export interface ForkSource {
@@ -30,6 +31,7 @@ interface Props {
  * (call-sign plus what it is working on), and stays editable.
  */
 export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
+  const t = useT();
   const [mode, setMode] = useState<ForkMode>("chat");
   const [branch, setBranch] = useState("");
   const [info, setInfo] = useState<ForkSuggestion | null>(null);
@@ -69,17 +71,17 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
   const options: { mode: ForkMode; title: string; body: string; Icon: ComponentType<{ className?: string }>; disabled: boolean }[] = [
     {
       mode: "chat",
-      title: "Fork chat",
-      body: "A new agent opens beside this one and continues a copy of the conversation, in the same folder.",
+      title: t("ide_panes.fork.chat_title"),
+      body: t("ide_panes.fork.chat_body"),
       Icon: MessagesSquare,
       disabled: false,
     },
     {
       mode: "worktree",
-      title: "Fork into a worktree",
+      title: t("ide_panes.fork.worktree_title"),
       body: worktreeOff
-        ? "Needs a git repository — this folder is not one."
-        : "Same copy of the conversation, but in its own git worktree and branch, so both agents can change files without getting in each other's way.",
+        ? t("ide_panes.fork.worktree_needs_repo")
+        : t("ide_panes.fork.worktree_body"),
       Icon: FolderGit2,
       disabled: worktreeOff,
     },
@@ -96,9 +98,9 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
               <BranchIcon className="h-[18px] w-[18px]" />
             </div>
             <div className="min-w-0 flex-1">
-              <Dialog.Title className="truncate text-base font-semibold">Fork {source?.name}</Dialog.Title>
+              <Dialog.Title className="truncate text-base font-semibold">{fill(t("ide_panes.fork.title"), { pane: source?.name ?? "" })}</Dialog.Title>
               <Dialog.Description className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                Start a second agent from where this one is. The original keeps running unchanged.
+                {t("ide_panes.fork.description")}
               </Dialog.Description>
             </div>
           </div>
@@ -109,7 +111,7 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
             <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">{source.name}</span>
           </div>}
 
-          <div role="radiogroup" aria-label="How to fork" className="mt-4 grid gap-2">
+          <div role="radiogroup" aria-label={t("ide_panes.fork.how")} className="mt-4 grid gap-2">
             {options.map((option) => {
               const checked = mode === option.mode;
               return <button key={option.mode} type="button" role="radio" aria-checked={checked}
@@ -129,29 +131,29 @@ export function ForkPaneDialog({ source, busy, onCancel, onConfirm }: Props) {
           </div>
 
           {mode === "worktree" && <div className="mt-4">
-            <label htmlFor="fork-branch-name" className="text-xs font-medium text-muted-foreground">Worktree and branch name</label>
+            <label htmlFor="fork-branch-name" className="text-xs font-medium text-muted-foreground">{t("ide_panes.fork.branch_label")}</label>
             <input id="fork-branch-name" ref={nameRef} data-testid="fork-branch-name" value={branch} disabled={busy || info === null}
               onChange={(event) => setBranch(event.target.value)} spellCheck={false} autoComplete="off" maxLength={80}
-              placeholder={info === null ? "Finding a name…" : undefined}
+              placeholder={info === null ? t("ide_panes.fork.finding_name") : undefined}
               className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" />
             <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-              Created from the last commit. Changes that are not committed yet stay in the current folder.
+              {t("ide_panes.fork.branch_hint")}
             </p>
           </div>}
 
           {info && !info.can_fork && <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-            {source?.displayName} cannot copy its conversation, so the fork starts with a fresh chat.
+            {fill(t("ide_panes.fork.cannot_copy"), { agent: source?.displayName ?? "" })}
           </p>}
           {loadError && <p role="alert" className="mt-4 text-xs text-destructive">{loadError}</p>}
 
           <div className="mt-6 flex justify-end gap-2">
             <button type="button" disabled={busy} onClick={onCancel}
               className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
-              Cancel</button>
+              {t("common.cancel")}</button>
             <button type="submit" data-testid="fork-confirm" disabled={!canSubmit}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover disabled:opacity-50">
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-              {mode === "worktree" ? "Fork into worktree" : "Fork chat"}</button>
+              {mode === "worktree" ? t("ide_panes.fork.confirm_worktree") : t("ide_panes.fork.chat_title")}</button>
           </div>
         </form>
       </Dialog.Content>

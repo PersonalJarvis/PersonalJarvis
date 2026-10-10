@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, Folder, FolderOpen, FolderPlus, Loader2, X } from "lucide-react";
 import { fetchFolders } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { FolderPicker } from "./FolderPicker";
 
 interface Props {
@@ -16,6 +17,7 @@ const primaryButton = `inline-flex h-10 items-center justify-center gap-2 rounde
 
 /** A project summary with a separate, explicitly confirmed folder selection. */
 export function ProjectConnectDialog({ onClose, onConnect }: Props) {
+  const t = useT();
   const [name, setName] = useState("");
   const [path, setPath] = useState<string | null>(null);
   const [candidate, setCandidate] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function ProjectConnectDialog({ onClose, onConnect }: Props) {
     try {
       await operation();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not connect this folder. Try again.");
+      setError(reason instanceof Error ? reason.message : t("ide_projects.connect_failed"));
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -60,7 +62,7 @@ export function ProjectConnectDialog({ onClose, onConnect }: Props) {
       // Recents and pasted paths may have disappeared since they were listed.
       const folder = await fetchFolders(candidate, true);
       if (folder.error) throw new Error(folder.error);
-      if (!folder.path) throw new Error("Choose a folder to continue.");
+      if (!folder.path) throw new Error(t("ide_projects.choose_folder_error"));
       setPath(folder.path);
       setChoosing(false);
     });
@@ -80,10 +82,10 @@ export function ProjectConnectDialog({ onClose, onConnect }: Props) {
         className={cn("fixed left-1/2 top-1/2 z-[90] flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl", choosing ? "h-[min(42rem,calc(100dvh-2rem))] max-w-3xl" : "max-w-xl")}
       >
         <header className="flex shrink-0 items-center gap-3 px-6 pb-5 pt-6 sm:px-7">
-          {choosing && <button type="button" aria-label="Back to project" disabled={busy} onClick={back} className={cn("-ml-2 rounded-lg p-2 text-muted-foreground hover:bg-muted", focusRing)}><ArrowLeft className="h-5 w-5" /></button>}
-          <Dialog.Title className="flex-1 text-xl font-semibold tracking-tight">{choosing ? "Choose a folder" : "Connect project"}</Dialog.Title>
-          <Dialog.Close disabled={busy} aria-label="Close" className={cn("-mr-2 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50", focusRing)}><X className="h-5 w-5" /></Dialog.Close>
-          <Dialog.Description className="sr-only">Choose a source folder and an optional project name.</Dialog.Description>
+          {choosing && <button type="button" aria-label={t("ide_projects.back_to_project")} disabled={busy} onClick={back} className={cn("-ml-2 rounded-lg p-2 text-muted-foreground hover:bg-muted", focusRing)}><ArrowLeft className="h-5 w-5" /></button>}
+          <Dialog.Title className="flex-1 text-xl font-semibold tracking-tight">{choosing ? t("ide_projects.choose_folder_title") : t("ide_projects.connect_title")}</Dialog.Title>
+          <Dialog.Close disabled={busy} aria-label={t("common.close")} className={cn("-mr-2 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50", focusRing)}><X className="h-5 w-5" /></Dialog.Close>
+          <Dialog.Description className="sr-only">{t("ide_projects.connect_description")}</Dialog.Description>
         </header>
 
         {choosing ? <>
@@ -95,38 +97,38 @@ export function ProjectConnectDialog({ onClose, onConnect }: Props) {
           <footer className="shrink-0 border-t border-border px-6 py-4 sm:px-7">
             {error && <p role="alert" className="mb-3 text-sm text-destructive">{error}</p>}
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={candidate ?? undefined}>{candidate || "Choose a folder to continue"}</p>
+              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={candidate ?? undefined}>{candidate || t("ide_projects.choose_folder_hint")}</p>
               <div className="flex gap-2">
-                <button type="button" disabled={busy} onClick={back} className={secondaryButton}>Back</button>
-                <button type="button" disabled={busy || !candidate} onClick={confirmFolder} className={primaryButton}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}Use this folder</button>
+                <button type="button" disabled={busy} onClick={back} className={secondaryButton}>{t("common.back")}</button>
+                <button type="button" disabled={busy || !candidate} onClick={confirmFolder} className={primaryButton}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{t("ide_projects.use_folder")}</button>
               </div>
             </div>
           </footer>
         </> : <form className="min-h-0 overflow-y-auto" onSubmit={(event) => { event.preventDefault(); if (path) void perform(() => onConnect(path, name.trim() || undefined)); }}>
           <fieldset disabled={busy} className="space-y-6 px-6 pb-7 sm:px-7">
             <label className="block">
-              <span className="sr-only">Project name</span>
+              <span className="sr-only">{t("ide_projects.project_name")}</span>
               <span className="flex h-12 items-center gap-3 rounded-xl border border-input bg-background/40 px-4 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
                 <Folder className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                <input ref={nameInput} value={name} onChange={(event) => setName(event.target.value)} placeholder={folderName || "Project name (optional)"} className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground disabled:opacity-50" />
+                <input ref={nameInput} value={name} onChange={(event) => setName(event.target.value)} placeholder={folderName || t("ide_projects.project_name_optional")} className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground disabled:opacity-50" />
               </span>
             </label>
-            <section aria-label="Source folder">
-              <h3 className="mb-3 text-sm font-medium">Source folder</h3>
+            <section aria-label={t("ide_projects.source_folder")}>
+              <h3 className="mb-3 text-sm font-medium">{t("ide_projects.source_folder")}</h3>
               {path ? <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/20 p-4">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-muted"><FolderOpen className="h-5 w-5 text-muted-foreground" aria-hidden="true" /></div>
                 <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{folderName}</p><p title={path} className="mt-1 break-all text-xs leading-relaxed text-muted-foreground">{path}</p></div>
-                <button type="button" onClick={choose} className={cn(secondaryButton, "shrink-0 px-3")}>Change</button>
+                <button type="button" onClick={choose} className={cn(secondaryButton, "shrink-0 px-3")}>{t("ide_projects.change")}</button>
               </div> : <div className="flex min-h-36 flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border bg-muted/10 p-5">
-                <p className="text-center text-sm text-muted-foreground">Add a folder from this computer</p>
-                <button type="button" onClick={choose} className={cn(secondaryButton, "border border-border bg-muted/60 text-foreground")}><FolderPlus className="h-4 w-4" aria-hidden="true" />Choose folder</button>
+                <p className="text-center text-sm text-muted-foreground">{t("ide_projects.add_folder_hint")}</p>
+                <button type="button" onClick={choose} className={cn(secondaryButton, "border border-border bg-muted/60 text-foreground")}><FolderPlus className="h-4 w-4" aria-hidden="true" />{t("ide_projects.choose_folder")}</button>
               </div>}
             </section>
             {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           </fieldset>
           <footer className="flex justify-end gap-2 px-6 pb-6 sm:px-7">
-            <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>Cancel</button>
-            <button type="submit" disabled={busy || !path} className={primaryButton}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? "Connecting…" : "Connect project"}</button>
+            <button type="button" disabled={busy} onClick={onClose} className={secondaryButton}>{t("common.cancel")}</button>
+            <button type="submit" disabled={busy || !path} className={primaryButton}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? t("ide_projects.connecting") : t("ide_projects.connect_title")}</button>
           </footer>
         </form>}
       </Dialog.Content>

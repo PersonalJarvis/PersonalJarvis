@@ -154,7 +154,10 @@ export function RunDetail({
                   <Badge
                     variant={a.worst_slo_status === "breach" ? "destructive" : "warning"}
                   >
-                    {t("run_inspector.latency")} {a.worst_slo_status}
+                    {t("run_inspector.latency")}{" "}
+                    {a.worst_slo_status === "breach" || a.worst_slo_status === "warn"
+                      ? t(`run_inspector.slo.${a.worst_slo_status}`)
+                      : a.worst_slo_status}
                   </Badge>
                 )}
               </div>

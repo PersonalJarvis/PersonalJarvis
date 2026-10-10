@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { appZoomCaps } from "@/lib/appZoom";
+import { fill, useT } from "@/i18n";
 import { appChord, useAppChordSettings } from "@/store/appChordSettings";
 import {
   STICKY_ACTIONS, assignAgentKeys, hotkeyHints, isLeaderChord, modeBar, resolveHotkey,
@@ -38,6 +39,7 @@ function Cap({ children }: { children: React.ReactNode }) {
  * moving between steps never makes it blink.
  */
 export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, onPassThrough }: Props) {
+  const t = useT();
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState("");
   const leader = useAppChordSettings((state) => state.bindings.ide_menu);
@@ -117,11 +119,11 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
     if (name && name !== pane) onRenamePane(name);
   };
 
-  return <div data-ide-hotkey-menu role="dialog" aria-label="IDE shortcuts"
+  return <div data-ide-hotkey-menu role="dialog" aria-label={t("ide_hotkeys.menu.aria")}
     className="pointer-events-none fixed inset-x-0 bottom-4 z-[90] flex flex-col items-center gap-2 px-4">
-    {view.menu === "help" && <section aria-label="All keys"
+    {view.menu === "help" && <section aria-label={t("ide_hotkeys.menu.all_keys")}
       className="pointer-events-auto w-full max-w-3xl rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-150">
-      <h2 className="mb-3 text-sm font-semibold">All keys</h2>
+      <h2 className="mb-3 text-sm font-semibold">{t("ide_hotkeys.menu.all_keys")}</h2>
       <div className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
         {hotkeyHints({ menu: "root" }, keyed, leaderCaps).map((group) => <section key={group.title} className="min-w-0">
           <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.title}</h3>
@@ -136,14 +138,14 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
     </section>}
     <div className="pointer-events-auto flex h-10 max-w-full items-center gap-3 overflow-hidden rounded-xl border border-border bg-popover pl-1.5 pr-2 text-xs text-popover-foreground shadow-lg motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-150">
       <span className="flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold tracking-wide text-primary-foreground">
-        <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" aria-hidden="true" />{view.menu === "rename" ? "RENAME" : bar.badge}
+        <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" aria-hidden="true" />{view.menu === "rename" ? t("ide_hotkeys.badge.rename") : bar.badge}
       </span>
       {pane && step.menu !== "workspace" && <span className="max-w-[10rem] shrink-0 truncate font-medium">{pane}</span>}
       {view.menu === "rename" ? <form className="flex items-center gap-2" onSubmit={submitRename}>
-        <input autoFocus aria-label={`Rename ${pane}`} value={draft} maxLength={40} onChange={(event) => setDraft(event.target.value)}
+        <input autoFocus aria-label={fill(t("agentic_grid.pane.rename"), { pane })} value={draft} maxLength={40} onChange={(event) => setDraft(event.target.value)}
           onFocus={(event) => event.currentTarget.select()}
           className="h-7 w-48 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
-        <button type="submit" className="h-7 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground">Save</button>
+        <button type="submit" className="h-7 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground">{t("common.save")}</button>
       </form>
         : <ul className="flex min-w-0 items-center gap-3 overflow-hidden whitespace-nowrap">
           {bar.hints.map((hint) => <li key={`${hint.keys.join("+")}:${hint.label}`} className="inline-flex shrink-0 items-center gap-1">
@@ -151,7 +153,7 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
           </li>)}
         </ul>}
       <span className="ml-auto inline-flex shrink-0 items-center gap-1 border-l border-border pl-3">
-        <Cap>Esc</Cap><span className="text-muted-foreground">{view.menu === "rename" ? "cancel" : "exit"}</span>
+        <Cap>Esc</Cap><span className="text-muted-foreground">{view.menu === "rename" ? t("ide_hotkeys.menu.cancel") : t("ide_hotkeys.menu.exit")}</span>
       </span>
     </div>
   </div>;

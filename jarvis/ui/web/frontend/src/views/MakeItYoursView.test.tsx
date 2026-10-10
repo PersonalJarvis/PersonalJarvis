@@ -2,7 +2,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Identity translator so rendered text equals the i18n key.
-vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+vi.mock("@/i18n", () => ({
+  useT: () => (key: string) => key,
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (match, k: string) => (k in vars ? String(vars[k]) : match)),
+}));
 
 vi.mock("@/store/events", () => ({
   useEventStore: (selector: (s: { pushToast: () => void }) => unknown) =>
@@ -105,7 +109,7 @@ describe("MakeItYoursView", () => {
     expect((next as HTMLButtonElement).disabled).toBe(false);
 
     // Remove one → 7/8 → Next disabled.
-    fireEvent.click(screen.getAllByLabelText("decrease")[0]);
+    fireEvent.click(screen.getAllByLabelText("install_agents.decrease")[0]);
     expect((next as HTMLButtonElement).disabled).toBe(true);
 
     // "Split evenly" → 4+4 = 8 → Next enabled again.

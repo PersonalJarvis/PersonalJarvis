@@ -1,5 +1,6 @@
 import { PanelBottom } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 import { drawerShown, useThreadTerminalsStore } from "@/store/threadTerminals";
 
 /**
@@ -12,10 +13,11 @@ import { drawerShown, useThreadTerminalsStore } from "@/store/threadTerminals";
  * and must not pull xterm into it.
  */
 export function ThreadTerminalToggle({ className }: { className?: string }) {
+  const t = useT();
   const shown = useThreadTerminalsStore(drawerShown);
   const available = useThreadTerminalsStore((state) => Boolean(state.folder));
   const toggle = useThreadTerminalsStore((state) => state.toggle);
-  const label = !available ? "Terminal needs a project folder" : shown ? "Hide terminal" : "Show terminal";
+  const label = !available ? t("ide_threads.terminal_needs_folder") : shown ? t("ide_threads.hide_terminal") : t("ide_threads.show_terminal");
   return (
     <button
       type="button"

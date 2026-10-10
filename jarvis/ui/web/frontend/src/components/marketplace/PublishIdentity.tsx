@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { fill, useLocaleChunk, useT } from "@/i18n";
+import { fill, translate, useLocaleChunk, useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
@@ -72,7 +72,7 @@ export function useGithubSignIn() {
           .json()
           .then((b: { detail?: string }) => b.detail)
           .catch(() => undefined);
-        throw new Error(detail ?? `Sign-in start failed (${res.status})`);
+        throw new Error(detail ?? fill(translate("marketplace.err_identity_start"), { status: res.status }));
       }
       return res.json();
     },
@@ -116,7 +116,7 @@ export function useGithubSignIn() {
           queryClient.invalidateQueries({ queryKey: PUBLISH_IDENTITY_KEY });
         } else if (data.status === "error") {
           setFlow(null);
-          setError(data.error ?? "sign-in failed");
+          setError(data.error ?? translate("marketplace.err_identity_failed"));
         }
       } catch {
         // Network blip — keep polling until the flow expires.

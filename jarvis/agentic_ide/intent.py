@@ -54,6 +54,7 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"\b(?:sag|sage|sagst)\b[^.!?]{{0,40}}?\b{name}\b",
     r"\btell\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:dile|d[ií]gale|dile\s+a)\b[^.!?]{{0,40}}?\b{name}\b",
+    r"\b(?:diz|diga|dizer)\b[^.!?]{{0,40}}?\b{name}\b",  # i18n-allow: input vocab
     # "Mika soll …" / "lass Kai …" / "Nova should …" / "let Aria …"
     # Plural forms carry their weight: the moment two panes are addressed the
     # user says "Iris und Bruno sollen …", and a singular-only verb list made
@@ -64,6 +65,9 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"d[uü]e?rfen|d[uü]e?rfte|d[uü]e?rften)\b",  # i18n-allow: input vocab
     r"\b{name}\b[^.!?]{{0,20}}?\b(?:should|can|could|please|must)\b",
     r"\b{name}\b[^.!?]{{0,20}}?\b(?:deber[ií]an?|pueden?|podr[ií]an?)\b",
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:deve|devem|deveria|deveriam|pode|podem|"  # i18n-allow
+    r"poderia|poderiam|t[eê]m\s+de|tem\s+que)\b",  # i18n-allow: input vocab
+    r"\bdeixa\b[^.!?]{{0,20}}?\b{name}\b",  # i18n-allow: input vocab
     r"\b(?:lass|l[aä]sst)\b[^.!?]{{0,20}}?\b{name}\b",
     r"\blet\b[^.!?]{{0,20}}?\b{name}\b",
     # "prompt this terminal Kai …" / "prompte Mika …" / "instruct Nova to …".
@@ -80,16 +84,18 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     # Stems, so "prompting" / "prompte" / "anprompten" / "promptea" all land.
     # Deliberately narrow: these verbs have no status-question reading, which is
     # what makes them safe to let outrank the question branch.
-    r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*)\b"
+    r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|instrui\w*|anweis\w*)\b"
     r"[^.!?]{{0,40}}?\b{name}\b",
     # "schick(e) das an Kai" / "gib Mika …" / "frag Nova …" / "beauftrage Kai …"
     r"\b(?:schick|schicke|gib|gibt|frag|frage|beauftrag|beauftrage|"
     r"[uü]bergib|[uü]bergebe|weiterleit\w*)\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:send|give|ask|hand|forward|assign)\b[^.!?]{{0,40}}?\b{name}\b",
     r"\b(?:env[ií]a|manda|preg[uú]nta|pasa|asigna)\b[^.!?]{{0,40}}?\b{name}\b",
+    r"\b(?:pede|pergunta|passa|atribui|encaminha|reencaminha)\b"  # i18n-allow: input vocab
+    r"[^.!?]{{0,40}}?\b{name}\b",
     # "an Kai:" / "in Mika:" / "bei Nova" / "über Kai" — a routing preposition
     # immediately in front of the call-sign.
-    r"\b(?:an|in|bei|[uü]ber|via|to|into|en|a)\s+{name}\b",
+    r"\b(?:an|in|bei|[uü]ber|via|to|into|en|a|ao|para|em)\s+{name}\b",  # i18n-allow
     # "setz Kai auf den Wake-Bug an" / "put Nova on the audit" / "point Aria at
     # the failing test". The PREPOSITION is what makes these unambiguous — bare
     # "setz"/"put" is ordinary work talk ("put the file back"), but putting a
@@ -98,6 +104,7 @@ _DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"[^.!?]{{0,25}}?\bauf\b",  # i18n-allow: input vocab
     r"\b(?:put|point|set)\b\s+{name}\s+(?:on|at|onto|to)\b",
     r"\b(?:pon|p[oó]n|asigna|encarga\w*)\b[^.!?]{{0,25}}?\b{name}\b",
+    r"\b(?:p[oõ]e|encarrega\w*)\b[^.!?]{{0,25}}?\b{name}\b",  # i18n-allow: input vocab
     # Vocative: the name opens the utterance ("Kai, mach mal …").
     r"^{name}\b\s*[,:]",
 )
@@ -130,11 +137,15 @@ _WEAK_DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     r"w[uü]e?rde|m[oö]e?ge|mag)\s+{name}\b",  # i18n-allow: input vocab
     r"\b(?:can|could|should|would|will|shall|must|may)\s+{name}\b",
     r"\b(?:puede|podr[ií]a|deber[ií]a|debe)\s+{name}\b",
+    r"\b(?:pode|poderia|deveria|deve)\s+(?:o\s+|a\s+)?{name}\b",  # i18n-allow: input vocab
     # "que Alex revise el área" — the Spanish way to order a third party about.
     # Anchored to the START of the utterance on purpose: mid-sentence "que" is
     # the ordinary relative pronoun ("quiero saber que Alex revisó"), and
     # matching it there would turn asking ABOUT a pane into typing at it.
     r"^(?:[¿¡]\s*)?que\s+{name}\b",
+    # European Portuguese puts an article in front of a person's name: "que o
+    # Alex reveja a área". Same start-of-utterance anchor, same reason.
+    r"^que\s+(?:o|a)\s+{name}\b",  # i18n-allow: input vocab
     # The German sentence bracket: name first, handing-over verb last.
     r"\b{name}\b[^.!?]{{0,30}}?\b(?:sagen|bitten|beauftragen|anweisen|"  # i18n-allow: input vocab
     r"[uü]bergeben|weiterleiten|zuweisen|prompten|briefen)\b",  # i18n-allow: input vocab
@@ -142,6 +153,7 @@ _WEAK_DIRECTIVE_TEMPLATES: tuple[str, ...] = (
     # sign follows IMMEDIATELY: at any distance these verbs are ordinary speech
     # about a pane rather than an order to it ("I have a question about Alex").
     r"\b(?:have|get|need|want)\s+{name}\b",
+    r"\b(?:quero|queria|preciso)\s+que\s+(?:o\s+|a\s+)?{name}\b",  # i18n-allow: input vocab
 )
 
 # "what is Mika doing?" — a read, never a spawn either. Both word orders are
@@ -166,8 +178,14 @@ _REPORT_TEMPLATES: tuple[str, ...] = (
     r"\b(?:qu[eé]|c[oó]mo)\b[^.!?]{{0,20}}?"
     r"\b(?:hacen?|haciendo|hecho|hizo|hicieron|van?)\b"
     r"[^.!?]{{0,20}}?\b{name}\b",
-    r"\b{name}\b[^.!?]{{0,20}}?\b(?:status|fortschritt|progress|estado)\b",
-    r"\b(?:status|fortschritt|progress|estado)\b[^.!?]{{0,20}}?\b{name}\b",
+    r"\b(?:que|como)\b[^.!?]{{0,30}}?\b{name}\b[^.!?]{{0,30}}?"  # i18n-allow: input vocab
+    r"\b(?:faz|fazem|fazer|fez|fizeram|feito|vai|v[aã]o|anda|andam)\b",  # i18n-allow
+    r"\b(?:que|como)\b[^.!?]{{0,20}}?"  # i18n-allow: input vocab
+    r"\b(?:faz|fazem|fez|fizeram|feito|vai|v[aã]o|anda|andam)\b"  # i18n-allow
+    r"[^.!?]{{0,20}}?\b{name}\b",
+    r"\b{name}\b[^.!?]{{0,20}}?\b(?:status|fortschritt|progress|estado|progresso)\b",
+    r"\b(?:status|fortschritt|progress|estado|progresso)\b[^.!?]{{0,20}}?\b{name}\b",
+    r"\bem\s+que\s+ponto\b[^.!?]{{0,20}}?\b{name}\b",  # i18n-allow: input vocab
     # Is it done / is it stuck. Plural included, because two addressed panes
     # get asked about together:
     # "ist Kai fertig?" / "sind Iris und Bruno fertig?"  # i18n-allow: input vocab
@@ -175,6 +193,10 @@ _REPORT_TEMPLATES: tuple[str, ...] = (
     r"\b(?:h[aä]ngt|h[aä]ngen|steckt|stecken"  # i18n-allow: input vocab
     r"|stuck|fertig|done|listos?)\b"  # i18n-allow: input vocab
     r"[^.!?]{{0,20}}?\b{name}\b",
+    # European Portuguese: "está o Kai pronto?" / "o Kai já está pronto?"
+    r"\b(?:est[aá]|est[aã]o)\s+(?:o\s+|a\s+)?{name}\b",  # i18n-allow: input vocab
+    r"\b{name}\b\s+(?:j[aá]\s+)?(?:est[aá]|est[aã]o)\s+"  # i18n-allow: input vocab
+    r"(?:pront|despachad|terminad|encravad|bloquead)\w*",  # i18n-allow: input vocab
 )
 
 # Leading conversational filler that carries no instruction for the agent
@@ -186,7 +208,10 @@ _FILLER_PREFIX_RE = re.compile(
     r"|(?:kannst|k[oö]nntest|w[uü]rdest|willst|magst)\s+du\b\s*"
     r"|(?:could|can|would|will)\s+you\b\s*"
     r"|(?:puedes|podr[ií]as)\b\s*"
-    r"|(?:mal|bitte|kurz|schnell|eben|just|please|quickly|por\s+favor)\b[\s,]*"
+    r"|(?:ol[aá]|ei|ent[aã]o|pronto)\b[\s,]*"  # i18n-allow: input vocab
+    r"|(?:podes|poderias|consegues)\b\s*"  # i18n-allow: input vocab
+    r"|(?:mal|bitte|kurz|schnell|eben|just|please|quickly|por\s+favor"
+    r"|s[oó]|rapidamente)\b[\s,]*"  # i18n-allow: input vocab
     r")+",
     re.IGNORECASE,
 )
@@ -335,7 +360,7 @@ def _compile(templates: tuple[str, ...], names: list[str]) -> list[tuple[str, re
 
 #: Routing prepositions that may sit directly in front of a call-sign and are
 #: part of the addressing, not of the work ("schick das AN Kai").
-_ADDRESS_PREPOSITION = r"(?:an|to|a|bei|in|[uü]ber|via)"  # i18n-allow: input vocab
+_ADDRESS_PREPOSITION = r"(?:an|to|a|ao|para|bei|in|[uü]ber|via)"  # i18n-allow: input vocab
 
 #: How people point AT a pane before naming it: "prompt THIS TERMINAL Alex …".
 #: Part of the address, never part of the work — leaving it in briefed an agent
@@ -346,8 +371,9 @@ _ADDRESS_PREPOSITION = r"(?:an|to|a|bei|in|[uü]ber|via)"  # i18n-allow: input v
 #: the pane noun mandatory and stripping nothing at all.
 _ADDRESS_PANE_NOUN = (
     r"(?:"
-    r"(?:(?:this|that|the|dieses?|diesem|das|dem|el|la|ese|este)\s+)?"  # i18n-allow: input vocab
-    r"(?:terminals?|terminales|panes?|tabs?)\s+"
+    r"(?:(?:this|that|the|dieses?|diesem|das|dem|el|la|ese|este|"  # i18n-allow: input vocab
+    r"o|esse|ao|no)\s+)?"  # i18n-allow: input vocab
+    r"(?:terminals?|terminales|terminais|panes?|painel|tabs?)\s+"  # i18n-allow: input vocab
     r")?"
 )
 
@@ -362,7 +388,8 @@ def _strip_addressing(text: str, *names: str) -> str:
     cleaned = re.sub(
         r"\b(?:sag|sage|sagst|tell|dile|d[ií]gale|schick|schicke|send|gib|give|"
         r"frag|frage|ask|lass|let|beauftrage?|assign|env[ií]a|manda|"
-        r"prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*)\b\s*",
+        r"prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"
+        r"diz|diga|pede|pergunta|deixa|instrui\w*)\b\s*",  # i18n-allow: input vocab
         " ",
         text,
         flags=re.IGNORECASE,
@@ -378,7 +405,8 @@ def _strip_addressing(text: str, *names: str) -> str:
     # "…, dass er/sie …" / "…, that it should …" — the subordinating conjunction
     # left over once the addressee is gone.
     cleaned = re.sub(
-        r"^\s*(?:und\s+zwar\s+)?(?:dass|damit|that|que)\s+(?:er|sie|es|it|he|she|they)?\s*",
+        r"^\s*(?:und\s+zwar\s+)?(?:dass|damit|that|que)\s+"
+        r"(?:er|sie|es|it|he|she|they|ele|ela|eles|elas)?\s*",  # i18n-allow: input vocab
         "",
         cleaned.strip(),
         flags=re.IGNORECASE,
@@ -397,7 +425,7 @@ def _strip_addressing(text: str, *names: str) -> str:
 # let the engine try every split of a long blank gap (CodeQL
 # py/polynomial-redos). The accepted language is unchanged.
 _COORDINATION_RE = re.compile(
-    r"^[\s,]*+(?:(?:und|and|sowie|plus|y|&|\+)[\s,]*+)?$",
+    r"^[\s,]*+(?:(?:und|and|sowie|plus|y|e|&|\+)[\s,]*+)?$",
     re.IGNORECASE,
 )
 
@@ -435,6 +463,13 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
         r"\b(?:should|must|please|can)\b",
         r"\b(?:diles?|preg[uú]nta)\b[\s,]*\b(?:a\s+)?todos\b",
         r"^\b(?:todos|todas)\b[^.!?]{0,20}?\b(?:deben|deber[ií]an)\b",
+        # European Portuguese
+        r"\b(?:diz|diga|pergunta|pede)\b[\s,]*\b(?:a\s+|aos\s+)?"  # i18n-allow: input vocab
+        r"(?:todos|todas)\b",  # i18n-allow: input vocab
+        r"\b(?:prompt|instrui|atribui|encarrega)\w*\b[\s,]*(?:a\s+|aos\s+|as\s+)?"  # i18n-allow
+        r"\b(?:todos|todas)\b(?:\s+(?:os\s+)?(?:terminais|pain[eé]is))?",  # i18n-allow
+        r"^\b(?:todos|todas)\b[^.!?]{0,20}?"  # i18n-allow: input vocab
+        r"\b(?:devem|deviam|deveriam|t[eê]m\s+de)\b",  # i18n-allow: input vocab
     )
 )
 
@@ -444,19 +479,21 @@ _EVERYONE_TEMPLATES: tuple[re.Pattern[str], ...] = tuple(
 # while "prompt everyone except T12" addresses everyone else.
 _EXCLUSION_CUE_RE = re.compile(
     r"\b(?:außer|ausser|ausgenommen|except(?:\s+for)?|excluding|apart\s+from|"
-    r"but\s+not|not|nicht|excepto|salvo|menos|sino)\b",
+    r"but\s+not|not|nicht|excepto|salvo|menos|sino|"
+    r"exceto|tirando|sem\s+ser)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
 _EXCLUSION_GAP_RE = re.compile(
-    r"^[\s,:;\-]*(?:(?:the|den|dem|die|das|los|las)\s+)?"
-    r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?$",
+    r"^[\s,:;\-]*(?:(?:the|den|dem|die|das|los|las|o|a|os|as)\s+)?"  # i18n-allow
+    r"(?:(?:terminals?|terminales|terminais|panes?|tabs?)\s+)?$",
     re.IGNORECASE,
 )
 
 _OTHER_PANES_RE = re.compile(
     r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
-    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b",
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s|"
+    r"todos\s+os\s+outros|todas\s+as\s+outras)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -466,7 +503,9 @@ _COLLECTIVE_EXCEPTION_RE = re.compile(
     r"\b(?:all|everyone|everybody)(?:\s+(?:terminals?|panes?))?[\s,]+"
     r"(?:except(?:\s+for)?|excluding|apart\s+from|but\s+not)|"
     r"\b(?:todos|todas)(?:\s+(?:los|las))?(?:\s+(?:terminales|paneles))?"
-    r"[\s,]+(?:excepto|salvo|menos)",
+    r"[\s,]+(?:excepto|salvo|menos)|"
+    r"\b(?:todos|todas)(?:\s+(?:os|as))?(?:\s+(?:terminais|pain[eé]is))?"  # i18n-allow
+    r"[\s,]+(?:exceto|excepto|salvo|menos|tirando)",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -478,7 +517,9 @@ _NO_WORK_AFTER_NAME_RE = re.compile(
     r"do\s+not\s+(?:prompt|continue|keep\s+working)|"
     r"not\s+(?:prompt|continue|keep\s+working)|"
     r"nada\s+que\s+hacer|no\s+(?:los?\s+|las?\s+)?"
-    r"(?:instruy\w*|asign\w*|contin[uú]\w*)"
+    r"(?:instruy\w*|asign\w*|contin[uú]\w*)|"
+    r"nada\s+(?:para|a)\s+fazer|n[aã]o\s+(?:o\s+|a\s+|os\s+|as\s+)?"  # i18n-allow
+    r"(?:instrui\w*|atribu\w*|continu\w*)"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -486,7 +527,7 @@ _NO_WORK_AFTER_NAME_RE = re.compile(
 # Possessive runs: ``\s*[.!?]?\s*`` let the engine try every split of a long
 # blank run (CodeQL py/polynomial-redos). The accepted language is unchanged.
 _TRAILING_NEGATION_RE = re.compile(
-    r"^[\s,:\-]*+(?:aber\s++)?(?:nicht|not|no)\s*+[.!?]?+\s*+$",
+    r"^[\s,:\-]*+(?:(?:aber|mas)\s++)?(?:nicht|not|no|n[aã]o)\s*+[.!?]?+\s*+$",
     re.IGNORECASE,
 )
 
@@ -494,15 +535,17 @@ _TASK_AFTER_EXCLUSION_RE = re.compile(
     r"^[\s,:\-]*(?:"
     r"(?:dass|damit)\s+(?:sie|ihr|diese)?\s*|"
     r"that\s+(?:they|those)?\s*|to\s+|"
-    r"que\s+(?:ellos|ellas|estos|estas)?\s*"
+    r"que\s+(?:ellos|ellas|estos|estas|eles|elas|estes)?\s*"  # i18n-allow
     r")(?P<task>.+)$",
     re.IGNORECASE | re.DOTALL,
 )
 
 _OTHER_PANES_TASK_RE = re.compile(
     r"\b(?:alle\s+anderen|all\s+(?:the\s+)?others|everyone\s+else|"
-    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s)\b[^.!?;,]{0,12}?"
-    r"\b(?:soll(?:en)?|m[uü]ss(?:en)?|should|must|deben|deber[ií]an)\b\s+"
+    r"todos\s+los\s+dem[aá]s|todas\s+las\s+dem[aá]s|"
+    r"todos\s+os\s+outros|todas\s+as\s+outras)\b[^.!?;,]{0,12}?"  # i18n-allow
+    r"\b(?:soll(?:en)?|m[uü]ss(?:en)?|should|must|deben|deber[ií]an|"
+    r"devem|deveriam|t[eê]m\s+de)\b\s+"  # i18n-allow: input vocab
     r"(?P<task>[^.!?;,]+)",
     re.IGNORECASE,
 )
@@ -522,6 +565,7 @@ _WORD_RE = CALL_SIGN_WORD_RE
 #: er macht" — a genuine read — is untouched by it.
 _BRIEFING_VERB_RE = re.compile(
     r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
+    r"instrui\w*|encarrega\w*|"  # i18n-allow: input vocab
     r"beauftrag\w*|briefing|briefe\w*|assign\w*|encarga\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
@@ -535,10 +579,11 @@ _BRIEFING_VERB_RE = re.compile(
 #: ("prompt THE TERMINAL Alex"), each at most once.
 _BRIEFED_NAME_RE = re.compile(
     r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
+    r"instrui\w*|encarrega\w*|"  # i18n-allow: input vocab
     r"beauftrag\w*|briefe\w*|assign\w*|encarga\w*)\b\s+"  # i18n-allow: input vocab
     r"(?:(?:this|that|the|dieses?|diesem|den|dem|"  # i18n-allow: input vocab
-    r"das|der|el|la|ese|este)\s+)?"  # i18n-allow: input vocab
-    r"(?:(?:terminals?|terminales|panes?|tabs?)\s+)?"
+    r"das|der|el|la|ese|este|o|esse)\s+)?"  # i18n-allow: input vocab
+    r"(?:(?:terminals?|terminales|terminais|panes?|painel|tabs?)\s+)?"  # i18n-allow
     r"(?P<word>[^\W\d_]+\d*)",
     re.IGNORECASE,
 )
@@ -552,10 +597,11 @@ _VISIBLE_TERMINAL_RE = re.compile(
     r"(?:"
     r"\b(?:this|that|the|current|visible|"
     r"dies(?:es|em|en)?|das|der|dem|den|aktuelle[nmrs]?|sichtbare[nmrs]?|"
-    r"el|este|ese|actual|visible)\s+(?:terminal|pane|tab)\b"
+    r"el|este|ese|actual|visible|"
+    r"o|esse|atual|vis[ií]vel)\s+(?:terminal|pane|tab)\b"  # i18n-allow
     r"|"
     r"\b(?:terminal|pane|tab)\b[^.!?]{0,20}?"
-    r"\b(?:here|on\s+screen|hier|im\s+bild|aqu[ií]|en\s+pantalla)\b"
+    r"\b(?:here|on\s+screen|hier|im\s+bild|aqu[ií]|en\s+pantalla|no\s+ecr[aã])\b"
     r")",
     re.IGNORECASE,
 )
@@ -564,7 +610,8 @@ _VISIBLE_REPORT_RE = re.compile(
     r"\b(?:"
     r"what|how|status|progress|doing|done|stuck|"
     r"was|wie|status|fortschritt|macht|tut|l[aä]uft|los|fertig|h[aä]ngt|"
-    r"qu[eé]|c[oó]mo|estado|progreso|haciendo|hecho|atascado"
+    r"qu[eé]|c[oó]mo|estado|progreso|haciendo|hecho|atascado|"
+    r"progresso|faz|fazer|feito|encravado"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -1050,7 +1097,13 @@ _INSTRUCTION_VERB_RE = re.compile(
     # so the stems have to reach past the 2nd-person imperative. Fixed forms
     # only made the Spanish half of every detector that consults this quietly
     # weaker than the German and English halves.
-    r"haz|hag[ao]\w*|escrib\w*|crea|revis\w*|arregl\w*|ejecut\w*|analic\w*|analiz\w*)\b",
+    r"haz|hag[ao]\w*|escrib\w*|crea|revis\w*|arregl\w*|ejecut\w*|analic\w*|analiz\w*|"
+    # European Portuguese, subjunctive included for the same reason: "que o
+    # Kai FAÇA uma revisão", "que a Mika CORRIJA os testes".
+    r"faz|fa[cç]a\w*|escrev\w*|cria|crie\w*|rev[eê]|rever|revej\w*|"  # i18n-allow
+    r"corrig\w*|corrij\w*|conserta\w*|execut\w*|analis\w*|verific\w*|"  # i18n-allow
+    r"investig\w*|adicion\w*|acrescent\w*|remov\w*|apag\w*|atualiz\w*|"  # i18n-allow
+    r"procur\w*|explic\w*|document\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1083,7 +1136,7 @@ def _looks_like_instruction(text: str) -> bool:
 # (window) is deliberately NOT here: a spoken "open two windows" is at least as
 # likely to mean an application window, which is a Computer-Use request.
 _PANE_NOUN_RE = re.compile(
-    r"\b(?:terminals?|terminales|panes?|tabs?)\b",
+    r"\b(?:terminals?|terminales|terminais|panes?|tabs?)\b",
     re.IGNORECASE,
 )
 
@@ -1097,7 +1150,8 @@ _BROWSER_TAB_CONTEXT_RE = re.compile(
     r"incognito|private|guest|"
     r"webseite|internetseite|inkognito|privat|gast|"  # i18n-allow: input vocab
     r"navegador|sitio\s+web|p[aá]gina\s+web|"  # i18n-allow: input vocab
-    r"inc[oó]gnit\w*|privad\w*)\b",  # i18n-allow: input vocab
+    r"inc[oó]gnit\w*|privad\w*|"  # i18n-allow: input vocab
+    r"s[ií]tio\s+web|p[aá]gina\s+da\s+internet|an[oó]nim\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1124,14 +1178,17 @@ _OPEN_VERB_RE = re.compile(
     r"(?:auf|an|zu|hoch)?mach\w*|erstell\w*|f[uü]g\w*|"  # i18n-allow: input vocab
     r"gib|geb\w*|brauch\w*|will|h[aä]tte|"  # i18n-allow: German input vocabulary
     r"open\w*|create\w*|launch\w*|add|give|need|want|"
-    r"abr\w*|cre\w*|lanz\w*|a[nñ]ad\w*|agrega\w*|dame|necesito|quiero)\b",
+    r"abr\w*|cre\w*|lanz\w*|a[nñ]ad\w*|agrega\w*|dame|necesito|quiero|"
+    r"cria\w*|lan[cç]a\w*|adiciona\w*|acrescenta\w*|d[aá]-me|"  # i18n-allow: input vocab
+    r"preciso|quero|queria)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 _ADDITIVE_RE = re.compile(
     r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|"  # i18n-allow: input vocab
     r"more|"
     r"extra|"
-    r"otr[oa]s?|m[aá]s)\b",
+    r"otr[oa]s?|m[aá]s|"
+    r"outr[oa]s?|mais)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1150,15 +1207,18 @@ _QUESTION_OPENER_RE = re.compile(
     r"\s+welche\w*|"  # i18n-allow: input vocab
     r"(?:with|in|on|at|from|to|under|for|by|through)\s+which|"
     r"(?:con|en|de|a|para|por)\s+(?:qu[eé]|cu[aá]les?)|"  # i18n-allow: input vocab
+    r"(?:com|em|no|na|de|a|para|por)\s+(?:qual|quais)|(?:com|em)\s+que|"  # i18n-allow
     # First-person and impersonal modals ask about possibility or advice. Keep
     # second-person forms out: "can you open …" remains a polite command.
     r"(?:kann|k[oö]nnte|soll(?:te)?|muss|darf|d[üu]rfte)"  # i18n-allow: input vocab
     r"\s+(?:ich|man)|"  # i18n-allow: input vocab
     r"(?:can|could|should|must|may|would|do)\s+i|"
     r"(?:puedo|podr[ií]a|debo|se\s+puede)|"  # i18n-allow: input vocab
+    r"(?:posso|devo|consigo|d[aá]\s+para)|"  # i18n-allow: input vocab
     r"wie|was|wieso|warum|wo|wann|welche\w*|wieviel\w*|"
     r"how|what|why|where|when|which|"
-    r"c[oó]mo|qu[eé]|cu[aá]nt\w*|por\s+qu[eé]|d[oó]nde|cu[aá]ndo"
+    r"c[oó]mo|qu[eé]|cu[aá]nt\w*|por\s+qu[eé]|d[oó]nde|cu[aá]ndo|"
+    r"o\s+que|porqu[eê]|onde|quando|qual|quais|quant\w*"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -1172,7 +1232,7 @@ _QUESTION_OPENER_RE = re.compile(
 # adjacent ``\s*`` let the engine try every split of a long blank run
 # (CodeQL py/polynomial-redos). The matched prefix is unchanged.
 _QUESTION_DISCOURSE_PREFIX_RE = re.compile(
-    r"^\s*+(?:¿\s*+)?(?:(?:und|and|y)\b[\s,;:–—-]*+)+",  # i18n-allow: input vocab
+    r"^\s*+(?:¿\s*+)?(?:(?:und|and|y|e)\b[\s,;:–—-]*+)+",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1234,6 +1294,20 @@ _NUMBER_WORDS: dict[str, int] = {
     "diez": 10,
     "once": 11,
     "doce": 12,
+    # European Portuguese ("tres"/"seis"/"cinco" are shared with Spanish).
+    # "um"/"uma" double as the article, see ``_ARTICLE_ONES``.
+    "um": 1,  # i18n-allow: number words
+    "uma": 1,  # i18n-allow: number words
+    "dois": 2,
+    "duas": 2,
+    "três": 3,  # i18n-allow: number words
+    "quatro": 4,
+    "sete": 7,
+    "oito": 8,
+    "nove": 9,
+    "dez": 10,
+    "onze": 11,
+    "doze": 12,
     # Past a dozen, spoken counts are the round ones — nobody asks for
     # thirty-seven terminals out loud, and the workspace maximum is a hundred.
     # Digits already cover every number in between; these exist because a
@@ -1278,6 +1352,14 @@ _NUMBER_WORDS: dict[str, int] = {
     "noventa": 90,
     "cien": 100,
     "ciento": 100,  # i18n-allow: number words
+    "quinze": 15,
+    "vinte": 20,
+    "trinta": 30,
+    "quarenta": 40,  # i18n-allow: number words
+    "cinquenta": 50,
+    "sessenta": 60,
+    "oitenta": 80,
+    "cem": 100,
 }
 
 
@@ -1587,10 +1669,11 @@ def _spoken_count(text: str) -> int:
 #: usual qualifiers. Bounded at two words so the count and the agent cannot
 #: drift into different clauses of the sentence.
 _COUNT_AGENT_PREFIX = (
-    r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
+    r"\b(?P<count>\d{1,3}|[a-zäöüñêç]+)\s+"  # i18n-allow: input vocab
     r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|"  # i18n-allow: input vocab
-    r"additional|de|del|"
-    r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
+    r"additional|de|del|do|"
+    r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?|"
+    r"novos|novas|outros|outras|mais|terminais)\s+){0,2}"  # i18n-allow: input vocab
 )
 _COUNT_AGENT_RE = re.compile(
     rf"{_COUNT_AGENT_PREFIX}(?P<agent>{_AGENT_ALTERNATION})\b",
@@ -1625,7 +1708,7 @@ _COUNT_AGENT_MAX_GAP = 40
 #: "uno" are absent on purpose: those are the bare numbers, never articles.
 _ARTICLE_ONES: frozenset[str] = frozenset(
     # i18n-allow: speech-recognition input vocabulary, not prose
-    {"ein", "eine", "einen", "a", "an", "un", "una"}
+    {"ein", "eine", "einen", "a", "an", "un", "una", "um", "uma"}
 )
 
 #: How many words may sit between the article and the thing it sizes. Two, the
@@ -1909,7 +1992,8 @@ _AGENT_NOUN_RE = re.compile(
 _BACKGROUND_RE = re.compile(
     r"\b(?:hintergrund|background|worker\w*|mission\w*|"  # i18n-allow: input vocab
     r"sub-?agent\w*|subagent\w*|delegier\w*|delegate\w*|"  # i18n-allow: input vocab
-    r"segundo\s+plano|trabajador\w*)\b",  # i18n-allow: input vocab
+    r"segundo\s+plano|trabajador\w*|"  # i18n-allow: input vocab
+    r"miss[aã]o|miss[oõ]es|trabalhador\w*|delega\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -1953,6 +2037,7 @@ _FLEET_BRIEF_VERB_RE = re.compile(
     # was parsed as MORE FLEET: the counts inside it opened extra panes
     # (live 2026-08-12 17:40, four billed panes for a spoken "two").
     r"sag\w*|diles?|d[ií]gale|"  # i18n-allow: input vocab
+    r"diz|diga|instrui\w*|cada\s+um\s+(?:deles|delas)|"  # i18n-allow: input vocab
     r"anweis\w*|beauftrag\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
@@ -2103,6 +2188,22 @@ _CLI_POSITION_NOISE = frozenset(
         "me",
         "uns",
         "us",  # i18n-allow: input vocab
+        "novo",
+        "nova",
+        "novos",
+        "novas",
+        "outro",
+        "outra",
+        "outros",
+        "outras",
+        "mais",
+        "do",
+        "dos",
+        "o",
+        "os",
+        "um",
+        "uma",
+        "e",  # i18n-allow: input vocab
     }
 )
 
@@ -2138,7 +2239,7 @@ def _closest_clis(word: str) -> tuple[tuple[str, float], ...]:
 
 #: Punctuation or coordination that ends one fleet group and starts the next.
 _GROUP_BOUNDARY_RE = re.compile(
-    r"[,;]|\b(?:und|and|y)\b",  # i18n-allow: input vocab
+    r"[,;]|\b(?:und|and|y|e)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2418,7 +2519,8 @@ def _spawn_regions(text: str) -> list[_SpawnSpan]:
 _SPAWN_CONDITION_RE = re.compile(
     r"\b(?:wenn|falls|sofern|ansonsten|sonst|"  # i18n-allow: input vocab
     r"if|in\s+case|unless|otherwise|"
-    r"si|en\s+caso|sino)\b",  # i18n-allow: input vocab
+    r"si|en\s+caso|sino|"  # i18n-allow: input vocab
+    r"se|caso\s+(?:n[aã]o|haja)|sen[aã]o)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2470,7 +2572,9 @@ _RETRACTION_RE = re.compile(
     r"vergiss\s+(?:das|es)|ich\s+mein(?:e|te)|"  # i18n-allow: input vocab
     r"no+[,\s]+wait|wait[,\s]+no+|no[,\s]+no|scratch\s+that|"
     r"forget\s+(?:that|it)|i\s+meant?|actually[,\s]+no|instead|"
-    r"mejor\s+dicho|digo|olvida\s+eso|espera[,\s]+no"  # i18n-allow: input vocab
+    r"mejor\s+dicho|digo|olvida\s+eso|espera[,\s]+no|"  # i18n-allow: input vocab
+    r"n[aã]o[,\s]+espera|espera[,\s]+n[aã]o|esquece\s+(?:isso|isto)|"  # i18n-allow
+    r"quer\s+dizer|ali[aá]s|melhor\s+dizendo|em\s+vez\s+disso"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )
@@ -2530,6 +2634,7 @@ def spawn_includes_task(user_text: str) -> bool:
 _TASK_AFTER_BRIEF_RE = re.compile(
     r"\b(?:prompt\w*|brief\w*|instruct\w*|assign\w*|tell\w*|"
     r"sag\w*|diles?|d[ií]gale|"  # i18n-allow: input vocab
+    r"diz|diga|instrui\w*|"  # i18n-allow: input vocab
     r"anweis\w*|beauftrag\w*)\b\s*"
     r"(?:,?\s*(?:dass|damit|that|to|que)\s*)?"  # i18n-allow: input vocab
     # The pronoun standing for the fleet. "them" was missing, so "prompt
@@ -2537,7 +2642,8 @@ _TASK_AFTER_BRIEF_RE = re.compile(
     # word "them," — a fragment of the address baked into their work.
     r"(?:(?:sie|er|es|ihnen|ihm|they|it|them(?:\s+all)?|those|"  # i18n-allow: input vocab
     r"each(?:\s+one|\s+of\s+them)?|all(?:\s+of\s+them)?|everyone|"
-    r"beiden?|allen?|cada\s+uno|todos|todas|ellos|ellas)"  # i18n-allow: input vocab
+    r"beiden?|allen?|cada\s+uno|todos|todas|ellos|ellas|"  # i18n-allow: input vocab
+    r"cada\s+um|eles|elas)"  # i18n-allow: input vocab
     r"[\s,:]+)?"
     # Spoken filler introducing the task itself: "prompt them LIKE one fixes
     # …", "prompte sie SO, DASS einer …". Part of the address, and the word
@@ -2623,7 +2729,8 @@ def spawn_instruction(user_text: str) -> str:
 _GROUP_BRIEF_VERB_RE = re.compile(
     r"\b(?:prompt\w*|anprompt\w*|instruct\w*|instruy\w*|anweis\w*|"  # i18n-allow: input vocab
     r"beauftrag\w*|brief\w*|assign\w*|encarga\w*|tell\w*|sag\w*|"  # i18n-allow: input vocab
-    r"dile|d[ií]gale|frag\w*|ask\w*|pregunt\w*)\b",  # i18n-allow: input vocab
+    r"dile|d[ií]gale|frag\w*|ask\w*|pregunt\w*|"  # i18n-allow: input vocab
+    r"instrui\w*|encarrega\w*|diz|diga|pergunta|pede)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2633,7 +2740,8 @@ _GROUP_BRIEF_VERB_RE = re.compile(
 #: borrow a modal from the next clause.
 _GROUP_BRIEF_MODAL_RE = re.compile(
     r"[^.!?;,]{0,12}?\b(?:soll(?:en|te|ten)?|should|shall|must|"  # i18n-allow: input vocab
-    r"m[uü]ss(?:en|t)?|deben?|deber[ií]an?)\b",  # i18n-allow: input vocab
+    r"m[uü]ss(?:en|t)?|deben?|deber[ií]an?|"  # i18n-allow: input vocab
+    r"devem|deve|deveriam|t[eê]m\s+de)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2642,7 +2750,7 @@ _GROUP_BRIEF_MODAL_RE = re.compile(
 #: the ADDRESS, never of the task.
 _GROUP_BRIEF_CONNECTIVE_RE = re.compile(
     r"\s*[,:]?\s*(?:(?:to|that|dass|damit|que)\b\s*)?"  # i18n-allow: input vocab
-    r"(?:(?:sie|er|es|they|it|them)\b\s*)?",  # i18n-allow: input vocab
+    r"(?:(?:sie|er|es|they|it|them|eles|elas)\b\s*)?",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2661,6 +2769,17 @@ _GROUP_TASK_TRIM_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: The same trim with the Portuguese conjunction and articles ("… e o "). Used
+#: ONLY when the utterance reads as Portuguese: "e", "o", "a", "os" and "as"
+#: are ordinary English words, and "fix the tests for option A" or "treat it
+#: as" must keep their last word.
+_GROUP_TASK_TRIM_PT_RE = re.compile(
+    r"(?<![\s,;.])[\s,;.]*+(?:\b(?:und|and|y|e|sowie|plus)\b)?+"  # i18n-allow: input vocab
+    r"[\s,;.]*+(?:\b(?:the|die|der|das|den|dem|el|la|los|las|o|a|os|as)\b)?+"  # i18n-allow
+    r"[\s,;.]*+$",
+    re.IGNORECASE,
+)
+
 #: Words allowed in front of the FIRST group brief without disqualifying the
 #: per-group reading. Anything more substantial before it is a brief of its own
 #: ("prompt each of them to do X and tell the codex …"), and the per-group map
@@ -2670,6 +2789,16 @@ _GROUP_BRIEF_LEAD_RE = re.compile(
     r"[\s.,:;!?—–-]*(?:\b(?:und|and|y|dann|then|also|bitte|"  # i18n-allow: input vocab
     r"please|jetzt|now|"
     r"the|die|der|das|den|los|las|el|la)\b[\s,]*)*",  # i18n-allow: input vocab
+    re.IGNORECASE,
+)
+
+#: The same lead filler plus the Portuguese words ("e depois os claudes …"),
+#: applied only to a Portuguese utterance for the reason given at
+#: ``_GROUP_TASK_TRIM_PT_RE``.
+_GROUP_BRIEF_LEAD_PT_RE = re.compile(
+    r"[\s.,:;!?—–-]*(?:\b(?:und|and|y|dann|then|also|bitte|"  # i18n-allow: input vocab
+    r"please|jetzt|now|e|depois|ent[aã]o|agora|"  # i18n-allow: input vocab
+    r"the|die|der|das|den|los|las|el|la|o|os|as)\b[\s,]*)*",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2741,14 +2870,19 @@ def spawn_group_tasks(user_text: str) -> dict[str, str]:
     anchors = _group_brief_anchors(remainder)
     if not anchors:
         return {}
-    lead = _GROUP_BRIEF_LEAD_RE.match(remainder)
+    from jarvis.core.turn_language import detect_text_language
+
+    portuguese = detect_text_language(text) == "pt"
+    lead_re = _GROUP_BRIEF_LEAD_PT_RE if portuguese else _GROUP_BRIEF_LEAD_RE
+    trim_re = _GROUP_TASK_TRIM_PT_RE if portuguese else _GROUP_TASK_TRIM_RE
+    lead = lead_re.match(remainder)
     if lead is None or lead.end() < anchors[0][0]:
         return {}
     out: dict[str, str] = {}
     for index, (_cut, task_start, agent) in enumerate(anchors):
         stop = anchors[index + 1][0] if index + 1 < len(anchors) else len(remainder)
         task = remainder[task_start:stop].strip(" \t,:;-")
-        task = " ".join(_GROUP_TASK_TRIM_RE.sub("", task).split())
+        task = " ".join(trim_re.sub("", task).split())
         if len(task) < _MIN_GROUP_TASK_CHARS:
             continue
         out[agent] = f"{out[agent]}; {task}" if agent in out else task
@@ -2758,7 +2892,8 @@ def spawn_group_tasks(user_text: str) -> dict[str, str]:
 _RECENT_FLEET_RE = re.compile(
     r"\b(?:jede[nr]?\s+(?:davon|dieser)|alle\s+davon|diese\w*|"
     r"each\s+(?:one|of\s+them)|all\s+of\s+them|those\s+(?:agents|terminals)|"
-    r"cada\s+uno\s+de\s+ellos|todos\s+ellos)\b",  # i18n-allow: input vocab
+    r"cada\s+uno\s+de\s+ellos|todos\s+ellos|"  # i18n-allow: input vocab
+    r"cada\s+um\s+(?:deles|delas)|todos\s+eles|esses\s+(?:agentes|terminais))\b",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -2818,6 +2953,17 @@ _UNDELIVERED_COMPLAINT_RE = re.compile(
     r"\bno\s+(?:pas[oó]|lleg[oó])\s+nada\b"  # i18n-allow: input vocab
     r"|"
     r"\b(?:int[eé]ntalo\s+de\s+nuevo|otra\s+vez|de\s+nuevo)\b"  # i18n-allow: input vocab
+    r"|"
+    # European Portuguese: "não lhe enviaste nada" / "não chegou nada"
+    r"\bn[aã]o\s+(?:o\s+|a\s+|lhe\s+)?(?:enviaste|mandaste|fizeste|"  # i18n-allow
+    r"instru[ií]ste|passaste)\b"  # i18n-allow: input vocab
+    r"|"
+    r"\bn[aã]o\s+(?:foi|chegou)\b[^.!?]{0,30}?"  # i18n-allow: input vocab
+    r"\b(?:enviad\w*|feit\w*|mandad\w*|nada)\b"  # i18n-allow: input vocab
+    r"|"
+    r"\bn[aã]o\s+(?:aconteceu|chegou)\s+nada\b|\bnada\s+(?:aconteceu|chegou)\b"  # i18n-allow
+    r"|"
+    r"\b(?:tenta\s+(?:outra\s+vez|de\s+novo)|de\s+novo|novamente)\b"  # i18n-allow: input vocab
     r")",
     re.IGNORECASE,
 )
@@ -2840,7 +2986,10 @@ _CLOSE_VERB_RE = re.compile(
     # matched the infinitive while missing every spoken command.
     r"\b(?:schlie(?:ß|ss)\w*|beend\w*|stopp?\w*|zumach\w*|close\w*|"  # i18n-allow: input vocab
     r"quit\w*|"
-    r"kill\w*|c(?:e|ie)rr\w*|det[eé]n\w*)\b",  # i18n-allow: input vocab
+    r"kill\w*|c(?:e|ie)rr\w*|det[eé]n\w*|"  # i18n-allow: input vocab
+    # Portuguese "fecha"/"encerra". Not ``termin\w*``: it would swallow the
+    # pane noun "terminais" itself.
+    r"fech\w*|encerr\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2859,7 +3008,8 @@ _ALL_PANES_RE = re.compile(
     re.IGNORECASE,
 )
 _CLOSE_STATE_QUESTION_RE = re.compile(
-    r"^(?:are|is|sind|ist|est[aá]n?)\b[^?]*\b(?:closed|geschlossen|cerrad\w*)\b",
+    r"^(?:are|is|sind|ist|est[aá]n?|est[aã]o)\b[^?]*\b"  # i18n-allow: input vocab
+    r"(?:closed|geschlossen|cerrad\w*|fechad\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -2891,7 +3041,8 @@ _CLOSE_VERB_MAX_GAP = 30
 _CLOSE_BRIEFING_RE = re.compile(
     r"\b(?:tell\w*|ask\w*|have|let|instruct\w*|assign\w*|prompt\w*|brief\w*|"
     r"sag\w*|frag\w*|lass\w*|l[aä]sst|anweis\w*|beauftrag\w*|schick\w*|"  # i18n-allow: input vocab
-    r"dile|d[ií]gale|pregunt\w*|pide|pida|manda|env[ií]a|encarga\w*)\b",  # i18n-allow: input vocab
+    r"dile|d[ií]gale|pregunt\w*|pide|pida|manda|env[ií]a|encarga\w*|"  # i18n-allow
+    r"diz\w*|diga|pergunta|pede|pe[cç]a|instrui\w*|encarrega\w*|deixa)\b",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -3194,14 +3345,16 @@ def detect_spawn(user_text: str, *, names: list[str] | None = None) -> SpawnTerm
 
 _DIVIDE_VERB_RE = re.compile(
     r"\b(?:teil\w*|aufteil\w*|verteil\w*|split|splits|divide|divides|"
-    r"distribute|reparte|repartan|repartir|dividan|divid[ií]d)\b",
+    r"distribute|reparte|repartan|repartir|dividan|divid[ií]d|"
+    r"divide[mi]?|dividam|reparti\w*|distribu[ií]\w*)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
 #: Who the work is divided between — the agents themselves.
 _DIVIDE_RECIPIENT_RE = re.compile(
     r"\b(?:unter\s+euch|untereinander|euch|between\s+you|among\s+"
-    r"you(?:rselves)?|entre\s+(?:vosotros|ustedes))\b",
+    r"you(?:rselves)?|entre\s+(?:vosotros|ustedes)|"
+    r"entre\s+(?:v[oó]s|voc[eê]s|eles|elas|si))\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -3211,15 +3364,16 @@ _DIVIDE_RECIPIENT_RE = re.compile(
 _DIVIDE_AREA_RE = re.compile(
     r"\b(?:aufgabenbereich\w*|bereich\w*|themen\w*|themengebiet\w*|"
     r"schwerpunkt\w*|areas?|topics?|domains?|workstreams?|"
-    r"[aá]reas?|temas?)\b",
+    r"[aá]reas?|temas?|dom[ií]nios?)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
 #: "each of you takes a different part" — the same request without a verb.
 _DIVIDE_EACH_RE = re.compile(
     r"\b(?:jede[rn]?\s+von\s+euch|jede[rn]?\s+einzelne|each\s+of\s+you|"
-    r"each\s+one|cada\s+uno)\b[^.!?]{0,40}?"
-    r"\b(?:ander\w*|different|separate|own|distinto\w*|diferente\w*|propio)\b",
+    r"each\s+one|cada\s+uno|cada\s+um)\b[^.!?]{0,40}?"
+    r"\b(?:ander\w*|different|separate|own|distinto\w*|diferente\w*|propio|"
+    r"pr[oó]pri[oa])\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -3269,7 +3423,7 @@ def wants_split(user_text: str) -> bool:
 #
 # Two qualifying enumerators are the evidence; one is an ordinary sentence.
 
-_DISTRIBUTIVE_PREFIX = r"(?:^|[,;:]|\b(?:und|and|y)\b)\s*"  # i18n-allow: input vocab
+_DISTRIBUTIVE_PREFIX = r"(?:^|[,;:]|\b(?:und|and|y|e)\b)\s*"  # i18n-allow: input vocab
 
 _DISTRIBUTIVE_ONE_RE = re.compile(
     _DISTRIBUTIVE_PREFIX
@@ -3277,14 +3431,16 @@ _DISTRIBUTIVE_ONE_RE = re.compile(
     r"(?:(?:der|die|das|the|el|la)\s+)?"  # i18n-allow: input vocab
     r"(?:erste[rs]?|zweite[rs]?|dritte[rs]?|vierte[rs]?|"  # i18n-allow: input vocab
     r"first|second|third|fourth|"
-    r"primer[oa]?|segund[oa]?|tercer[oa]?))\b",
+    r"primer[oa]?|segund[oa]?|tercer[oa]?)|"
+    r"um(?:\s+deles)?|uma(?:\s+delas)?|"  # i18n-allow: input vocab
+    r"(?:(?:o|a)\s+)?(?:primeir[oa]|terceir[oa]|quart[oa]))\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
 _DISTRIBUTIVE_OTHER_RE = re.compile(
     _DISTRIBUTIVE_PREFIX
     + r"(?:(?:der|die|das)\s+andere[nrs]?|the\s+other(?:\s+one)?|"  # i18n-allow: input vocab
-    r"(?:el\s+|la\s+)?otr[oa])\b",
+    r"(?:el\s+|la\s+)?otr[oa]|(?:o\s+|a\s+)?outr[oa])\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
 
@@ -3295,6 +3451,7 @@ _DISTRIBUTIVE_PREDICATE_RE = re.compile(
     r"\b(?:soll\w*|m[uü]ss\w*|kann|k[oö]nn\w*|darf\w*|"  # i18n-allow: input vocab
     r"should|shall|must|can|could|will|would|takes?|gets?|does|"
     r"deber?[ií]?an?|pueden?|podr[ií]an?|"
+    r"deve\w*|pode\w*|fica|trata|com|em|no|na|"  # i18n-allow: input vocab
     r"auf|f[uü]r|on|for|en|an|mit|with|con)\b",  # i18n-allow: input vocab
     re.IGNORECASE,
 )
@@ -3341,10 +3498,13 @@ _PLURAL_ADDRESS_RE = re.compile(
     r"beide[nsr]?|alle\s+beide|ihr\s+(?:beide[nr]?|zwei|drei|vier)|euch\s+beide[nr]?|"
     r"both(?:\s+of\s+(?:you|them))?|all\s+(?:of\s+)?(?:you|them)|you\s+(?:two|three|four)|"
     r"ambos|ambas|los\s+dos|las\s+dos|ustedes\s+dos|"
+    r"os\s+dois|as\s+duas|voc[eê]s\s+dois|todos\s+os\s+tr[eê]s|"  # i18n-allow: input vocab
     # a spoken count next to what is being counted
-    r"(?:zwei|drei|vier|f[üu]nf|two|three|four|five|dos|tres|cuatro|cinco|[2-9])\s+"
-    r"(?:der\s+|die\s+|von\s+den\s+|of\s+the\s+|de\s+los\s+)?"
-    r"(?:terminals?|terminales|panes?|agent(?:s|en)?|instanz\w*|instances?)"
+    r"(?:zwei|drei|vier|f[üu]nf|two|three|four|five|dos|tres|cuatro|cinco|"
+    r"dois|duas|tr[eê]s|quatro|[2-9])\s+"  # i18n-allow: input vocab
+    r"(?:der\s+|die\s+|von\s+den\s+|of\s+the\s+|de\s+los\s+|dos\s+|das\s+)?"
+    r"(?:terminals?|terminales|terminais|panes?|agent(?:s|en|es)?|"  # i18n-allow
+    r"instanz\w*|instances?|inst[aâ]ncias)"  # i18n-allow: input vocab
     r")\b",
     re.IGNORECASE,
 )

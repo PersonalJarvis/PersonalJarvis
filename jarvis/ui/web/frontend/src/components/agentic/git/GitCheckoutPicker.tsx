@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { folderName, inspectGit, type GitPlan, type GitPrepareMode, type GitRepoInfo } from "@/lib/gitApi";
 import { GitStatusLine } from "./GitStatusLine";
+import { fill, useT } from "@/i18n";
 
 interface Props {
   /** The folder the workspace/agent would open in. */
@@ -41,6 +42,7 @@ function reroll(current: string): string {
  * and shows where things stand (branch, changes, ahead/behind) beside the choice.
  */
 export function GitCheckoutPicker({ folder, value, onChange, disabled, context, onInfo }: Props) {
+  const t = useT();
   const [info, setInfo] = useState<GitRepoInfo | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -84,19 +86,19 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
 
   const options: Option[] = !info?.is_repo
     ? [
-      { mode: "current", title: "Without git", hint: "Open the folder as it is", Icon: FolderTree, recommended: true },
-      { mode: "init", title: "Initialize git", hint: "New repository on main, ready for branches", Icon: Sparkles },
+      { mode: "current", title: t("ide_git.without_git"), hint: t("ide_git.without_git_hint"), Icon: FolderTree, recommended: true },
+      { mode: "init", title: t("ide_git.init"), hint: t("ide_git.init_hint"), Icon: Sparkles },
     ]
     : [
       context === "agent"
-        ? { mode: "current", title: "Share this checkout", hint: `Same folder as the other agents${info.branch ? ` · ${info.branch}` : ""}`, Icon: FolderTree, recommended: true }
-        : { mode: "current", title: "Current checkout", hint: info.branch ? `Work on ${info.branch} in the project folder` : "Work in the project folder", Icon: FolderTree, recommended: true },
-      { mode: "new_worktree", title: "New worktree", hint: context === "agent" ? "Own folder and branch, opens as its own tab" : "Own folder and branch, agents never collide", Icon: GitFork },
+        ? { mode: "current", title: t("ide_git.share_checkout"), hint: `${t("ide_git.share_checkout_hint")}${info.branch ? ` · ${info.branch}` : ""}`, Icon: FolderTree, recommended: true }
+        : { mode: "current", title: t("ide_git.current_checkout"), hint: info.branch ? fill(t("ide_git.work_on_branch"), { branch: info.branch }) : t("ide_git.work_in_folder"), Icon: FolderTree, recommended: true },
+      { mode: "new_worktree", title: t("ide_git.new_worktree"), hint: context === "agent" ? t("ide_git.new_worktree_hint_agent") : t("ide_git.new_worktree_hint"), Icon: GitFork },
       ...(context === "workspace" ? [
-        { mode: "new_branch" as const, title: "New branch", hint: "Branch off here, in the project folder", Icon: GitBranchPlus },
-        ...(switchable.length ? [{ mode: "switch_branch" as const, title: "Existing branch", hint: "Check out another branch here", Icon: GitBranch }] : []),
+        { mode: "new_branch" as const, title: t("ide_git.new_branch"), hint: t("ide_git.new_branch_hint"), Icon: GitBranchPlus },
+        ...(switchable.length ? [{ mode: "switch_branch" as const, title: t("ide_git.existing_branch"), hint: t("ide_git.existing_branch_hint"), Icon: GitBranch }] : []),
       ] : []),
-      ...(linked.length ? [{ mode: "open_worktree" as const, title: "Existing worktree", hint: "Open a worktree that is already there", Icon: FolderGit2 }] : []),
+      ...(linked.length ? [{ mode: "open_worktree" as const, title: t("ide_git.existing_worktree"), hint: t("ide_git.existing_worktree_hint"), Icon: FolderGit2 }] : []),
     ];
 
   const choose = (mode: GitPrepareMode) => {
@@ -112,18 +114,20 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
   const preview = value.mode === "new_worktree" && info?.main_root
     ? `${folderName(info.main_root)}/.worktrees/${value.branch.trim().replace(/\s+/g, "-").replace(/\//g, "-") || "…"}` : "";
 
+  const [worksOnBefore, worksOnAfter = ""] = t("ide_git.works_on").split("{branch}");
+  const worksOn = info?.branch ? <>{worksOnBefore}<span className="font-mono">{info.branch}</span>{worksOnAfter}</> : t("ide_git.works_in_folder");
   const summary = !info?.is_repo
-    ? { title: "Opens the folder as it is", hint: "No git here. You can set it up if you like." }
+    ? { title: t("ide_git.opens_as_is"), hint: t("ide_git.opens_as_is_hint") }
     : context === "agent"
-      ? { title: info.branch ? <>Works on <span className="font-mono">{info.branch}</span></> : "Works in the project folder", hint: "Same folder as your other agents. Nothing to set up." }
-      : { title: info.branch ? <>Works on <span className="font-mono">{info.branch}</span></> : "Works in the project folder", hint: "In the project folder, as it is now. Nothing to set up." };
+      ? { title: worksOn, hint: t("ide_git.summary_agent_hint") }
+      : { title: worksOn, hint: t("ide_git.summary_workspace_hint") };
 
   if (!expanded && !error && (loading || info?.git_available)) {
     return <section aria-label="Git" data-testid="git-checkout-picker">
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
         <FolderTree className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="min-w-0 flex-1">
-          {loading ? <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading repository…</span>
+          {loading ? <span className="flex items-center gap-1.5 text-sm text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t("ide_git.reading_repo")}</span>
             : <>
               <span className="block truncate text-sm font-medium text-foreground">{summary.title}</span>
               <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{summary.hint}</span>
@@ -131,7 +135,7 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
         </span>
         <button type="button" disabled={disabled || loading} aria-expanded={false} onClick={() => setUnfolded(true)}
           className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-          Git options<ChevronDown className="h-3.5 w-3.5" aria-hidden />
+          {t("ide_git.git_options")}<ChevronDown className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
     </section>;
@@ -141,16 +145,16 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
     <div className="flex flex-wrap items-center justify-between gap-2">
       <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">Git
         {value.mode === "current" && <button type="button" aria-expanded onClick={() => setUnfolded(false)}
-          className="rounded-md px-1.5 py-0.5 text-xs font-normal hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Hide options</button>}
+          className="rounded-md px-1.5 py-0.5 text-xs font-normal hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t("ide_git.hide_options")}</button>}
       </span>
-      {loading ? <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading repository…</span>
+      {loading ? <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t("ide_git.reading_repo")}</span>
         : info?.is_repo ? <GitStatusLine info={info} /> : null}
     </div>
     {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     {!loading && info && !info.git_available && <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      Git is not installed on this computer. Install it from git-scm.com to use branches and worktrees.</p>}
+      {t("ide_git.not_installed")}</p>}
 
-    {!loading && info?.git_available && <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Git checkout">
+    {!loading && info?.git_available && <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("ide_git.checkout_aria")}>
       {options.map((option) => {
         const checked = value.mode === option.mode;
         return <button key={option.mode} type="button" role="radio" aria-checked={checked} disabled={disabled}
@@ -160,7 +164,7 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
           <option.Icon className={cn("mt-0.5 h-4 w-4 shrink-0", checked ? "text-primary" : "text-muted-foreground")} aria-hidden />
           <span className="min-w-0">
             <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">{option.title}
-              {option.recommended && <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground">Recommended</span>}</span>
+              {option.recommended && <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground">{t("ide_git.recommended")}</span>}</span>
             <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{option.hint}</span>
           </span>
         </button>;
@@ -168,40 +172,46 @@ export function GitCheckoutPicker({ folder, value, onChange, disabled, context, 
     </div>}
 
     {info?.is_repo && creating && <div className="grid grid-cols-1 gap-2 rounded-xl border border-border bg-muted/30 p-3 sm:grid-cols-2">
-      <label className="block text-xs text-muted-foreground">Branch name
+      <label className="block text-xs text-muted-foreground">{t("ide_git.branch_name")}
         <span className="mt-1 flex gap-1.5">
-          <input value={value.branch} disabled={disabled} spellCheck={false} aria-label="Branch name"
+          <input value={value.branch} disabled={disabled} spellCheck={false} aria-label={t("ide_git.branch_name")}
             onChange={(event) => onChange({ ...value, branch: event.target.value })}
             placeholder={info.suggested_branch} className={cn(field, "font-mono text-xs")} />
-          <button type="button" disabled={disabled} aria-label="Suggest another name" title="Suggest another name"
+          <button type="button" disabled={disabled} aria-label={t("ide_git.suggest_name")} title={t("ide_git.suggest_name")}
             onClick={() => onChange({ ...value, branch: reroll(value.branch) })}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Dices className="h-4 w-4" /></button>
         </span>
       </label>
-      <div className="block text-xs text-muted-foreground"><span>Based on</span>
-        <BrandedSelect value={value.base} disabled={disabled || info.unborn} ariaLabel="Base branch"
+      <div className="block text-xs text-muted-foreground"><span>{t("ide_git.based_on")}</span>
+        <BrandedSelect value={value.base} disabled={disabled || info.unborn} ariaLabel={t("ide_git.base_branch")}
           onValueChange={(base) => onChange({ ...value, base })} className="mt-1 h-9"
-          options={bases.map((name) => ({ value: name, label: name, hint: name === info.branch ? "current" : name === info.default_branch ? "default" : undefined }))} />
+          options={bases.map((name) => ({ value: name, label: name, hint: name === info.branch ? t("ide_git.hint_current") : name === info.default_branch ? t("ide_git.hint_default") : undefined }))} />
       </div>
       <p className="text-xs text-muted-foreground sm:col-span-2">
-        {info.unborn ? "This repository has no commit yet — make a first commit before branching."
-          : value.mode === "new_worktree" ? <>Creates <span className="font-mono text-foreground">{preview}</span>. Only committed work is copied; an existing branch is reused.</>
-          : info.dirty ? "Your uncommitted changes move along to the new branch." : "The project folder switches to the new branch for every agent in it."}
+        {info.unborn ? t("ide_git.unborn")
+          : value.mode === "new_worktree" ? (() => {
+            const [before, after = ""] = t("ide_git.creates_worktree").split("{path}");
+            return <>{before}<span className="font-mono text-foreground">{preview}</span>{after}</>;
+          })()
+          : info.dirty ? t("ide_git.dirty_moves") : t("ide_git.folder_switches")}
       </p>
     </div>}
 
-    {info?.is_repo && value.mode === "switch_branch" && <div className="block text-xs text-muted-foreground"><span>Branch</span>
-      <BrandedSelect value={value.branch} disabled={disabled} ariaLabel="Existing branch" onValueChange={(branch) => onChange({ ...value, branch })} className="mt-1 h-9"
+    {info?.is_repo && value.mode === "switch_branch" && <div className="block text-xs text-muted-foreground"><span>{t("ide_git.branch")}</span>
+      <BrandedSelect value={value.branch} disabled={disabled} ariaLabel={t("ide_git.existing_branch")} onValueChange={(branch) => onChange({ ...value, branch })} className="mt-1 h-9"
         options={switchable.map((branch) => ({ value: branch.name, label: branch.name }))} />
     </div>}
 
-    {info?.is_repo && value.mode === "open_worktree" && <div className="block text-xs text-muted-foreground"><span>Worktree</span>
-      <BrandedSelect value={value.base} disabled={disabled} ariaLabel="Existing worktree"
+    {info?.is_repo && value.mode === "open_worktree" && <div className="block text-xs text-muted-foreground"><span>{t("ide_git.worktree")}</span>
+      <BrandedSelect value={value.base} disabled={disabled} ariaLabel={t("ide_git.existing_worktree")}
         onValueChange={(path) => { const tree = linked.find((entry) => entry.path === path); onChange({ ...value, base: path, branch: tree?.branch ?? "" }); }}
         className="mt-1 h-9"
-        options={linked.map((tree) => ({ value: tree.path, label: folderName(tree.path), hint: tree.branch || "detached", searchText: tree.path }))} />
+        options={linked.map((tree) => ({ value: tree.path, label: folderName(tree.path), hint: tree.branch || t("ide_git.detached"), searchText: tree.path }))} />
     </div>}
 
-    {value.mode === "init" && <p className="text-xs text-muted-foreground">Creates a repository on <span className="font-mono">main</span> with an empty first commit. Your files are not committed — you decide what goes in.</p>}
+    {value.mode === "init" && (() => {
+      const [before, after = ""] = t("ide_git.init_note").split("{branch}");
+      return <p className="text-xs text-muted-foreground">{before}<span className="font-mono">main</span>{after}</p>;
+    })()}
   </section>;
 }

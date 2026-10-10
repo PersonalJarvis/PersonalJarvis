@@ -24,6 +24,8 @@ def test_lang_normalization():
     assert wmf.vosk_lang_for("de-DE") == "de"
     assert wmf.vosk_lang_for("de") == "de"
     assert wmf.vosk_lang_for("es") == "es"
+    assert wmf.vosk_lang_for("pt") == "pt"
+    assert wmf.vosk_lang_for("pt-PT") == "pt"
     assert wmf.vosk_lang_for("auto") == "en"   # DEFAULT_LOCALE fallback
     assert wmf.vosk_lang_for(None) == "en"
     assert wmf.vosk_lang_for("fr") == "en"     # unsupported -> default
@@ -51,6 +53,46 @@ def test_ensure_downloads_extracts_and_resolves(tmp_path, monkeypatch):
     resolved = resolve_vosk_model_path("de")  # honors JARVIS__MEMORY__DATA_DIR
     assert resolved is not None
     assert Path(resolved).name.startswith("vosk-model-small-de")
+
+
+def _fake_legacy_model_zip() -> bytes:
+    """The legacy flat layout vosk-model-small-pt-0.3 ships: final.mdl at the
+    model root, no am/ or conf/ subdir."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("vosk-model-small-pt-0.3/final.mdl", b"x")
+        z.writestr("vosk-model-small-pt-0.3/HCLr.fst", b"y")
+        z.writestr("vosk-model-small-pt-0.3/Gr.fst", b"z")
+    return buf.getvalue()
+
+
+def test_portuguese_model_is_pinned():
+    spec = wmf.VOSK_MODELS["pt"]
+    assert spec.zip_name == "vosk-model-small-pt-0.3.zip"
+    assert len(spec.sha256) == 64
+
+
+def test_ensure_accepts_legacy_flat_layout_for_portuguese(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS__MEMORY__DATA_DIR", str(tmp_path))
+    data = _fake_legacy_model_zip()
+    monkeypatch.setitem(
+        wmf.VOSK_MODELS, "pt",
+        wmf.VoskModelSpec(
+            zip_name="vosk-model-small-pt-0.3.zip",
+            sha256=hashlib.sha256(data).hexdigest(),
+        ),
+    )
+
+    def fake_get(url: str) -> bytes:
+        assert url.endswith("vosk-model-small-pt-0.3.zip")
+        return data
+
+    out = wmf.ensure_vosk_model("pt-PT", data_dir=str(tmp_path), http_get=fake_get)
+    assert out is not None
+    assert wmf.vosk_model_present("pt", data_dir=str(tmp_path))
+    resolved = resolve_vosk_model_path("pt")
+    assert resolved is not None
+    assert Path(resolved).name == "vosk-model-small-pt-0.3"
 
 
 def test_ensure_is_idempotent_noop_when_present(tmp_path, monkeypatch):
@@ -128,7 +170,7 @@ def test_resolve_wake_language_pin_beats_stt_and_ui():
 
 def test_resolve_wake_language_ui_change_never_moves_a_pinned_wake_language():
     """Switching the app display language must not move a pinned wake word."""
-    for ui_lang in ("en", "de", "es"):
+    for ui_lang in ("en", "de", "es", "pt"):
         cfg = SimpleNamespace(
             trigger=_pin("de"),
             stt=SimpleNamespace(language="auto"),

@@ -15,18 +15,20 @@
  * searching for.
  */
 
+import { fill, translate } from "@/i18n";
+
 /**
  * Windows NTSTATUS values a coding CLI actually dies with, already re-signed
  * the way the backend hands them over. The hex form is what a user would find
  * a description of, so it stays in the text.
  */
 const WINDOWS_STATUS: ReadonlyMap<number, string> = new Map([
-  [-1073741510, "stopped with Ctrl-C (0xC000013A)"],
-  [-1073741819, "crashed — memory access violation (0xC0000005)"],
-  [-1073740791, "crashed — stack buffer overrun (0xC0000409)"],
-  [-1073740940, "crashed — heap corruption (0xC0000374)"],
-  [-1073740771, "crashed — unhandled exception (0xC000041D)"],
-  [-1073741502, "could not start — a required DLL was missing (0xC0000142)"],
+  [-1073741510, "ide_panes.exit.ctrl_c"],
+  [-1073741819, "ide_panes.exit.access_violation"],
+  [-1073740791, "ide_panes.exit.stack_overrun"],
+  [-1073740940, "ide_panes.exit.heap_corruption"],
+  [-1073740771, "ide_panes.exit.unhandled_exception"],
+  [-1073741502, "ide_panes.exit.dll_missing"],
 ]);
 
 /** What the pane writes into the terminal when its agent is gone. */
@@ -36,12 +38,12 @@ export function describeExit(name: string, code: number): string {
 
 /** The same explanation without the pane's name — for the header's tooltip. */
 export function explainExit(code: number): string {
-  if (code === 0) return "stopped";
+  if (code === 0) return translate("ide_panes.exit.stopped");
   const known = WINDOWS_STATUS.get(code);
-  if (known) return known;
+  if (known) return translate(known);
   // -1 is what both a child that exited with -1 and a backend that could not
   // read a code at all arrive as. They are one case to the reader: the agent is
   // gone and did not stop cleanly.
-  if (code === -1) return "stopped unexpectedly — use Restart to bring it back";
-  return `stopped unexpectedly (exit code ${code}) — use Restart to bring it back`;
+  if (code === -1) return translate("ide_panes.exit.unexpected");
+  return fill(translate("ide_panes.exit.unexpected_code"), { code });
 }

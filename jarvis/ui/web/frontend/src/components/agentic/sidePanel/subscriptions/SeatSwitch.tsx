@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   fetchAutoSwitch,
   switchSeat,
@@ -156,7 +157,7 @@ function eventText(t: (key: string) => string, event: SeatSwitchEvent, tool: str
  */
 export function AutoSwitchBar() {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const seat = useSeatSwitch();
   const state = seat?.state;
   const options = useMemo(
@@ -225,7 +226,7 @@ export function AutoSwitchBar() {
  */
 export function SwitchSeatButton({ row }: { row: SubscriptionRow }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const seat = useSeatSwitch();
   if (!seat?.state || row.active) return null;
   const { account } = row;

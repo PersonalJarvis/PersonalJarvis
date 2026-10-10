@@ -1,5 +1,6 @@
 import { MessageCircle, Zap } from "lucide-react";
 import type { ChannelLink } from "@/hooks/useFriends";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,6 +19,7 @@ export function SourceBadge({
   channels: ChannelLink[];
   className?: string;
 }) {
+  const t = useT();
   const hasTelegram = channels.some((c) => c.channel === "telegram");
   const hasJarvis = channels.some((c) => c.channel === "jarvis_pubkey");
 
@@ -29,7 +31,7 @@ export function SourceBadge({
           className
         )}
       >
-        no source
+        {t("friends_list.no_source")}
       </span>
     );
   }
@@ -51,7 +53,7 @@ export function SourceBadge({
       )}
       {hasJarvis && (
         <span
-          title="Jarvis Federation"
+          title={t("friends_list.jarvis_federation")}
           className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/15 text-primary"
         >
           <Zap className="h-2.5 w-2.5" />

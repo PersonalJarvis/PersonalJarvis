@@ -86,6 +86,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { fill, translate, useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { waitForNativeDrop } from "@/lib/nativeDrop";
 import { useDragSessionEnd } from "./dragSessionEnd";
 import { Button, Field, IconButton, SectionLabel } from "./controls";
@@ -181,6 +183,7 @@ export function FolderPicker({
   showSelection = true,
   className,
 }: FolderPickerProps) {
+  const t = useT();
   const [path, setPath] = useState<string | null>(null);
   const [parent, setParent] = useState<string | null>(null);
   const [entries, setEntries] = useState<FolderItem[]>([]);
@@ -433,7 +436,7 @@ export function FolderPicker({
     createFolder({ parent, name })
       .then((res) => {
         if (res.error || !res.folder) {
-          setCreateNote(res.error || "Could not create that folder.");
+          setCreateNote(res.error || t("ide_folder_picker.create_failed"));
           return;
         }
         setNaming(false);
@@ -507,12 +510,10 @@ export function FolderPicker({
     // Read the DataTransfer BEFORE awaiting anything (see extractDropPayload).
     const payload = extractDropPayload(event.dataTransfer);
     if (!payload.path && !payload.name) {
-      setDropNote(
-        "That was not a folder. Drop a folder here, or pick one from the list.",
-      );
+      setDropNote(t("ide_folder_picker.drop_not_folder"));
       return;
     }
-    setDropNote("Finding the folder you dropped…");
+    setDropNote(t("ide_folder_picker.drop_finding"));
     // The desktop shell knows the real path of what was dropped and says so a
     // moment after the drop; with only a name, that beats searching for it.
     // The wait itself is armed here, synchronously, so no announcement is
@@ -532,7 +533,7 @@ export function FolderPicker({
           navigate(res.resolved);
         } else {
           setDropChoices(res.candidates);
-          setDropNote(res.detail || "Could not find that folder.");
+          setDropNote(res.detail || t("ide_folder_picker.drop_not_found"));
         }
       })
       .catch((e) => setDropNote((e as Error).message));
@@ -551,15 +552,15 @@ export function FolderPicker({
   // hints. Built from the real home folder, never from a hard-coded `C:\…` —
   // the same UI is opened against Macs and Linux boxes.
   const pathExample = home ? joinPath(home, "my-project") : null;
-  const machine = deviceName || "This machine";
+  const machine = deviceName || t("ide_folder_picker.this_machine");
   const crumbs = path ? foldCrumbs(pathCrumbs(path)) : [];
   const listLabel = searchingMachine
     ? null
     : pathLeaf !== null
-      ? `Folders starting with “${pathLeaf}”`
+      ? fill(t("ide_folder_picker.starting_with"), { leaf: pathLeaf })
       : path
-        ? `Folders in ${leafName(path)}`
-        : "Places";
+        ? fill(t("ide_folder_picker.folders_in"), { folder: leafName(path) })
+        : t("ide_folder_picker.places");
   const hasMessages = Boolean(error || nativeNote || dropNote || createNote);
 
   return (
@@ -586,7 +587,7 @@ export function FolderPicker({
         <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-surface border-2 border-dashed border-primary/60 bg-background/95">
           <FolderOpen className="h-8 w-8 text-primary" />
           <span className="text-sm font-medium text-foreground">
-            Drop to choose this folder
+            {t("ide_folder_picker.drop_overlay")}
           </span>
         </div>
       )}
@@ -602,8 +603,8 @@ export function FolderPicker({
           <Field
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or paste a path"
-            aria-label="Search folders by name, or paste a path"
+            placeholder={t("ide_folder_picker.search_placeholder")}
+            aria-label={t("ide_folder_picker.search_aria")}
             data-testid="folder-search"
             data-autofocus
             className="h-9 w-full pl-9 pr-8"
@@ -613,7 +614,7 @@ export function FolderPicker({
           {query && (
             <IconButton
               size="sm"
-              label="Clear search"
+              label={t("ide_folder_picker.clear_search")}
               onClick={() => setQuery("")}
               className="absolute right-1.5 top-1/2 -translate-y-1/2"
             >
@@ -626,7 +627,7 @@ export function FolderPicker({
             onClick={browseNatively}
             disabled={nativeOpen}
             data-testid="native-browse"
-            title="Choose the folder in this computer's own folder window"
+            title={t("ide_folder_picker.browse_title")}
             className="h-9"
           >
             {nativeOpen ? (
@@ -634,7 +635,7 @@ export function FolderPicker({
             ) : (
               <FolderOpen className="h-4 w-4" />
             )}
-            {nativeOpen ? "Window open…" : "Browse…"}
+            {nativeOpen ? t("ide_folder_picker.window_open") : t("ide_folder_picker.browse")}
           </Button>
         )}
         <Button
@@ -645,11 +646,11 @@ export function FolderPicker({
           }}
           disabled={naming}
           data-testid="new-folder"
-          title={`Make a new folder in ${path ?? "your home folder"}`}
+          title={fill(t("ide_folder_picker.new_folder_title"), { path: path ?? t("ide_folder_picker.your_home_folder") })}
           className="h-9"
         >
           <FolderPlus className="h-4 w-4" />
-          New folder
+          {t("ide_folder_picker.new_folder")}
         </Button>
       </div>
 
@@ -658,8 +659,7 @@ export function FolderPicker({
           that hung. Saying so costs one line and saves the confusion. */}
       {nativeOpen && (
         <p className="mt-2 text-xs text-primary" role="status">
-          A folder window has opened. Choose your folder there. If you cannot
-          see it, it is behind this window or in the taskbar.
+          {t("ide_folder_picker.native_open_note")}
         </p>
       )}
 
@@ -670,7 +670,7 @@ export function FolderPicker({
         {/* ------------------------------------------------------ address bar */}
         <div className="relative flex h-10 shrink-0 items-center gap-0.5 rounded-t-surface border-b border-border bg-secondary/40 px-1">
           <IconButton
-            label="Go up one folder"
+            label={t("ide_folder_picker.go_up")}
             onClick={() => navigate(parent)}
             disabled={loading || searchingMachine || path === null}
           >
@@ -692,18 +692,18 @@ export function FolderPicker({
           ) : searchingMachine ? (
             <span className="min-w-0 flex-1 truncate px-2 text-xs text-muted-foreground">
               {visible.length === 0 && !searching
-                ? `Nothing on ${machine} is called “${query.trim()}”`
-                : `Folders called “${query.trim()}” anywhere on ${machine}`}
+                ? fill(t("ide_folder_picker.nothing_called"), { machine, query: query.trim() })
+                : fill(t("ide_folder_picker.called_anywhere"), { machine, query: query.trim() })}
             </span>
           ) : (
             <nav
-              aria-label="Folder path"
+              aria-label={t("ide_folder_picker.folder_path")}
               className="flex h-full min-w-0 flex-1 items-center"
             >
               <button
                 type="button"
                 onClick={() => navigate(null)}
-                title={`Start: recent folders and places on ${machine}`}
+                title={fill(t("ide_folder_picker.start_title"), { machine })}
                 aria-current={path === null ? "location" : undefined}
                 className={cn(
                   CRUMB,
@@ -723,8 +723,8 @@ export function FolderPicker({
                       <button
                         type="button"
                         onClick={() => setEditingPath(true)}
-                        title={`${crumb.hidden}\nClick to see and edit the whole path`}
-                        aria-label="Show the whole path"
+                        title={`${crumb.hidden}\n${t("ide_folder_picker.click_to_edit_path")}`}
+                        aria-label={t("ide_folder_picker.show_whole_path")}
                         className={cn(CRUMB, "shrink-0")}
                       >
                         …
@@ -761,8 +761,8 @@ export function FolderPicker({
 
           {!editingPath && (
             <IconButton
-              label="Type a path"
-              title="Type or paste a path — Tab completes folder names"
+              label={t("ide_folder_picker.type_path")}
+              title={t("ide_folder_picker.type_path_title")}
               onClick={() => setEditingPath(true)}
               data-testid="edit-path"
             >
@@ -770,11 +770,11 @@ export function FolderPicker({
             </IconButton>
           )}
           <IconButton
-            label={showHidden ? "Hide hidden folders" : "Show hidden folders"}
+            label={showHidden ? t("ide_folder_picker.hide_hidden") : t("ide_folder_picker.show_hidden")}
             title={
               showHidden
-                ? "Hidden folders (names starting with a dot) are shown"
-                : "Also list hidden folders — names starting with a dot"
+                ? t("ide_folder_picker.hidden_shown_title")
+                : t("ide_folder_picker.hidden_list_title")
             }
             aria-pressed={showHidden}
             onClick={toggleHidden}
@@ -789,7 +789,7 @@ export function FolderPicker({
             )}
           </IconButton>
           <IconButton
-            label="Reload this folder"
+            label={t("ide_folder_picker.reload")}
             onClick={() => void load(path)}
             disabled={loading}
           >
@@ -824,8 +824,8 @@ export function FolderPicker({
                     setCreateNote(null);
                   }
                 }}
-                placeholder="Name of the new folder"
-                aria-label="Name of the new folder"
+                placeholder={t("ide_folder_picker.new_folder_name")}
+                aria-label={t("ide_folder_picker.new_folder_name")}
                 data-testid="new-folder-name"
                 className="min-w-0 flex-1"
                 spellCheck={false}
@@ -838,10 +838,10 @@ export function FolderPicker({
                 data-testid="new-folder-create"
               >
                 {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Create
+                {t("ide_folder_picker.create")}
               </Button>
               <IconButton
-                label="Cancel new folder"
+                label={t("ide_folder_picker.cancel_new_folder")}
                 onClick={() => {
                   setNaming(false);
                   setCreateNote(null);
@@ -851,8 +851,8 @@ export function FolderPicker({
               </IconButton>
             </div>
             <p className="mt-1.5 truncate pl-6 text-xs text-muted-foreground">
-              Created in{" "}
-              <span className="font-mono">{path ?? "your home folder"}</span>
+              {t("ide_folder_picker.created_in")}{" "}
+              <span className="font-mono">{path ?? t("ide_folder_picker.your_home_folder")}</span>
             </p>
           </form>
         )}
@@ -860,8 +860,8 @@ export function FolderPicker({
         {/* ------------------------------------------------------------- list */}
         <div className="min-h-[14rem] flex-1 overflow-y-auto scrollbar-jarvis p-1.5">
           {visibleRecents.length > 0 && (
-            <section aria-label="Recent folders" className="pb-2">
-              <GroupLabel>Recent folders</GroupLabel>
+            <section aria-label={t("ide_folder_picker.recent_folders")} className="pb-2">
+              <GroupLabel>{t("ide_folder_picker.recent_folders")}</GroupLabel>
               <ul>
                 {visibleRecents.map((recent) => (
                   <li key={recent.path} className="group/row relative">
@@ -895,16 +895,18 @@ export function FolderPicker({
                             layout is replayed — the launcher. */}
                         {onSelectRecent && (
                           <span className="block tabular-nums">
-                            {recent.terminals}{" "}
-                            {recent.terminals === 1 ? "terminal" : "terminals"}
+                            {fill(
+                              t(recent.terminals === 1 ? "ide_folder_picker.terminals_one" : "ide_folder_picker.terminals_other"),
+                              { count: recent.terminals },
+                            )}
                           </span>
                         )}
                       </span>
                     </button>
                     <IconButton
                       size="sm"
-                      label={`Forget ${recent.name}`}
-                      title="Remove from this list (the folder itself stays)"
+                      label={fill(t("ide_folder_picker.forget"), { folder: recent.name })}
+                      title={t("ide_folder_picker.forget_title")}
                       onClick={(e) => {
                         e.stopPropagation();
                         setRecents((prev) =>
@@ -944,10 +946,10 @@ export function FolderPicker({
               )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate">
-                  Create folder “{createOffer.name}”
+                  {fill(t("ide_folder_picker.create_folder_named"), { folder: createOffer.name })}
                 </span>
                 <span className="block truncate font-mono text-micro text-muted-foreground">
-                  in {createOffer.parent ?? "your home folder"}
+                  {fill(t("ide_folder_picker.in_parent"), { path: createOffer.parent ?? t("ide_folder_picker.your_home_folder") })}
                 </span>
               </span>
             </button>
@@ -960,18 +962,18 @@ export function FolderPicker({
           {visible.length === 0 && !loading && !searching ? (
             <p className="px-2.5 py-6 text-center text-sm text-muted-foreground">
               {searchingMachine
-                ? `No folder with that name was found.${
+                ? `${t("ide_folder_picker.empty_search")}${
                     pathExample
-                      ? ` To open one by where it is, type its full path — like ${pathExample}.`
+                      ? ` ${fill(t("ide_folder_picker.empty_search_hint"), { example: pathExample })}`
                       : ""
                   }`
                 : pathLeaf !== null
-                  ? `No folder here starts with “${pathLeaf}”.`
+                  ? fill(t("ide_folder_picker.empty_leaf"), { leaf: pathLeaf })
                   : needle
-                    ? `No folder here matches “${query.trim()}”. Keep typing to search the whole machine.`
+                    ? fill(t("ide_folder_picker.empty_needle"), { query: query.trim() })
                     : path
-                      ? "This folder has no folders inside. You can choose it as it is, or make a new folder in it."
-                      : "Nothing to list here — search above, drop a folder, or type its path."}
+                      ? t("ide_folder_picker.empty_folder")
+                      : t("ide_folder_picker.empty_start")}
             </p>
           ) : (
             <ul>
@@ -1040,8 +1042,9 @@ export function FolderPicker({
               <p className="text-destructive">{error}</p>
               {pathExample && (
                 <p className="mt-0.5 text-muted-foreground">
-                  A full path on this machine looks like{" "}
-                  <code className="font-mono">{pathExample}</code>.
+                  {t("ide_folder_picker.path_example_before")}{" "}
+                  <code className="font-mono">{pathExample}</code>
+                  {t("ide_folder_picker.path_example_after")}
                 </p>
               )}
               {/* The path field's "no such folder", answered: make it. */}
@@ -1057,7 +1060,7 @@ export function FolderPicker({
                   ) : (
                     <FolderPlus className="h-3.5 w-3.5" />
                   )}
-                  Create folder “{createOffer.name}”
+                  {fill(t("ide_folder_picker.create_folder_named"), { folder: createOffer.name })}
                 </Button>
               )}
             </div>
@@ -1102,7 +1105,7 @@ export function FolderPicker({
         </div>
       ) : (
         <p className="mt-2 text-xs text-muted-foreground">
-          Tip: you can also drag a folder here from your file manager.
+          {t("ide_folder_picker.tip_drag")}
         </p>
       )}
     </div>
@@ -1134,6 +1137,7 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
  * the choice is gone the moment it is made.
  */
 function SelectedFolder({ selected }: { selected: string | null }) {
+  const t = useT();
   return (
     <div
       data-testid="folder-selection"
@@ -1151,7 +1155,7 @@ function SelectedFolder({ selected }: { selected: string | null }) {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">
-              <span className="sr-only">Chosen folder: </span>
+              <span className="sr-only">{t("ide_folder_picker.chosen_folder")}{" "}</span>
               {leafName(selected)}
             </span>
             <span
@@ -1166,7 +1170,7 @@ function SelectedFolder({ selected }: { selected: string | null }) {
         <>
           <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="text-sm text-muted-foreground">
-            No folder chosen yet. Open a folder in the list to choose it.
+            {t("ide_folder_picker.no_folder_chosen")}
           </span>
         </>
       )}
@@ -1275,14 +1279,16 @@ export function lastUsedLabel(lastUsed: number, now: number = Date.now()): strin
     return d.getTime();
   };
   const days = Math.round((dayStart(now) - dayStart(ms)) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
+  if (days <= 0) return translate("ide_folder_picker.today");
+  if (days === 1) return translate("ide_folder_picker.yesterday");
+  if (days < 7) return fill(translate("ide_folder_picker.days_ago"), { count: days });
   if (days < 30) {
     const weeks = Math.floor(days / 7);
-    return weeks === 1 ? "Last week" : `${weeks} weeks ago`;
+    return weeks === 1
+      ? translate("ide_folder_picker.last_week")
+      : fill(translate("ide_folder_picker.weeks_ago"), { count: weeks });
   }
-  return new Date(ms).toLocaleDateString(undefined, {
+  return new Date(ms).toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), {
     day: "numeric",
     month: "short",
     year: days > 300 ? "numeric" : undefined,
@@ -1368,6 +1374,7 @@ function PathInput({
   onUse: (value: string) => Promise<void>;
   onCancel: () => void;
 }) {
+  const t = useT();
   const [value, setValue] = useState(initial);
   const [options, setOptions] = useState<FolderItem[]>([]);
   const [active, setActive] = useState(-1);
@@ -1489,8 +1496,8 @@ function PathInput({
             if (document.activeElement !== inputRef.current) onCancel();
           }, 150)
         }
-        placeholder="Type a path — Tab completes folder names"
-        aria-label="Folder path"
+        placeholder={t("ide_folder_picker.path_input_placeholder")}
+        aria-label={t("ide_folder_picker.folder_path")}
         data-testid="folder-path-input"
         className="h-8 w-full pr-8 font-mono text-xs"
         spellCheck={false}
@@ -1504,7 +1511,7 @@ function PathInput({
       {value.trim() && (
         <IconButton
           size="sm"
-          label="Go to this path"
+          label={t("ide_folder_picker.go_to_path")}
           onMouseDown={(e) => e.preventDefault()}
           onClick={submit}
           className="absolute right-1 top-1/2 -translate-y-1/2 text-primary"

@@ -429,6 +429,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 {
                     "type": "provider_error",
                     "error": "Voice connection lost; actions were not replayed.",
+                    # Stable code the desktop UI translates; ``error`` stays.
+                    "message_code": "voice_connection_lost",
                 }
             )
         finally:

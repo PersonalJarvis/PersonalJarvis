@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FileText, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import { cn } from "@/lib/utils";
 import { MemoryMarkdown } from "../chat/MemoryDocument";
 
@@ -49,6 +50,7 @@ export function useAgentKnowledge(agentId: string, sample: boolean) {
 
 export function LearnedInstructions({ agentId, sample }: { agentId: string; sample: boolean }) {
   const t = useT();
+  const locale = useRunLocale();
   const query = useAgentKnowledge(agentId, sample);
   if (sample) return null;
   const data = query.data;
@@ -67,7 +69,7 @@ export function LearnedInstructions({ agentId, sample }: { agentId: string; samp
         {data?.learned_instructions.length ? <ul className="list-disc space-y-2 pl-4 text-sm">{data.learned_instructions.map((rule) => <li key={rule}>{rule}</li>)}</ul>
           : <p className="text-sm text-muted-foreground">{t("society.profile_card.no_instructions")}</p>}
         <p className="mt-3 text-xs text-muted-foreground" role="status">{t(`society.profile_card.review_${status}`)}{data?.reviews.pending ? ` (${data.reviews.pending})` : ""}</p>
-        {data?.last_review && <p className="mt-1 text-xs text-muted-foreground">{t("society.profile_card.last_review")}: {new Date(data.last_review.updated_ms).toLocaleString()}</p>}
+        {data?.last_review && <p className="mt-1 text-xs text-muted-foreground">{t("society.profile_card.last_review")}: {new Date(data.last_review.updated_ms).toLocaleString(locale)}</p>}
       </>}
   </section>;
 }

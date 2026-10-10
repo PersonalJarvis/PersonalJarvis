@@ -614,6 +614,17 @@ def test_readonly_answer_rejects_worker_clarification_as_a_result() -> None:
     ) is None
 
 
+def test_portuguese_worker_clarification_is_not_a_result() -> None:
+    clarification = (
+        "Pergunta rápida antes de começar: queres uma apresentação "  # i18n-allow: fixture
+        "ou um relatório escrito?"  # i18n-allow: fixture
+    )
+    assert is_clarification_only_answer(clarification)
+    assert not is_clarification_only_answer(
+        "O relatório está pronto: as três fontes concordam no essencial."  # i18n-allow: fixture
+    )
+
+
 # --- informational_file_answer: research request answered in a prose document --
 #
 # Root cause of mission_019ecb56 (2026-06-15): "recherchiere AI-News" is an

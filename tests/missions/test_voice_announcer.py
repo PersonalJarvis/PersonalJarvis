@@ -583,3 +583,59 @@ async def test_stop_unsubscribes(store_and_bus) -> None:
     )
 
     assert len(captured) == 0
+
+
+# ---------------------------------------------------------------------------
+# European Portuguese: a pt mission is announced in Portuguese end to end
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_portuguese_mission_announces_in_portuguese(store_and_bus) -> None:
+    store, bus = store_and_bus
+    speech_bus = EventBus()
+    captured = _collect_announcements(speech_bus)
+    announcer = MissionAnnouncer(bus=bus, store=store, speech_bus=speech_bus)
+    await announcer.start()
+
+    approved = await _seed_voice_mission(store, language="pt")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=approved,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionApproved(
+                result_uri=f"mission://{approved}",
+                tokens_used=0,
+                cost_usd=0.0,
+                wall_ms=0,
+                summary_de="Mission abgeschlossen.",
+                summary_en="Mission completed.",
+                summary_local="Missão concluída.",  # i18n-allow: PT TTS
+            ),
+        )
+    )
+    failed = await _seed_voice_mission(store, language="pt")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=failed,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionFailed(reason="budget_exceeded", last_state="RUNNING"),
+        )
+    )
+    cancelled = await _seed_voice_mission(store, language="pt")
+    await store.append_and_publish(
+        EventEnvelope(
+            mission_id=cancelled,
+            source_actor="ui",
+            ts_ms=now_ms(),
+            payload=MissionCancelled(reason="user"),
+        )
+    )
+
+    texts = [a.text for a in captured]
+    assert texts[0] == "Missão concluída."  # i18n-allow
+    assert texts[1] == "A missão falhou. O limite de custo foi atingido."  # i18n-allow
+    assert texts[2] == "Missão cancelada."  # i18n-allow
+    assert {a.language for a in captured} == {"pt"}

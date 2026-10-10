@@ -41,6 +41,11 @@ from jarvis.dictation.cleanup import (
             "es",
             "Creo que deberíamos enviarlo.",
         ),
+        (
+            "Humm, acho que ãh devíamos enviá-lo amanhã.",  # i18n-allow: pt fixture under test
+            "pt",
+            "Acho que devíamos enviá-lo amanhã.",  # i18n-allow: pt fixture under test
+        ),
     ],
 )
 def test_removes_hesitation_sounds(text: str, language: str, expected: str) -> None:
@@ -74,6 +79,9 @@ def test_every_supported_language_has_rules() -> None:
         # Spanish words that are demonstratives / connectives, not fillers.
         ("Este informe es bueno, pues claro.", "es"),
         ("O sea que vale, entonces seguimos.", "es"),
+        # European Portuguese discourse markers that are also content words.
+        ("Pois, o tipo de ficheiro está pronto, então seguimos.", "pt"),  # i18n-allow
+        ("Portanto, quer dizer que o hum do ventilador parou.", "pt"),  # i18n-allow
     ],
 )
 def test_content_words_are_never_removed(text: str, language: str) -> None:
@@ -160,6 +168,11 @@ def test_german_eh_survives_a_spanish_tag() -> None:
         ("eh", "es", "ordinary German for 'anyway'"),
         ("ah", "en", "a spoken interjection that carries meaning of its own"),
         ("um", "en", "one of the most common German prepositions"),
+        ("eh", "pt", "ordinary German for 'anyway'"),
+        ("hum", "pt", "an English noun and verb ('the hum of the fan')"),
+        ("um", "pt", "a German preposition and the Portuguese article"),
+        ("tipo", "pt", "the Portuguese noun 'type'"),
+        ("pronto", "pt", "the Portuguese adjective 'ready'"),
     ],
 )
 def test_a_filler_must_be_meaningless_in_every_supported_language(
@@ -228,6 +241,7 @@ def test_ceiling_is_configurable() -> None:
         ("de-DE", "de"),
         ("DE_de", "de"),
         ("en-US", "en"),
+        ("pt-PT", "pt"),
         ("auto", None),
         ("unknown", None),
         ("", None),
@@ -249,6 +263,8 @@ def test_normalize_language(value: str | None, expected: str | None) -> None:
         ("Deutsch", "de"),
         ("Spanish", "es"),
         ("español", "es"),
+        ("Portuguese", "pt"),
+        ("português", "pt"),  # i18n-allow: language name
         ("French", None),  # a name we have no rules for is still a no-op
     ],
 )

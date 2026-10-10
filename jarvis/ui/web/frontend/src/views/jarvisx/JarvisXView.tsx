@@ -47,6 +47,7 @@ import { useEventStore } from "@/store/events";
 import { JarvisXConfirmDialog } from "@/views/jarvisx/JarvisXConfirmDialog";
 import { JarvisXEditor } from "@/views/jarvisx/JarvisXEditor";
 import { JarvisXSettingsPanel } from "@/views/jarvisx/JarvisXSettingsPanel";
+import { uiLocale } from "@/lib/boardInsights";
 
 /**
  * Jarvis X — screenshots and screen recordings, without the assistant.
@@ -69,8 +70,8 @@ function relativeTime(iso: string, t: (key: string) => string, now: number): str
   const date = new Date(ms);
   const sameDay = new Date(now).toDateString() === date.toDateString();
   return sameDay
-    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : date.toLocaleDateString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    ? date.toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleDateString(uiLocale(), { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 export function JarvisXView() {

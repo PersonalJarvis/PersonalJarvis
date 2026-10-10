@@ -25,6 +25,8 @@ vi.mock("@/hooks/useRuns", () => ({
   }),
 }));
 vi.mock("@/i18n", () => ({
+  fill: (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)),
   useT: () => (k: string) => k,
   useUiLanguage: () => "en",
 }));
@@ -36,7 +38,7 @@ describe("RunDetail", () => {
     const { container } = render(<RunDetail sessionId="s1" />);
     expect(container.querySelector('[data-testid="run-detail"]')).not.toBeNull();
     expect(container.querySelector('[data-outcome="success"]')).not.toBeNull();
-    expect(container.textContent).toContain("Success");
+    expect(container.textContent).toContain("run_inspector.outcome.success");
     // turn content is visible without expanding anything
     expect(container.querySelector('[data-testid="run-turn-card"]')).not.toBeNull();
     expect(container.textContent).toContain("hi");

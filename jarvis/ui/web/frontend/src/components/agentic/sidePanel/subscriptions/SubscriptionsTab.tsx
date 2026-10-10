@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, ChevronRight, Loader2, RefreshCw } from "lucide-react";
-import { fill, useT, useUiLanguage } from "@/i18n";
+import { fill, useT } from "@/i18n";
+import { useRunLocale } from "@/components/runs/format";
 import {
   fetchAgentAccounts,
   fetchAgentUsage,
@@ -129,7 +130,7 @@ function windowLabel(t: (key: string) => string, window: UsageWindow): string {
 
 function UsageBar({ window, now }: { window: UsageWindow; now: number }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   const percent = Math.round(Math.min(100, Math.max(0, window.percent)));
   const label = windowLabel(t, window);
   const reset = resetText(window.resets_at, now, lang);
@@ -168,7 +169,7 @@ function UsageBar({ window, now }: { window: UsageWindow; now: number }) {
 /** The expanded part of a row: every limit of the plan, or why there is none. */
 function UsageDetails({ usage, now }: { usage: AccountUsage | null; now: number }) {
   const t = useT();
-  const lang = useUiLanguage();
+  const lang = useRunLocale();
   if (!usage) {
     return <p className="text-[11.5px] text-muted-foreground">{t("ide_side_panel.subscriptions.usage_pending")}</p>;
   }

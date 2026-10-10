@@ -5,6 +5,8 @@ import { useEventStore, type ConversationSummary } from "@/store/events";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useHomeStore } from "@/store/home";
 import { transcriptFromMessages } from "@/lib/homeTranscript";
+import { useI18nStore } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 /**
  * The one chat history the app has, and the one way to open a row of it.
@@ -152,7 +154,10 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
  */
 export function chatRowLabel(row: ChatRow, t: (key: string) => string): { text: string; untitled: boolean } {
   const title = row.title.trim();
-  if (title) return { text: title, untitled: false };
+  // "New Chat" is the placeholder title `ensureActiveThread` stores for a fresh
+  // text thread; it is not a topic, so it reads in the UI language like any
+  // other untitled row.
+  if (title && title !== "New Chat") return { text: title, untitled: false };
   if (row.kind === "voice") {
     const when = formatChatWhen(row.updatedMs);
     const kind = t("sidebar.untitled_voice_chat");
@@ -168,9 +173,9 @@ export function formatChatWhen(ms: number): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   if (d.getTime() >= today.getTime()) {
-    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString(localeForUiLanguage(useI18nStore.getState().ui), { hour: "2-digit", minute: "2-digit" });
   }
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return d.toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), { month: "short", day: "numeric" });
 }
 
 export type ChatDayBucket = "today" | "yesterday" | "week" | "month" | "older";

@@ -15,6 +15,8 @@ ASKS = [
     "Do you have a GitHub personal access token?",
     "Schick mir bitte deinen API-Schlüssel.",  # i18n-allow
     "Por favor, envíame la contraseña de la base de datos.",  # i18n-allow
+    "Preciso da tua chave de API da OpenAI para terminar a app.",  # i18n-allow
+    "Cola aqui a palavra-passe da base de dados, por favor.",  # i18n-allow
     "请提供你的 API 密钥。",  # i18n-allow
 ]
 
@@ -24,6 +26,7 @@ QUIET = [
     "Done: the summary is in report.md.",
     "A bot token identifies your Discord application.",
     "Der Discord-Bot-Token ist gespeichert und Discord hat ihn akzeptiert.",  # i18n-allow
+    "A app lê a chave a partir de OPENAI_API_KEY e está a funcionar.",  # i18n-allow
 ]
 
 
@@ -40,4 +43,5 @@ def test_using_or_explaining_a_secret_is_not_a_request(text: str) -> None:
 def test_a_claim_that_a_secret_is_stored_is_spotted() -> None:
     assert claims_stored_secret("Der Bot-Token ist bereits sicher gespeichert.")  # i18n-allow
     assert claims_stored_secret("Your API key is already stored.")
+    assert claims_stored_secret("O token do bot já está guardado.")  # i18n-allow
     assert not claims_stored_secret("The bot is online.")

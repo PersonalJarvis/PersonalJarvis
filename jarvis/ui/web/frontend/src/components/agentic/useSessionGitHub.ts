@@ -1,3 +1,4 @@
+import { translate } from "@/i18n";
 import { useCallback, useSyncExternalStore } from "react";
 import { requestConnect, spreadDelay } from "@/lib/connectBudget";
 import type { CiStatus, PullRequestState } from "./sidePanel/git/gitOverviewApi";
@@ -75,7 +76,7 @@ function start(workspaceId: string): Entry {
       }));
       notify();
     } catch {
-      if (!disposed) unavailable("GitHub status could not be refreshed.");
+      if (!disposed) unavailable(translate("ide_panes.github.refresh_failed"));
     } finally {
       clearTimeout(timeout);
       controller = undefined;
@@ -90,7 +91,7 @@ function start(workspaceId: string): Entry {
     }
     // A suspended window must not present its last green badge as live data.
     if (Object.values(entry.panes).some((value) => value && Date.now() / 1000 - value.fetched_at > 60)) {
-      unavailable("Refreshing GitHub status…");
+      unavailable(translate("ide_panes.github.refreshing"));
     }
     if (!controller) schedule(spreadDelay(500));
   };

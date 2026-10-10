@@ -73,6 +73,10 @@ def test_refusal_hint_installed_not_connected():
     assert "GWS" in hint_de and "installiert" in hint_de
     hint_en = refusal_hint("calendar", fake, "en")
     assert "GWS" in hint_en and "installed" in hint_en
+    hint_pt = refusal_hint("calendar", fake, "pt")
+    assert "GWS" in hint_pt and "ainda não está ligado" in hint_pt  # i18n-allow
+    hint_es = refusal_hint("calendar", fake, "es")
+    assert "GWS" in hint_es and "aún no está conectado" in hint_es  # i18n-allow
 
 
 def test_refusal_hint_known_but_not_installed():

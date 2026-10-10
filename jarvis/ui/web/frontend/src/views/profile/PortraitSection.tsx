@@ -14,7 +14,8 @@ import { Loader2, RefreshCw, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useBio, useBioFeedback, useBioRegenerate, type BioFeedbackKind } from "@/hooks/useBoard";
-import { useT } from "@/i18n";
+import { useI18nStore, useT } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 import { useEventStore } from "@/store/events";
 import { ProfileGroup } from "@/views/profile/ProfileGroup";
 
@@ -45,7 +46,7 @@ export function PortraitSection() {
   const generatedAt = bio.data?.generated_at ?? null;
   const cutOff = !!text && !isFinishedText(text);
   const written = generatedAt
-    ? new Date(generatedAt).toLocaleDateString(undefined, {
+    ? new Date(generatedAt).toLocaleDateString(localeForUiLanguage(useI18nStore.getState().ui), {
         day: "numeric",
         month: "short",
         year: "numeric",

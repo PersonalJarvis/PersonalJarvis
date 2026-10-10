@@ -26,9 +26,10 @@ import {
   type WakeWordSaveResult,
 } from "@/hooks/useWakeWord";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
+import { backendMessage } from "@/lib/backendMessage";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { isAutopilotToastsEnabled, setAutopilotToastsEnabled } from "@/lib/autopilotToasts";
 
 // The wake-word language pin — its OWN setting ([trigger.wake_word] language),
@@ -37,14 +38,14 @@ import { isAutopilotToastsEnabled, setAutopilotToastsEnabled } from "@/lib/autop
 // wake word spoken in German must be possible, with neither following the
 // other). Mirrors jarvis/ui/web/settings_routes.py::_WAKE_LANGUAGES minus
 // "auto".
-type WakeLanguage = "en" | "de" | "es";
+type WakeLanguage = "en" | "de" | "es" | "pt";
 
 // Concrete spoken languages only — "auto" is deliberately NOT offered here: the
 // wake word must be pinned to the language the user actually speaks (an
 // ambiguous "auto" silently derives a default from other settings, the exact
 // trap that left German speakers deaf). A user on "auto" sees a "choose your
 // language" placeholder until they pick.
-const WAKE_LANGUAGES: WakeLanguage[] = ["en", "de", "es"];
+const WAKE_LANGUAGES: WakeLanguage[] = ["en", "de", "es", "pt"];
 
 interface WakeSelfTestResult {
   ok: boolean;
@@ -56,6 +57,12 @@ interface WakeSelfTestResult {
   mic_ok: boolean;
   message: string;
   hint: string;
+  // Stable codes for `message` / `hint` (jarvis/ui/web/settings_routes.py
+  // WAKE_MESSAGE_CODES / WAKE_HINT_CODES, plus the wake plan's codes); the UI
+  // translates them and falls back to the English sentences above.
+  message_code?: string;
+  message_params?: Record<string, string>;
+  hint_code?: string;
 }
 
 /**
@@ -320,7 +327,16 @@ function WakeWordPanel() {
       });
       setResult(res);
       if (res.degraded) {
-        pushToast("warning", res.message);
+        pushToast(
+          "warning",
+          backendMessage(
+            t,
+            "settings_view.wake_word.msg",
+            res.message_code,
+            res.message_params,
+            res.message,
+          ),
+        );
       } else {
         pushToast("success", t("settings_view.wake_word.saved"));
       }
@@ -342,26 +358,37 @@ function WakeWordPanel() {
       const res = await fetch("/api/settings/wake-word/download-model", {
         method: "POST",
       });
-      const data: { ok?: boolean; present?: boolean; message?: string } = await res
+      const data: {
+        ok?: boolean;
+        present?: boolean;
+        message?: string;
+        message_code?: string;
+      } = await res
         .json()
         .catch(() => ({}));
-      const backendMessage = typeof data.message === "string" ? data.message : "";
+      const downloadMessage = backendMessage(
+        t,
+        "settings_view.wake_word.msg",
+        data.message_code,
+        null,
+        typeof data.message === "string" ? data.message : "",
+      );
       if (!res.ok) {
         setWakeModelDownload({
           state: "error",
-          message: backendMessage || `HTTP ${res.status}`,
+          message: downloadMessage || `HTTP ${res.status}`,
         });
         return;
       }
       if (data.present) {
-        setWakeModelDownload({ state: "done", message: backendMessage });
+        setWakeModelDownload({ state: "done", message: downloadMessage });
         // Model is present now — re-save with the same phrase/engine so the
         // panel re-resolves to vosk_kws and drops out of the degraded state.
         await onSave();
       } else {
         setWakeModelDownload({
           state: "error",
-          message: backendMessage || t("settings_view.wake_word.download_model_error"),
+          message: downloadMessage || t("settings_view.wake_word.download_model_error"),
         });
       }
     } catch (e) {
@@ -399,6 +426,15 @@ function WakeWordPanel() {
   }
 
   const showResultNote = selfTest.state === "done" && selfTest.data;
+  const wakeSaveMessage = result
+    ? backendMessage(
+        t,
+        "settings_view.wake_word.msg",
+        result.message_code,
+        result.message_params,
+        result.message,
+      )
+    : "";
 
   return (
     <SettingsSection
@@ -551,15 +587,33 @@ function WakeWordPanel() {
           {showResultNote && selfTest.data && (
             <SettingsNote>
               <p className={selfTest.data.ok ? "text-success" : "text-destructive"}>
-                {selfTest.data.message}
+                {backendMessage(
+                  t,
+                  "settings_view.wake_word.msg",
+                  selfTest.data.message_code,
+                  selfTest.data.message_params,
+                  selfTest.data.message,
+                )}
               </p>
               {selfTest.data.hint && (
-                <p className="mt-1 text-muted-foreground">{selfTest.data.hint}</p>
+                <p className="mt-1 text-muted-foreground">
+                  {backendMessage(
+                    t,
+                    "settings_view.wake_word.hint",
+                    selfTest.data.hint_code,
+                    selfTest.data.message_params,
+                    selfTest.data.hint,
+                  )}
+                </p>
               )}
               <p className="mt-1 font-mono text-xs text-muted-foreground">
-                engine: {selfTest.data.engine} · language: {selfTest.data.language}
-                {selfTest.data.phrase_in_vocab === false ? " · not in vocabulary" : ""}
-                {selfTest.data.mic_ok ? "" : " · mic quiet"}
+                {fill(t("settings_view.wake_word.diag_engine"), { engine: selfTest.data.engine })}
+                {" · "}
+                {fill(t("settings_view.wake_word.diag_language"), { language: selfTest.data.language })}
+                {selfTest.data.phrase_in_vocab === false
+                  ? ` · ${t("settings_view.wake_word.diag_not_in_vocab")}`
+                  : ""}
+                {selfTest.data.mic_ok ? "" : ` · ${t("settings_view.wake_word.diag_mic_quiet")}`}
               </p>
             </SettingsNote>
           )}
@@ -569,13 +623,13 @@ function WakeWordPanel() {
               <p className={result.degraded ? "text-warning" : "text-success"}>
                 {result.degraded
                   ? t("settings_view.wake_word.degraded_warning")
-                  : result.message}
+                  : wakeSaveMessage}
               </p>
               <p className="mt-1 font-mono text-xs text-muted-foreground">
-                engine: {result.resolved_engine}
+                {fill(t("settings_view.wake_word.diag_engine"), { engine: result.resolved_engine })}
               </p>
               {result.degraded && result.message && (
-                <p className="mt-1 text-muted-foreground">{result.message}</p>
+                <p className="mt-1 text-muted-foreground">{wakeSaveMessage}</p>
               )}
               {result.restart_required && (
                 <p className="mt-1 text-muted-foreground">

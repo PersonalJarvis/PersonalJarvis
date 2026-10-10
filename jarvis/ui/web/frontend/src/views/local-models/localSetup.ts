@@ -28,9 +28,10 @@
  * the summary; a role whose write fails is skipped with the reason and the
  * flow goes on — one refused slot must not undo the other four.
  *
- * Nothing here touches react-query or i18n: the caller repaints and renders
- * the sentences.
+ * Nothing here touches react-query, and only the one locally made error
+ * sentence goes through i18n: the caller repaints and renders the rest.
  */
+import { fill, translate } from "@/i18n";
 import {
   ollamaRuntime,
   ollamaRuntimeInstall,
@@ -172,7 +173,9 @@ async function ensureServer(
   if (s.running) return false;
   if (s.host_kind === "remote")
     throw new Error(
-      s.error || s.detail || `The server at ${s.base_url} does not answer.`,
+      s.error ||
+        s.detail ||
+        fill(translate("local_models.overview.server_no_answer"), { url: s.base_url }),
     );
   if (!s.installed) {
     await installRuntime(providerId, report, alive, pollMs);

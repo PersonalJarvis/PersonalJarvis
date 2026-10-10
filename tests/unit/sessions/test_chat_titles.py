@@ -32,6 +32,7 @@ from jarvis.sessions.chat_titles import (
         ["Was geht ab", "ähm, nichts", "ähm", ", ähm, ähm"],
         ["Was geht ab", "Nicht so viel", ". Hallo"],
         ["Hi. What's good up", "Mm."],
+        ["Olá, tudo bem?", "hum"],  # i18n-allow: pt voice input
         [""],
         [],
     ],
@@ -52,6 +53,8 @@ def test_greetings_and_fragments_have_no_topic(utterances: list[str]) -> None:
         (["Hey George, hallo", "Can you please summarize my inbox"], "Summarize my inbox"),
         (["Hi, was geht ab? Kannst du bitte schnell sagen, was alles zu tun ist?"],
          "Sagen, was alles zu tun ist"),
+        (["Olá, tudo bem? Podes por favor resumir a minha caixa de entrada"],  # i18n-allow
+         "Resumir a minha caixa de entrada"),  # i18n-allow
     ],
 )
 def test_the_request_survives_its_lead_in(utterances: list[str], title: str) -> None:

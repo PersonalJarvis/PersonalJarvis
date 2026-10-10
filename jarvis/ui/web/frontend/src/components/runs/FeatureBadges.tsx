@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { Bot, Monitor, Sparkles, Terminal } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { useT } from "@/i18n";
 import { agentBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -17,11 +18,12 @@ import { useEventStore } from "@/store/events";
  * render — it carries the wake-word-derived assistant name ("Ruben" ->
  * "Ruben-Agent").
  */
+/** `label` is an i18n key; null = the dynamic agent brand. */
 const AGENT_META: Record<string, { label: string | null; Icon: LucideIcon }> = {
-  computer_use: { label: "Computer-Use", Icon: Monitor },
+  computer_use: { label: "run_inspector.feature_computer_use", Icon: Monitor },
   // Dynamic: agentBrand(assistantName).
   sub_agent: { label: null, Icon: Bot },
-  skill: { label: "Skill", Icon: Sparkles },
+  skill: { label: "run_inspector.feature_skill", Icon: Sparkles },
 };
 
 export function FeatureBadges({
@@ -34,6 +36,7 @@ export function FeatureBadges({
   size?: "sm" | "xs";
 }) {
   const assistantName = useEventStore((s) => s.assistantName);
+  const t = useT();
   if (!tags.length) return null;
   const shown = max ? tags.slice(0, max) : tags;
   const rest = tags.length - shown.length;
@@ -52,7 +55,7 @@ export function FeatureBadges({
             className={cn(meta ? "text-foreground" : "font-mono", compact)}
           >
             <Icon aria-hidden />
-            {meta ? (meta.label ?? agentBrand(assistantName)) : tag}
+            {meta ? (meta.label ? t(meta.label) : agentBrand(assistantName)) : tag}
           </Badge>
         );
       })}

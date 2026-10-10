@@ -11,6 +11,7 @@
  * delegates everything (maintainer direction 2026-09-01). Every row carries
  * a figure recipe so the card, the rail and the island agree on the look.
  */
+import { fill, translate } from "@/i18n";
 import type { SocietyAgent } from "./data";
 import type { FigureRecipe } from "./figures/figureRecipe";
 
@@ -182,3 +183,34 @@ export const SAMPLE_ROSTER: SocietyAgent[] = [
     stats: { runs: 311, totalCostUsd: 0.9, spentTodayUsd: 0.05, lastActiveMs: SAMPLE_LAST_ACTIVE_MS },
   },
 ];
+
+/** Where each sample agent's visible words live; the routine times stay fixed. */
+const SAMPLE_TEXT: Record<string, { name?: string; key: string; at: string }> = {
+  jarvis: { key: "lead", at: "08:00" },
+  scout: { name: "society.sample.scout.name", key: "scout", at: "07:00" },
+  archivist: { name: "society.sample.archivist.name", key: "archivist", at: "23:30" },
+};
+
+/**
+ * Write the sample agents' visible words in the current UI language; the
+ * literals above are only the English defaults (used before the first roster
+ * fetch, and by tests that import the rows). The rows are updated in place:
+ * callers recognise a sample row by identity (`SAMPLE_ROSTER.includes(agent)`),
+ * so they must stay the same objects.
+ */
+export function localizeSampleRoster(): SocietyAgent[] {
+  for (const agent of SAMPLE_ROSTER) {
+    const text = SAMPLE_TEXT[agent.agentId];
+    if (!text) continue;
+    if (text.name) agent.name = translate(text.name);
+    agent.title = translate(`society.sample.${text.key}.title`);
+    agent.description = translate(`society.sample.${text.key}.description`);
+    if (agent.provider === "ollama") agent.providerLabel = translate("society.provider_label.ollama");
+    for (const routine of agent.routines) {
+      routine.label = translate(`society.sample.${text.key}.routine`);
+      routine.schedule = fill(translate("society.sample.daily_at"), { time: text.at });
+    }
+  }
+  return SAMPLE_ROSTER;
+}
+

@@ -333,7 +333,7 @@ async def stop_mcp(name: str, request: Request) -> dict[str, Any]:
 
 @router.post("/import-claude-desktop")
 async def import_claude_desktop(request: Request) -> dict[str, Any]:
-    count, names, note = mcp_state.import_claude_desktop()
+    count, names, note, note_code, note_params = mcp_state.import_claude_desktop_coded()
 
     registry = _get_registry(request)
     if registry is not None and count > 0:
@@ -347,7 +347,16 @@ async def import_claude_desktop(request: Request) -> dict[str, Any]:
             except Exception as exc:  # noqa: BLE001
                 log.warning("Custom spec %s could not be registered: %s", name, exc)
 
-    return {"ok": True, "count": count, "added": names, "note": note}
+    return {
+        "ok": True,
+        "count": count,
+        "added": names,
+        "note": note,
+        # Stable code + fill-ins for ``note`` (CLAUDE_DESKTOP_IMPORT_NOTE_CODES)
+        # so the UI shows it in the user's language; ``note`` stays English.
+        "note_code": note_code,
+        "note_params": note_params,
+    }
 
 
 class CredentialsPayload(BaseModel):
