@@ -259,3 +259,32 @@ async def test_smalltalk_and_world_knowledge_never_inject(utterance: str) -> Non
     assert verdict.strict is True, "smalltalk gets the strict coverage bar"
     assert search.queries, "retrieval-first: the local probe does run"
     assert result == BASE_PROMPT, "an uncovering hit never reaches the prompt"
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_uses_full_user_text_and_can_rescue_lexical_miss() -> None:
+    lexical = SpyVaultSearch([])
+    semantic = SpyVaultSearch(
+        [
+            FakeHit(
+                title="obsidian-test",
+                snippet="Mart? prefers testing integrations with one concrete step at a time.",
+                score=0.60,
+            )
+        ]
+    )
+
+    injector = WikiContextInjector(
+        search=lexical,
+        semantic_search=semantic,
+        latency_budget_ms=500,
+    )
+
+    user_text = "What approach do I prefer when validating new connections?"
+    result = await injector.maybe_inject(
+        user_text=user_text,
+        system_prompt=BASE_PROMPT,
+    )
+
+    assert semantic.queries == [user_text]
+    assert "testing integrations" in result

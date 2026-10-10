@@ -3451,9 +3451,32 @@ class WebServer:
             conn = sqlite3.connect(str(db_path), check_same_thread=False)
             try:
                 indexed = rebuild_index(vault_root, conn)
+
+                try:
+                    from fastembed import TextEmbedding
+
+                    from jarvis.memory.wiki.semantic_index import (
+                        rebuild_index as rebuild_semantic_index,
+                    )
+
+                    embedder = TextEmbedding("BAAI/bge-small-en-v1.5")
+                    semantic_indexed = rebuild_semantic_index(
+                        vault_root,
+                        conn,
+                        embedder=embedder,
+                    )
+                except Exception:
+                    semantic_indexed = 0
+                    logger.debug(
+                        "wiki_boot_index: semantic reconciliation unavailable",
+                        exc_info=True,
+                    )
+
                 logger.info(
-                    "wiki_boot_index: reconciled {} page(s) from {} into {}",
+                    "wiki_boot_index: reconciled {} FTS page(s), {} semantic page(s) "
+                    "from {} into {}",
                     indexed,
+                    semantic_indexed,
                     vault_root,
                     db_path,
                 )
