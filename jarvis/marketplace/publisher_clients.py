@@ -105,7 +105,8 @@ _BROKER_BASE = "https://token.personaljarvis.ai/oauth"
 # authorization_code grant (PKCE verifier required, redirect_uri restricted to
 # loopback or to the broker's own callback) and the refresh_token grant, adds
 # the shipped client's id and secret, and returns the provider's answer
-# unchanged. It stores and logs nothing. The app sends no client secret there
+# unchanged. Logging and retention are properties of the deployed service,
+# not guarantees established by this client. The app sends no client secret there
 # and never holds one, so every install type — desktop bundle, pip, CLI —
 # works with zero setup.
 # A broker is used ONLY for grants issued to the shipped client: an expert

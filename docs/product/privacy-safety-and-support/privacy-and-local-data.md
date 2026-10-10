@@ -8,17 +8,16 @@ order: 1
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-08
 phase: "-"
 audience: end-user
 tags: [privacy, local-data, retention, deletion, providers, backups]
 related: [credentials-and-secrets, permissions, wiki-and-memory, jarvis-board]
 ---
 
-Jarvis keeps much of its working history on the computer or server where the
-app runs. It contacts another service only when a feature needs that service,
-such as a remote Brain, speech provider, connected tool, phone service, or a
-sharing destination you choose.
+Jarvis stores history on its host and contacts configured services for remote
+AI, speech, tools, calls, or sharing. A local installation also contacts the
+project's OAuth service for some plugin sign-ins.
 
 This page explains those boundaries and their current limits. It is a product
 map, not a promise about a provider's own storage, training, or deletion rules.
@@ -46,9 +45,8 @@ A normal request can cross several boundaries:
 
 ## Know What Is Stored
 
-Jarvis currently uses several local storage areas rather than one single data
-file. The important areas are the installation data folder, the app's user-data
-folder, the Wiki vault, the Jarvis-Agent output area, and any exports you save.
+Local stores include the installation data folder, app user-data folder, Wiki
+vault, Jarvis-Agent output area, and saved exports.
 
 | Area | What it can contain | Current retention or removal boundary |
 |---|---|---|
@@ -91,6 +89,7 @@ chat as proof that no local or remote copy exists.
 | Voice | Microphone audio for remote speech recognition or Realtime voice, transcripts for the Brain, and reply text for remote speech output | While you use the corresponding remote voice capability |
 | Vision and Computer Use | Screenshots, visible window context, the requested action, and action results | When a remote vision or action model is needed; approvals still apply to consequential actions |
 | Plugins, MCP, and CLI connections | The arguments and context passed to the tool, plus any result it returns | When you or Jarvis runs that connection; a local CLI can itself contact services outside Jarvis |
+| Project OAuth token service | Authorization codes, PKCE verifiers, client and redirect information, refresh tokens, and provider token responses | When connecting or refreshing a grant issued to a shipped Google or Slack client; Slack's browser callback also uses this service |
 | Jarvis-Agents | The mission request, selected files or repository context, scoped tool calls, worker output, and review material | When a remote worker or model handles the mission |
 | Wiki processing | Candidate facts and relevant page excerpts | When a remote Wiki extractor or curator reviews a possible memory update |
 | Board and sharing | A share card when you send it; a request routed through a configured Board federation service when that API is used | Sharing is user-triggered. Enabling federation alone does not start an automatic aggregate upload in the current app. The biography limitation below is separate. |
@@ -100,6 +99,18 @@ Phone calls and connected messaging channels necessarily pass audio or messages
 through their configured services. Once data reaches a provider, channel,
 community, or recipient, its retention and deletion rules apply separately.
 Removing the local Jarvis record does not send a deletion request to them.
+
+### Understand the Project OAuth Service
+
+Shipped Google and Slack clients use the project-run `token.personaljarvis.ai`
+service on Cloudflare for token exchange and refresh. Slack's browser callback
+also passes through it. You sign in and approve access at the provider.
+
+These requests exclude chat histories and local files; plugins separately send
+tool arguments and content. This page makes no server-side logging, storage, or
+retention guarantee. Local deletion does not prove remote erasure. Explicit
+alternative OAuth clients may contact provider endpoints directly; other
+integrations follow their configured authentication paths.
 
 An optional feedback API relay can send a report title, description, screenshot,
 app and runtime versions, operating-system description, and submission time to
@@ -190,24 +201,18 @@ it for sensitive material.
 
 ## How It Fits Together
 
-1. **Chats and Voice collect requests.** Remote Brain, speech, or vision
-   providers receive the context or media needed for their capabilities.
-2. **Tasks preserve future work.** They can call providers or connections
-   later. Deleting a task does not undo an action that already ran.
-3. **Profile, Contacts, and Wiki supply durable context.** Contact mirroring
+1. **Chats and Voice** collect requests for local or remote providers.
+2. **Tasks** schedule future work; deletion does not undo completed actions.
+3. **Profile, Contacts, and Wiki** supply durable context. Contact mirroring
    excludes structured phone, email, and address fields, but can copy names,
-   relationships, aliases, and notes into the Wiki.
-4. **Jarvis-Agents keep a separate mission trail.** Prompts, evidence, and
-   outputs live outside Chats, and exported copies have their own life.
-5. **Board derives summaries.** Share cards leave when you share them. The
-   background biography can still use the selected Brain provider.
-6. **Feedback is an external handoff.** Review text and screenshots before
-   posting them to the community destination.
+   relationships, aliases, and notes.
+4. **Jarvis-Agents** retain a separate mission trail and exported copies.
+5. **Board** derives summaries and optional share cards.
+6. **Feedback** opens an external handoff for you to review before posting.
 
-If a provider or connection is unavailable, the corresponding remote step can
-fail or use another compatible provider you configured. Local records and
-unrelated features remain available, but switching providers changes who
-receives the next request; it does not move or erase older provider-side data.
+Unavailable remote steps can fail or use another compatible configured
+provider. Switching changes who receives the next request; it does not move or
+erase older provider-side data.
 
 ## Check That It Works
 

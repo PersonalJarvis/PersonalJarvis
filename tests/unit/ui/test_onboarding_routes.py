@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.setup import state as setup_state
+from jarvis.setup.onboarding_meta import CURRENT_TERMS_VERSION
 from jarvis.ui.web import onboarding_routes
 
 
@@ -25,7 +26,7 @@ def client(state_dir):
 def test_state_starts_incomplete(client):
     body = client.get("/api/onboarding/state").json()
     assert body["completed"] is False
-    assert body["terms"]["current_version"] == "1.0"
+    assert body["terms"]["current_version"] == CURRENT_TERMS_VERSION
     assert body["terms"]["accepted"] is False
     assert body["terms"]["accepted_version"] is None
     assert body["steps"][0] == "name"
@@ -44,19 +45,19 @@ def test_tour_complete_is_recorded_without_restart(client, monkeypatch):
 
 def test_terms_endpoint(client):
     body = client.get("/api/onboarding/terms").json()
-    assert body["version"] == "1.0"
+    assert body["version"] == CURRENT_TERMS_VERSION
     assert "Personal Jarvis" in body["text"]
 
 
 def test_accept_then_complete(client):
-    assert client.post("/api/onboarding/accept-terms").json()["version"] == "1.0"
+    assert client.post("/api/onboarding/accept-terms").json()["version"] == CURRENT_TERMS_VERSION
     client.post("/api/onboarding/acknowledge-wake-word")
     client.post("/api/onboarding/step", json={"step": "finish", "skipped": ["mic-test"]})
     client.post("/api/onboarding/complete")
     body = client.get("/api/onboarding/state").json()
     assert body["completed"] is True
     assert body["terms"]["accepted"] is True
-    assert body["terms"]["accepted_version"] == "1.0"
+    assert body["terms"]["accepted_version"] == CURRENT_TERMS_VERSION
     assert body["wake_word_acknowledged"] is True
     assert body["skipped_steps"] == ["mic-test"]
     assert body["current_step"] == "finish"

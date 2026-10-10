@@ -119,6 +119,16 @@ if FRONTEND_DIST.exists():
 # never reads or writes the copy inside the bundle.
 datas.append((str(PROJECT_ROOT / "jarvis.toml"), "."))
 datas.append((str(PROJECT_ROOT / "docs" / "product"), "docs/product"))
+# The onboarding terms and redistribution notices must survive freezing.
+# Source-tree references in NOTICE are useful only when their target texts ship.
+datas.append((str(PROJECT_ROOT / "docs" / "legal" / "TERMS.md"), "docs/legal"))
+datas.append((str(PROJECT_ROOT / "docs" / "licensing.md"), "docs"))
+for name in ("LICENSE", "NOTICE"):
+    datas.append((str(PROJECT_ROOT / name), "."))
+for pattern in ("*/LICENSE", "*/NOTICE*", "*/ThirdPartyNotices.txt"):
+    for entry in sorted((PROJECT_ROOT / "third_party").glob(pattern)):
+        if entry.is_file():
+            datas.append((str(entry), str(entry.relative_to(PROJECT_ROOT).parent)))
 
 # Include build-time desktop assets such as icons and chimes when present.
 assets_dir = PROJECT_ROOT / "assets"
@@ -320,6 +330,22 @@ a = Analysis(
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
+)
+
+# Preserve notices of distributions actually present in the frozen graph. The
+# generated inventory deliberately leaves native transitive/source obligations
+# unassessed: copying Python package notices cannot settle those terms.
+import importlib.util
+
+_notice_helper_path = PROJECT_ROOT / "scripts" / "packaging" / "native_notices.py"
+_notice_helper_spec = importlib.util.spec_from_file_location("_native_notices", _notice_helper_path)
+if _notice_helper_spec is None or _notice_helper_spec.loader is None:
+    raise SystemExit(f"cannot load the native notice collector from {_notice_helper_path}")
+_notice_helper = importlib.util.module_from_spec(_notice_helper_spec)
+_notice_helper_spec.loader.exec_module(_notice_helper)
+a.datas += _notice_helper.collect_native_notices(
+    a.pure, a.binaries, a.datas,
+    Path(globals().get("WORKPATH", PROJECT_ROOT / "build")) / "native-notices",
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

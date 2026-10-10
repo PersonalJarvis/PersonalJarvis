@@ -1,0 +1,239 @@
+{
+  "packages": {
+    "@radix-ui/number": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-compose-refs": {
+      "version": "1.1.2",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-context": {
+      "version": "1.1.2",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-direction": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-id": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-use-callback-ref": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-use-escape-keydown": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-use-layout-effect": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-use-previous": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@radix-ui/react-use-size": {
+      "version": "1.1.1",
+      "documents": [
+        {
+          "file": "third_party/radix-ui/LICENSE",
+          "source": "https://raw.githubusercontent.com/radix-ui/primitives/fcef0668a5c827e5a4baac405474d75680f9a4eb/LICENSE",
+          "sha256": "0e80a2d229d2fd4fc7e8636142ec5d0ff0bc031f14c15b682e2ac01dfd5b5138"
+        }
+      ]
+    },
+    "@react-three/fiber": {
+      "version": "8.18.0",
+      "documents": [
+        {
+          "file": "third_party/react-three-fiber/LICENSE",
+          "source": "https://raw.githubusercontent.com/pmndrs/react-three-fiber/f81bfe8cb29373d2687433c6130e0ce1daf7222c/LICENSE",
+          "sha256": "ebd6a29bec64bdfcf8795388f2eceaf1479c14d343c0846de347ab8609d66139"
+        }
+      ]
+    },
+    "react-arborist": {
+      "version": "3.5.0",
+      "documents": [
+        {
+          "file": "third_party/react-arborist/LICENSE",
+          "source": "https://raw.githubusercontent.com/jameskerr/react-arborist/7272564052d1cea78383b03d683c352cba3b7157/LICENSE",
+          "sha256": "f1dcfe846608164333e4662013cd41adcee862327ca0b93228fbc11418b299c8"
+        }
+      ]
+    },
+    "react-force-graph-2d": {
+      "version": "1.29.1",
+      "documents": [
+        {
+          "file": "third_party/react-force-graph/LICENSE",
+          "source": "https://raw.githubusercontent.com/vasturiano/react-force-graph/5ee21b693d83f62da569cba6e3cdf31e028406e1/LICENSE",
+          "sha256": "5b6dc9ce44c7b73620b191c567339212bd00537af46fdedaf98304c34214cc9c"
+        }
+      ]
+    },
+    "react-force-graph-3d": {
+      "version": "1.29.1",
+      "documents": [
+        {
+          "file": "third_party/react-force-graph/LICENSE",
+          "source": "https://raw.githubusercontent.com/vasturiano/react-force-graph/5ee21b693d83f62da569cba6e3cdf31e028406e1/LICENSE",
+          "sha256": "5b6dc9ce44c7b73620b191c567339212bd00537af46fdedaf98304c34214cc9c"
+        }
+      ]
+    },
+    "victory-vendor": {
+      "version": "37.3.6",
+      "documents": [
+        {
+          "file": "third_party/victory-vendor/LICENSE",
+          "source": "https://raw.githubusercontent.com/FormidableLabs/victory/v37.3.6/LICENSE.txt",
+          "sha256": "34dee5fd5e5cc756efb5ad4d64652bce719bdf5e900ca5d7538253e737930bc4"
+        }
+      ]
+    },
+    "maath": {
+      "version": "0.10.8",
+      "documents": [
+        {
+          "file": "third_party/maath/LICENSE",
+          "source": "https://raw.githubusercontent.com/pmndrs/maath/56e1c4d3855dedc436bdc18a011fcad001c4f237/LICENSE",
+          "sha256": "f8ed15d0893b846b869dc0290a5aee14c82319a09d3522091ad300a0e5f73291"
+        }
+      ],
+      "reason": "The published package and release tag omit LICENSE; the package declares MIT. This is the full license supplied by the same upstream in a later pinned source snapshot."
+    },
+    "react-remove-scroll-bar": {
+      "version": "2.3.8",
+      "documents": [
+        {
+          "file": "third_party/react-remove-scroll-bar/LICENSE",
+          "source": "https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/8ca9ba5ea52de03308fe8ced94f7b159a44d28ff/LICENSE",
+          "sha256": "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84"
+        }
+      ],
+      "reason": "The published package omits LICENSE and its registry gitHead is unavailable upstream. This is the full MIT license supplied by the same upstream in a pinned source snapshot."
+    },
+    "onnxruntime-web": {
+      "version": "1.31.0-dev.20260914-8d85527a0",
+      "documents": [
+        {
+          "file": "third_party/onnxruntime/LICENSE",
+          "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/8d85527a010e294a26b274749f74294b2a32cec5/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+        },
+        {
+          "file": "third_party/onnxruntime/ThirdPartyNotices.txt",
+          "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/8d85527a010e294a26b274749f74294b2a32cec5/ThirdPartyNotices.txt",
+          "sha256": "143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3"
+        }
+      ],
+      "reason": "ThirdPartyNotices.txt is the upstream aggregate notice; it also describes optional upstream components and does not assert that all of them are included in this frontend."
+    },
+    "onnxruntime-common": {
+      "version": "1.31.0-dev.20260911-2a43ec07e",
+      "documents": [
+        {
+          "file": "third_party/onnxruntime/LICENSE",
+          "source": "https://raw.githubusercontent.com/microsoft/onnxruntime/2a43ec07e67df9263c7c56c15da76cc7f74d7b32/LICENSE",
+          "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+        }
+      ]
+    },
+    "bezier-js": {
+      "version": "6.1.4",
+      "reason": "The npm tarball and its registry gitHead omit LICENSE. The package declares MIT; this is the full license supplied by the same upstream in a later pinned source snapshot.",
+      "documents": [
+        {
+          "file": "third_party/bezier-js/LICENSE",
+          "source": "https://raw.githubusercontent.com/Pomax/bezierjs/4e767299184ab4079dc8d7c970020103db14f431/LICENSE.md",
+          "sha256": "4fb7b04152f7b3a7c48c98c638aba80fc1f221e915d605d45d016d87d8e2cc9f"
+        }
+      ]
+    },
+    "troika-three-text": {
+      "version": "0.52.5",
+      "reason": "The emitted Troika prebundle embeds Typr.ts, fflate and modified woff2otf.js under their separate licenses. Embedded package versions are recorded in the upstream package-lock.json at 2280cf77383163220912d6e07f69e25eb3505e68: @lojjic/typr 0.3.8-lojjic1 and fflate 0.7.5. The woff2otf notice is copied from that exact upstream source; its Apache-2.0 terms are reproduced from the license authority.",
+      "documents": [
+        {
+          "file": "third_party/typr/LICENSE",
+          "source": "https://registry.npmjs.org/@lojjic/typr/-/typr-0.3.8-lojjic1.tgz#package/LICENSE",
+          "sha256": "44b8cdb76bb7adb8fb3ca23a63d4bbf32c2be201bae44106e712094e6cff42a7"
+        },
+        {
+          "file": "third_party/troika-fflate/LICENSE",
+          "source": "https://registry.npmjs.org/fflate/-/fflate-0.7.5.tgz#package/LICENSE",
+          "sha256": "62249119bb7df6e54300f37a37145c26a6d4420410aac8881a119c5b427cf751"
+        },
+        {
+          "file": "third_party/woff2otf/NOTICE.txt",
+          "source": "https://raw.githubusercontent.com/protectwise/troika/2280cf77383163220912d6e07f69e25eb3505e68/packages/troika-three-text/src/woff2otf.js",
+          "sha256": "e2bd3d7898d3dc01c23f7fb160b390c444563cfb73bb751128943802b0515553"
+        },
+        {
+          "file": "third_party/woff2otf/LICENSE",
+          "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    }
+  }
+}

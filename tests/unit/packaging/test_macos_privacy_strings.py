@@ -204,6 +204,12 @@ def spec_root(tmp_path: Path) -> Path:
     (root / "jarvis" / "__init__.py").write_text('__version__ = "9.9.9"\n', encoding="utf-8")
     shutil.copy2(TABLE_PATH, root / "jarvis" / "core" / "macos_privacy_strings.py")
     shutil.copy2(SPEC_PATH, root / "jarvis.spec")
+    helper_dir = root / "scripts" / "packaging"
+    helper_dir.mkdir(parents=True)
+    shutil.copy2(
+        REPO_ROOT / "scripts" / "packaging" / "native_notices.py",
+        helper_dir / "native_notices.py",
+    )
     return root
 
 
