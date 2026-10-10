@@ -203,6 +203,19 @@ def test_native_installers_are_attested_on_tags_before_upload():
     assert attest < upload
 
 
+def test_rename_gap_still_verifies_the_released_wrapper():
+    """v3.1.1 was signed by the renamed repository while its published
+    verifier still names the previous owner. The smoke retargets that one
+    unsigned pin and still executes the released script."""
+    step = workflows()["release-wrapper-smoke.yml"]["jobs"]["verify"]["steps"][0]["run"]
+    assert 'bash "$verifier"' in step
+    assert 'readonly DEFAULT_OFFICIAL_REPO_SLUG=' in step
+    assert "PersonalJarvis/PersonalJarvis" in step
+    assert "Dodaios/Dodaios" in step
+    assert "JARVIS_OFFICIAL_REPO_SLUG" in step
+    assert "released layout regexp is not the pre-rename pin" in step
+
+
 def test_release_smoke_is_read_only_and_follows_every_cut():
     definitions = workflows()
     for name in ("release-smoke.yml", "release-wrapper-smoke.yml"):
