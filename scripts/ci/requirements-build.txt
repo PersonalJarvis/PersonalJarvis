@@ -4,4 +4,4 @@ twine==7.0.0
 setuptools==84.0.0
 wheel==0.48.0
 # Security floor for a transitive dependency (twine -> requests): GHSA-65pc-fj4g-8rjx.
-idna>=3.15
+idna>=3.20
