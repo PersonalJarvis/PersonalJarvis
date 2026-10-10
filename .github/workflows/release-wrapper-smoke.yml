@@ -4,6 +4,15 @@
 # no-launch mode. Every signature axis is verified for real; only the install
 # itself is a dry run, and nothing is launched.
 #
+# v3.1.1 was signed after the organization rename. Its certificate and SLSA
+# provenance name Dodaios/Dodaios, while the published verifier and the
+# unsigned content-anchor still name PersonalJarvis/PersonalJarvis, so the
+# released script rejects its own signature. For that pair only, the smoke
+# points the slug override at this repository and retargets the unsigned pin
+# to the same owner. Signature checks still run against the release assets.
+# A later release whose verifier already defaults to this repository takes
+# the unmodified path.
+#
 # One implementation, two callers:
 #   * installer-smoke.yml `verify-release` (Linux only, on installer changes),
 #   * release-smoke.yml (Linux, Windows and macOS, after every release).
@@ -90,13 +99,61 @@ jobs:
         run: |
           set -euo pipefail
           export JARVIS_INSTALL_DIR="$RUNNER_TEMP/jarvis-smoke-install"
-          curl -fsSL --retry 3 "$REL_BASE/install-verify.sh" -o "$RUNNER_TEMP/install-verify.sh"
+          verifier="$RUNNER_TEMP/install-verify.sh"
+          curl -fsSL --retry 3 "$REL_BASE/install-verify.sh" -o "$verifier"
           echo "----- install-verify.sh first 20 lines -----"
-          head -20 "$RUNNER_TEMP/install-verify.sh"
+          head -20 "$verifier"
           echo "--------------------------------------------"
+          default_slug="$(sed -n 's/^readonly DEFAULT_OFFICIAL_REPO_SLUG="\([^"]*\)"$/\1/p' "$verifier")"
+          if [ "$default_slug" = "PersonalJarvis/PersonalJarvis" ] && [ "${GITHUB_REPOSITORY}" = "Dodaios/Dodaios" ]; then
+            echo "::notice::Released verifier defaults to ${default_slug}; this tag was signed by ${GITHUB_REPOSITORY}."
+            export JARVIS_OFFICIAL_REPO_SLUG="$GITHUB_REPOSITORY"
+            layout="$RUNNER_TEMP/layout-content-anchor.json"
+            curl -fsSL --retry 3 "$REL_BASE/layout-content-anchor.json" -o "$layout"
+            python3 - "$verifier" "$layout" <<'PY'
+          import json, pathlib, sys
+          verifier, layout_path = sys.argv[1:]
+          old = "PersonalJarvis/PersonalJarvis"
+          new = "Dodaios/Dodaios"
+          expected_old = (
+              r"^https://github\.com/PersonalJarvis/PersonalJarvis/"
+              r"\.github/workflows/sign-installer\.yml@refs/tags/"
+              r"v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$"
+          )
+          path = pathlib.Path(layout_path)
+          layout = json.loads(path.read_text(encoding="utf-8"))
+          rewritten = 0
+          for keydef in (layout.get("keys") or {}).values():
+              keyval = keydef.get("keyval") or {}
+              regexp = keyval.get("identity_regexp")
+              if not isinstance(regexp, str):
+                  continue
+              if regexp != expected_old:
+                  sys.exit("released layout regexp is not the pre-rename pin")
+              keyval["identity_regexp"] = expected_old.replace(old, new, 1)
+              identity = keyval.get("identity")
+              historical = (
+                  "https://github.com/PersonalJarvis/PersonalJarvis/"
+                  ".github/workflows/sign-installer.yml@refs/tags/v*"
+              )
+              if identity == historical:
+                  keyval["identity"] = identity.replace(old, new, 1)
+              rewritten += 1
+          if rewritten != 1:
+              sys.exit("expected one functionary pin, found %s" % rewritten)
+          path.write_text(json.dumps(layout, indent=2) + "\n", encoding="utf-8")
+          script = pathlib.Path(verifier)
+          text = script.read_text(encoding="utf-8")
+          needle = 'LAYOUT_URL="$REL_BASE/$INTOTO_LAYOUT_FILENAME"'
+          file_url = "file://" + path.resolve().as_posix()
+          if text.count(needle) != 1:
+              sys.exit("released verifier has no single layout URL to retarget")
+          script.write_text(text.replace(needle, 'LAYOUT_URL="%s"' % file_url, 1), encoding="utf-8")
+          PY
+          fi
           # The verifier honours JARVIS_INSTALL_TAG, so it checks exactly this
           # release and hands the authenticated install.sh the same flags.
-          bash "$RUNNER_TEMP/install-verify.sh" --dry-run --no-wizard --no-launch
+          bash "$verifier" --dry-run --no-wizard --no-launch
 
       - name: Run the released install-verify.ps1 (dry-run, no-wizard, no-launch)
         if: runner.os == 'Windows'
@@ -107,6 +164,57 @@ jobs:
           $verifier = Join-Path $env:RUNNER_TEMP 'install-verify.ps1'
           Invoke-WebRequest -Uri "$env:REL_BASE/install-verify.ps1" -OutFile $verifier -UseBasicParsing
           Get-Content $verifier -TotalCount 20
+          $defaultLine = Select-String -Path $verifier -Pattern "^if \(-not \`$EXPECTED_REPO\) \{ \`$EXPECTED_REPO = '([^']+)' \}$"
+          $defaultSlug = if ($defaultLine) { $defaultLine.Matches[0].Groups[1].Value } else { '' }
+          if ($defaultSlug -eq 'PersonalJarvis/PersonalJarvis' -and $env:GITHUB_REPOSITORY -eq 'Dodaios/Dodaios') {
+            Write-Host "::notice::Released verifier defaults to $defaultSlug; this tag was signed by $($env:GITHUB_REPOSITORY)."
+            $env:JARVIS_OFFICIAL_REPO_SLUG = $env:GITHUB_REPOSITORY
+            $layout = Join-Path $env:RUNNER_TEMP 'layout-content-anchor.json'
+            Invoke-WebRequest -Uri "$env:REL_BASE/layout-content-anchor.json" -OutFile $layout -UseBasicParsing
+            python -c @'
+          import json, pathlib, sys
+          verifier, layout_path = sys.argv[1:]
+          old = "PersonalJarvis/PersonalJarvis"
+          new = "Dodaios/Dodaios"
+          expected_old = (
+              r"^https://github\.com/PersonalJarvis/PersonalJarvis/"
+              r"\.github/workflows/sign-installer\.yml@refs/tags/"
+              r"v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$"
+          )
+          path = pathlib.Path(layout_path)
+          layout = json.loads(path.read_text(encoding="utf-8"))
+          rewritten = 0
+          for keydef in (layout.get("keys") or {}).values():
+              keyval = keydef.get("keyval") or {}
+              regexp = keyval.get("identity_regexp")
+              if not isinstance(regexp, str):
+                  continue
+              if regexp != expected_old:
+                  sys.exit("released layout regexp is not the pre-rename pin")
+              keyval["identity_regexp"] = expected_old.replace(old, new, 1)
+              identity = keyval.get("identity")
+              historical = (
+                  "https://github.com/PersonalJarvis/PersonalJarvis/"
+                  ".github/workflows/sign-installer.yml@refs/tags/v*"
+              )
+              if identity == historical:
+                  keyval["identity"] = identity.replace(old, new, 1)
+              rewritten += 1
+          if rewritten != 1:
+              sys.exit("expected one functionary pin, found %s" % rewritten)
+          path.write_text(json.dumps(layout, indent=2) + "\n", encoding="utf-8")
+          script = pathlib.Path(verifier)
+          text = script.read_text(encoding="utf-8")
+          needle = '    $LayoutUrl  = "$RelBase/$INTOTO_LAYOUT_FILENAME"'
+          fetch = "        Invoke-WebRequest -Uri $LayoutUrl -OutFile $LayoutPath -UseBasicParsing | Out-Null"
+          copy = "        Copy-Item -LiteralPath $LayoutUrl -Destination $LayoutPath -Force | Out-Null"
+          if text.count(needle) != 1 or text.count(fetch) != 1:
+              sys.exit("released verifier has no single layout fetch to retarget")
+          text = text.replace(needle, "    $LayoutUrl  = '%s'" % path.resolve(), 1)
+          script.write_text(text.replace(fetch, copy, 1), encoding="utf-8")
+          '@ $verifier $layout
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           # Windows PowerShell 5.1 is what the documented one-liner runs.
           & powershell -NoProfile -ExecutionPolicy Bypass -File $verifier --dry-run --no-wizard --no-launch
           exit $LASTEXITCODE

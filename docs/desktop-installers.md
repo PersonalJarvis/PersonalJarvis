@@ -12,7 +12,7 @@ the website, run a normal install wizard, and the app updates itself afterwards.
 
 Every `v*.*.*` tag produces these assets on the GitHub Release. The names are a
 contract - the website's download button and the in-app updater both resolve
-`https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/<name>`:
+`https://github.com/Dodaios/Dodaios/releases/latest/download/<name>`:
 
 | Asset                                  | Platform                                  |
 | -------------------------------------- | ----------------------------------------- |

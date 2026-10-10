@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>English</strong> ·
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.zh-CN.md">简体中文</a>
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -12,15 +12,15 @@
 
 <p align="center">
   <a href="https://pypi.org/project/personal-jarvis/"><img alt="PyPI" src="https://img.shields.io/pypi/v/personal-jarvis?labelColor=0A0A0A&amp;color=F7F7F4" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/PersonalJarvis/PersonalJarvis/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/License-Apache_2.0-F7F7F4?labelColor=0A0A0A" /></a>
+  <a href="https://github.com/Dodaios/Dodaios/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Dodaios/Dodaios/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-F7F7F4?labelColor=0A0A0A&amp;logo=discord&amp;logoColor=white" /></a>
 </p>
 
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="https://personaljarvis.ai">Website</a> ·
-  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md">Docs</a> ·
+  <a href="https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/welcome-to-personal-jarvis.md">Docs</a> ·
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
   <a href="https://x.com/PersonalJarvis">X</a>
 </p>
@@ -75,7 +75,7 @@ without touching the keyboard. You might say "Tell T1 to write the tests",
   right pane by its call sign.
 - Every pane is a real terminal, so you can type into it yourself at any time.
 
-The [Agentic IDE guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md) has the details.
+The [Agentic IDE guide](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/agentic-ide.md) has the details.
 
 ## A team of agents that keeps working
 
@@ -94,9 +94,9 @@ work needs.
   worktree), can split into parallel workers, and pass a review before you see
   the result.
 
-Read more in the [Agents guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md),
-[how agents learn](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/agent-society/self-learning.md)
-and [routines](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/routines.md).
+Read more in the [Agents guide](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/jarvis-agents.md),
+[how agents learn](https://github.com/Dodaios/Dodaios/blob/main/docs/agent-society/self-learning.md)
+and [routines](https://github.com/Dodaios/Dodaios/blob/main/docs/routines.md).
 
 ## Talk to your computer
 
@@ -112,8 +112,8 @@ and then you talk.
 - Speech recognition and voices can run fully offline. Hosted voices are
   optional.
 
-Read more in the [voice guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md)
-and the [dictation guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md).
+Read more in the [voice guide](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/voice-conversations.md)
+and the [dictation guide](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/dictation.md).
 
 ## Connect your tools
 
@@ -127,10 +127,10 @@ and the [dictation guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/
 - The `jarvis` command and a local API give your own scripts, and other agents,
   the same control you have.
 
-Read more about [plugins](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md),
-[MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md),
-[command-line tools](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/cli-connections.md)
-and the [Jarvis CLI](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md).
+Read more about [plugins](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/plugins.md),
+[MCP](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/mcp-connections.md),
+[command-line tools](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/cli-connections.md)
+and the [Jarvis CLI](https://github.com/Dodaios/Dodaios/blob/main/docs/jarvis-cli.md).
 
 ## You stay in control
 
@@ -140,21 +140,21 @@ and every run is recorded, so you can see later exactly what happened. Your keys
 are kept in your operating system's credential store. Nothing leaves your
 machine unless you connect a service that needs it.
 
-Read more about [safety and approvals](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md)
-and [privacy and local data](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md).
+Read more about [safety and approvals](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/safety-and-approvals.md)
+and [privacy and local data](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/privacy-and-local-data.md).
 
 ## Install
 
 **Windows (PowerShell)**
 
 ```powershell
-irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.ps1 | iex
 ```
 
 **macOS and Linux**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Dodaios/Dodaios/main/install/install.sh | bash
 ```
 
 The installer checks for Python 3.11 or newer and Git, offers to install
@@ -169,13 +169,13 @@ jarvis          # full desktop
 
 If you prefer a regular desktop installer, download one here:
 
-- [Windows](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Setup-x64.exe)
-- [macOS on Apple Silicon](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-arm64.dmg)
-- [macOS on Intel](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg)
-- [Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
+- [Windows](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-Setup-x64.exe)
+- [macOS on Apple Silicon](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-macOS-arm64.dmg)
+- [macOS on Intel](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-macOS-x64.dmg)
+- [Linux AppImage](https://github.com/Dodaios/Dodaios/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
 
 Windows installers are signed under our
-[code signing policy](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/code-signing-policy.md)
+[code signing policy](https://github.com/Dodaios/Dodaios/blob/main/docs/code-signing-policy.md)
 once the SignPath Foundation program approves the project. Free code signing
 provided by SignPath.io, certificate by SignPath Foundation.
 
@@ -186,10 +186,10 @@ installer above does not need this step.
 
 To run Jarvis on a server, use `pip install personal-jarvis` and `jarvis serve`,
 then open `http://localhost:47821` in a browser. Using a microphone from another
-computer needs HTTPS. The [headless deployment guide](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md)
+computer needs HTTPS. The [headless deployment guide](https://github.com/Dodaios/Dodaios/blob/main/docs/headless-vps-deployment.md)
 explains the setup. If you install with pip or pipx by hand on an Intel Mac or
 on Windows ARM64, you also need the
-[native package index](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package).
+[native package index](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/install-personal-jarvis.md#install-the-isolated-pypi-package).
 The installer sets that up for you.
 
 You need one API key, a subscription or a local model. A microphone helps for
@@ -211,19 +211,19 @@ voice. You do not need a GPU.
 
 ## Docs
 
-- **Getting started:** [quick start](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/first-run-setup.md), [app tour](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/start-here/desktop-app-tour.md)
-- **Everyday use:** [voice](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/voice-conversations.md), [dictation](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/everyday-use/dictation.md), [memory](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md)
-- **Agents and automation:** [agentic IDE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/agentic-ide.md), [agents](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/jarvis-agents.md), [computer use](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/computer-use.md), [plugins](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/plugins.md), [MCP](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/extend-and-automate/mcp-connections.md), [CLI](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli.md)
-- **Models:** [providers](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md), [local models](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/personalize-and-connect/local-ai-providers.md)
-- **Running and fixing:** [server](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/headless-vps-deployment.md), [architecture](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/architecture-overview.md), [troubleshooting](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md)
+- **Getting started:** [quick start](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/first-run-setup.md), [app tour](https://github.com/Dodaios/Dodaios/blob/main/docs/product/start-here/desktop-app-tour.md)
+- **Everyday use:** [voice](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/voice-conversations.md), [dictation](https://github.com/Dodaios/Dodaios/blob/main/docs/product/everyday-use/dictation.md), [memory](https://github.com/Dodaios/Dodaios/blob/main/docs/product/knowledge-and-sharing/wiki-and-memory.md)
+- **Agents and automation:** [agentic IDE](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/agentic-ide.md), [agents](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/jarvis-agents.md), [computer use](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/computer-use.md), [plugins](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/plugins.md), [MCP](https://github.com/Dodaios/Dodaios/blob/main/docs/product/extend-and-automate/mcp-connections.md), [CLI](https://github.com/Dodaios/Dodaios/blob/main/docs/jarvis-cli.md)
+- **Models:** [providers](https://github.com/Dodaios/Dodaios/blob/main/docs/product/personalize-and-connect/providers-and-api-keys.md), [local models](https://github.com/Dodaios/Dodaios/blob/main/docs/product/personalize-and-connect/local-ai-providers.md)
+- **Running and fixing:** [server](https://github.com/Dodaios/Dodaios/blob/main/docs/headless-vps-deployment.md), [architecture](https://github.com/Dodaios/Dodaios/blob/main/docs/architecture-overview.md), [troubleshooting](https://github.com/Dodaios/Dodaios/blob/main/docs/product/privacy-safety-and-support/troubleshooting.md)
 
 ## Contribute
 
-A good place to start is a [good first issue](https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and the guide to [your first contribution in 10 minutes](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes). Questions and ideas go to [discussions](https://github.com/PersonalJarvis/PersonalJarvis/discussions), and security reports follow [SECURITY.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SECURITY.md).
+A good place to start is a [good first issue](https://github.com/Dodaios/Dodaios/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) and the guide to [your first contribution in 10 minutes](https://github.com/Dodaios/Dodaios/blob/main/CONTRIBUTING.md#your-first-contribution-in-10-minutes). Questions and ideas go to [discussions](https://github.com/Dodaios/Dodaios/discussions), and security reports follow [SECURITY.md](https://github.com/Dodaios/Dodaios/blob/main/SECURITY.md).
 
-If you are an AI agent helping with this repository, read [`AGENTS.md`](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/AGENTS.md) first.
+If you are an AI agent helping with this repository, read [`AGENTS.md`](https://github.com/Dodaios/Dodaios/blob/main/AGENTS.md) first.
 
-If Personal Jarvis is useful to you, a star on GitHub helps other people find it. Sponsors are listed in [SPONSORS.md](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/SPONSORS.md).
+If Personal Jarvis is useful to you, a star on GitHub helps other people find it. Sponsors are listed in [SPONSORS.md](https://github.com/Dodaios/Dodaios/blob/main/SPONSORS.md).
 
 <!-- contributors:start -->
 
@@ -233,4 +233,4 @@ If Personal Jarvis is useful to you, a star on GitHub helps other people find it
 
 ## License
 
-[Apache 2.0](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/LICENSE). Releases up to and including 1.6.0 keep their original MIT license. See [NOTICE](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/NOTICE) and the [trademark guidance](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/TRADEMARK.md).
+[Apache 2.0](https://github.com/Dodaios/Dodaios/blob/main/LICENSE). Releases up to and including 1.6.0 keep their original MIT license. See [NOTICE](https://github.com/Dodaios/Dodaios/blob/main/NOTICE) and the [trademark guidance](https://github.com/Dodaios/Dodaios/blob/main/TRADEMARK.md).

@@ -34,7 +34,7 @@
     Where to build the sandbox. Default: a 'Jarvis-Sandbox' sibling of this repo.
 
 .PARAMETER RepoUrl
-    Source repo. Default: the public flagship PersonalJarvis/PersonalJarvis.
+    Source repo. Default: the public flagship Dodaios/Dodaios.
 
 .PARAMETER Ref
     Branch or tag to clone. Default: main (the published default branch).
@@ -55,7 +55,7 @@
 [CmdletBinding()]
 param(
     [string]$SandboxRoot,
-    [string]$RepoUrl = "https://github.com/PersonalJarvis/PersonalJarvis.git",
+    [string]$RepoUrl = "https://github.com/Dodaios/Dodaios.git",
     [string]$Ref = "main",
     [int]$Port = 47830,
     [switch]$Force,
