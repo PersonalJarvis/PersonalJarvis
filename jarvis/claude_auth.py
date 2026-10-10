@@ -472,6 +472,11 @@ class ClaudeAuthService:
 
     # -- seams -----------------------------------------------------------
 
+    def resolve_binary(self) -> str | None:
+        """The installed ``claude`` CLI, or None — PATH stat probes only, no
+        subprocess (safe to call where a login probe would be too slow)."""
+        return self._resolve_binary()
+
     def _resolve_binary(self) -> str | None:
         """Full path to the ``claude`` binary, or ``None`` when absent."""
         # A CLI installed AFTER app start (or into a dir the GUI PATH never

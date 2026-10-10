@@ -62,6 +62,27 @@ log = logging.getLogger(__name__)
 
 __all__ = ["TelegramChannel", "InflightMap"]
 
+#: Longest error text kept from a Telegram/httpx exception.
+_ERROR_TEXT_MAX = 300
+
+
+def _safe_error(exc: BaseException, token: str | None = None) -> str:
+    """``Type: message`` with the bot token removed.
+
+    The token is part of every Bot API URL, and python-telegram-bot itself
+    puts it into ``InvalidToken`` ("The token `…` was rejected by the
+    server."). Every error text this channel logs, stores or raises goes
+    through here: the exact token first, then the generic secret shapes.
+    """
+    from jarvis.core.redact import redact_secrets
+
+    message = str(exc)
+    if token:
+        message = message.replace(token, "[redacted]")
+    message = redact_secrets(message)[:_ERROR_TEXT_MAX]
+    name = type(exc).__name__
+    return f"{name}: {message}" if message else name
+
 
 class InflightMap:
     """Mapping ``trace_id -> chat_id`` with TTL-based GC."""
@@ -176,16 +197,30 @@ class TelegramChannel:
                 "Install via: pip install 'python-telegram-bot>=22,<23'"
             ) from exc
 
+        # python-telegram-bot polls through httpx, which logs every request URL
+        # at INFO — and every Bot API URL carries the token.
+        from jarvis.core.redact import redact_logger
+
+        redact_logger("httpx")
         await self._validate_token(token)
 
-        self._app = ApplicationBuilder().token(token).build()
-        self._app.add_handler(MessageHandler(filters.ALL, self._on_telegram_msg))
+        try:
+            self._app = ApplicationBuilder().token(token).build()
+            self._app.add_handler(MessageHandler(filters.ALL, self._on_telegram_msg))
 
-        await self._app.initialize()
-        await self._app.start()
-        await self._app.updater.start_polling(
-            poll_interval=self._cfg.polling_interval_s
-        )
+            await self._app.initialize()
+            await self._app.start()
+            await self._app.updater.start_polling(
+                poll_interval=self._cfg.polling_interval_s
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised without the token
+            # ``initialize()`` re-checks the token and raises InvalidToken with
+            # the token in its message; ``from None`` keeps that original out of
+            # every traceback that prints this error.
+            self._app = None
+            raise ChannelStartError(
+                f"Telegram start failed: {_safe_error(exc, token)}"
+            ) from None
 
         self._event_handler_ref = self._on_bus_event
         self._bus.subscribe_all(self._event_handler_ref)
@@ -209,7 +244,7 @@ class TelegramChannel:
                 await self._app.stop()
                 await self._app.shutdown()
             except Exception as exc:  # noqa: BLE001
-                log.warning("Telegram stop raised: %s", exc)
+                log.warning("Telegram stop raised: %s", _safe_error(exc))
             self._app = None
 
         self._started = False
@@ -222,7 +257,7 @@ class TelegramChannel:
 
             tokens = TokenStore().load("telegram")
         except Exception as exc:  # noqa: BLE001
-            log.debug("Telegram marketplace token fallback failed: %s", exc)
+            log.debug("Telegram marketplace token fallback failed: %s", _safe_error(exc))
             return None
         if tokens is None or not tokens.access:
             return None
@@ -241,15 +276,19 @@ class TelegramChannel:
         try:
             me = await bot.get_me()
             self._bot_username = (me.username or "").lower() or "<unknown>"
-        except InvalidToken as exc:
+        except InvalidToken:
             raise ChannelStartError(
                 "Telegram token invalid (InvalidToken). "
                 "Check the token in @BotFather or renew it via the wizard."
-            ) from exc
+            ) from None
         except TelegramError as exc:
-            raise ChannelStartError(f"Telegram getMe failed: {exc}") from exc
+            raise ChannelStartError(
+                f"Telegram getMe failed: {_safe_error(exc, token)}"
+            ) from None
         except Exception as exc:  # noqa: BLE001
-            raise ChannelStartError(f"Telegram getMe failed: {exc}") from exc
+            raise ChannelStartError(
+                f"Telegram getMe failed: {_safe_error(exc, token)}"
+            ) from None
 
     # ------------------------------------------------------------------
     # Inbound
@@ -465,6 +504,10 @@ class TelegramChannel:
             return
         await self._send_text(chat_id, msg.content, language="de")
 
+    def owns_trace(self, trace_id: UUID) -> bool:
+        """Whether *trace_id* belongs to a Telegram message awaiting its reply."""
+        return self._inflight.get(trace_id) is not None
+
     async def broadcast_event(self, event: Event) -> None:
         """No-op: Telegram routing goes through InflightMap, not broadcast."""
 
@@ -480,7 +523,7 @@ class TelegramChannel:
         try:
             await self._app.bot.send_message(chat_id=chat_id, text=cleaned)
         except Exception as exc:  # noqa: BLE001
-            log.warning("Telegram send_message failed (chat=%s): %s", chat_id, exc)
+            log.warning("Telegram send_message failed: %s", _safe_error(exc))
 
     # === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
     async def send_status_card(
@@ -512,9 +555,7 @@ class TelegramChannel:
                 chat_id=chat_id, text=text, parse_mode="Markdown"
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "Telegram send_status_card failed (chat=%s): %s", chat_id, exc
-            )
+            log.warning("Telegram send_status_card failed: %s", _safe_error(exc))
 
     async def sessions(self) -> list[ChannelSession]:
         return list(self._sessions_by_chat.values())

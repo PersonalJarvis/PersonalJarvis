@@ -25,6 +25,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from jarvis.core.protocols import started_by_user
 from jarvis.workflows.schema import WorkflowDef
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
@@ -240,11 +241,12 @@ async def run_workflow(
     _require_store(request)
     runner = _require_runner(request)
     try:
-        run_id = await runner.trigger(
-            workflow_id,
-            trigger_reason="manual",
-            input_data=input_data or {},
-        )
+        with started_by_user():
+            run_id = await runner.trigger(
+                workflow_id,
+                trigger_reason="manual",
+                input_data=input_data or {},
+            )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"run_id": run_id, "workflow_id": workflow_id}

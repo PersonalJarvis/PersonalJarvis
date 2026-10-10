@@ -19,14 +19,17 @@ _METHODS: Final[tuple[str, ...]] = ("get", "post", "put", "patch", "delete")
 #: Never offered to the brain: credentials and sign-ins (voice must never carry
 #: a secret, AP-2), the raw control plane, webhooks, self-modification, the
 #: action policy itself — Jarvis never edits its own permissions — the
-#: main-brain switch, which only the person may flip (the provider lock), and
+#: main-brain switch, which only the person may flip (the provider lock),
 #: consent to spend money: the missions' paid-API fallback switch and a
-#: mission's paid-use approval (jarvis/missions/capacity.py).
+#: mission's paid-use approval (jarvis/missions/capacity.py), and consent to
+#: send real messages out: the Ops core's live Telegram switch and its test
+#: message (jarvis/ops/delivery.py).
 _EXCLUDED: Final[re.Pattern[str]] = re.compile(
     r"(secret|api-?keys?|/keys?(/|$)|install-key|host-key|use-key|token|password|"
     r"credential|oauth|/auth(/|$)|login|pairing|/callback|/hooks/|openapi|/ws$|"
     r"^/api/control/|^/api/self-mod|^/api/app-actions|^/api/brain/switch$|"
-    r"^/api/mission-billing|/capacity-decision$)",
+    r"^/api/mission-billing|/capacity-decision$|"
+    r"^/api/ops/notify/live$|^/api/ops/notify/telegram/test$)",
     re.IGNORECASE,
 )
 

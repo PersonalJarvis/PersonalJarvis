@@ -570,6 +570,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .ops_routes import router as ops_router
         from .workspace_clis_routes import router as workspace_clis_router
         from .workspace_routes import router as workspace_router
 
@@ -720,6 +721,8 @@ class WebServer:
         # The voice orb's click — call / hangup without speaking the wake word.
         app.include_router(voice_call_router)
         app.include_router(workflows_router)
+        # Read-only work overview across missions, tasks, quests, workflows.
+        app.include_router(ops_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
@@ -3590,9 +3593,42 @@ class WebServer:
                 getattr(self.app.state, "workflow_runner", None),
             )
 
+        from jarvis.ops.morning import ops_task_tools
+
+        from .ops_routes import (
+            briefing_composer_for_state,
+            notify_store_for_state,
+            snapshot_store_for_state,
+            transport_for_state,
+        )
+
+        state = self.app.state
+
+        class _BrainToolExecutor:
+            """The brain's ToolExecutor, resolved when a task runs (AP-3).
+
+            The task stack starts before the brain is built; a run before
+            then fails visibly and the recurring task keeps its schedule.
+            """
+
+            async def execute(self, tool: Any, args: dict[str, Any], **kwargs: Any) -> Any:
+                executor = getattr(getattr(state, "brain", None), "_tool_executor_ref", None)
+                if executor is None:
+                    raise RuntimeError("The tool executor is not ready yet")
+                return await executor.execute(tool, args, **kwargs)
+
         runner = TaskRunner(
             store=store,
             bus=self.bus,
+            # Private to scheduled tasks: the Ops core's tools, never the chat
+            # or router tool set (ADR-0011).
+            tool_registry=ops_task_tools(
+                composer=lambda: briefing_composer_for_state(state),
+                notify_store=lambda: notify_store_for_state(state),
+                snapshot_store=lambda: snapshot_store_for_state(state),
+                transport=lambda settings: transport_for_state(state, settings),
+            ),
+            tool_executor=_BrainToolExecutor(),
             harness_manager=HarnessManager(bus=self.bus),
             agent_brain=agent_brain,
             auto_approver=auto_approver,

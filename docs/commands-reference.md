@@ -531,3 +531,13 @@ Reopen the coding workspace that was last open: the same folder, the same named 
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "resume all my coding sessions"
 
+## `ops-briefing` — Answer a briefing or calendar question
+
+The person's briefing and appointments from the calendar, read live: focus='briefing' for the full morning briefing (tasks that need them, focus, today's appointments), 'appointments' for one day's appointments, 'changes' for moved, new and cancelled appointments of today and tomorrow. day='today' or 'tomorrow'. Speak the returned 'say' text; it states only what the calendar reports. Reads only, no model call.
+
+- **Endpoint:** `POST /api/ops/briefing/answer`
+- **Arguments:** `day` (one of: today, tomorrow; optional); `focus` (one of: briefing, appointments, changes; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `board`
+- **Voice example (EN):** "what is on today"
+

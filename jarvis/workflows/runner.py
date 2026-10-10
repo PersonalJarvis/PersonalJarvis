@@ -679,6 +679,9 @@ class WorkflowRunner:
 
         import httpx
 
+        from jarvis.core.redact import redact_logger
+
+        redact_logger("httpx")  # its request log line would carry the token in the URL
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -691,15 +694,16 @@ class WorkflowRunner:
             try:
                 r = await client.post(url, json=payload)
             except Exception as exc:  # noqa: BLE001
-                raise RuntimeError(f"Telegram request failed: {exc}") from exc
+                # The type only: an httpx error can carry the URL, and the URL
+                # carries the bot token. ``from None`` keeps it out of tracebacks.
+                raise RuntimeError(
+                    f"Telegram request failed: {type(exc).__name__}"
+                ) from None
 
         if r.status_code >= 400:
-            # Telegram responds with ``{"ok": false, "description": "..."}``
-            try:
-                detail = r.json().get("description") or r.text[:200]
-            except Exception:  # noqa: BLE001
-                detail = r.text[:200]
-            raise RuntimeError(f"Telegram HTTP {r.status_code}: {detail}")
+            # The status only — Telegram's ``description`` is a provider error
+            # body and stays out of the run record, the UI and the log (AP-34).
+            raise RuntimeError(f"Telegram HTTP {r.status_code}")
         return f"sent to chat_id={chat_id} ({len(text)} characters)"
 
 

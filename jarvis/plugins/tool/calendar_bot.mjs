@@ -115,6 +115,14 @@ function summarizeEvent(rawEvent, calendarId, calendarName) {
     end: rawEvent.end?.dateTime || rawEvent.end?.date || null,
     location: rawEvent.location || null,
     status: rawEvent.status || null,
+    // Change facts the API itself states (never inferred): when the event was
+    // last modified, and — for a moved instance of a recurring series — the
+    // slot it originally had.
+    updated: rawEvent.updated || null,
+    created: rawEvent.created || null,
+    original_start:
+      rawEvent.originalStartTime?.dateTime || rawEvent.originalStartTime?.date || null,
+    recurring_event_id: rawEvent.recurringEventId || null,
   };
 }
 
@@ -150,6 +158,8 @@ async function listEvents(token, args) {
     singleEvents: "true",
     orderBy: "startTime",
     maxResults: String(args.max_results || 50),
+    // Opt-in: also return cancelled events (status "cancelled").
+    showDeleted: args.show_deleted ? "true" : undefined,
   };
 
   // Discover every calendar; if the scope is too narrow to list them, fall back
@@ -164,6 +174,15 @@ async function listEvents(token, args) {
       return { ok: false, status: 401, error: "Calendar API 401" };
     }
     targets = [{ id: "primary", name: "primary" }];
+  }
+  // Opt-in: read ONLY these calendars. Others (e.g. colleagues' calendars a
+  // shared account subscribes to) are never fetched.
+  const only = Array.isArray(args.calendar_ids)
+    ? args.calendar_ids.map((id) => String(id).toLowerCase()).filter(Boolean)
+    : [];
+  if (only.length) {
+    const known = new Map(cal.calendars.map((c) => [String(c.id).toLowerCase(), c]));
+    targets = only.map((id) => known.get(id) || { id, name: id });
   }
 
   const perCal = await Promise.all(

@@ -30,6 +30,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.core.protocols import started_by_user
 from jarvis.tasks.scheduler import TaskNotFound, TaskStateConflict
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
@@ -257,7 +258,8 @@ async def run_task_now(task_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Task is already running")
     scheduler = _require_scheduler(request)
     try:
-        await scheduler.run_now(task_id)
+        with started_by_user():
+            await scheduler.run_now(task_id)
     except TaskNotFound as exc:
         raise HTTPException(status_code=404, detail="Task not found") from exc
     except TaskStateConflict as exc:

@@ -38,6 +38,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.core.protocols import CapacityDeferred
+
 log = logging.getLogger(__name__)
 
 #: How long one connected sighting keeps the install in subscription mode.
@@ -54,7 +56,7 @@ _probe_cache: dict[str, tuple[float, bool | None]] = {}
 _probe_override: Callable[[str], bool | None] | None = None
 
 
-class BackgroundDeferred(RuntimeError):
+class BackgroundDeferred(CapacityDeferred):
     """No provider background work may bill is usable right now; retry later."""
 
 
@@ -118,6 +120,11 @@ def _billing(provider: str) -> str:
         if spec.id == provider and spec.tier == "brain":
             return provider_billing(spec)
     return "api"
+
+
+def billing_kind(provider: str) -> str:
+    """Public read of :func:`_billing` for callers that gate on it."""
+    return _billing(provider)
 
 
 def subscription_capable(provider: str) -> bool:
@@ -232,6 +239,7 @@ __all__ = [
     "BackgroundDeferred",
     "BackgroundProviders",
     "background_providers",
+    "billing_kind",
     "forget",
     "keyless_local",
     "login_state",
