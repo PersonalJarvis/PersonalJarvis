@@ -92,7 +92,7 @@ the index redeploys in minutes. Installed copies are removed by the user
 
 ## Feed contract
 
-`https://personaljarvis.github.io/marketplace/index.json` — shape mirrored
+`https://dodaios.github.io/marketplace/index.json` — shape mirrored
 by `CommunityIndex` in `community_source.py` (tolerant models: unknown
 fields never break older apps). Plugins embed their Agent Plugins v1.0.0
 manifests verbatim; skills carry a `raw_url` the existing skill-catalog

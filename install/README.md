@@ -71,7 +71,7 @@ helper use the same reviewed builds.
 For a manual source checkout, use `python scripts/pip_install.py -e '.[full]'`
 to select the supplemental index automatically. A raw `pip` or `pipx` install
 on Intel macOS or Windows ARM64 needs
-`--find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/`
+`--find-links https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/cryptography/`
 (pass it through `pipx --pip-args` when using pipx).
 
 Maintainers build both native wheels with the **Native cryptography wheels**
@@ -94,13 +94,13 @@ its `requirements.in`, enforced by `check_requirements_sync.py`.
 ```bash
 uv pip compile --universal --generate-hashes --emit-find-links \
   --python-version 3.11 --output-file=requirements.txt pyproject.toml \
-  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --find-links https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/cryptography/ \
   --config-file packaging/native-crypto-uv.toml \
   --default-index https://pypi.org/simple --keyring-provider disabled --no-progress --color never
 uv pip compile jarvis/assets/browser/pyproject.toml --universal --generate-hashes --emit-find-links \
   --python-version 3.12 --no-header --output-file=jarvis/assets/browser/requirements.lock \
   --config-file packaging/native-crypto-uv.toml \
-  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --find-links https://dodaios.github.io/Dodaios/native-crypto/50.0.2-1/simple/cryptography/ \
   --default-index https://pypi.org/simple --keyring-provider disabled
 uv lock --config-file packaging/native-crypto-uv.toml --default-index https://pypi.org/simple
 ```
