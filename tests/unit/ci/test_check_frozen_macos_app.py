@@ -367,7 +367,7 @@ def test_check_app_reports_a_bundle_built_without_the_localisation_step(tmp_path
         app, read_modules=lambda _exe: ALL_MODULES, run_codesign=_codesign(ADHOC_REPORT)
     )
 
-    assert len(problems) == 2
+    assert len(problems) == len(macos_privacy_strings.LOCALIZED_LANGUAGES)
     assert all("InfoPlist.strings is missing" in problem for problem in problems)
 
 

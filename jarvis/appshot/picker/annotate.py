@@ -198,6 +198,40 @@ _LABELS: dict[str, dict[str, str]] = {
         "done": "完成 — 发送给助手",  # i18n-allow: product UI string
         "placeholder": "输入文字",  # i18n-allow: product UI string
     },
+    "pt": {
+        mm.MOVE: "Selecionar e mover",  # i18n-allow: product UI string
+        mm.RECT: "Retângulo",  # i18n-allow: product UI string
+        mm.FILLED: "Retângulo preenchido",  # i18n-allow: product UI string
+        mm.ELLIPSE: "Elipse",  # i18n-allow: product UI string
+        mm.LINE: "Linha",  # i18n-allow: product UI string
+        mm.ARROW: "Seta",  # i18n-allow: product UI string
+        mm.TEXT: "Texto",  # i18n-allow: product UI string
+        mm.REDACT: "Pixelizar / desfocar",  # i18n-allow: product UI string
+        mm.SPOTLIGHT: "Destacar zona",  # i18n-allow: product UI string
+        mm.COUNTER: "Passo numerado",  # i18n-allow: product UI string
+        mm.PEN: "Desenhar",  # i18n-allow: product UI string
+        mm.HIGHLIGHT: "Marcador",  # i18n-allow: product UI string
+        mm.BACKGROUND: "Fundo",  # i18n-allow: product UI string
+        "arrow_tapered": "Afunilada",  # i18n-allow: product UI string
+        "arrow_classic": "Clássica",  # i18n-allow: product UI string
+        "arrow_double": "Duas pontas",  # i18n-allow: product UI string
+        "text_plain": "Simples",  # i18n-allow: product UI string
+        "text_label": "Etiqueta",  # i18n-allow: product UI string
+        "text_outline": "Contorno",  # i18n-allow: product UI string
+        "redact_pixelate": "Pixelizar",  # i18n-allow: product UI string
+        "redact_blur": "Desfocar",  # i18n-allow: product UI string
+        "background_off": "Sem fundo",  # i18n-allow: product UI string
+        "color": "Cor",  # i18n-allow: product UI string
+        "width": "Tamanho (1-5, roda do rato)",  # i18n-allow: product UI string
+        "undo": "Anular",  # i18n-allow: product UI string
+        "redo": "Refazer",  # i18n-allow: product UI string
+        "copy": "Copiar",  # i18n-allow: product UI string
+        "save": "Guardar em Transferências",  # i18n-allow: product UI string
+        "edit": "Abrir no editor",  # i18n-allow: product UI string
+        "cancel": "Cancelar",  # i18n-allow: product UI string
+        "done": "Concluído — enviar ao assistente",  # i18n-allow: product UI string
+        "placeholder": "Escreve um texto",  # i18n-allow: product UI string
+    },
 }
 
 #: Shortcut shown in each tooltip.

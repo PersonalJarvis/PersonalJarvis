@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Locale = Record<string, unknown>;
 
@@ -18,7 +19,7 @@ const keys = (locale: Locale, section: string) =>
   flatten((locale[section] ?? {}) as Locale).sort();
 
 describe("workspace launcher i18n parity", () => {
-  for (const [language, locale] of Object.entries({ de, es })) {
+  for (const [language, locale] of Object.entries({ de, es, pt })) {
     it(`${language} has the same workspace launcher keys as en`, () => {
       expect(keys(locale as Locale, "workspace_launcher")).toEqual(
         keys(en as Locale, "workspace_launcher"),

@@ -234,7 +234,7 @@ def _session_payload(
     transcription: dict[str, Any] = {"model": transcription_model} if transcription_model else {}
     input_language = str(getattr(cfg, "input_language", "auto") or "auto")
     input_language = input_language.strip().lower().replace("_", "-").split("-", 1)[0]
-    if input_language in {"de", "en", "es"}:
+    if input_language in {"de", "en", "es", "pt"}:
         transcription["language"] = input_language
 
     turn_detection = str(getattr(cfg, "turn_detection", "server_vad") or "server_vad")

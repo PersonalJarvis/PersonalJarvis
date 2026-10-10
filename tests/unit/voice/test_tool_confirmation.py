@@ -43,6 +43,11 @@ class TestFormatToolConfirmation:
         assert "¿" in q
         assert "correo" in q.lower() or "enviar" in q.lower()
 
+    def test_known_tool_pt_is_a_portuguese_question(self) -> None:
+        q = format_tool_confirmation("gmail", language="pt")
+        assert q.endswith("Diz sim ou não.")
+        assert "email" in q.lower() and "envie" in q.lower()
+
     def test_unknown_tool_falls_back_to_a_generic_question(self) -> None:
         q = format_tool_confirmation("some_unmapped_tool", language="de")
         assert "?" in q
@@ -51,7 +56,7 @@ class TestFormatToolConfirmation:
         assert "ja" in q.lower()  # the confirm cue "Sag ja ..."
 
     def test_generic_fallback_covers_all_three_languages(self) -> None:
-        for lang in ("de", "en", "es"):
+        for lang in ("de", "en", "es", "pt"):
             q = format_tool_confirmation("unmapped", language=lang)
             assert "?" in q
             assert q.strip() != ""
@@ -92,7 +97,7 @@ class TestImpactQuestions:
         assert "löschen" not in read.lower()  # i18n-allow — German surface quote
 
     @pytest.mark.parametrize("level", ["destructive", "modify", "read"])
-    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
     def test_every_impact_level_covers_all_three_languages(
         self, level: str, lang: str
     ) -> None:
@@ -151,7 +156,7 @@ class TestFormatConfirmOutcome:
         assert msg.strip() != ""
 
     @pytest.mark.parametrize("kind", ["done", "vetoed", "timeout", "failed"])
-    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
     def test_every_outcome_covers_all_three_languages(self, kind: str, lang: str) -> None:
         msg = format_confirm_outcome(kind, "gmail", language=lang)
         assert msg.strip() != ""

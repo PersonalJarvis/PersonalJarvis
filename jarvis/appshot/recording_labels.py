@@ -77,4 +77,25 @@ LABELS = {
         "recording": "正在录制",  # i18n-allow: product UI
         "saving": "正在保存录制…",  # i18n-allow: product UI
     },
+    "pt": {
+        "title": "AppShots — Gravação de ecrã",  # i18n-allow: product UI
+        "play": "Reproduzir vídeo",  # i18n-allow: product UI
+        "video": "Vídeo",  # i18n-allow: product UI
+        "save": "Guardar vídeo",  # i18n-allow: product UI
+        "close": "Fechar",  # i18n-allow: product UI
+        "pin": "Manter no ecrã",  # i18n-allow: product UI
+        "saved": "Guardado em Transferências",  # i18n-allow: product UI
+        "failed": "Não foi possível concluir",  # i18n-allow: product UI
+        "select": "Arrasta uma área para gravar · Esc cancela",  # i18n-allow: product UI
+        "full": "Gravar o ecrã inteiro",  # i18n-allow: product UI
+        "portal": "Escolhe um ecrã na caixa de partilha do sistema.",  # i18n-allow: product UI
+        "preview": (
+            "Arrasta uma área na pré-visualização ou grava o ecrã partilhado."  # i18n-allow: UI
+        ),
+        "cancel": "Cancelar",  # i18n-allow: product UI
+        "stop": "Parar e guardar",  # i18n-allow: product UI
+        "starting": "A iniciar a gravação…",  # i18n-allow: product UI
+        "recording": "A gravar",  # i18n-allow: product UI
+        "saving": "A guardar a gravação…",  # i18n-allow: product UI
+    },
 }

@@ -47,7 +47,7 @@ DEFAULT_VOICE_ES = "Diego"
 
 # BCP-47 tags Inworld expects. Jarvis' turn resolver already emits de-DE/en-US/
 # es-ES, but a bare "de" is normalized up so the field is always well-formed.
-_BCP47 = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+_BCP47 = {"de": "de-DE", "en": "en-US", "es": "es-ES", "pt": "pt-PT"}
 
 # DE letters are part of the sentence-boundary match set on the next line.
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-ZÄÖÜ])")  # i18n-allow

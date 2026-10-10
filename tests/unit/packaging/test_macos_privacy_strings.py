@@ -345,7 +345,7 @@ def test_the_folder_strings_do_not_promise_saving_or_creating() -> None:
         assert "works with files" in lowered, key
 
 
-# --- German and Spanish: both bundles ship the same InfoPlist.strings -----------
+# --- German, Spanish, Portuguese: both bundles ship the same InfoPlist.strings --
 
 
 def _parse_strings(text: str) -> dict[str, str]:
@@ -363,9 +363,9 @@ def _parse_strings(text: str) -> dict[str, str]:
 
 
 def test_the_localised_tables_cover_exactly_the_required_keys() -> None:
-    assert table_module.LOCALIZATIONS == ("en", "de", "es")
+    assert table_module.LOCALIZATIONS == ("en", "de", "es", "pt-PT")
     assert table_module.DEVELOPMENT_REGION == "en"
-    assert table_module.LOCALIZED_LANGUAGES == ("de", "es")
+    assert table_module.LOCALIZED_LANGUAGES == ("de", "es", "pt-PT")
     english = table_module.usage_descriptions()
     for language in table_module.LOCALIZED_LANGUAGES:
         localised = table_module.localized_usage_descriptions(language)
@@ -393,10 +393,15 @@ def test_localised_dicts_are_fresh_copies() -> None:
     )
     keys = table_module.localization_plist_keys()
     keys["CFBundleLocalizations"].append("fr")
-    assert table_module.localization_plist_keys()["CFBundleLocalizations"] == ["en", "de", "es"]
+    assert table_module.localization_plist_keys()["CFBundleLocalizations"] == [
+        "en",
+        "de",
+        "es",
+        "pt-PT",
+    ]
 
 
-@pytest.mark.parametrize("language", ["de", "es"])
+@pytest.mark.parametrize("language", ["de", "es", "pt-PT"])
 def test_the_strings_file_round_trips_the_table(language: str) -> None:
     text = table_module.info_plist_strings_text(language)
 
@@ -425,6 +430,7 @@ def test_write_localizations_creates_one_lproj_per_language(tmp_path: Path) -> N
     assert sorted(path.relative_to(resources).as_posix() for path in written) == [
         "de.lproj/InfoPlist.strings",
         "es.lproj/InfoPlist.strings",
+        "pt-PT.lproj/InfoPlist.strings",
     ]
     for language in table_module.LOCALIZED_LANGUAGES:
         raw = (resources / f"{language}.lproj" / "InfoPlist.strings").read_bytes()
@@ -437,7 +443,11 @@ def test_write_localizations_is_repeatable(tmp_path: Path) -> None:
     table_module.write_localizations(tmp_path)
     table_module.write_localizations(tmp_path)
 
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["de.lproj", "es.lproj"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "de.lproj",
+        "es.lproj",
+        "pt-PT.lproj",
+    ]
 
 
 def test_the_spec_declares_the_localisations(
@@ -445,7 +455,7 @@ def test_the_spec_declares_the_localisations(
 ) -> None:
     info = _exec_spec(monkeypatch, spec_root)["info_plist"]
 
-    assert info["CFBundleLocalizations"] == ["en", "de", "es"]
+    assert info["CFBundleLocalizations"] == ["en", "de", "es", "pt-PT"]
     assert info["CFBundleDevelopmentRegion"] == "en"
     assert plistlib.loads(plistlib.dumps(info)) == info
 
@@ -453,7 +463,7 @@ def test_the_spec_declares_the_localisations(
 def test_the_managed_bundle_declares_the_same_localisations() -> None:
     info = mab._bundle_plist()
 
-    assert info["CFBundleLocalizations"] == ["en", "de", "es"]
+    assert info["CFBundleLocalizations"] == ["en", "de", "es", "pt-PT"]
     assert info["CFBundleDevelopmentRegion"] == "en"
     # No format bump: a bump would rebuild every installed bundle and re-ask every
     # permission after an ad-hoc rebuild (see the comment above _BUNDLE_FORMAT_VERSION).

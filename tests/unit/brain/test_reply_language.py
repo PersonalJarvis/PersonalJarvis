@@ -38,7 +38,7 @@ def _manager(reply_language: str) -> BrainManager:
 
 
 def test_normalize_accepts_known_languages() -> None:
-    for code in ("auto", "de", "en", "es"):
+    for code in ("auto", "de", "en", "es", "pt"):
         assert normalize_reply_language(code) == code
 
 
@@ -59,6 +59,7 @@ def test_directive_names_target_language() -> None:
     assert "English" in _manager("en")._reply_language_directive()
     assert "German" in _manager("de")._reply_language_directive()
     assert "Spanish" in _manager("es")._reply_language_directive()
+    assert "European Portuguese" in _manager("pt")._reply_language_directive()
 
 
 def test_directive_is_mandatory_and_keeps_proper_nouns() -> None:
@@ -70,8 +71,9 @@ def test_directive_is_mandatory_and_keeps_proper_nouns() -> None:
 
 def test_auto_directive_mirrors_user_language() -> None:
     d = _manager("auto")._reply_language_directive()
-    # auto = mirror; must mention all three supported languages, no hard pin
+    # auto = mirror; must mention every supported language, no hard pin
     assert "German" in d and "English" in d and "Spanish" in d
+    assert "European Portuguese" in d
     assert "MANDATORY" not in d
 
 
@@ -119,6 +121,9 @@ def test_set_reply_language_updates_runtime() -> None:
     m.set_reply_language("es")
     assert m._reply_language == "es"
     assert "Spanish" in m._build_system_prompt()
+    m.set_reply_language("pt")
+    assert m._reply_language == "pt"
+    assert "European Portuguese" in m._build_system_prompt()
 
 
 def test_set_reply_language_rejects_unknown() -> None:
@@ -131,3 +136,52 @@ def test_set_reply_language_rejects_unknown() -> None:
 
 def test_reply_language_property_reflects_value() -> None:
     assert _manager("en").reply_language == "en"
+
+
+def test_every_manager_phrase_table_carries_european_portuguese() -> None:
+    """Every spoken table with a Spanish column also has a pt column with the
+    same placeholders and variant count (nested tables included), so a
+    pt-pinned turn never falls back to German."""
+    import string
+
+    import jarvis.brain.manager as manager
+
+    def fields(value: object) -> list[set[str]]:
+        texts = value if isinstance(value, tuple) else (value,)
+        return [
+            {f for _, f, _, _ in string.Formatter().parse(str(t)) if f} for t in texts
+        ]
+
+    def walk(table: dict, path: str) -> int:
+        checked = 0
+        if "es" in table and isinstance(table["es"], (str, tuple, dict)):
+            assert "pt" in table, path
+            if isinstance(table["es"], dict):
+                assert set(table["pt"]) == set(table["es"]), path
+            else:
+                assert fields(table["pt"]) == fields(table["es"]), path
+            checked += 1
+        for key, value in table.items():
+            if isinstance(value, dict):
+                checked += walk(value, f"{path}.{key}")
+        return checked
+
+    checked = sum(
+        walk(value, name)
+        for name, value in vars(manager).items()
+        if name.isupper() or name.startswith("_") and isinstance(value, dict)
+        if isinstance(value, dict)
+    )
+    assert checked >= 30
+
+
+def test_tool_use_loop_spoken_fallbacks_carry_european_portuguese() -> None:
+    from jarvis.brain.tool_use_loop import (
+        _ANTI_SILENCE_PHRASES,
+        _META_DEBUG_ACK_PHRASES,
+        _localized_phrase,
+    )
+
+    for table in (_ANTI_SILENCE_PHRASES, _META_DEBUG_ACK_PHRASES):
+        assert table["pt"] and table["pt"] not in (table["de"], table["es"])
+        assert _localized_phrase(table, "anything", "pt") == table["pt"]

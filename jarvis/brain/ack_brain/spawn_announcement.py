@@ -188,12 +188,13 @@ interpreted task, use it as the topic source.
 Output: ONLY the announcement, nothing else."""
 
 
-# Languages with a native flash-LLM spawn persona. An ``es`` turn has no
+# Languages with a native flash-LLM spawn persona. An ``es`` or ``pt`` turn has no
 # persona (the locked 2026-05-11 preamble spec is not touched), so it skips the
 # LLM round-trip and uses the curated ``es`` fallback pool directly — a
 # DE/EN-persona LLM call would only produce text that the language-match
 # validation rejects, wasting one timeout. Bringing a SPAWN_PERSONA_ES online is
-# a tracked follow-up; Spanish is already fully covered deterministically here.
+# a tracked follow-up; Spanish and European Portuguese are already fully covered
+# deterministically here.
 _PERSONA_LANGS: frozenset[str] = frozenset({"de", "en"})
 
 
@@ -250,6 +251,18 @@ _FALLBACK_SPAWN: dict[str, tuple[str, ...]] = {
         "He puesto un {agent} con este tema más grande; volverá con algo sólido.",
         "Un {agent} ya trabaja en ello. Hay más detrás, así que tardará un momentito.",
     ),
+    "pt": (
+        "Vou tratar disso. Iniciei um {agent} para esta tarefa maior; ele avisa quando terminar.",
+        "Entendido. Um {agent} está a analisar isto com atenção; pode demorar um momento.",
+        "Está bem, isto precisa de ser visto a fundo. Um {agent} já está a trabalhar em segundo "
+        "plano.",
+        "Um {agent} trata disso. É uma tarefa com mais conteúdo, por isso precisa de um momento.",
+        "Já está. Um {agent} assumiu este trabalho um pouco maior.",
+        "Claro. Um {agent} já está a aprofundar; fazer isto bem leva algum tempo.",
+        "Pus um {agent} a tratar deste assunto maior; vai voltar com algo sólido.",
+        "Um {agent} já está a trabalhar nisso. Há mais por trás, por isso vai demorar um "
+        "bocadinho.",
+    ),
 }
 
 _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
@@ -270,6 +283,12 @@ _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
         "El {agent} ya tiene esa tarea, un momento.",
         "Un {agent} sigue trabajando en ello, casi está.",
         "Paciencia, esa tarea ya está con un {agent}.",
+    ),
+    "pt": (
+        "Um {agent} já está a tratar disso; continua em curso.",
+        "O {agent} já tem essa tarefa, um momento.",
+        "Um {agent} ainda está a trabalhar nisso, está quase.",
+        "Paciência, essa tarefa já está com um {agent}.",
     ),
 }
 
@@ -307,6 +326,13 @@ STILL_RUNNING_PHRASES: dict[str, tuple[str, ...]] = {
         "Aún no he terminado: prefiero darte algo en condiciones que algo a medias.",
         "Todavía trabajando en ello. Vuelvo contigo enseguida.",
         "Ya casi; estoy juntando las piezas para ti.",
+    ),
+    "pt": (
+        "Continuo com o assunto maior. Daqui a pouco tenho algo sólido para ti.",
+        "Isto precisa de mais um pouco; continuo a tratar disso em segundo plano.",
+        "Ainda não terminei: prefiro dar-te algo como deve ser do que algo pela metade.",
+        "Ainda a trabalhar nisso. Volto a falar contigo já a seguir.",
+        "Quase lá; estou a juntar as peças para ti.",
     ),
 }
 
@@ -362,14 +388,14 @@ def _fix_en_article(text: str) -> str:
 def _resolve_language(explicit: str | None, utterance: str) -> str:
     """Resolve the announcement language: explicit hint > utterance heuristic.
 
-    Supports 'de', 'en' and 'es' (Runtime Output Language doctrine — every
-    spoken phrase table covers all three). An explicit hint wins (the
+    Supports 'de', 'en', 'es' and 'pt' (Runtime Output Language doctrine — every
+    spoken phrase table covers all four). An explicit hint wins (the
     ``brain.reply_language`` pin / STT tag reaches here as ``language`` — the
     live source on the voice path); otherwise the utterance heuristic decides,
     and an inconclusive detection falls back to the shared ``DEFAULT_LOCALE``
     (honesty-over-guessing, never a per-layer hardcoded default). Only 'de'/'en'
-    have a native LLM persona (see ``_PERSONA_LANGS``); 'es' is served from the
-    curated fallback pool.
+    have a native LLM persona (see ``_PERSONA_LANGS``); 'es' and 'pt' are served
+    from the curated fallback pools.
     """
     if explicit:
         low = str(explicit).strip().lower()
@@ -377,10 +403,12 @@ def _resolve_language(explicit: str | None, utterance: str) -> str:
             return "en"
         if low.startswith("es"):
             return "es"
+        if low.startswith("pt"):
+            return "pt"
         if low.startswith("de"):
             return "de"
     detected = detect_text_language(utterance or "")
-    return detected if detected in ("de", "en", "es") else DEFAULT_LOCALE
+    return detected if detected in ("de", "en", "es", "pt") else DEFAULT_LOCALE
 
 
 def _trim_to_sentences(text: str, max_words: int) -> str | None:

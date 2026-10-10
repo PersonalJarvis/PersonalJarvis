@@ -1,6 +1,6 @@
 /**
  * Every `agent_chat.*` / `all_chats.*` key the front page's chat asks for
- * must exist in en — and de/es must carry exactly the keys en carries in
+ * must exist in en — and de/es/pt must carry exactly the keys en carries in
  * those two blocks. The keys are read from the source files themselves, so
  * a composer or timeline string added without its translations fails here,
  * not in front of a person. Modelled on local-models-i18n-parity.test.ts.
@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 const BLOCKS = ["agent_chat", "all_chats"] as const;
 type Block = (typeof BLOCKS)[number];
@@ -71,6 +72,7 @@ describe("agent chat i18n parity", () => {
   for (const [lang, loc] of [
     ["de", de],
     ["es", es],
+    ["pt", pt],
   ] as const) {
     for (const block of BLOCKS) {
       it(`${lang} has the same ${block} keys as en`, () => {

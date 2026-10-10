@@ -515,7 +515,7 @@ class BrowserVoiceSession:
             )
 
     def _lang_short(self) -> str:
-        # scrub_for_voice only knows the runtime locales de/en/es (AP-11, regex
+        # scrub_for_voice only knows the runtime locales de/en/es/pt (AP-11, regex
         # only); an unknown tag would silently apply the wrong blacklist.
         tag = (self.language_code or "de-DE").split("-", 1)[0].lower()
-        return tag if tag in {"de", "en", "es"} else "de"
+        return tag if tag in {"de", "en", "es", "pt"} else "de"

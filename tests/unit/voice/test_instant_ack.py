@@ -100,7 +100,7 @@ def test_none_plan_gets_no_ack():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("language", ["de", "en", "es"])
+@pytest.mark.parametrize("language", ["de", "en", "es", "pt"])
 @pytest.mark.parametrize(
     "work_class", [WorkClass.RESEARCH, WorkClass.PERSONAL, WorkClass.SCREEN, WorkClass.MISSION]
 )
@@ -115,13 +115,13 @@ def test_every_pooled_class_has_varied_lines_in_every_locale(work_class, languag
 
 
 def test_action_pool_is_empty_by_design():
-    for language in ("de", "en", "es"):
+    for language in ("de", "en", "es", "pt"):
         assert instant_ack_pool(WorkClass.ACTION, language) == ()
         assert pick_instant_ack_text(WorkClass.ACTION, language) == ""
 
 
 def test_mission_lines_carry_the_dynamic_agent_brand_never_a_product_name():
-    for language in ("de", "en", "es"):
+    for language in ("de", "en", "es", "pt"):
         for line in instant_ack_pool(WorkClass.MISSION, language, agent_brand="Athena-Agent"):
             assert "Athena-Agent" in line
             assert "{agent}" not in line
@@ -177,6 +177,8 @@ def test_all_lines_are_normalized_for_transcript_matching():
         ("Opening Spotify for you now.", "Open Spotify", "en"),
         ("I'm telling T1 to run the tests.", "Tell T1 to run the tests", "en"),
         ("Abro Spotify.", "Abre Spotify", "es"),
+        ("Estou a abrir o Spotify.", "Abre o Spotify", "pt"),
+        ("Vou ligar à Ana agora.", "Liga à Ana", "pt"),
     ],
 )
 def test_contextual_intent_lines_pass(text, utterance, language):
@@ -219,6 +221,9 @@ def test_contextual_intent_lines_pass(text, utterance, language):
         ("I'm sending that to terminal one.", "Tell T1 to run the tests", "en", "invented words"),
         ("Done, Spotify is running.", "Open Spotify", "en", "completion"),
         ("Spotify ya está abierto.", "Abre Spotify", "es", "copula result claim"),
+        ("O Spotify já está aberto.", "Abre o Spotify", "pt", "copula result claim"),
+        ("Abri o Spotify.", "Abre o Spotify", "pt", "preterite result"),
+        ("Estou a tratar disso.", "Abre o Spotify", "pt", "stock filler, no subject"),
         ("I'm opening Spotify, Sir.", "Open Spotify", "en", "forbidden honorific"),
         ("The worker is opening Spotify.", "Open Spotify", "en", "forbidden internal name"),
         ("", "Open Spotify", "en", "empty"),
@@ -275,7 +280,7 @@ def test_tool_names_map_onto_progress_activities(tool_name, activity):
     assert classify_tool_activity(tool_name) is activity
 
 
-@pytest.mark.parametrize("language", ["de", "en", "es"])
+@pytest.mark.parametrize("language", ["de", "en", "es", "pt"])
 def test_progress_pools_exist_for_every_activity_except_handover(language):
     for activity in ToolActivity:
         pool = progress_pool(activity, language)

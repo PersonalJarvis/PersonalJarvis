@@ -633,10 +633,10 @@ async def _generate(
             # turn lock; do not detect language from an English result prompt.
             if not handle.output_language:
                 pin = getattr(brain, "reply_language", "")
-                language = pin if pin in {"de", "en", "es"} else getattr(
+                language = pin if pin in {"de", "en", "es", "pt"} else getattr(
                     brain, "conversation_language", ""
                 )
-                if language in {"de", "en", "es"}:
+                if language in {"de", "en", "es", "pt"}:
                     handle.output_language = language
             return result
         task.cancel()

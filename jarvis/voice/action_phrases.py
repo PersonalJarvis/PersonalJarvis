@@ -7,7 +7,7 @@ displayed VERBATIM, so it must be rendered in the turn's language HERE (live
 bug 2026-06-15: an all-English computer-use turn ended with the German
 "Erledigt." completion readback).
 
-Pure dict lookups — no LLM, no IO (AP-9 / AP-11). Languages: de / en / es;
+Pure dict lookups — no LLM, no IO (AP-9 / AP-11). Languages: de / en / es / pt;
 an unknown language falls back to German (the historical default). The German
 column is intentionally the same wording the paths used before, so a German
 turn is byte-identical to the old behavior.
@@ -19,9 +19,9 @@ import re
 from jarvis.core.turn_language import resolve_turn_language
 
 _DEFAULT = "de"
-_SUPPORTED = ("de", "en", "es")
+_SUPPORTED = ("de", "en", "es", "pt")
 
-#: ``HarnessTask.env`` key carrying the turn's resolved output language (de/en/es)
+#: ``HarnessTask.env`` key carrying the turn's resolved output language (de/en/es/pt)
 #: into the computer-use harness, so the in-harness verifier writes its spoken
 #: ``proof`` in the user's language instead of defaulting to English (live bug
 #: 2026-06-27: a German turn read back "Erledigt — The file explorer window is
@@ -46,6 +46,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Erledigt.",  # i18n-allow
         "en": "Done.",
         "es": "Listo.",
+        "pt": "Feito.",
     },
     # The lookup ran, its answer never got spoken, and nothing could be built
     # from what it returned. The floor under ``_wordless_success_line`` — and
@@ -66,6 +67,7 @@ _PHRASES: dict[str, dict[str, str]] = {
             "Tengo la información, pero no pude leerla en voz alta. "
             "¿Lo intento otra vez?"
         ),
+        "pt": "Tenho a informação, mas não a consegui ler em voz alta. Tento outra vez?",
     },
     # The lookup ran and came back empty. The honest answer to a question with
     # no hit — never ``cu_done``, which would report a finished job instead.
@@ -73,6 +75,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Dazu habe ich nichts gefunden.",  # i18n-allow
         "en": "I didn't find anything on that.",
         "es": "No encontré nada sobre eso.",  # i18n-allow
+        "pt": "Não encontrei nada sobre isso.",  # i18n-allow
     },
     # Success WITH the verifier's on-screen observation forwarded (the SUCCESS
     # sibling of cu_failed_reason). Lets an informational request actually be
@@ -84,21 +87,25 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Erledigt. {detail}",  # i18n-allow
         "en": "Done. {detail}",
         "es": "Listo. {detail}",
+        "pt": "Feito. {detail}",
     },
     "cu_failed": {
         "de": "Das am Bildschirm hat nicht geklappt.",  # i18n-allow
         "en": "That didn't work on screen.",
         "es": "Eso no funcionó en la pantalla.",
+        "pt": "Isso não funcionou no ecrã.",
     },
     "cu_failed_reason": {
         "de": "Das am Bildschirm hat nicht geklappt: {error}",  # i18n-allow
         "en": "That didn't work on screen: {error}",
         "es": "Eso no funcionó en la pantalla: {error}",
+        "pt": "Isso não funcionou no ecrã: {error}",
     },
     "cu_crashed": {
         "de": "Beim Erledigen am Bildschirm ist leider etwas schiefgegangen.",  # i18n-allow
         "en": "Something went wrong while doing it on screen.",
         "es": "Algo salió mal al hacerlo en la pantalla.",
+        "pt": "Algo correu mal ao fazer isso no ecrã.",
     },
     # Computer-use failure readbacks keyed off the harness EXIT CODE. These are
     # plain-language sentences for the case where the underlying layer gives us
@@ -113,16 +120,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe es am Bildschirm versucht, aber nicht hinbekommen.",  # i18n-allow
         "en": "I tried it on screen but couldn't get it done.",
         "es": "Lo intenté en la pantalla, pero no pude completarlo.",
+        "pt": "Tentei no ecrã, mas não consegui concluir.",
     },
     "cu_exit_no_view": {  # exit 1 — observe failure (no usable screenshot)
         "de": "Ich konnte den Bildschirm nicht richtig sehen und habe abgebrochen.",  # i18n-allow
         "en": "I couldn't see the screen properly, so I stopped.",
         "es": "No pude ver bien la pantalla, así que lo detuve.",
+        "pt": "Não consegui ver bem o ecrã, por isso parei.",
     },
     "cu_exit_confused": {  # exit 2 — invalid model / parse response
         "de": "Ich konnte keine gueltige Bildschirm-Antwort bekommen und habe gestoppt.",  # i18n-allow
         "en": "I couldn't get a valid screen-control response, so I stopped.",
         "es": "No pude obtener una respuesta valida para controlar la pantalla, asi que me detuve.",
+        "pt": "Não consegui obter uma resposta válida para controlar o ecrã, por isso parei.",
     },
     # exit 3 — the vision-provider chain was EXHAUSTED: no screen-capable AI model
     # was reachable (every candidate keyless / out-of-credit / rate-limited /
@@ -140,28 +150,36 @@ _PHRASES: dict[str, dict[str, str]] = {
               "Please check your API keys or your credit in settings.",
         "es": "Ahora mismo no tengo un modelo de IA que pueda ver la pantalla. "
               "Revisa tus claves de API o tu saldo en los ajustes.",
+        "pt": (
+            "Neste momento não tenho um modelo de IA que consiga ver o ecrã. Verifica as tuas "
+            "chaves de API ou o teu saldo nas definições."
+        ),
     },
     "cu_exit_too_many_steps": {  # exit 4 — step budget exhausted
         "de": "Es hat am Bildschirm zu viele Schritte gebraucht, ich habe "  # i18n-allow
               "aufgehoert.",  # i18n-allow
         "en": "It took too many steps on screen, so I stopped.",
         "es": "Hicieron falta demasiados pasos en la pantalla, así que lo detuve.",
+        "pt": "Foram precisos demasiados passos no ecrã, por isso parei.",
     },
     "cu_exit_action_failed": {  # exit 8 — tool/action failure
         "de": "Eine Aktion am Bildschirm ist fehlgeschlagen, ich habe abgebrochen.",  # i18n-allow
         "en": "An action on screen failed, so I stopped.",
         "es": "Una acción en la pantalla falló, así que lo detuve.",
+        "pt": "Uma ação no ecrã falhou, por isso parei.",
     },
     "cu_exit_cancelled": {  # exit 130 — cancel token (e.g. voice hangup)
         "de": "Die Aktion am Bildschirm wurde abgebrochen.",  # i18n-allow
         "en": "The action on screen was cancelled.",
         "es": "La acción en la pantalla se canceló.",
+        "pt": "A ação no ecrã foi cancelada.",
     },
     "cu_exit_needs_elevation": {  # exit 9 — waited for admin confirmation, none came
         "de": "Ich habe auf die Administrator-Bestaetigung gewartet, aber es kam "  # i18n-allow
               "keine, also habe ich gestoppt.",  # i18n-allow
         "en": "I waited for the administrator confirmation, but none came, so I stopped.",
         "es": "Esperé la confirmación de administrador, pero no llegó, así que me detuve.",
+        "pt": "Esperei pela confirmação de administrador, mas não chegou, por isso parei.",
     },
     # exit 8 + "[cu] blocked_permission": the mission stopped because a macOS
     # permission or a system dialog needs the person. ``cu_blocked_permission``
@@ -174,10 +192,14 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I had to stop. {sentence}",
         "es": "Tuve que parar: Personal Jarvis necesita el permiso de {permission}. "
               "Actívalo en {pane}. Después, vuelve a intentarlo.",
+        "pt": (
+            "Tive de parar: o Personal Jarvis precisa da permissão de {permission}. Ativa-a em "
+            "{pane}. Depois, tenta outra vez."
+        ),
     },
     # The grant is on but unusable, a permission this session cannot ask for, and a
     # macOS dialog that is still open: each one has its own remedy, none is "allow it
-    # in Settings". de/es name the permission; en forwards the engine's sentence and
+    # in Settings". de/es/pt name the permission; en forwards the engine's sentence and
     # only needs these as the fixed fallback.
     "cu_blocked_restart_hint": {
         "de": "Ich musste anhalten: Die Berechtigung {permission} wirkt "  # i18n-allow
@@ -189,6 +211,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "Tuve que parar: el permiso de {permission} puede que solo surta efecto "
               "cuando Personal Jarvis se cierre y se vuelva a abrir. "
               "Reinicia la app y vuelve a intentarlo.",
+        "pt": (
+            "Tive de parar: a permissão de {permission} pode só ter efeito depois de o Personal "
+            "Jarvis ser fechado e reaberto. Reinicia a app e tenta outra vez."
+        ),
     },
     "cu_blocked_unavailable": {
         "de": "Ich musste anhalten: Personal Jarvis kann in dieser Sitzung "  # i18n-allow
@@ -197,6 +223,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "in this session.",
         "es": "Tuve que parar: Personal Jarvis no puede pedir el permiso de {permission} "
               "en esta sesión.",
+        "pt": (
+            "Tive de parar: o Personal Jarvis não pode pedir a permissão de {permission} nesta "
+            "sessão."
+        ),
     },
     "cu_blocked_waiting": {
         "de": "Ich musste anhalten, weil macOS gerade nach der Berechtigung "  # i18n-allow
@@ -206,6 +236,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "Answer the dialog, then try again.",
         "es": "Tuve que parar porque macOS está preguntando por el permiso de "
               "{permission}. Responde al diálogo y vuelve a intentarlo.",
+        "pt": (
+            "Tive de parar porque o macOS está a pedir a permissão de {permission}. Responde ao "
+            "diálogo e tenta outra vez."
+        ),
     },
     "cu_blocked_dialog": {
         "de": "Ich musste anhalten, weil auf dem Mac ein Systemdialog offen ist. "  # i18n-allow
@@ -214,6 +248,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "Answer it yourself, then try again.",
         "es": "Tuve que parar porque hay un diálogo del sistema abierto en el Mac. "
               "Respóndelo tú y vuelve a intentarlo.",
+        "pt": (
+            "Tive de parar porque há um diálogo do sistema aberto no Mac. Responde tu a ele e "
+            "tenta outra vez."
+        ),
     },
     "cu_blocked_restricted": {
         "de": "Ich musste anhalten: Eine nötige Berechtigung ist auf diesem "  # i18n-allow
@@ -224,6 +262,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "profile or a parental control. That cannot be changed from the app.",
         "es": "Tuve que parar: un permiso necesario está restringido en este Mac por un "
               "perfil o un control parental. No se puede cambiar desde la app.",
+        "pt": (
+            "Tive de parar: uma permissão necessária está restrita neste Mac por um perfil ou "
+            "por controlo parental. Não pode ser alterada a partir da app."
+        ),
     },
     "cu_blocked_generic": {
         "de": "Ich musste anhalten, weil macOS eine Berechtigung für Personal Jarvis "  # i18n-allow
@@ -233,12 +275,17 @@ _PHRASES: dict[str, dict[str, str]] = {
               "Allow it in System Settings under Privacy & Security, then try again.",
         "es": "Tuve que parar porque macOS necesita un permiso para Personal Jarvis. "
               "Actívalo en Ajustes del Sistema, en Privacidad y seguridad, y vuelve a intentarlo.",
+        "pt": (
+            "Tive de parar porque o macOS precisa de uma permissão para o Personal Jarvis. "
+            "Ativa-a nas Definições do Sistema, em Privacidade e segurança, e tenta outra vez."
+        ),
     },
     "cu_timeout": {
         "de": "Das am Bildschirm hat zu lange gedauert "  # i18n-allow
               "(ueber {secs} Sekunden) und wurde abgebrochen.",  # i18n-allow
         "en": "That took too long on screen (over {secs} seconds) and was cancelled.",
         "es": "Eso tardó demasiado en la pantalla (más de {secs} segundos) y se canceló.",
+        "pt": "Isso demorou demasiado no ecrã (mais de {secs} segundos) e foi cancelado.",
     },
     # open_app launch readbacks (deterministic local-action path). The German
     # column keeps the exact historical wording.
@@ -246,16 +293,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Gestartet: {app}",  # i18n-allow
         "en": "Launched: {app}",
         "es": "Iniciado: {app}",
+        "pt": "Iniciado: {app}",
     },
     "open_app_launched_raised": {
         "de": "Gestartet und nach vorn geholt: {app}",  # i18n-allow
         "en": "Launched and brought to the front: {app}",
         "es": "Iniciado y traído al frente: {app}",
+        "pt": "Iniciado e trazido para a frente: {app}",
     },
     "open_app_not_found": {
         "de": "Anwendung '{app}' nicht gefunden.",  # i18n-allow
         "en": "Application '{app}' was not found.",
         "es": "No se encontró la aplicación '{app}'.",
+        "pt": "A aplicação '{app}' não foi encontrada.",
     },
     # Computer-use is NOT wired on this machine — the honest counterpart of
     # ``cu_dispatch_ack`` below, spoken INSTEAD of it. The harness only works
@@ -275,6 +325,10 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "El control de pantalla está desactivado en este equipo. "
               "Actívalo en la configuración con computer_use.enabled y "
               "reiníciame una vez.",
+        "pt": (
+            "O controlo do ecrã está desativado neste computador. Ativa-o nas definições com "
+            "computer_use.enabled e reinicia-me uma vez."
+        ),
     },
     # Computer-use dispatch — the immediate optimistic ACK.
     "cu_dispatch_ack": {
@@ -282,6 +336,7 @@ _PHRASES: dict[str, dict[str, str]] = {
               "und sage Bescheid, sobald es fertig ist.",  # i18n-allow
         "en": "On it. I'll handle that on screen and let you know when it's done.",
         "es": "Voy. Lo hago directamente en la pantalla y te aviso cuando termine.",
+        "pt": "Vou já. Faço isso diretamente no ecrã e aviso-te quando terminar.",
     },
     # Computer-use pause: an OS elevation prompt (Windows Secure Desktop & co.)
     # is up. A non-elevated process can neither see nor click it (UIPI), so we
@@ -295,6 +350,10 @@ _PHRASES: dict[str, dict[str, str]] = {
               "prompt once, then I'll keep going.",
         "es": "Esto requiere permisos de administrador. Confirma el aviso de "
               "seguridad una vez y continúo.",
+        "pt": (
+            "Isto requer permissões de administrador. Confirma o aviso de segurança uma vez e eu "
+            "continuo."
+        ),
     },
     # Computer-use human handoff: a screen only the USER may complete is up — a
     # login / password entry, a 2FA / one-time-code prompt, or a CAPTCHA. The
@@ -308,6 +367,7 @@ _PHRASES: dict[str, dict[str, str]] = {
               "verification, then I'll keep going.",
         "es": "Este paso te necesita, inicia sesión o completa la "
               "verificación y continúo.",
+        "pt": "Este passo precisa de ti, inicia sessão ou conclui a verificação e eu continuo.",
     },
     # Cost / budget guards on the computer-use branch.
     "cost_cooldown": {
@@ -317,22 +377,29 @@ _PHRASES: dict[str, dict[str, str]] = {
               "New requests resume once the cooldown ends.",
         "es": "Enfriamiento de costes activo, el presupuesto diario se agotó. "
               "Las nuevas solicitudes se reanudan al terminar el enfriamiento.",
+        "pt": (
+            "Pausa de custos ativa, o orçamento diário esgotou-se. Os novos pedidos são "
+            "retomados quando a pausa terminar."
+        ),
     },
     "task_budget": {
         "de": "Task-Budget fuer diese Konversation ueberschritten.",  # i18n-allow
         "en": "The task budget for this conversation is exceeded.",
         "es": "Se superó el presupuesto de tareas de esta conversación.",
+        "pt": "O orçamento de tarefas desta conversa foi excedido.",
     },
     "daily_budget": {
         "de": "Tagesbudget ueberschritten.",  # i18n-allow
         "en": "The daily budget is exceeded.",
         "es": "Se superó el presupuesto diario.",
+        "pt": "O orçamento diário foi excedido.",
     },
     # Direct local-action tool failure fallback.
     "tool_failed": {
         "de": "{tool} fehlgeschlagen.",  # i18n-allow
         "en": "{tool} failed.",
         "es": "{tool} falló.",
+        "pt": "{tool} falhou.",
     },
     # Generic action-failure fallback — the deterministic line behind the
     # context-aware composer for ANY failed action (local tool, recovered tool).
@@ -345,6 +412,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat gerade nicht geklappt.",  # i18n-allow
         "en": "That didn't work just now.",
         "es": "Eso no funcionó ahora mismo.",
+        "pt": "Isso não funcionou agora.",
     },
     # A stale re-render of an already-delivered answer was suppressed: the
     # live model executed the leftover rendering order of an earlier delegate
@@ -356,6 +424,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hatte ich gerade schon beantwortet. Was genau möchtest du wissen?",  # i18n-allow
         "en": "I already answered that just now. What exactly would you like to know?",
         "es": "Eso ya lo acabo de responder. ¿Qué querías saber exactamente?",
+        "pt": "Acabei de responder a isso. O que querias saber exatamente?",
     },
     # Action failure WITH a human reason forwarded (the speakable cause pulled
     # from the tool's stderr/error — never a bare exit code).
@@ -363,6 +432,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat nicht geklappt: {reason}",  # i18n-allow
         "en": "That didn't work: {reason}",
         "es": "Eso no funcionó: {reason}",
+        "pt": "Isso não funcionou: {reason}",
     },
     # Delegated-turn failures with a KNOWN internal cause. The raw internal
     # strings ("No configured Tool Model completed the delegated turn.") are
@@ -374,16 +444,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Keins meiner Modelle hat auf diese Anfrage geantwortet.",  # i18n-allow
         "en": "None of my models answered this request.",
         "es": "Ninguno de mis modelos respondió a esta petición.",
+        "pt": "Nenhum dos meus modelos respondeu a este pedido.",
     },
     "delegate_no_result": {
         "de": "Ich habe dazu kein belastbares Ergebnis zurückbekommen.",  # i18n-allow
         "en": "I got no grounded result back for that.",
         "es": "No recibí ningún resultado sólido para eso.",
+        "pt": "Não recebi nenhum resultado fiável para isso.",
     },
     "delegate_failed_internal": {
         "de": "Dabei ist intern etwas schiefgelaufen, ich habe sicher abgebrochen.",  # i18n-allow
         "en": "Something went wrong internally, so I stopped safely.",
         "es": "Algo falló internamente, así que me detuve de forma segura.",
+        "pt": "Algo falhou internamente, por isso parei em segurança.",
     },
     # The realtime provider yielded control for an action, but this session has
     # no executor to hand it to (no callable supervisor brain, or the request
@@ -395,6 +468,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Aktionen gehen gerade nicht, aber wir können weiter reden.",  # i18n-allow
         "en": "I can't run actions right now, but we can keep talking.",
         "es": "Ahora mismo no puedo ejecutar acciones, pero podemos seguir hablando.",
+        "pt": "Neste momento não consigo executar ações, mas podemos continuar a conversar.",
     },
     # Every tool the model reached for was GATED — the user's words did not ask
     # for it. Distinct from ``actions_unavailable`` above, which claims a
@@ -408,6 +482,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe dafür nichts ausgeführt. Sag mir, was ich tun soll.",  # i18n-allow
         "en": "I didn't run anything for that. Tell me what you want done.",
         "es": "No ejecuté nada para eso. Dime qué quieres que haga.",
+        "pt": "Não executei nada para isso. Diz-me o que queres que eu faça.",
     },
     # The only thing that ran was a ``run-skill`` instruction load: the model
     # read HOW to do it and then stopped, the tool that does the work was never
@@ -419,6 +494,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe die Anleitung dafür geladen, aber noch nichts ausgeführt.",  # i18n-allow
         "en": "I loaded the instructions for that, but I haven't carried them out yet.",
         "es": "Cargué las instrucciones para eso, pero todavía no las ejecuté.",
+        "pt": "Carreguei as instruções para isso, mas ainda não as executei.",
     },
     # A local action that ran past its short deadline. Replaces the old
     # tool-name-prefixed "X timeout after 3s" machine string (which leaked the
@@ -427,6 +503,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Das hat zu lange gedauert, also habe ich abgebrochen.",  # i18n-allow
         "en": "That took too long, so I stopped.",
         "es": "Eso tardó demasiado, así que lo detuve.",
+        "pt": "Isso demorou demasiado, por isso parei.",
     },
     # Background sub-agent / worker could not be started. The spoken sibling of
     # action_failed_* for the spawn paths — the opaque ``exit N`` / a hardcoded
@@ -435,11 +512,13 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich konnte den Hintergrund-Helfer gerade nicht starten.",  # i18n-allow
         "en": "I couldn't start the background helper just now.",
         "es": "No pude iniciar el ayudante en segundo plano ahora mismo.",
+        "pt": "Não consegui iniciar o assistente em segundo plano agora.",
     },
     "spawn_failed_reason": {
         "de": "Ich konnte den Hintergrund-Helfer nicht starten: {reason}",  # i18n-allow
         "en": "I couldn't start the background helper: {reason}",
         "es": "No pude iniciar el ayudante en segundo plano: {reason}",
+        "pt": "Não consegui iniciar o assistente em segundo plano: {reason}",
     },
     # The mission was accepted but NOTHING will ever pick it up: the spoken ack
     # already promised an answer, and the mission would sit PENDING until the
@@ -452,6 +531,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich kann die Aufgabe gerade nicht starten. Starte mich bitte neu.",  # i18n-allow
         "en": "I can't start the task right now. Please restart me.",
         "es": "No puedo iniciar la tarea ahora. Reiníciame, por favor.",
+        "pt": "Não consigo iniciar a tarefa agora. Reinicia-me, por favor.",
     },
     # ``create_artifact`` handed the page to a background agent. The promise
     # names the artifact and says the result will be announced — the tool's
@@ -462,6 +542,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "I'm building “{title}” in the background and will tell you when it's ready.",
         "es": "Estoy creando «{title}» en segundo plano y te aviso cuando esté listo.",
+        "pt": "Estou a criar «{title}» em segundo plano e aviso-te quando estiver pronto.",
     },
     "artifact_revising": {
         "de": (  # i18n-allow
@@ -469,6 +550,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "I'm revising “{title}” in the background and will tell you when it's ready.",
         "es": "Estoy revisando «{title}» en segundo plano y te aviso cuando esté listo.",
+        "pt": "Estou a rever «{title}» em segundo plano e aviso-te quando estiver pronto.",
     },
     # Scheduled-routine failures (jarvis/workflows). A broken routine used to
     # vanish into a log line, which is the maintainer's exact complaint: "you
@@ -481,6 +563,7 @@ _PHRASES: dict[str, dict[str, str]] = {
               "I'll try again at the next scheduled time.",
         "es": "La rutina {name} no pudo iniciarse. "
               "Lo intentaré en el próximo momento programado.",
+        "pt": "A rotina {name} não conseguiu arrancar. Vou tentar na próxima hora agendada.",
     },
     # The scheduler's own poll loop threw — EVERY scheduled routine is stalled,
     # not just one, so this names no routine. It retries by itself, hence the
@@ -492,6 +575,7 @@ _PHRASES: dict[str, dict[str, str]] = {
               "I'll keep trying.",
         "es": "Tus rutinas programadas no se están ejecutando ahora. "
               "Seguiré intentándolo.",
+        "pt": "As tuas rotinas agendadas não estão a correr agora. Vou continuar a tentar.",
     },
     # A routine stopped mid-way. ``{step}`` is the author's own step label or the
     # plain ordinal below — NEVER ``step_display_label``'s engineering fallback
@@ -503,6 +587,7 @@ _PHRASES: dict[str, dict[str, str]] = {
               "also habe ich sie angehalten.",  # i18n-allow
         "en": "The routine {name} got stuck at {step}, so I stopped it.",
         "es": "La rutina {name} se atascó en {step}, así que la detuve.",
+        "pt": "A rotina {name} ficou presa em {step}, por isso parei-a.",
     },
     # The reason trails in its own sentence rather than after a colon: it is
     # forwarded text and may well end in a full stop of its own.
@@ -513,11 +598,13 @@ _PHRASES: dict[str, dict[str, str]] = {
               "The reason: {reason}",
         "es": "La rutina {name} se atascó en {step}, así que la detuve. "
               "El motivo: {reason}",
+        "pt": "A rotina {name} ficou presa em {step}, por isso parei-a. O motivo: {reason}",
     },
     "workflow_step_ordinal": {
         "de": "Schritt {n}",  # i18n-allow
         "en": "step {n}",
         "es": "el paso {n}",
+        "pt": "o passo {n}",
     },
     # Fills the ``{name}`` slot when a routine row carries no name. Worded to
     # stay grammatical inside the sentences above ("Die Routine ohne Namen
@@ -527,6 +614,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "ohne Namen",  # i18n-allow
         "en": "without a name",
         "es": "sin nombre",
+        "pt": "sem nome",
     },
     # Deterministic wiki-write fast path (spec A1-A3). The saving line is a
     # PROGRESS ack — it must never claim the write already happened; the
@@ -535,32 +623,38 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich schreibe das jetzt ins Wiki.",  # i18n-allow
         "en": "Writing that to the wiki now.",
         "es": "Lo estoy escribiendo en la wiki.",
+        "pt": "Estou a escrever isso na wiki.",
     },
     "wiki_saved": {
         "de": "Im Wiki gespeichert.",  # i18n-allow
         "en": "Saved to the wiki.",
         "es": "Guardado en la wiki.",
+        "pt": "Guardado na wiki.",
     },
     "wiki_saved_detail": {
         "de": "Im Wiki gespeichert: {detail}.",  # i18n-allow
         "en": "Saved to the wiki: {detail}.",
         "es": "Guardado en la wiki: {detail}.",
+        "pt": "Guardado na wiki: {detail}.",
     },
     "wiki_save_failed": {
         "de": "Das Speichern im Wiki hat nicht geklappt.",  # i18n-allow
         "en": "Saving to the wiki did not work.",
         "es": "No se pudo guardar en la wiki.",
+        "pt": "Não foi possível guardar na wiki.",
     },
     "wiki_save_failed_reason": {
         "de": "Das Speichern im Wiki hat nicht geklappt: {reason}",  # i18n-allow
         "en": "Saving to the wiki did not work: {reason}",
         "es": "No se pudo guardar en la wiki: {reason}",
+        "pt": "Não foi possível guardar na wiki: {reason}",
     },
     "wiki_nothing_to_save": {
         "de": "Mir ist nicht klar, was ich ins Wiki schreiben soll. Sag es mir "  # i18n-allow
               "bitte noch einmal mit Inhalt.",  # i18n-allow
         "en": "I am not sure what to write to the wiki. Please say it again with the content.",
         "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
+        "pt": "Não tenho a certeza do que escrever na wiki; diz-mo outra vez com o conteúdo.",
     },
     # No "I am writing the task now" phrase belongs here. One existed for a few
     # hours on 2026-07-27 to fill the prompt writer's 10-21 s, and the realtime
@@ -575,21 +669,25 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ist bei {terminal}.",  # i18n-allow
         "en": "Sent to {terminal}.",
         "es": "Enviado a {terminal}.",
+        "pt": "Enviado para {terminal}.",
     },
     "ide_prompt_sent_files": {
         "de": "Ist bei {terminal}, mit {count} Dateien dazu.",  # i18n-allow
         "en": "Sent to {terminal}, with {count} files attached.",
         "es": "Enviado a {terminal}, con {count} archivos adjuntos.",
+        "pt": "Enviado para {terminal}, com {count} ficheiros anexados.",
     },
     "ide_prompt_sent_one_file": {
         "de": "Ist bei {terminal}, samt {file}.",  # i18n-allow
         "en": "Sent to {terminal}, along with {file}.",
         "es": "Enviado a {terminal}, junto con {file}.",
+        "pt": "Enviado para {terminal}, juntamente com {file}.",
     },
     "ide_terminal_not_running": {
         "de": "{terminal} läuft gerade nicht ({status}). Ich habe nichts geschickt.",  # i18n-allow
         "en": "{terminal} is not running right now ({status}). I sent nothing.",
         "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
+        "pt": "{terminal} não está a correr agora ({status}). Não enviei nada.",
     },
     # Fan-out: ONE order handed to SEVERAL panes. The partial and the
     # nobody-reached cases are separate keys on purpose — the live 2026-07-26
@@ -599,16 +697,19 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ist bei {names}.",  # i18n-allow
         "en": "Sent to {names}.",
         "es": "Enviado a {names}.",
+        "pt": "Enviado para {names}.",
     },
     "ide_prompt_sent_partial": {
         "de": "Ist bei {names}. Zu {failed} bin ich nicht durchgekommen.",  # i18n-allow
         "en": "Sent to {names}. I could not reach {failed}.",
         "es": "Enviado a {names}. No pude llegar a {failed}.",
+        "pt": "Enviado para {names}. Não consegui chegar a {failed}.",
     },
     "ide_prompt_sent_nobody": {
         "de": "Ich bin zu {failed} nicht durchgekommen, es läuft nichts.",  # i18n-allow
         "en": "I could not reach {failed}, so nothing is running.",
         "es": "No pude llegar a {failed}, así que no hay nada en marcha.",
+        "pt": "Não consegui chegar a {failed}, por isso não há nada em curso.",
     },
     # Typed into the input box but never submitted — looks identical to a
     # running agent until you ask it something (the 2026-07-25 popup trap).
@@ -616,6 +717,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Bei {names} steht der Text nur im Eingabefeld.",  # i18n-allow
         "en": "On {names} the text is only sitting in the input box.",
         "es": "En {names} el texto solo está en el cuadro de entrada.",
+        "pt": "Em {names} o texto está apenas na caixa de entrada.",
     },
     # Joining call-signs for speech. A comma-separated list read aloud sounds
     # like an enumeration that never ends; the last pair needs the conjunction.
@@ -623,6 +725,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "{head} und {last}",  # i18n-allow
         "en": "{head} and {last}",
         "es": "{head} y {last}",
+        "pt": "{head} e {last}",
     },
     # Opening more panes by voice ("spawn five more Claude Code terminals").
     # The names are always read back: they are how the user addresses the new
@@ -632,26 +735,31 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "{names} ist offen.",  # i18n-allow
         "en": "{names} is open.",
         "es": "{names} está abierta.",
+        "pt": "{names} está aberto.",
     },
     "ide_terminals_spawned": {
         "de": "{count} neue Terminals: {names}.",  # i18n-allow
         "en": "{count} new terminals: {names}.",
         "es": "{count} terminales nuevas: {names}.",
+        "pt": "{count} terminais novos: {names}.",
     },
     "ide_terminals_briefing_queued": {
         "de": "Ich übergebe ihnen die Aufgabe, sobald die Terminals bereit sind.",  # i18n-allow
         "en": "I will hand them the task as soon as the terminals are ready.",
         "es": "Les entregaré la tarea en cuanto las terminales estén listas.",
+        "pt": "Entrego-lhes a tarefa assim que os terminais estiverem prontos.",
     },
     "ide_terminals_closed": {
         "de": "{count} Terminals geschlossen: {names}.",  # i18n-allow
         "en": "Closed {count} terminals: {names}.",
         "es": "Cerré {count} terminales: {names}.",
+        "pt": "Fechei {count} terminais: {names}.",
     },
     "ide_terminals_none_to_close": {
         "de": "Es sind keine passenden Terminals offen.",  # i18n-allow
         "en": "There are no matching open terminals.",
         "es": "No hay terminales abiertas que coincidan.",
+        "pt": "Não há terminais abertos que correspondam.",
     },
     # Fewer than asked for, because a pane failed to start mid-batch. Named
     # separately from the plain success so the shortfall is impossible to miss.
@@ -659,11 +767,13 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Nur {count} ließen sich öffnen: {names}.",  # i18n-allow
         "en": "Only {count} could be opened: {names}.",
         "es": "Solo se pudieron abrir {count}: {names}.",
+        "pt": "Só foi possível abrir {count}: {names}.",
     },
     "ide_terminals_open_failed": {
         "de": "Ich konnte kein Terminal öffnen.",  # i18n-allow
         "en": "I could not open a terminal.",
         "es": "No pude abrir ninguna terminal.",
+        "pt": "Não consegui abrir nenhum terminal.",
     },
     # The name came through garbled and lands between two coding CLIs. Asked
     # rather than guessed (maintainer directive 2026-07-28): a needless question
@@ -672,11 +782,13 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {spoken} verstanden. Meintest du {first} oder {second}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {first} or {second}?",
         "es": "Escuché {spoken}: ¿te refieres a {first} o a {second}?",
+        "pt": "Ouvi {spoken}: referes-te a {first} ou a {second}?",
     },
     "ide_terminal_kind_unclear_one": {
         "de": "Ich habe {spoken} verstanden. Meintest du {first}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {first}?",
         "es": "Escuché {spoken}: ¿te refieres a {first}?",
+        "pt": "Ouvi {spoken}: referes-te a {first}?",
     },
     # A coding CLI this workspace does not offer was named in a fleet request.
     # Said out loud rather than dropped: a name nobody recognises used to fall
@@ -686,6 +798,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Für {name} gibt es keine Terminal-Art. Verfügbar: {available}.",  # i18n-allow
         "en": "There is no {name} terminal kind. Available: {available}.",
         "es": "No hay un tipo de terminal {name}. Disponibles: {available}.",
+        "pt": "Não existe nenhum tipo de terminal {name}. Disponíveis: {available}.",
     },
     # No workspace was open, so one was opened in the most recent folder. The
     # folder is named on purpose: it is an assumption, and hearing it is how the
@@ -694,6 +807,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {folder} geöffnet: {names}.",  # i18n-allow
         "en": "I opened {folder}: {names}.",
         "es": "Abrí {folder}: {names}.",
+        "pt": "Abri {folder}: {names}.",
     },
     # A call-sign the transcript almost matched. Both variants REPEAT what was
     # heard: the user's own word is the only thing that lets them tell a
@@ -703,11 +817,13 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe {spoken} verstanden. Meinst du {name}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {name}?",
         "es": "Entendí {spoken}: ¿te refieres a {name}?",
+        "pt": "Percebi {spoken}: referes-te a {name}?",
     },
     "ide_terminal_clarify_many": {
         "de": "Ich habe {spoken} verstanden. Meinst du {names}?",  # i18n-allow
         "en": "I heard {spoken}. Did you mean {names}?",
         "es": "Entendí {spoken}: ¿te refieres a {names}?",
+        "pt": "Percebi {spoken}: referes-te a {names}?",
     },
     # The user says a briefing never arrived, but the pane's own receipt says it
     # did. Answering with the CLOCK TIME is the point: it is the one thing that
@@ -721,6 +837,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         ),
         "en": "{name} got the task at {time}. I am not sending it twice.",
         "es": "{name} recibió la tarea a las {time}: no la envío dos veces.",
+        "pt": "{name} recebeu a tarefa às {time}: não a envio duas vezes.",
     },
     # The separator for the final pair of an alternative list ("Maggie or Max").
     # A phrase entry rather than a literal, so the choice is offered in the
@@ -729,6 +846,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": " oder ",  # i18n-allow
         "en": " or ",
         "es": " o ",
+        "pt": " ou ",
     },
     # The separator for the final pair of a LIST ("Alex and Blake"). Distinct
     # from ``join_or`` because the two questions mean opposite things: "Max or
@@ -737,6 +855,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": " und ",  # i18n-allow
         "en": " and ",
         "es": " y ",
+        "pt": " e ",
     },
     # Panes were briefed AND one call-sign of the same breath stayed unclear.
     # The two halves are said in one sentence on purpose: the user has to hear
@@ -745,6 +864,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich habe außerdem {spoken} verstanden. Meinst du {names}?",  # i18n-allow
         "en": "I also heard {spoken}. Did you mean {names}?",
         "es": "También entendí {spoken}: ¿te refieres a {names}?",
+        "pt": "Também percebi {spoken}: referes-te a {names}?",
     },
     # The user addressed several panes and only one call-sign survived speech
     # recognition. Saying which one was placed is the load-bearing half: it is
@@ -753,6 +873,7 @@ _PHRASES: dict[str, dict[str, str]] = {
         "de": "Ich konnte nur {names} zuordnen. Wer sollte noch ran?",  # i18n-allow
         "en": "I could only place {names}. Who else did you mean?",
         "es": "Solo pude identificar a {names}: ¿quién más?",
+        "pt": "Só consegui identificar {names}: quem mais?",
     },
     "ide_terminals_nowhere": {
         "de": (  # i18n-allow
@@ -767,14 +888,18 @@ _PHRASES: dict[str, dict[str, str]] = {
             "No hay ningún espacio de trabajo abierto ni uno reciente. "
             "Elige una carpeta en el IDE agéntico."
         ),
+        "pt": (
+            "Não há nenhum espaço de trabalho aberto nem nenhum recente. Escolhe uma pasta no "
+            "IDE agêntico."
+        ),
     },
 }
 
 
 def resolve_phrase_language(reply_language: str | None, user_text: str) -> str:
-    """Resolve de/en/es for a deterministic action phrase.
+    """Resolve de/en/es/pt for a deterministic action phrase.
 
-    An explicit ``brain.reply_language`` pin (de/en/es) wins; otherwise the
+    An explicit ``brain.reply_language`` pin (de/en/es/pt) wins; otherwise the
     turn's language is detected from ``user_text``; ambiguous text keeps the
     historical German default. Mirrors ``BrainManager._direct_ack_language`` so
     every non-LLM spoken path resolves language the same way.
@@ -1028,6 +1153,7 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Verbinde es in der Plugins-Ansicht.",  # i18n-allow
             "en": "{subject} is not connected. Connect it in the Plugins view.",
             "es": "{subject} no está conectado. Conéctalo en la vista de Plugins.",
+            "pt": "{subject} não está ligado. Liga-o na vista de Plugins.",
         },
     ),
     (
@@ -1040,6 +1166,7 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Verbinde es in der Plugins-Ansicht neu.",  # i18n-allow
             "en": "The sign-in for {subject} expired. Reconnect it in the Plugins view.",
             "es": "La sesión de {subject} caducó. Vuelve a conectarlo en la vista de Plugins.",
+            "pt": "A sessão de {subject} expirou. Volta a ligá-lo na vista de Plugins.",
         },
     ),
     (
@@ -1048,6 +1175,7 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
             "de": "Ich kenne keinen Skill namens {subject}.",  # i18n-allow
             "en": "I don't know a skill called {subject}.",
             "es": "No conozco ninguna skill llamada {subject}.",
+            "pt": "Não conheço nenhuma skill chamada {subject}.",
         },
     ),
     (
@@ -1058,6 +1186,7 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
             "de": "Der Skill {subject} ist noch ein Entwurf. Gib ihn erst frei.",  # i18n-allow
             "en": "The skill {subject} is still a draft. Promote it first.",
             "es": "La skill {subject} sigue siendo un borrador. Actívala primero.",
+            "pt": "A skill {subject} ainda é um rascunho. Ativa-a primeiro.",
         },
     ),
     (
@@ -1069,6 +1198,7 @@ _REASON_FAMILIES: tuple[tuple[re.Pattern[str], dict[str, str]], ...] = (
                   "Schalte ihn erst wieder ein.",  # i18n-allow
             "en": "The skill {subject} is switched off. Switch it back on first.",
             "es": "La skill {subject} está desactivada. Vuelve a activarla primero.",
+            "pt": "A skill {subject} está desativada. Volta a ativá-la primeiro.",
         },
     ),
 )
@@ -1089,6 +1219,7 @@ _PERMISSION_CAUSE_TEMPLATES: dict[str, str] = {
     "de": "Personal Jarvis hat die Berechtigung {name} gerade nicht.",  # i18n-allow
     "en": _PERMISSION_CAUSE_EN,
     "es": "Personal Jarvis no tiene ahora el permiso de {name}.",
+    "pt": "O Personal Jarvis não tem neste momento a permissão de {name}.",
 }
 #: How each language names a permission (the macOS UI labels; unverified on a real Mac).
 _PERMISSION_CAUSE_NAMES: dict[str, dict[str, str]] = {
@@ -1096,26 +1227,31 @@ _PERMISSION_CAUSE_NAMES: dict[str, dict[str, str]] = {
         "de": "Mikrofon",  # i18n-allow
         "en": "Microphone",
         "es": "Micrófono",
+        "pt": "Microfone",
     },
     "accessibility": {
         "de": "Bedienungshilfen",  # i18n-allow
         "en": "Accessibility",
         "es": "Accesibilidad",
+        "pt": "Acessibilidade",
     },
     "screen_recording": {
         "de": "Bildschirmaufnahme",  # i18n-allow
         "en": "Screen Recording",
         "es": "Grabación de pantalla",
+        "pt": "Gravação de ecrã",
     },
     "input_monitoring": {
         "de": "Eingabeüberwachung",  # i18n-allow
         "en": "Input Monitoring",
         "es": "Monitorización de entrada",
+        "pt": "Monitorização de entrada",
     },
     "automation": {
         "de": "Automatisierung",  # i18n-allow
         "en": "Automation",
         "es": "Automatización",
+        "pt": "Automatização",
     },
 }
 _PERMISSION_CAUSE_NAMES["event_posting"] = _PERMISSION_CAUSE_NAMES["accessibility"]
@@ -1129,11 +1265,13 @@ _PERMISSION_FIXED_CAUSES: dict[str, dict[str, str]] = {
         "de": "Personal Jarvis hat angehalten, weil ein Systemdialog offen ist.",  # i18n-allow
         "en": "Personal Jarvis paused because a macOS system dialog is open.",
         "es": "Personal Jarvis se detuvo porque hay un cuadro de diálogo del sistema abierto.",
+        "pt": "O Personal Jarvis parou porque há uma caixa de diálogo do sistema aberta.",
     },
     "A macOS permission is missing right now.": {
         "de": "Eine macOS-Berechtigung fehlt gerade.",  # i18n-allow
         "en": "A macOS permission is missing right now.",
         "es": "Falta un permiso de macOS en este momento.",
+        "pt": "Falta uma permissão do macOS neste momento.",
     },
 }
 
@@ -1288,7 +1426,7 @@ _CU_BLOCKED_PERMISSION_RE = re.compile(
 #: The engine's exit code for a tool/action failure; ``blocked_permission`` rides it.
 _CU_TOOL_EXIT_CODE = 8
 
-#: How the localized (de/es) phrase names a permission, found by keyword in the
+#: How the localized (de/es/pt) phrase names a permission, found by keyword in the
 #: engine's English sentence: ``(keyword, {lang: (permission name, settings pane)})``.
 #: The pane names are the macOS UI labels (UNVERIFIED on a real Mac: they move
 #: between macOS versions).
@@ -1303,6 +1441,10 @@ _BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = 
             "es": (
                 "Accesibilidad",
                 "Ajustes del Sistema > Privacidad y seguridad > Accesibilidad",
+            ),
+            "pt": (
+                "Acessibilidade",
+                "Definições do Sistema > Privacidade e segurança > Acessibilidade",
             ),
         },
     ),
@@ -1319,6 +1461,11 @@ _BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = 
                 "Ajustes del Sistema > Privacidad y seguridad > "
                 "Grabación de pantalla y audio del sistema",
             ),
+            "pt": (
+                "Gravação de ecrã e áudio do sistema",
+                "Definições do Sistema > Privacidade e segurança > Gravação de ecrã e áudio do "
+                "sistema",
+            ),
         },
     ),
     (
@@ -1331,6 +1478,10 @@ _BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = 
             "es": (
                 "Supervisión de entradas",
                 "Ajustes del Sistema > Privacidad y seguridad > Supervisión de entradas",
+            ),
+            "pt": (
+                "Monitorização de entrada",
+                "Definições do Sistema > Privacidade e segurança > Monitorização de entrada",
             ),
         },
     ),
@@ -1345,6 +1496,10 @@ _BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = 
                 "Micrófono",
                 "Ajustes del Sistema > Privacidad y seguridad > Micrófono",
             ),
+            "pt": (
+                "Microfone",
+                "Definições do Sistema > Privacidade e segurança > Microfone",
+            ),
         },
     ),
     (
@@ -1357,6 +1512,10 @@ _BLOCKED_PERMISSION_NAMES: tuple[tuple[str, dict[str, tuple[str, str]]], ...] = 
             "es": (
                 "Automatización",
                 "Ajustes del Sistema > Privacidad y seguridad > Automatización",
+            ),
+            "pt": (
+                "Automatização",
+                "Definições do Sistema > Privacidade e segurança > Automatização",
             ),
         },
     ),
@@ -1394,15 +1553,15 @@ def _spoken_en(sentence: str) -> str:
 
 def _spoken_pane(text: str, lang: str) -> str:
     """Replace the written Settings-path separators with speakable words."""
-    and_word = {"de": "und", "es": "y"}.get(lang, "and")
-    then_word = {"de": "dann", "es": "luego"}.get(lang, "then")
+    and_word = {"de": "und", "es": "y", "pt": "e"}.get(lang, "and")
+    then_word = {"de": "dann", "es": "luego", "pt": "depois"}.get(lang, "then")
     return text.replace(" > ", f", {then_word} ").replace(" & ", f" {and_word} ")
 
 
 def _blocked_permission_readback(lang: str, sentence: str) -> str:
     """The localized readback of a ``blocked_permission`` mission (no LLM, AP-11).
 
-    English forwards the engine's own sentence (second person, speakable). de/es
+    English forwards the engine's own sentence (second person, speakable). de/es/pt
     cannot (it is English), so they name the permission by keyword and pick the
     remedy by REASON: a dialog still open, a restart, an unaskable permission or a
     restriction each get their own phrase, and only a switch that is off says "allow

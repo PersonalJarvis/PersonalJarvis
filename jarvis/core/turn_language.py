@@ -1,4 +1,4 @@
-"""Turn-language detection and resolution (de / en / es).
+"""Turn-language detection and resolution (de / en / es / pt).
 
 Live forensic 2026-06-10 23:12 (data/jarvis_desktop.log): ``[stt].language``
 pins Groq Whisper to German, and Whisper echoes the pin back in its response —
@@ -12,9 +12,11 @@ This module is the single source of truth for the language of a turn:
 * :func:`detect_text_language` — cheap token-overlap heuristic over the
   transcribed text. Returns a code only when the text is clearly one language;
   ``"unknown"`` otherwise (single proper nouns, "ok", ...). Tokens shared by
-  two of the three languages ("in", "an", "es", "was", "me", "no", "a") are
-  deliberately excluded from all sets — the historical "'in' counts as EN"
-  trap.
+  two of the supported languages ("in", "an", "es", "was", "me", "no", "a",
+  "que", "para", "um", "das") are deliberately excluded from all sets — the
+  historical "'in' counts as EN" trap. Spanish and Portuguese share most
+  accented vowels, so only their distinctive characters (``ñ ¿ ¡`` versus
+  ``ã õ ç â ê ô à``) are strong script signals.
 * :func:`normalize_language_tag` — maps the two tag shapes seen live (Whisper
   language NAMES like ``"german"`` from the cloud API, ISO codes like ``"de"``
   from local faster-whisper, BCP-47 like ``"de-DE"``) to plain codes, so
@@ -55,7 +57,7 @@ DEFAULT_LOCALE = "en"
 
 #: The codes an explicit ``brain.reply_language`` pin may carry (``"auto"`` is
 #: deliberately absent — it means "no pin, mirror the input").
-_REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es"})
+_REPLY_PINS: frozenset[str] = frozenset({"de", "en", "es", "pt"})
 
 #: A turn with at most this many word tokens is a "thin" turn — a one- or
 #: two-word interjection ("Now", "Stop now", "jetzt", a lone loanword). A thin
@@ -72,20 +74,27 @@ _TOKEN_RE = re.compile(r"\b[\w']+\b", re.UNICODE)
 _LANGUAGE_REQUEST_RE = re.compile(
     r"(?:jarvis[\s,]+)?"
     r"(?:(?:please|bitte|por favor)[\s,]+)?"  # i18n-allow
-    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora)\s+)?"  # i18n-allow
-    r"(?:(?:can|could|would) you\s+|(?:kannst|könntest) du\s+|puedes\s+)?"  # i18n-allow
+    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora|sempre"  # i18n-allow
+    r"|a partir de agora)\s+)?"  # i18n-allow
+    r"(?:(?:can|could|would) you\s+|(?:kannst|könntest) du\s+|puedes\s+"  # i18n-allow
+    r"|(?:podes|consegues|pode|podia|podias)\s+)?"  # i18n-allow
     r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
     r"(?:(?:speak|reply|respond|answer|write|continue|switch)(?:\s+to me)?\s+"
     r"|(?:sprich|spreche|antworte|antworten|schreib|schreibe|rede|wechsel|wechsle)\s+"  # i18n-allow
     r"|(?:sollst|du sollst)\s+"  # i18n-allow
-    r"|(?:habla|háblame|responde|contesta|escribe|cambia)\s+)?"
+    r"|(?:habla|háblame|responde|contesta|escribe|cambia)\s+"
+    r"|(?:fala|fale|falar|responde|responda|responder|escreve|escreva|escrever"  # i18n-allow
+    r"|muda|mude|passa|continua)(?:-me)?(?:\s+comigo)?\s+)?"  # i18n-allow
     r"(?:(?:please|bitte|por favor)\s+)?"  # i18n-allow
-    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora)\s+)?"  # i18n-allow
-    r"(?:(?:in|auf|en|to|zu|a)\s+)?"  # i18n-allow
+    r"(?:(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora|sempre"  # i18n-allow
+    r"|a partir de agora)\s+)?"  # i18n-allow
+    r"(?:(?:in|auf|en|to|zu|a|em|para)\s+)?"  # i18n-allow
     r"(?P<language>deutsch|german|alemán|aleman|english|englisch|inglés|ingles"  # i18n-allow
-    r"|español|espanol|spanish|spanisch)"  # i18n-allow
+    r"|español|espanol|spanish|spanisch"  # i18n-allow
+    r"|português|portugues|portugués|portuguese|portugiesisch"  # i18n-allow
+    r"|alemão|alemao|inglês|espanhol)"  # i18n-allow
     r"(?:\s+(?:antworten|sprechen))?"  # i18n-allow
-    r"(?:[\s,]+(?:please|bitte|por favor|now|jetzt|ahora))?"  # i18n-allow
+    r"(?:[\s,]+(?:please|bitte|por favor|now|jetzt|ahora|agora))?"  # i18n-allow
     r"[\s.!?]*",
     re.IGNORECASE,
 )
@@ -93,6 +102,9 @@ _REQUEST_LANGUAGE_CODES = {
     "deutsch": "de", "german": "de", "alemán": "de", "aleman": "de",  # i18n-allow
     "english": "en", "englisch": "en", "inglés": "en", "ingles": "en",  # i18n-allow
     "español": "es", "espanol": "es", "spanish": "es", "spanisch": "es",  # i18n-allow
+    "português": "pt", "portugues": "pt", "portugués": "pt",  # i18n-allow
+    "portuguese": "pt", "portugiesisch": "pt",  # i18n-allow
+    "alemão": "de", "alemao": "de", "inglês": "en", "espanhol": "es",  # i18n-allow
 }
 
 # Output validation deliberately ignores code and links. They frequently carry
@@ -151,13 +163,17 @@ class OutputLanguageValidation:
         return self.status == "mismatch"
 
 
-# Strong script signals: German-specific letters and Spanish punctuation or
-# accented vowels (minus the pan-European acute-e) are useful hints.
+# Strong script signals: German-specific letters, Spanish ñ and inverted
+# punctuation, and Portuguese nasal vowels, cedilla and circumflexes. The acute
+# vowels á/í/ó/ú are written in BOTH Spanish and Portuguese, so they only add a
+# weak point to each of the two (the pan-European acute-e counts for nothing).
 _DE_SCRIPT_RE = re.compile(r"[äöüÄÖÜß]")  # i18n-allow: German-script regex
-_ES_SCRIPT_RE = re.compile(r"[áíóúñÁÍÓÚÑ¿¡]")
+_ES_SCRIPT_RE = re.compile(r"[ñÑ¿¡]")
+_PT_SCRIPT_RE = re.compile(r"[ãõçâêôàÃÕÇÂÊÔÀ]")
+_IBERIAN_ACUTE_RE = re.compile(r"[áíóúÁÍÓÚ]")
 
 # Function-word sets, kept mutually disjoint. Words common to more than one of
-# the three languages are excluded on purpose (see module docstring).
+# the supported languages are excluded on purpose (see module docstring).
 _DE_TOKENS: frozenset[str] = frozenset({
     "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem",  # i18n-allow
     "und", "oder", "aber", "nicht", "ist", "sind", "bin", "bist", "wird",  # i18n-allow
@@ -182,33 +198,54 @@ _EN_TOKENS: frozenset[str] = frozenset({
     "be", "been", "i'm", "i", "we", "they", "he", "she", "weather",
     "yesterday",
 })
+# Spanish words also common in Portuguese ("que", "como", "por", "favor",
+# "para", "está", "estás", "abre", "clima") are excluded.
 _ES_TOKENS: frozenset[str] = frozenset({
-    "el", "la", "los", "las", "un", "una", "unos", "unas", "qué", "que",
-    "cómo", "como", "cuándo", "cuando", "dónde", "donde", "quién", "quien",
-    "por", "favor", "para", "hace", "hacer", "hoy", "mañana", "ahora",
-    "está", "estás", "estoy", "tiempo", "gracias", "hola", "sí", "puedes",
-    "puedo", "quiero", "necesito", "dime", "dame", "abre", "muestra", "lee",
-    "escribe", "y", "pero", "con", "del", "al", "muy", "bien", "clima",
+    "el", "la", "los", "las", "un", "una", "unos", "unas", "qué",
+    "cómo", "cuándo", "cuando", "dónde", "donde", "quién", "quien",
+    "hace", "hacer", "hoy", "mañana", "ahora", "estoy", "tiempo", "gracias",
+    "hola", "sí", "puedes", "puedo", "puede", "quiero", "necesito", "dime",
+    "dame", "muestra", "lee", "escribe", "y", "pero", "con", "del", "al",
+    "muy", "bien", "hay", "yo", "tú", "lo", "eso", "esto", "también",
+    "entonces", "tengo",
+})
+# Portuguese words also common in Spanish, German or English ("que", "para",
+# "está", "da", "dos", "das", "um", "as", "do", "o", "e", "na", "tu", "porque",
+# "com" — a ".com" domain) are excluded.
+_PT_TOKENS: frozenset[str] = frozenset({
+    "não", "nao", "você", "voce", "obrigado", "obrigada", "também", "tambem",
+    "então", "entao", "isso", "isto", "muito", "muita", "uma", "os", "ao",
+    "à", "pelo", "pela", "num", "numa", "eu", "ele", "ela", "nós", "sim",
+    "olá", "ola", "bom", "boa", "fazer", "faz", "ficheiro", "ecrã", "agora",
+    "quando", "mais", "já", "só", "é", "estou", "tenho", "tens", "podes",
+    "pode", "consegues", "queres", "quero", "vou", "vai", "hoje", "amanhã",
+    "onde", "meu", "minha", "teu", "tua", "sua", "em", "tempo", "ainda",
+    "depois", "tudo", "coisa", "diz", "dizer", "mostra", "escreve", "lê",
+    "são", "foi", "bem", "neste", "nesta", "nesse", "nessa",
 })
 
 _SETS: tuple[tuple[str, frozenset[str]], ...] = (
     ("de", _DE_TOKENS),
     ("en", _EN_TOKENS),
     ("es", _ES_TOKENS),
+    ("pt", _PT_TOKENS),
 )
 
 # Whisper cloud APIs return language NAMES; local faster-whisper returns ISO
-# codes; some TTS configs use BCP-47. All collapse to de/en/es here.
+# codes; some TTS configs use BCP-47 ("pt-PT", "pt-BR"). All collapse to
+# de/en/es/pt here.
 _TAG_TO_CODE: dict[str, str] = {
     "de": "de", "deu": "de", "ger": "de", "german": "de", "deutsch": "de",
     "en": "en", "eng": "en", "english": "en", "englisch": "en",
     "es": "es", "spa": "es", "spanish": "es", "spanisch": "es",
     "espanol": "es", "español": "es", "castellano": "es",
+    "pt": "pt", "por": "pt", "portuguese": "pt", "português": "pt",  # i18n-allow
+    "portugues": "pt", "portugués": "pt", "portugiesisch": "pt",  # i18n-allow
 }
 
 
 def normalize_language_tag(tag: object) -> str:
-    """Collapse an STT/TTS language tag to ``de``/``en``/``es``/``unknown``."""
+    """Collapse an STT/TTS tag to ``de``/``en``/``es``/``pt``/``unknown``."""
     if not tag:
         return "unknown"
     head = str(tag).strip().lower().replace("_", "-").split("-", 1)[0]
@@ -216,9 +253,9 @@ def normalize_language_tag(tag: object) -> str:
 
 
 def detect_text_language(text: str) -> str:
-    """Classify *text* as ``de``/``en``/``es`` — or ``unknown`` when unclear.
+    """Classify *text* as ``de``/``en``/``es``/``pt`` — or ``unknown`` when unclear.
 
-    A language must score strictly higher than both others to win; ties and
+    A language must score strictly higher than every other to win; ties and
     zero-overlap text (proper nouns, "ok") return ``"unknown"`` so the caller
     can fall back to the STT tag.
     """
@@ -227,14 +264,24 @@ def detect_text_language(text: str) -> str:
         return "unknown"
     tokens = {tok.lower() for tok in _TOKEN_RE.findall(t)}
     scores = {code: len(tokens & vocab) for code, vocab in _SETS}
-    if _DE_SCRIPT_RE.search(t):
-        scores["de"] += 2
-    if _ES_SCRIPT_RE.search(t):
-        scores["es"] += 2
+    _add_script_scores(t, scores)
     best_code, best = max(scores.items(), key=lambda kv: kv[1])
     if best == 0 or sum(1 for s in scores.values() if s == best) > 1:
         return "unknown"
     return best_code
+
+
+def _add_script_scores(text: str, scores: dict[str, int]) -> None:
+    """Add the character-level hints shared by input and output detection."""
+    if _DE_SCRIPT_RE.search(text):
+        scores["de"] += 2
+    if _ES_SCRIPT_RE.search(text):
+        scores["es"] += 2
+    if _PT_SCRIPT_RE.search(text):
+        scores["pt"] += 2
+    if _IBERIAN_ACUTE_RE.search(text):
+        scores["es"] += 1
+        scores["pt"] += 1
 
 
 def _prose_for_output_validation(text: str) -> str:
@@ -266,17 +313,14 @@ def _detect_gross_vietnamese_output(text: str, tokens: list[str]) -> bool:
 
 
 def _detect_strong_supported_output(text: str, tokens: list[str]) -> str:
-    """Return de/en/es only when multiple independent prose signals agree."""
+    """Return de/en/es/pt only when multiple independent prose signals agree."""
     if len(tokens) < 4:
         return "unknown"
     scores = {
         code: sum(token in vocabulary for token in tokens)
         for code, vocabulary in _SETS
     }
-    if _DE_SCRIPT_RE.search(text):
-        scores["de"] += 2
-    if _ES_SCRIPT_RE.search(text):
-        scores["es"] += 2
+    _add_script_scores(text, scores)
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     (best_code, best_score), (_, second_score) = ranked[:2]
     if best_score < 3 or best_score == second_score:
@@ -289,7 +333,7 @@ def validate_output_language(
     *,
     resolved_language: object,
 ) -> OutputLanguageValidation:
-    """Validate reply *text* against an already-resolved ``de``/``en``/``es``.
+    """Validate reply *text* against a resolved ``de``/``en``/``es``/``pt``.
 
     The target MUST come from :func:`resolve_output_language`; this function
     never derives or changes the turn language. It only detects high-confidence
@@ -348,14 +392,14 @@ def resolve_transcript_language(reported: object, text: str) -> str:
     one answers "which language do we SPEAK back", where a wrong guess sounds
     odd; this one answers "whose word list may DELETE tokens from what the user
     said", where a wrong guess removes content and reports success. Returns a
-    code (``de`` / ``en`` / ``es``) or ``"unknown"`` — and ``"unknown"`` means
+    code (``de`` / ``en`` / ``es`` / ``pt``) or ``"unknown"`` — and ``"unknown"`` means
     *run no language's rules*, never *pick a default*.
 
     Precedence, and the order is the whole point:
 
     1. **A tag we cannot place stays unplaced.** ``detect_text_language`` only
-       knows three languages, so letting it overrule a "French" or "ja" tag
-       would relabel that utterance as whichever of the three it scored highest
+       knows four languages, so letting it overrule a "French" or "ja" tag
+       would relabel that utterance as whichever of the four it scored highest
        on and then run THAT language's word lists over it. ``unknown`` is the
        honest answer for ~95 of the 100 recognition languages STT supports.
     2. **Otherwise the TEXT outranks a tag that contradicts it.** The cloud
@@ -441,7 +485,7 @@ def resolve_output_language(
     default: str = DEFAULT_LOCALE,
     conversation_language: object = "",
 ) -> str:
-    """The SINGLE authoritative output language for one turn (de/en/es).
+    """The SINGLE authoritative output language for one turn (de/en/es/pt).
 
     Every spoken or written layer — the deep-brain reply, the ack-brain
     preamble, spawn announcements, every canned status / error / clarify /
@@ -452,7 +496,7 @@ def resolve_output_language(
 
     Precedence, highest first:
 
-    1. an explicit ``brain.reply_language`` pin (``de``/``en``/``es``) — the
+    1. an explicit ``brain.reply_language`` pin (``de``/``en``/``es``/``pt``) — the
        user-selected language wins over everything, including what STT heard;
     2. else an explicit language instruction, even a two-word correction;
     3. else, in auto mode, conversation stickiness: a "thin" turn (a one- or
@@ -467,7 +511,7 @@ def resolve_output_language(
 
     ``reply_language`` is tolerant: case/whitespace-insensitive, and any value
     that is not a pin (``"auto"``, ``""``, ``None``, a typo) means "no pin —
-    mirror the input". ``conversation_language`` (de/en/es) is the language of
+    mirror the input". ``conversation_language`` (de/en/es/pt) is the language of
     the conversation so far; pass ``""`` when none is established yet.
     """
     pin = str(reply_language or "").strip().lower()

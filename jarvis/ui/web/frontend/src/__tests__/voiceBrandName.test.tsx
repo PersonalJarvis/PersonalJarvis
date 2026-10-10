@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import enJson from "@/i18n/locales/en.json";
 import deJson from "@/i18n/locales/de.json";
 import esJson from "@/i18n/locales/es.json";
+import ptJson from "@/i18n/locales/pt.json";
 
 // usePluginAttention polls /api/marketplace/plugins — mocked so the sidebar
 // renders without a fetch.
@@ -263,12 +264,12 @@ describe("voice API-Keys tab brand", () => {
 
 /**
  * The locale-level root cause. The rendered checks above only see the keys this
- * one tab happens to mount; these pin the values themselves, in all three
- * locales, so a translation cannot reintroduce the literal name through a
- * surface no test renders.
+ * one tab happens to mount; these pin the values themselves, in every locale,
+ * so a translation cannot reintroduce the literal name through a surface no
+ * test renders.
  */
 describe("voice locale copy", () => {
-  const LOCALES = { en: enJson, de: deJson, es: esJson } as const;
+  const LOCALES = { en: enJson, de: deJson, es: esJson, pt: ptJson } as const;
 
   // The descriptions the merged voice section and the API-Keys view share.
   const NAME_BEARING_KEYS = [

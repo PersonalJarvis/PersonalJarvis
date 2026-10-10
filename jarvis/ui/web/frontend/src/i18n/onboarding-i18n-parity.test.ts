@@ -10,6 +10,7 @@ import { SETUP_STEP_IDS } from "@/components/onboarding/setup/setupSteps";
 import en from "./locales/onboarding/en.json";
 import de from "./locales/onboarding/de.json";
 import es from "./locales/onboarding/es.json";
+import pt from "./locales/onboarding/pt.json";
 import mainEn from "./locales/en.json";
 
 function flatten(obj: Record<string, unknown>, prefix = ""): string[] {
@@ -42,7 +43,7 @@ function sources(dir: string): string[] {
 describe("onboarding locale chunk", () => {
   const enKeys = keysOf(en);
 
-  for (const [lang, loc] of [["de", de], ["es", es]] as const) {
+  for (const [lang, loc] of [["de", de], ["es", es], ["pt", pt]] as const) {
     it(`${lang} has exactly the keys en has`, () => {
       const langKeys = keysOf(loc);
       const missing = [...enKeys].filter((k) => !langKeys.has(k));
@@ -79,7 +80,7 @@ describe("onboarding locale chunk", () => {
   });
 
   it("never names the assistant with a trademark — only the {name} token", () => {
-    const text = JSON.stringify(en) + JSON.stringify(de) + JSON.stringify(es);
+    const text = JSON.stringify(en) + JSON.stringify(de) + JSON.stringify(es) + JSON.stringify(pt);
     expect(text).not.toMatch(/\bJarvis\b/);
   });
 });

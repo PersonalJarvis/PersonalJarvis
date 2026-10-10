@@ -3542,13 +3542,18 @@
       "zh": {
         "label": "中文 (Chinesisch)",
         "description": "Vereinfachtes Chinesisch für jede Beschriftung und Schaltfläche."
+      },
+      "pt": {
+        "label": "Português (Portugal)",
+        "description": "Europäisches Portugiesisch für jede Beschriftung und Schaltfläche."
       }
     },
     "reply_options": {
       "auto": "{name} spiegelt die Sprache, die du sprichst oder schreibst.",
       "en": "{name} antwortet auf Englisch.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} antwortet auf Spanisch."
+      "es": "{name} antwortet auf Spanisch.",
+      "pt": "{name} antwortet auf Portugiesisch."
     },
     "stt_options": {
       "auto": "Erkennt automatisch, welche Sprache du sprichst.",

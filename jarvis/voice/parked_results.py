@@ -52,7 +52,7 @@ SURFACE_PIPELINE: Final[str] = "pipeline"
 SURFACE_CHAT: Final[str] = "chat"
 SURFACE_CHANNEL: Final[str] = "channel"
 
-_SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = ("de", "en", "es")
+_SUPPORTED_LANGUAGES: Final[tuple[str, ...]] = ("de", "en", "es", "pt")
 _DEFAULT_LANGUAGE: Final[str] = "en"
 _MAX_WAIT_QUERY_WORDS: Final[int] = 9
 _TOPIC_MAX_WORDS: Final[int] = 8
@@ -209,10 +209,12 @@ def requested_result(items: Sequence[ParkedResult], query: str) -> ParkedResult 
 # request that merely contains "result" stays a real turn for the model.
 _LEAD_IN: Final[str] = (
     r"(?:(?:ja|yes|s[ií]|und|and|y|also|so|okay|ok|hey|hallo|hello|hola|"
-    r"jarvis|bitte|please|por\s+favor|sag\s+mal|tell\s+me|dime)\s+)*"
+    r"jarvis|bitte|please|por\s+favor|sag\s+mal|tell\s+me|dime|"
+    r"sim|e|ent(?:ã|a)o|ol(?:á|a)|diz\s+me)\s+)*"
 )
 _TAIL: Final[str] = (
-    r"(?:\s+(?:damit|dabei|schon|jetzt|denn|eigentlich|now|yet|already|ya|ahora|con\s+eso))*"
+    r"(?:\s+(?:damit|dabei|schon|jetzt|denn|eigentlich|now|yet|already|ya|ahora|con\s+eso|"
+    r"j(?:á|a)|agora|com\s+isso))*"
 )
 
 _PROGRESS_CORES: Final[tuple[str, ...]] = (
@@ -240,6 +242,13 @@ _PROGRESS_CORES: Final[tuple[str, ...]] = (
     r"(?:ya\s+)?(?:has\s+terminado|terminaste|est(?:á|a)s\s+listo)",
     r"cu(?:á|a)nto\s+(?:falta|tarda|queda)",
     r"sigues\s+(?:trabajando|en\s+ello)",
+    # --- European Portuguese ---
+    r"como\s+vais",
+    r"como\s+vai\s+isso",
+    r"como\s+(?:(?:é|e)\s+que\s+)?est(?:á|a)\s+a\s+correr",
+    r"(?:j(?:á|a)\s+)?(?:acabaste|terminaste|est(?:á|a)\s+pronto)",
+    r"quanto\s+(?:tempo\s+)?(?:falta|demora)",
+    r"ainda\s+est(?:á|a)s\s+(?:a\s+trabalhar(?:\s+nisso)?|nisso)",
 )
 
 _RESULT_CORES: Final[tuple[str, ...]] = (
@@ -264,6 +273,11 @@ _RESULT_CORES: Final[tuple[str, ...]] = (
     r"(?:ya\s+)?tienes\s+(?:el|un|alg(?:ú|u)n)?\s*resultado",
     r"y\s+el\s+resultado",
     r"cu(?:á|a)l\s+es\s+el\s+resultado",
+    # --- European Portuguese ---
+    r"o\s+que\s+(?:encontraste|descobriste|saiu(?:\s+da(?:í|i)|\s+disso)?)",
+    r"(?:j(?:á|a)\s+)?tens\s+(?:o|um|algum)?\s*resultado",
+    r"e\s+o\s+resultado",
+    r"qual\s+(?:(?:é|e)\s+)?o\s+resultado",
 )
 
 
@@ -314,6 +328,10 @@ _TOPIC_STOPWORDS: Final[dict[str, frozenset[str]]] = {
         "por favor puedes podrías me mi yo hey hola jarvis ok vale y luego "
         "el la los las un una unos unas".split()
     ),
+    "pt": frozenset(
+        "por favor podes podias me mim eu hey olá jarvis ok pronto e depois "
+        "o a os as um uma uns umas".split()
+    ),
 }
 
 _ANCHOR_POOLS: Final[dict[str, tuple[str, ...]]] = {
@@ -332,6 +350,11 @@ _ANCHOR_POOLS: Final[dict[str, tuple[str, ...]]] = {
         "Volviendo a {topic}: {result}",
         "El resultado sobre {topic}: {result}",
     ),
+    "pt": (
+        "Sobre o teu pedido de há pouco – {topic}: {result}",
+        "Voltando a {topic}: {result}",
+        "O resultado sobre {topic}: {result}",
+    ),
 }
 _ANCHOR_POOLS_NO_TOPIC: Final[dict[str, tuple[str, ...]]] = {
     "de": (
@@ -345,6 +368,10 @@ _ANCHOR_POOLS_NO_TOPIC: Final[dict[str, tuple[str, ...]]] = {
     "es": (
         "Sobre tu petición de antes: {result}",
         "Volviendo a lo de antes: {result}",
+    ),
+    "pt": (
+        "Sobre o teu pedido de há pouco: {result}",
+        "Voltando ao que pediste há pouco: {result}",
     ),
 }
 

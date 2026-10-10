@@ -757,7 +757,7 @@ def _classify(text: str, language: str) -> str:
         return "unknown"
     verdicts = {
         classify_response(text, language=lang)
-        for lang in {"de", "en", "es", str(language or "de")}
+        for lang in {"de", "en", "es", "pt", str(language or "de")}
     }
     if "veto" in verdicts:
         return "veto"

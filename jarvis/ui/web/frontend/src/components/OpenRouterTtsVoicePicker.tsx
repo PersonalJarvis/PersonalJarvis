@@ -90,6 +90,8 @@ function languageChip(
       return { flag: "🇬🇧", label: "EN" };
     case "es":
       return { flag: "🇪🇸", label: "ES" };
+    case "pt":
+      return { flag: "🇵🇹", label: "PT" };
     case "fr":
       return { flag: "🇫🇷", label: "FR" };
     case "multi":
@@ -133,10 +135,10 @@ function VoicePicker({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
-  // The sample language — defaults to the app's UI language (DE/EN/ES are the
+  // The sample language — defaults to the app's UI language (DE/EN/ES/PT are the
   // supported sample languages; any other locale falls back to EN).
-  const [previewLang, setPreviewLang] = useState<"de" | "en" | "es">(
-    uiLang === "de" ? "de" : uiLang === "es" ? "es" : "en",
+  const [previewLang, setPreviewLang] = useState<"de" | "en" | "es" | "pt">(
+    uiLang === "de" ? "de" : uiLang === "es" ? "es" : uiLang === "pt" ? "pt" : "en",
   );
   // The voice currently PLAYING vs. the voice whose audio is being FETCHED — the
   // preview button shows a spinner while loading, a stop icon while playing.
@@ -293,7 +295,7 @@ function VoicePicker({
           <span className="text-xs text-muted-foreground">
             {t("apikeys_voice.preview_in")}
           </span>
-          {(["de", "en", "es"] as const).map((lng) => (
+          {(["de", "en", "es", "pt"] as const).map((lng) => (
             <button
               key={lng}
               type="button"

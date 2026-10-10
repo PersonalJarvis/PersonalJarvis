@@ -1,0 +1,101 @@
+{
+  "first_run": {
+    "back": "Voltar",
+    "continue": "Continuar",
+    "step_of": "{current} de {total}",
+    "window": {
+      "title": "Configurar {name}",
+      "progress": "Progresso da configuração",
+      "language": "Idioma"
+    },
+    "name": {
+      "pill": "Nome",
+      "title": "Olá! Como gostarias de me chamar?",
+      "lede": "Escolhe o nome que quiseres. É também a minha palavra de ativação: diz-a em voz alta e eu fico a ouvir. Podes alterá-lo a qualquer momento nas Definições.",
+      "label": "Nome do assistente",
+      "placeholder": "Escreve um nome…"
+    },
+    "connect": {
+      "pill": "Ligar",
+      "title": "Liga a tua IA",
+      "lede": "Inicia sessão com uma subscrição que já pagas ou cola uma chave de API. Basta uma delas para {name} pensar e falar.",
+      "sign_in": "Iniciar sessão",
+      "api_key": "Chave de API",
+      "ready": "Pronto",
+      "checking": "A verificar…",
+      "waiting": "A aguardar…",
+      "signed_in": "Sessão iniciada",
+      "signed_in_as": "Sessão iniciada como {account}",
+      "key_saved": "Chave de API guardada",
+      "plans_or_key": "{plans} ou uma chave de API",
+      "key_only": "Chave de API",
+      "more": "Mais fornecedores",
+      "finish_in_browser": "Conclui o início de sessão no teu navegador.",
+      "install_first": "Instala-o primeiro: executa isto num terminal e depois verifica novamente.",
+      "check_again": "Verificar novamente",
+      "copy": "Copiar comando",
+      "key_connecting": "A ativar tudo…",
+      "key_connected": "Ligado: {provider}.",
+      "key_partial": "Algumas partes não foram ativadas ({parts}). Podes corrigi-las mais tarde na página Chaves de API.",
+      "live_ready": "A voz em direto está ativa: fala e {name} responde de imediato.",
+      "live_missing": "O chat funciona. A voz em direto precisa de uma chave OpenAI ou Gemini; até lá, {name} fala da forma clássica, um pouco mais lenta.",
+      "key_security": "As subscrições são cobradas a um preço mensal fixo. As chaves ficam no porta-chaves do teu sistema e só são enviadas ao fornecedor que escolheste.",
+      "nothing_yet": "Ainda nada ligado. Sem uma subscrição ou uma chave, o chat e a voz ficam desligados. Podes ligar uma mais tarde na página Chaves de API.",
+      "later": "Saltar por agora"
+    },
+    "voice": {
+      "pill": "Voz",
+      "title": "Como vais falar com {name}",
+      "lede": "Escreve no chat ou simplesmente fala: diz a tua palavra de ativação ou prime o teu atalho de Chamada.",
+      "wake_title": "Palavra de ativação: {phrase}",
+      "call_title": "Atalho de Chamada",
+      "call_detail": "Prime-o em qualquer lado para começar a falar. Clica nas teclas para escolheres as tuas.",
+      "call_recording": "Mantém premidas as teclas que queres e depois solta. Esc cancela.",
+      "call_none": "Ainda sem atalho. Clica no campo e prime as teclas que queres.",
+      "call_press": "Clica e depois prime as teclas",
+      "call_change": "Alterar o atalho de Chamada",
+      "call_saved": "Guardado. Prime-o em qualquer lado para começar a falar.",
+      "call_refused": "Esta combinação não pode ser usada. Experimenta outra.",
+      "no_word": "Ainda sem palavra de ativação",
+      "wake_on": "Sempre à escuta da tua palavra de ativação. É reconhecida aqui mesmo, neste computador.",
+      "wake_off": "Desligado: prime o teu atalho de Chamada para falar. Ativa-o para que a tua palavra de ativação seja ouvida a toda a hora.",
+      "wake_switch": "Ouvir sempre a palavra de ativação",
+      "after_restart": "Isto é ativado com o reinício no final.",
+      "login_title": "Iniciar com a sessão",
+      "login_detail": "Abre {name} quando o computador arranca, para estar pronto a ouvir-te.",
+      "preview_note": "Isto é uma repetição, por isso nada é reiniciado.",
+      "restart_note": "A seguir, uma pequena visita mostra-te a aplicação. No final, a aplicação reinicia uma vez (cerca de dez segundos) para ativar tudo.",
+      "start": "Mostra-me a aplicação"
+    },
+    "tour": {
+      "title": "Uma visita a {name}",
+      "lede": "O teu animal de estimação guia-te pela aplicação e explica cada secção.",
+      "next": "Seguinte",
+      "finish": "Vamos lá",
+      "skip": "Saltar",
+      "labels": {
+        "chat": "Chat",
+        "voice": "Chat de voz",
+        "agents": "Agentes",
+        "ide": "IDE agêntico",
+        "plugins": "Plugins",
+        "wake": "Palavra de ativação",
+        "done": "Tudo pronto"
+      },
+      "stops": {
+        "chat": "Olá, sou o {pet}! Deixa-me mostrar-te a aplicação. Este é o teu chat com {name}. Escreve aqui o que quiseres: uma pergunta, uma tarefa, um ficheiro para analisar. Nunca tens de escolher uma ferramenta ou um modelo; {name} decide o que é preciso.",
+        "voice": "Preferes falar? Isto é o chat de voz. Clica na barra, diz a tua palavra de ativação ou prime o teu atalho de Chamada e depois fala. A onda mostra quem está a falar.",
+        "agents": "Trabalhos grandes, como uma pesquisa, um relatório ou um site, vão para os teus agentes. São a equipa de {name}, cada um com a sua função e modelo. Abre Agentes para os veres a trabalhar, conversar com um deles ou criar o teu.",
+        "ide": "O IDE agêntico executa agentes de programação como o Claude Code e o Codex em terminais reais, nos teus próprios projetos. Escreve-lhes diretamente ou deixa {name} orientá-los por voz.",
+        "plugins": "Os plugins ligam {name} às aplicações que usas: email, calendário, notas, casa inteligente e muito mais. Cada um torna-se uma nova ferramenta, e tudo o que envia ou altera algo pede-te autorização primeiro.",
+        "wake": "A tua palavra de ativação está aqui nas Definições. Diz \"Olá {name}\" e {name} fica a ouvir. Altera a palavra, escolhe o idioma ou testa-a a qualquer momento.",
+        "done": "E a visita termina aqui! Fala com {name} sempre que quiseres e, se alguma vez ficares sem saber o que fazer, basta perguntar. Definições → Aplicação repete este guia."
+      }
+    }
+  },
+  "app_tour": {
+    "replay_title": "Repetir a introdução",
+    "replay_body": "Abre novamente a janela de configuração (nome, ligações de IA, voz) e depois a visita à aplicação. Nada é reiniciado.",
+    "replay": "Repetir"
+  }
+}

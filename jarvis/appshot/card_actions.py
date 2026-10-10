@@ -100,6 +100,23 @@ _LABELS: dict[str, dict[str, str]] = {
         "text_copied": "文字已复制",  # i18n-allow: UI
         "no_text": "未找到文字",  # i18n-allow: UI
     },
+    "pt": {
+        "edit": "Editar",  # i18n-allow: product UI string
+        "copy": "Copiar",  # i18n-allow: product UI string
+        "save": "Guardar",  # i18n-allow: product UI string
+        "close": "Fechar",  # i18n-allow: product UI string
+        "pin": "Manter no ecrã",  # i18n-allow: product UI string
+        "unpin": "Deixar de fixar",  # i18n-allow: product UI string
+        "copy_text": "Copiar texto",  # i18n-allow: product UI string
+        "copied": "Copiado",  # i18n-allow: product UI string
+        "saved": "Guardado em Transferências",  # i18n-allow: product UI string
+        "failed": "Não funcionou",  # i18n-allow: product UI string
+        "no_access": "Sem permissão para guardar em Transferências",  # i18n-allow: UI
+        "no_access_mac": "Permite Transferências em Ficheiros e pastas",  # i18n-allow: UI
+        "gone": "Já não está guardado",  # i18n-allow: product UI string
+        "text_copied": "Texto copiado",  # i18n-allow: product UI string
+        "no_text": "Nenhum texto encontrado",  # i18n-allow: product UI string
+    },
 }
 
 

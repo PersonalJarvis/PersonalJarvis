@@ -17,7 +17,9 @@ __all__ = ["REPORT_PROMPT_CHARS", "clip_report", "report_update_prompt"]
 #: runaway log keeps both ends, where the ask and the verdict are.
 REPORT_PROMPT_CHARS = 6000
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German", "en": "English", "es": "Spanish", "pt": "European Portuguese",
+}
 
 
 def clip_report(report: str) -> str:

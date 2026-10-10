@@ -1,6 +1,6 @@
 /**
  * Every `local_models.*` key a Local models panel asks for must exist in all
- * three locale chunks — and de/es must carry exactly the keys en carries.
+ * three locale chunks — and de/es/pt must carry exactly the keys en carries.
  * The keys are read from the source files themselves, so a panel that adds a
  * string without its translations fails here, not in front of a user.
  */
@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/local_models/en.json";
 import de from "./locales/local_models/de.json";
 import es from "./locales/local_models/es.json";
+import pt from "./locales/local_models/pt.json";
 
 function flatten(obj: Record<string, unknown>, prefix = ""): string[] {
   const out: string[] = [];
@@ -64,6 +65,7 @@ describe("local models i18n parity", () => {
   for (const [lang, loc] of [
     ["de", de],
     ["es", es],
+    ["pt", pt],
   ] as const) {
     it(`${lang} has the same local_models keys as en`, () => {
       const enKeys = keysFor(en as Record<string, unknown>);

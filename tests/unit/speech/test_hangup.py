@@ -9,6 +9,8 @@ from jarvis.speech.hangup import (
     HANGUP_RE,
     HangupConfirmation,
     contains_end_signal,
+    hangup_cancelled_reply,
+    hangup_confirmation_question,
     is_legacy_farewell,
     strip_end_signal,
     supports_semantic_hangup,
@@ -159,6 +161,7 @@ def test_is_legacy_farewell_rejects_other_text() -> None:
     "I think we're done here, thanks.", "That is all for now.",
     "I need to go", "No more questions", "Eso es todo por hoy, gracias.",
     "Creo que hemos terminado", "No necesito nada más",
+    "Obrigado, é tudo por hoje.", "Acho que terminámos", "Não preciso de mais nada",
 ])
 def test_semantic_closure_requires_positive_user_evidence(text: str) -> None:
     assert supports_semantic_hangup(text)
@@ -170,6 +173,7 @@ def test_semantic_closure_requires_positive_user_evidence(text: str) -> None:
     "We are not done", "We're done with step one, now continue with step two",
     'Translate "we are done" into German', "We're done?", "No hemos terminado",
     "Ich glaube wir sind nicht fertig", "Das war's mit dem Fehler, mach weiter",  # i18n-allow
+    "Ainda não terminámos", "Desliga a luz da sala", "Obrigado",
 ])
 def test_task_completion_and_quoted_closings_are_not_session_closure(text: str) -> None:
     assert not supports_semantic_hangup(text)
@@ -178,6 +182,7 @@ def test_task_completion_and_quoted_closings_are_not_session_closure(text: str) 
 @pytest.mark.parametrize("text", [
     "Leg auf", "auflegen bitte", "Tschüss Jarvis", "hang up", "Goodbye",  # i18n-allow
     "Danke, das war alles", "That's it for today", "Cuelga", "Adiós",  # i18n-allow
+    "Desliga", "Adeus, Jarvis!", "Até logo", "Tchau",
 ])
 def test_end_call_gate_accepts_the_users_own_closing(text: str) -> None:
     assert user_asked_to_hang_up(text)
@@ -186,6 +191,7 @@ def test_end_call_gate_accepts_the_users_own_closing(text: str) -> None:
 @pytest.mark.parametrize("text", [
     "", None, "Ja", "Ja.", "Yes", "Sí", "Okay", "Alles klar", "Mach das",  # i18n-allow
     "Danke", "Thanks", "Hey George, hallo",  # i18n-allow
+    "Sim", "Faz isso",
 ])
 def test_end_call_gate_refuses_a_model_hang_up_without_user_evidence(text) -> None:
     # Live 2026-10-01: the model answered a spoken "Ja" with end_call.
@@ -254,3 +260,20 @@ def test_padded_confirmation_still_requires_the_complete_answer(answer, expected
     padding = " \t\n" * 1000
     assert guard.observe(padding + answer + padding, "answer") == expected
     assert guard.observe("yes", "later-approval") == ""
+
+
+@pytest.mark.parametrize("answer, expected", [
+    ("Sim, desliga.", "confirmed"),
+    ("Sim, por favor", "confirmed"),
+    ("Não", "cancelled"),
+    ("Sim, mas continua a falar", ""),
+])
+def test_portuguese_answers_to_the_hangup_question(answer, expected):
+    guard = HangupConfirmation()
+    guard.arm("request")
+    assert guard.observe(answer, "answer") == expected
+
+
+def test_portuguese_hangup_question_and_cancel_reply():
+    assert hangup_confirmation_question("pt-PT") == "Queres mesmo desligar?"
+    assert hangup_cancelled_reply("pt") == "Ok, continuamos a falar."

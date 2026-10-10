@@ -169,7 +169,7 @@ class CreateArtifactTool:
             },
             "language": {
                 "type": "string",
-                "enum": ["de", "en", "es"],
+                "enum": ["de", "en", "es", "pt"],
                 "description": "Language the user is speaking (fallback only).",
             },
             "spoken_ack": {
@@ -303,7 +303,7 @@ class CreateArtifactTool:
             if wants_sample_data(f"{utterance}\n{request}")
             else plan_source_data(f"{utterance}\n{request}")
         )
-        # The mission dispatch contract is de/en; an "es" turn keeps the German
+        # The mission dispatch contract is de/en; an "es" or "pt" turn keeps the German
         # mission readback (the same cap spawn_worker applies).
         mission_language = language if language in ("de", "en") else "de"
         background = _called_in_background(ctx)

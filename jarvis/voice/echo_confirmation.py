@@ -141,6 +141,54 @@ _AMBIGUOUS_PATTERNS_ES: tuple[str, ...] = (
     r"\bni idea\b",
 )
 
+# European Portuguese (Runtime Output Language doctrine: every supported
+# language gets its own patterns). As in Spanish, "para" is NOT a veto keyword:
+# it is the common preposition ("para enviar" = "to send"). "não sei" needs no
+# ambiguous entry — the veto pass sees "não" first (safety bias, Plan-§AP-12).
+_CONFIRM_PATTERNS_PT: tuple[str, ...] = (
+    r"\bsim\b",
+    r"\bclaro\b",
+    r"\bpode ser\b",
+    r"\bpodes\b",
+    r"\bfor(ç|c)a\b",
+    r"\bfaz\b",
+    r"\bavan(ç|c)a\b",
+    r"\bok\b",
+    r"\bokay\b",
+    r"\bcerto\b",
+    r"\bcorreto\b",
+    r"\bexato\b",
+    r"\bperfeito\b",
+    r"\bde acordo\b",
+    r"\bconfirm(o|ar|ado)?\b",
+    r"\bv(á|a) l(á|a)\b",
+)
+
+_VETO_PATTERNS_PT: tuple[str, ...] = (
+    r"\bn(ã|a)o\b",
+    r"\bcancela(r)?\b",
+    r"\baborta(r)?\b",
+    r"\bp(á|a)ra com isso\b",
+    r"\bdeixa estar\b",
+    r"\bdeixa l(á|a)\b",
+    r"\besquece\b",
+    r"\bnem pensar\b",
+    r"\balto\b",
+    r"\bbasta\b",
+    r"\berrado\b",
+    r"\bincorreto\b",
+    r"\bnegativo\b",
+)
+
+_AMBIGUOUS_PATTERNS_PT: tuple[str, ...] = (
+    r"\btalvez\b",
+    r"\bse calhar\b",
+    r"\bespera\b",
+    r"\bmomento\b",
+    r"\bsei l(á|a)\b",
+    r"\b(hum|hmm|hm|eh)\b",
+)
+
 ResponseVerdict = Literal["confirm", "veto", "ambiguous", "unknown"]
 
 
@@ -165,6 +213,10 @@ def classify_response(transcript: str, *, language: str = "de") -> ResponseVerdi
         veto_pats = _VETO_PATTERNS_ES
         confirm_pats = _CONFIRM_PATTERNS_ES
         ambig_pats = _AMBIGUOUS_PATTERNS_ES
+    elif language == "pt":
+        veto_pats = _VETO_PATTERNS_PT
+        confirm_pats = _CONFIRM_PATTERNS_PT
+        ambig_pats = _AMBIGUOUS_PATTERNS_PT
     else:
         veto_pats = _VETO_PATTERNS_DE
         confirm_pats = _CONFIRM_PATTERNS_DE

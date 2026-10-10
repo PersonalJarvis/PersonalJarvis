@@ -46,6 +46,9 @@ _REFUSALS: dict[str, dict[str, str]] = {
         "es": "La voz local aún no está configurada en este equipo. "  # i18n-allow
               "Inicia la configuración en la tarjeta Voz local de los "  # i18n-allow
               "Ajustes.",  # i18n-allow
+        "pt": "A voz local ainda não está configurada neste computador. "  # i18n-allow
+              "Inicia a configuração no cartão Voz local das "  # i18n-allow
+              "Definições.",  # i18n-allow
     },
     "loading": {
         "en": "Local voice is still loading ({percent} %). The Local voice card "
@@ -54,6 +57,8 @@ _REFUSALS: dict[str, dict[str, str]] = {
               "Stimme in den Einstellungen zeigt den Fortschritt.",  # i18n-allow
         "es": "La voz local aún se está cargando ({percent} %). La tarjeta "  # i18n-allow
               "Voz local de los Ajustes muestra el progreso.",  # i18n-allow
+        "pt": "A voz local ainda está a carregar ({percent} %). O cartão "  # i18n-allow
+              "Voz local das Definições mostra o progresso.",  # i18n-allow
     },
     "failed": {
         "en": "Local voice could not start. The Local voice card in Settings shows why.",
@@ -61,13 +66,15 @@ _REFUSALS: dict[str, dict[str, str]] = {
               "Stimme in den Einstellungen zeigt den Grund.",  # i18n-allow
         "es": "La voz local no pudo arrancar. La tarjeta Voz local de los "  # i18n-allow
               "Ajustes muestra el motivo.",  # i18n-allow
+        "pt": "A voz local não conseguiu arrancar. O cartão Voz local das "  # i18n-allow
+              "Definições mostra o motivo.",  # i18n-allow
     },
 }
 NOT_SET_UP_REASON = _REFUSALS["not_set_up"]["en"]
 
 
 def refusal(kind: str, language: str, **values: object) -> str:
-    """One refusal sentence in ``language`` (de/en/es; anything else is English)."""
+    """One refusal sentence in ``language`` (de/en/es/pt; anything else is English)."""
     table = _REFUSALS[kind]
     return table.get(language, table["en"]).format(**values)
 

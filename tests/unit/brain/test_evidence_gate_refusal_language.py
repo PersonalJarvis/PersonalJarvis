@@ -18,6 +18,7 @@ from jarvis.brain.evidence_gate import (
     _REFUSAL_DE,
     _REFUSAL_EN,
     _REFUSAL_ES,
+    _REFUSAL_PT,
     check_evidence_domain,
 )
 from jarvis.core.capabilities import CapabilityRegistry
@@ -46,17 +47,18 @@ def _refuse(text, *, language=""):
 
 def test_every_locale_has_a_complete_refusal_table():
     """All locales are equal: no table may lag another (AGENTS.md §1)."""
-    assert set(_REFUSAL_ES) == set(_REFUSAL_DE) == set(_REFUSAL_EN)
+    assert set(_REFUSAL_PT) == set(_REFUSAL_ES) == set(_REFUSAL_DE) == set(_REFUSAL_EN)
     assert all(text.strip() for text in _REFUSAL_ES.values())
+    assert all(text.strip() for text in _REFUSAL_PT.values())
 
 
 def test_resolved_language_wins_over_the_utterance_language():
     for utterance in (DE_UTTERANCE, EN_UTTERANCE):
-        for language in ("de", "en", "es"):
+        for language in ("de", "en", "es", "pt"):
             v = _refuse(utterance, language=language)
             assert v.kind == "honest_refusal"
             assert v.refusal_text == {
-                "de": _REFUSAL_DE, "en": _REFUSAL_EN, "es": _REFUSAL_ES,
+                "de": _REFUSAL_DE, "en": _REFUSAL_EN, "es": _REFUSAL_ES, "pt": _REFUSAL_PT,
             }[language]["calendar"], (
                 f"utterance={utterance!r} language={language!r} "
                 f"got {v.refusal_text!r}"
@@ -69,6 +71,13 @@ def test_spanish_turn_is_refused_in_spanish():
 
     assert v.refusal_text == _REFUSAL_ES["calendar"]
     assert v.refusal_text != _REFUSAL_EN["calendar"]
+
+
+def test_european_portuguese_turn_is_refused_in_portuguese():
+    v = _refuse(EN_UTTERANCE, language="pt-PT")
+
+    assert v.refusal_text == _REFUSAL_PT["calendar"]
+    assert v.refusal_text != _REFUSAL_ES["calendar"]
 
 
 def test_bcp47_and_whisper_style_tags_are_accepted():

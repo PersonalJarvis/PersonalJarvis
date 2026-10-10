@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import en from "./locales/en.json";
 import de from "./locales/de.json";
 import es from "./locales/es.json";
+import pt from "./locales/pt.json";
 
 type Locale = Record<string, unknown>;
 
@@ -22,7 +23,7 @@ describe("code editor i18n parity", () => {
     expect(keys(en as Locale).length).toBeGreaterThan(0);
   });
 
-  for (const [language, locale] of Object.entries({ de, es })) {
+  for (const [language, locale] of Object.entries({ de, es, pt })) {
     it(`${language} has the same code editor keys as en`, () => {
       expect(keys(locale as Locale)).toEqual(keys(en as Locale));
     });

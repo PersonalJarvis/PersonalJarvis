@@ -184,7 +184,7 @@ async def test_an_unreadable_brain_still_gets_the_news_out() -> None:
     assert heard.last.language == "en"
 
 
-@pytest.mark.parametrize("language", ["de", "en", "es"])
+@pytest.mark.parametrize("language", ["de", "en", "es", "pt"])
 def test_every_supported_locale_has_both_sentences(language: str) -> None:
     from jarvis.ui.desktop_app import _conductor_news_sentence
 

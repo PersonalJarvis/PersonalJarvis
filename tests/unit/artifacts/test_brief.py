@@ -120,6 +120,11 @@ def test_an_oversized_previous_page_is_clipped_head_and_tail() -> None:
     assert len(brief.prompt) < MAX_PREVIOUS_HTML_CHARS + 30_000
 
 
+def test_a_portuguese_request_names_european_portuguese() -> None:
+    brief = build_artifact_brief("Uma página.", title="Página", language="pt")  # i18n-allow
+    assert "European Portuguese" in brief.prompt
+
+
 def test_brief_is_deterministic() -> None:
     a = build_artifact_brief("Same.", title="Same", language="es")
     b = build_artifact_brief("Same.", title="Same", language="es")

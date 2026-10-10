@@ -13,7 +13,7 @@ from .working_rules import PREFIX
 _DURABLE = re.compile(
     r"\b(?:always|from now on|immer|ab jetzt|siempre|a partir de ahora)\b", re.I  # i18n-allow
 )  # i18n-allow
-_NAMES = {"en": "English", "de": "German", "es": "Spanish"}
+_NAMES = {"en": "English", "de": "German", "es": "Spanish", "pt": "European Portuguese"}
 log = logging.getLogger(__name__)
 
 

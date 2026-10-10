@@ -119,6 +119,9 @@ def test_retrieve_for_prefers_the_named_result_then_the_oldest() -> None:
         "still working on it?",
         "cómo vas",
         "¿ya has terminado?",
+        "Como vais?",
+        "Já acabaste?",
+        "Então, ainda estás a trabalhar nisso?",
     ],
 )
 def test_progress_questions_are_recognised(text: str) -> None:
@@ -136,6 +139,9 @@ def test_progress_questions_are_recognised(text: str) -> None:
         "any results yet?",
         "qué encontraste",
         "ya tienes el resultado",
+        "O que encontraste?",
+        "E o resultado?",
+        "Já tens o resultado?",
     ],
 )
 def test_result_requests_are_recognised(text: str) -> None:
@@ -151,6 +157,7 @@ def test_result_requests_are_recognised(text: str) -> None:
         "wie weit ist es bis Berlin",
         "spiel Musik",
         "the result of the match was surprising, tell me more about the team",
+        "abre o ficheiro com os resultados do projeto",
     ],
 )
 def test_real_requests_stay_native(text: str) -> None:
@@ -182,7 +189,7 @@ def test_reanchor_only_when_something_happened_in_between() -> None:
 
 
 def test_reanchor_without_topic_uses_the_topicless_pool_and_every_locale() -> None:
-    for language in ("de", "en", "es"):
+    for language in ("de", "en", "es", "pt"):
         with_topic = anchor_pool(language)
         without = anchor_pool(language, with_topic=False)
         assert with_topic and without

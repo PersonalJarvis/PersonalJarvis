@@ -430,3 +430,16 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
         assert any(e["kind"] == "tool_result" for e in svc.store.list_events(sid))
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("locale", ["en", "de", "es", "pt"])
+def test_command_request_accepts_every_slash_locale(locale: str) -> None:
+    # Mirrors ChatCommands.tsx: every interface language with its own slash
+    # dictionary sends its code, and the request must not reject it.
+    req = CommandRequest(command="status", request_id="r1", locale=locale)
+    assert req.locale == locale
+
+
+def test_command_request_rejects_an_unknown_locale() -> None:
+    with pytest.raises(ValueError):
+        CommandRequest(command="status", request_id="r1", locale="xx")

@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import en from "@/i18n/locales/society/en.json";
 import de from "@/i18n/locales/society/de.json";
 import es from "@/i18n/locales/society/es.json";
+import pt from "@/i18n/locales/society/pt.json";
 import { AgentSymbol } from "../AgentSymbol";
 import {
   ACCESSORY_CATALOG, ACCESSORY_IDS_BY_SLOT, ACCESSORY_ITEMS, ACCESSORY_SLOTS, OFFERED_SLOTS, randomAccessories, resolveFill,
@@ -14,7 +15,7 @@ type Labels = { society: { companion: { items: Record<string, string>; slots: Re
 
 describe("agent symbol accessories", () => {
   it("labels every item and slot in every society locale", () => {
-    for (const locale of [en, de, es] as unknown as Labels[]) {
+    for (const locale of [en, de, es, pt] as unknown as Labels[]) {
       const { items, slots } = locale.society.companion;
       expect(Object.keys(items).sort()).toEqual(ACCESSORY_ITEMS.map(item => item.id).sort());
       expect(Object.keys(slots).sort()).toEqual([...ACCESSORY_SLOTS].sort());

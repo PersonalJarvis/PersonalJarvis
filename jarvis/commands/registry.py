@@ -33,7 +33,7 @@ from typing import Any
 
 # Kept static for zero-import-cost; parity-tested against
 # jarvis.brain.manager.SUPPORTED_REPLY_LANGUAGES (the authoritative tuple).
-REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+REPLY_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es", "pt")
 
 VOICE_MODES: tuple[str, ...] = ("pipeline", "realtime")
 
@@ -678,6 +678,12 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "de": ("antworte ab jetzt auf englisch",),  # i18n-allow: input vocab
                 "en": ("answer in german from now on",),
                 "es": ("responde en inglés a partir de ahora",),  # i18n-allow: input vocab
+                "pt": (  # i18n-allow: input vocab
+                    "responde em inglês a partir de agora",  # i18n-allow: input vocab
+                    "responde em português",  # i18n-allow: input vocab
+                    "fala português",  # i18n-allow: input vocab
+                    "fala comigo em português",  # i18n-allow: input vocab
+                ),
             },
         ),
         AppCommand(

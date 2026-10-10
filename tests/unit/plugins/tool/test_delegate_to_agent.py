@@ -524,3 +524,25 @@ async def test_status_resolves_a_misheard_name(voice_team):
     status = SocietyStatusTool(runtime_resolver=lambda: rt)
     res = await status.execute({"agent": "Java Scout", "turn_language": "en"}, _ctx("x"))
     assert res.success and res.output == "Jarvis-Scout has nothing to do right now."
+
+
+def test_every_spoken_table_carries_european_portuguese() -> None:
+    """All locales rank equally: each spoken table that has a Spanish column
+    also has a pt column with the same placeholders, so a pt turn never falls
+    back to English."""
+    import string
+
+    from jarvis.plugins.tool import delegate_to_agent as module
+
+    def fields(text: str) -> set[str]:
+        return {f for _, f, _, _ in string.Formatter().parse(text) if f}
+
+    tables = [
+        value
+        for value in vars(module).values()
+        if isinstance(value, dict) and "es" in value and isinstance(value["es"], str)
+    ]
+    assert len(tables) >= 16
+    for table in tables:
+        assert "pt" in table, table
+        assert fields(table["pt"]) == fields(table["es"]), table

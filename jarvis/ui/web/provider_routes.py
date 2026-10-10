@@ -3841,7 +3841,7 @@ _REALTIME_PREVIEW_TIMEOUT_S = 30.0
 # BCP-47 pronunciation pins for the sample languages. Gemini's prebuilt
 # voices are language-agnostic; an unpinned call auto-detects per word and
 # can code-switch mid-sentence, so the sample pins the language it speaks.
-_REALTIME_PREVIEW_LANG_CODES = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+_REALTIME_PREVIEW_LANG_CODES = {"de": "de-DE", "en": "en-US", "es": "es-ES", "pt": "pt-PT"}
 
 
 async def _gemini_live_voice_sample(
@@ -4006,7 +4006,7 @@ _REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
 
 class RealtimeVoicePreviewBody(BaseModel):
     voice: str = Field(default="", max_length=200)
-    # The sample language to speak ("de" | "en" | "es"). Falls back to English.
+    # The sample language to speak ("de" | "en" | "es" | "pt"). Falls back to English.
     language: str = Field(default="en", max_length=16)
     # The realtime model to sample through where the sampler needs one
     # (openai-realtime); "" = the adapter default. Validated when non-empty.
@@ -4622,6 +4622,11 @@ _TTS_PREVIEW_SAMPLES: dict[str, str] = {
         "¡Hola! Soy tu asistente personal. "
         "Así suena mi voz cuando hablo contigo y te ayudo con tus tareas."
     ),
+    "pt": (
+        "Olá! Sou o teu assistente pessoal. "  # i18n-allow: Portuguese TTS preview output.
+        "É assim que soa a minha voz quando falo contigo "  # i18n-allow
+        "e te ajudo com as tuas tarefas."  # i18n-allow
+    ),
 }
 _TTS_PREVIEW_DEFAULT_LANG = "en"
 
@@ -4776,7 +4781,7 @@ class TtsPreviewBody(BaseModel):
     provider: str = Field(default=_VOICE_PICKER_PROVIDER)
     model: str = Field(default="", max_length=200)
     voice: str = Field(default="", max_length=200)
-    # The sample language to speak ("de" | "en" | "es"). Falls back to English.
+    # The sample language to speak ("de" | "en" | "es" | "pt"). Falls back to English.
     language: str = Field(default=_TTS_PREVIEW_DEFAULT_LANG, max_length=16)
 
 

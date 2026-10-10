@@ -53,6 +53,11 @@ class TestSuccess:
         assert text is not None
         assert "done" not in text.lower()  # not English
 
+    def test_portuguese_is_supported(self) -> None:
+        out = _applied_dump(description="TTS speed", new_value=True)
+        text = config_readback(success=True, output=out, language="pt")
+        assert text == "Feito — TTS speed agora é ativado."
+
 
 class TestHonestFailures:
     def test_forbidden_is_an_honest_refusal_not_done(self) -> None:

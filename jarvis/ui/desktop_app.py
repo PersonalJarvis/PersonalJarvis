@@ -1716,11 +1716,13 @@ _CONDUCTOR_NEWS_PHRASES: dict[str, dict[str, str]] = {
         "de": "Der geplante Job {name} schlägt gerade fehl.",  # i18n-allow
         "en": "The scheduled job {name} has started failing.",
         "es": "El trabajo programado {name} está fallando.",
+        "pt": "A tarefa agendada {name} começou a falhar.",  # i18n-allow
     },
     "recovered": {
         "de": "Der geplante Job {name} läuft wieder.",  # i18n-allow
         "en": "The scheduled job {name} is working again.",
         "es": "El trabajo programado {name} vuelve a funcionar.",
+        "pt": "A tarefa agendada {name} voltou a funcionar.",  # i18n-allow
     },
 }
 

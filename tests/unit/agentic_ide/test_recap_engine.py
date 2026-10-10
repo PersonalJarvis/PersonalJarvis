@@ -425,6 +425,13 @@ def test_the_prompt_asks_for_the_interface_language(monkeypatch) -> None:
     assert "Write both lines in German." in recap_engine.build_prompt(_pane(), _rows(10))
 
 
+def test_a_portuguese_interface_asks_for_european_portuguese(monkeypatch) -> None:
+    monkeypatch.setattr(recap_engine, "_ui_language", lambda: "pt")
+
+    prompt = recap_engine.build_prompt(_pane(), _rows(10))
+    assert "Write both lines in European Portuguese." in prompt
+
+
 def test_an_unknown_interface_language_falls_back_to_english(monkeypatch) -> None:
     """A locale a newer build introduced must not produce an empty instruction."""
     monkeypatch.setattr(recap_engine, "_ui_language", lambda: "fr")

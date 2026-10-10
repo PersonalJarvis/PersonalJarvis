@@ -62,7 +62,7 @@ Settings panel can bootstrap the key before the user has it.
 | PUT | `/api/control/config` | write `{path,value,reason}` — SAFE applies, ASK returns `pending_id` |
 | POST | `/api/control/config/confirm` | apply an ASK-tier `pending_id` |
 | POST | `/api/control/config/reject` | cancel a pending mutation |
-| PUT | `/api/control/language` | convenience: set `reply_language` (auto/de/en/es) |
+| PUT | `/api/control/language` | convenience: set `reply_language` (auto/de/en/es/pt) |
 | GET | `/api/control/providers` | provider + settings snapshot |
 | PUT | `/api/control/providers/{tier}` | switch brain/tts/stt/subagent |
 | GET | `/api/control/secrets` | list secret slots (masked) |
@@ -83,7 +83,7 @@ allowlist:
   forwarded over `/ws`, so the open React UI **switches language live** — no
   reload, every OS. The frontend hydrates it on mount and pushes UI clicks to
   `GET/PUT /api/settings/ui-language`.
-- **`brain.reply_language`** (auto/de/en/es) — what Jarvis SPEAKS/writes back;
+- **`brain.reply_language`** (auto/de/en/es/pt) — what Jarvis SPEAKS/writes back;
   `auto` mirrors the user's input language. SAFE, hot-reloads into the next turn.
 
 The `PUT /api/control/language` verb (and the voice command) set **both** when

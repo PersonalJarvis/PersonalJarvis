@@ -62,7 +62,7 @@ def test_a_harness_output_dict_is_replaced_too() -> None:
     _assert_clean(cause)
 
 
-@pytest.mark.parametrize("lang", ["de", "en", "es"])
+@pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
 @pytest.mark.parametrize(("permission", "reason"), _PERMISSIONS)
 def test_the_canned_floor_speaks_the_cause_in_the_turn_language(lang, permission, reason) -> None:
     cause = extract_speakable_reason(_agent_text(permission, reason))
@@ -74,7 +74,7 @@ def test_the_canned_floor_speaks_the_cause_in_the_turn_language(lang, permission
         assert "Personal Jarvis does not have" not in line  # not left in English
 
 
-@pytest.mark.parametrize("lang", ["de", "en", "es"])
+@pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
 def test_the_computer_use_readback_never_speaks_the_agent_text(lang) -> None:
     line = cu_failure_readback(lang, error=_agent_text("screen_recording", "denied"), exit_code=1)
 
@@ -104,7 +104,7 @@ def test_the_realtime_failure_line_gets_the_cause_not_the_agent_text() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lang", ["de", "en", "es"])
+@pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
 async def test_the_brain_failure_readback_never_speaks_the_agent_text(lang) -> None:
     mgr = BrainManager.__new__(BrainManager)
     mgr._reply_language = lang

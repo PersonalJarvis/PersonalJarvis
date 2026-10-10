@@ -271,6 +271,25 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "disponible en esta instalación."  # i18n-allow: Spanish TTS
         ),
     },
+    # European Portuguese mirrors the ``es`` key set (same fallback contract).
+    "pt": {
+        "review_time_budget_exhausted": (  # i18n-allow: Portuguese TTS phrase
+            "O tempo de revisão esgotou-se; o resultado parcial está "  # i18n-allow
+            "disponível."  # i18n-allow
+        ),
+        "git_missing": (
+            "{agents} precisam que o git esteja instalado e no PATH."  # i18n-allow: PT TTS
+        ),
+        "git_not_a_repository": (
+            "{agents} precisam de uma cópia git (instala com o "  # i18n-allow: PT TTS
+            "instalador do git, não com uma transferência ZIP)."  # i18n-allow: PT TTS
+        ),
+        "source_checkout_unavailable": (
+            "Esta tarefa de {agent} precisa do "  # i18n-allow: PT TTS
+            "repositório do código-fonte, que não está "  # i18n-allow: PT TTS
+            "disponível nesta instalação."  # i18n-allow: PT TTS
+        ),
+    },
 }
 
 

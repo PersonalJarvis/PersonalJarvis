@@ -243,6 +243,10 @@ _ACTION_NOT_STARTED_PHRASES: dict[str, str] = {
         "No inicié ninguna acción para eso, así que todavía no tengo un "
         "resultado. Pídemelo de nuevo."
     ),  # i18n-allow: Spanish runtime voice/chat output
+    "pt": (  # i18n-allow
+        "Não iniciei nenhuma ação para isso, por isso ainda não tenho um resultado. Pede-mo "
+        "outra vez."  # i18n-allow
+    ),  # i18n-allow
 }
 
 

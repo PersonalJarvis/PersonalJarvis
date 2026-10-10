@@ -36,12 +36,12 @@ _JARGON = (
 
 
 class TestProviderDownPhrase:
-    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
     def test_three_variants_per_supported_language(self, lang: str) -> None:
         assert len(_PROVIDER_DOWN_PHRASES[lang]) == 3
         assert len(set(_PROVIDER_DOWN_PHRASES[lang])) == 3  # all distinct
 
-    @pytest.mark.parametrize("lang", ["de", "en", "es"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt"])
     def test_rotation_is_deterministic_and_cycles(self, lang: str) -> None:
         got = [_provider_down_phrase(lang, i) for i in range(6)]
         assert got[0] == got[3] and got[1] == got[4] and got[2] == got[5]
@@ -53,7 +53,7 @@ class TestProviderDownPhrase:
     def test_unknown_language_falls_back_to_german(self) -> None:
         assert _provider_down_phrase("fr", 1) == _PROVIDER_DOWN_PHRASES["de"][1]
 
-    @pytest.mark.parametrize("lang", ["de", "en", "es", "auto", "FR"])
+    @pytest.mark.parametrize("lang", ["de", "en", "es", "pt", "auto", "FR"])
     def test_phrase_is_voice_safe_no_provider_jargon(self, lang: str) -> None:
         for i in range(3):
             low = _provider_down_phrase(lang, i).lower()
@@ -64,6 +64,10 @@ class TestProviderDownPhrase:
         # Orthographic correctness — never ASCII-fold Spanish.
         joined = " ".join(_PROVIDER_DOWN_PHRASES["es"])
         assert any(c in joined for c in "áéíóúñ¿¡")
+
+    def test_portuguese_diacritics_preserved(self) -> None:
+        joined = " ".join(_PROVIDER_DOWN_PHRASES["pt"])
+        assert any(c in joined for c in "ãõçáéíóúâêô")
 
 
 class TestNextProviderDownPhraseAutoDetect:
@@ -124,7 +128,7 @@ class TestCauseAwareProviderDownPhrase:
         from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
 
         for cause, table in _PROVIDER_DOWN_CAUSE_PHRASES.items():
-            assert set(table) == {"de", "en", "es"}, cause
+            assert set(table) == {"de", "en", "es", "pt"}, cause
 
     def test_cause_phrases_are_voice_safe(self) -> None:
         from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES

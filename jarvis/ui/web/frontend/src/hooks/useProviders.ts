@@ -1883,7 +1883,7 @@ export async function saveTtsVoice(
 export async function fetchTtsPreview(opts: {
   model: string;
   voice: string;
-  language: "de" | "en" | "es";
+  language: "de" | "en" | "es" | "pt";
   provider?: string;
 }): Promise<Blob> {
   const res = await fetch("/api/tts/preview", {
@@ -2039,7 +2039,7 @@ export async function saveRealtimeOptions(
 export async function fetchRealtimeVoicePreview(opts: {
   providerId: string;
   voice: string;
-  language: "de" | "en" | "es";
+  language: "de" | "en" | "es" | "pt";
   model?: string;
 }): Promise<Blob> {
   const res = await fetch(

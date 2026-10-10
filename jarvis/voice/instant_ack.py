@@ -32,7 +32,7 @@ Design constraints, each of which killed an earlier attempt:
    canned "On it." — so the ACTION pool is deliberately empty and the class
    is marked ``contextual``.
 
-German/Spanish strings below are runtime voice output (AGENTS.md §1).
+German/Spanish/Portuguese strings below are runtime voice output (AGENTS.md §1).
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ from jarvis.brain.turn_planner import TurnPlan, TurnReason, is_lookup_shape
 
 log = logging.getLogger(__name__)
 
-_SUPPORTED_LANGUAGES = ("de", "en", "es")
+_SUPPORTED_LANGUAGES = ("de", "en", "es", "pt")
 _DEFAULT_LANGUAGE = "en"
 
 #: Grace window for SHORT work: speak only if the turn is still running
@@ -167,6 +167,12 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Estoy buscando información actual.",
             "Una búsqueda rápida, un momento.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Estou a pesquisar isso online.",
+            "Um momento, vou ver online.",
+            "Estou a ir buscar informação atual.",
+            "Uma pesquisa rápida, um momento.",
+        ),
     },
     WorkClass.PERSONAL: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -187,6 +193,12 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Busco eso en tus datos.",
             "Reviso lo que tengo tuyo sobre eso.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Estou a ver os teus registos.",
+            "Um momento, vou ver nas tuas coisas.",
+            "Vou procurar isso nos teus dados.",
+            "Vou ver o que tenho teu sobre isso.",
+        ),
     },
     WorkClass.SCREEN: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -206,6 +218,12 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Un momento, reviso la pantalla.",
             "Tomo la pantalla un momento.",
             "Veo qué hay en pantalla.",
+        ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Estou a olhar para o ecrã.",
+            "Um momento, vou ver o ecrã.",
+            "Fico com o ecrã por um momento.",
+            "Vou ver o que está no ecrã.",
         ),
     },
     # ``{agent}`` is the wake-word-derived agent brand ("<Name>-Agent"),
@@ -229,9 +247,15 @@ _POOLS: dict[WorkClass, dict[str, tuple[str, ...]]] = {
             "Pongo a un {agent} en ello.",
             "Eso queda con un {agent} desde ahora.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Vou passar isso a um {agent}.",
+            "Um {agent} trata disso, eu depois aviso.",
+            "Vou pôr um {agent} a tratar disso.",
+            "Isso fica com um {agent} a partir de agora.",
+        ),
     },
     # ACTION: deliberately empty — an action ack must reference the request.
-    WorkClass.ACTION: {"de": (), "en": (), "es": ()},
+    WorkClass.ACTION: {"de": (), "en": (), "es": (), "pt": ()},
 }
 
 # No-repeat memory per (class, language): back-to-back acks never share a
@@ -566,6 +590,106 @@ _INTENT_VERBS: dict[str, frozenset[str]] = {
             "termino",
         }
     ),
+    "pt": frozenset(
+        {
+            "abro",
+            "vou",
+            "procuro",
+            "pesquiso",
+            "vejo",
+            "verifico",
+            "leio",
+            "escrevo",
+            "envio",
+            "mando",
+            "ponho",
+            "mudo",
+            "altero",
+            "ligo",
+            "desligo",
+            "guardo",
+            "executo",
+            "anoto",
+            "ativo",
+            "desativo",
+            "inicio",
+            "arranco",
+            "consulto",
+            "preparo",
+            "reservo",
+            "pergunto",
+            "faco",
+            "comeco",
+            "passo",
+            "dou",
+            "fecho",
+            "movo",
+            "copio",
+            "apago",
+            "crio",
+            "instalo",
+            "atualizo",
+            "reinicio",
+            "paro",
+            "pauso",
+            "retomo",
+            "dito",
+            "gravo",
+            "agendo",
+            "lembro",
+            "termino",
+            "toco",
+            "trato",
+            "marco",
+            "abrir",
+            "procurar",
+            "pesquisar",
+            "ver",
+            "verificar",
+            "ler",
+            "escrever",
+            "enviar",
+            "mandar",
+            "mudar",
+            "alterar",
+            "ligar",
+            "desligar",
+            "guardar",
+            "executar",
+            "anotar",
+            "ativar",
+            "desativar",
+            "iniciar",
+            "arrancar",
+            "consultar",
+            "preparar",
+            "reservar",
+            "perguntar",
+            "fazer",
+            "comecar",
+            "passar",
+            "dar",
+            "fechar",
+            "mover",
+            "copiar",
+            "apagar",
+            "criar",
+            "instalar",
+            "atualizar",
+            "reiniciar",
+            "parar",
+            "pausar",
+            "retomar",
+            "ditar",
+            "gravar",
+            "agendar",
+            "lembrar",
+            "terminar",
+            "tocar",
+            "tratar",
+            "marcar",
+        }
+    ),
 }
 
 # Function words, politeness, and time adverbs a contextual line may use
@@ -825,6 +949,82 @@ _FREE_WORDS: dict[str, frozenset[str]] = {
             "voy",
         }
     ),
+    "pt": frozenset(
+        {
+            "eu",
+            "a",
+            "o",
+            "os",
+            "as",
+            "um",
+            "uma",
+            "uns",
+            "umas",
+            "em",
+            "no",
+            "na",
+            "nos",
+            "nas",
+            "num",
+            "numa",
+            "de",
+            "do",
+            "da",
+            "dos",
+            "das",
+            "ao",
+            "aos",
+            "para",
+            "pra",
+            "por",
+            "pelo",
+            "pela",
+            "com",
+            "te",
+            "ti",
+            "teu",
+            "tua",
+            "teus",
+            "tuas",
+            "agora",
+            "mesmo",
+            "ja",
+            "momento",
+            "ok",
+            "claro",
+            "isso",
+            "isto",
+            "disso",
+            "disto",
+            "e",
+            "que",
+            "se",
+            "me",
+            "lhe",
+            "rapido",
+            "rapidamente",
+            "sim",
+            "bem",
+            "sobre",
+            "desde",
+            "este",
+            "esta",
+            "esse",
+            "essa",
+            "aqui",
+            "ali",
+            "primeiro",
+            "depois",
+            "tudo",
+            "como",
+            "pediste",
+            "pedido",
+            "estou",
+            "seguida",
+            "entao",
+            "so",
+        }
+    ),
 }
 
 # A completion / result claim in an ack is the one thing that must never
@@ -850,7 +1050,14 @@ _RESULT_MARKER_RE = re.compile(
     r"enviado|enviada|activado|activada)\b|"
     r"\b(?:he|ya he)\s+(?:\w+\s+){0,3}"
     r"(?:abierto|hecho|guardado|enviado|encontrado|revisado|terminado)\b|"
-    r"\b(?:hecho|listo|terminado|encontrado)\b"
+    r"\b(?:hecho|listo|terminado|encontrado)\b|"
+    r"\b(?:esta|estao|ja esta|ja estao)\s+"
+    r"(?:aberto|aberta|pronto|pronta|feito|feita|guardado|guardada|"
+    r"enviado|enviada|ativado|ativada|ligado|ligada|desligado|desligada)\b|"
+    r"\b(?:tenho|ja tenho)\s+(?:\w+\s+){0,3}"
+    r"(?:aberto|feito|guardado|enviado|encontrado|verificado|terminado)\b|"
+    r"\b(?:abri|fiz|guardei|enviei|mandei|encontrei|verifiquei|terminei|"
+    r"liguei|desliguei|ativei|desativei|pus|feito|concluido)\b"
     r")"
 )
 
@@ -1050,6 +1257,11 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "La búsqueda sigue en marcha.",
             "La consulta en línea necesita un momento más.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Ainda estou a pesquisar.",
+            "A pesquisa ainda está a decorrer.",
+            "A pesquisa online precisa de mais um momento.",
+        ),
     },
     ToolActivity.READ: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1066,6 +1278,11 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "Sigo leyendo tus registros.",
             "Todavía lo estoy revisando.",
             "Sigo con ello, un momento.",
+        ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Ainda estou a ler os teus registos.",
+            "Ainda estou a ver isso.",
+            "Continuo a ler, um momento.",
         ),
     },
     ToolActivity.SCREEN: {
@@ -1084,6 +1301,11 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "El paso en pantalla sigue en marcha.",
             "Un momento más en la pantalla.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Ainda estou a tratar do ecrã.",
+            "O passo no ecrã ainda está a decorrer.",
+            "Mais um momento no ecrã.",
+        ),
     },
     ToolActivity.OTHER: {
         "de": (  # i18n-allow: localized runtime voice output
@@ -1101,9 +1323,14 @@ _PROGRESS_POOLS: dict[ToolActivity, dict[str, tuple[str, ...]]] = {
             "Un momento más.",
             "Ya casi está.",
         ),
+        "pt": (  # i18n-allow: localized runtime voice output
+            "Ainda estou a tratar disso.",
+            "Mais um momento.",
+            "Está quase.",
+        ),
     },
     # HANDOVER: no line of its own — the spawn reply states the handover.
-    ToolActivity.HANDOVER: {"de": (), "en": (), "es": ()},
+    ToolActivity.HANDOVER: {"de": (), "en": (), "es": (), "pt": ()},
 }
 
 _RECENT_PROGRESS: dict[tuple[ToolActivity, str], deque[str]] = {}
@@ -1231,7 +1458,9 @@ def start_chat_instant_ack(
 #: after the result, so a slow provider simply costs the ack, never the turn.
 CONTEXTUAL_BUDGET_MS = 700
 
-_LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
+_LANGUAGE_NAMES = {
+    "de": "German", "en": "English", "es": "Spanish", "pt": "European Portuguese",
+}
 
 
 def language_name(language: str) -> str:

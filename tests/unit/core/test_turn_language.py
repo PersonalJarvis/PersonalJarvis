@@ -488,3 +488,142 @@ def test_output_language_validator_keeps_unknown_target_non_blocking() -> None:
     assert result.status == "indeterminate"
     assert result.resolved_language == "unknown"
     assert result.should_block is False
+
+
+# ---------------------------------------------------------------------------
+# European Portuguese ("pt"): Portuguese shares accents and many function words
+# with Spanish, so only distinctive words and characters may decide it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tag", "expected"),
+    [
+        ("portuguese", "pt"),
+        ("Portuguese", "pt"),
+        ("pt", "pt"),
+        ("pt-PT", "pt"),
+        ("pt_BR", "pt"),
+        ("por", "pt"),
+        ("português", "pt"),
+    ],
+)
+def test_normalize_portuguese_tags(tag: str, expected: str) -> None:
+    assert normalize_language_tag(tag) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Olá, podes abrir o ficheiro no ecrã?", "pt"),
+        ("Obrigado, isso está muito bom.", "pt"),
+        ("Hoje está muito calor e eu vou à praia.", "pt"),
+        ("Eu quero saber o tempo para amanhã em Lisboa", "pt"),
+        # Typed without accents.
+        ("Nao sei, voce pode fazer isso agora?", "pt"),
+        ("Está bem", "pt"),
+        # Spanish, German and English stay where they were.
+        ("¿Qué tiempo hace mañana en Madrid?", "es"),
+        ("Hola, puedes abrir el archivo por favor", "es"),
+        ("Gracias, eso está muy bien", "es"),
+        ("Está bien", "es"),
+        ("Kümmere dich um das Update", "de"),  # i18n-allow: German voice fixture
+        ("Wie ist das Wetter morgen?", "de"),  # i18n-allow: German voice fixture
+        ("What is the weather like today?", "en"),
+        ("open google.com please", "en"),
+    ],
+)
+def test_detect_portuguese_without_stealing_other_languages(
+    text: str, expected: str,
+) -> None:
+    assert detect_text_language(text) == expected
+
+
+def test_portuguese_and_spanish_token_sets_are_disjoint() -> None:
+    from jarvis.core import turn_language
+
+    sets = dict(turn_language._SETS)
+    codes = sorted(sets)
+    for i, first in enumerate(codes):
+        for second in codes[i + 1:]:
+            assert not sets[first] & sets[second], (first, second)
+
+
+def test_portuguese_pin_wins() -> None:
+    assert resolve_output_language(
+        "pt", "german", "Wie ist das Wetter?",  # i18n-allow: German voice fixture
+    ) == "pt"
+    assert resolve_output_language(" PT ", None, "What time is it?") == "pt"
+
+
+@pytest.mark.parametrize("previous", ["de", "en", "es"])
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Responde em português", "pt"),
+        ("Fala português, por favor.", "pt"),
+        ("Podes falar em português?", "pt"),
+        ("Escreve sempre em português", "pt"),
+        ("Please speak Portuguese.", "pt"),
+        ("Antworte bitte auf Portugiesisch", "pt"),  # i18n-allow: spoken correction
+        ("Habla en portugués", "pt"),
+        ("Responde em inglês", "en"),
+        ("Fala alemão", "de"),
+        ("Muda para espanhol", "es"),
+    ],
+)
+def test_portuguese_language_request(previous: str, text: str, expected: str) -> None:
+    assert detect_language_request(text) == expected
+    assert resolve_output_language(
+        "auto", "es", text, conversation_language=previous,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Não fales em português", "Traduz isto para português: hello", "português"],
+)
+def test_portuguese_mentions_are_not_explicit_corrections(text: str) -> None:
+    assert detect_language_request(text) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hoje o tempo está muito bom e eu vou abrir o ficheiro agora.",
+        "Não consegui encontrar isso, mas já estou a procurar outra vez.",
+    ],
+)
+def test_output_language_validator_accepts_portuguese_under_pt_pin(text: str) -> None:
+    result = validate_output_language(text, resolved_language="pt")
+
+    assert result.status == "match"
+    assert result.detected_language == "pt"
+    assert result.should_block is False
+
+
+@pytest.mark.parametrize(
+    ("text", "detected_language"),
+    [
+        ("Hoy el tiempo está muy bien y quiero saber más del clima.", "es"),
+        ("The answer is in the wrong language and should not be spoken.", "en"),
+    ],
+)
+def test_output_language_validator_flags_wrong_language_under_pt_pin(
+    text: str, detected_language: str,
+) -> None:
+    result = validate_output_language(text, resolved_language="pt")
+
+    assert result.status == "mismatch"
+    assert result.detected_language == detected_language
+    assert result.should_block is True
+
+
+def test_output_language_validator_flags_portuguese_under_es_pin() -> None:
+    result = validate_output_language(
+        "Não consegui encontrar isso, mas já estou a procurar outra vez.",
+        resolved_language="es",
+    )
+
+    assert result.status == "mismatch"
+    assert result.detected_language == "pt"

@@ -74,6 +74,14 @@ from jarvis.screen_context.models import VisualIntent
         "haz una captura de pantalla",
         "analiza esta captura de pantalla",
         "que ves en mi monitor",
+        # -- European Portuguese
+        "Vê o meu ecrã.",
+        "O que está no ecrã?",
+        "Consegues ver isto?",
+        "Dá uma vista de olhos.",
+        "Tira-me uma captura de ecrã.",
+        "O que diz aí?",
+        "Lê a mensagem de erro",
     ],
 )
 def test_unambiguous_requests_capture(utterance: str) -> None:
@@ -100,6 +108,10 @@ def test_unambiguous_requests_capture(utterance: str) -> None:
         "Bitte den Knopf auf meinem Bildschirm anklicken",  # i18n-allow: DE input
         "Schau dir das an und scrolle dann nach unten",  # i18n-allow: DE input
         "pulsa el botón en mi pantalla",
+        "Clica no botão no meu ecrã",
+        "Fecha esta janela.",
+        "Abre esta página no meu ecrã",
+        "Explica o que está no meu ecrã e depois fecha a janela.",
         "Explain this, then close the window.",
     ],
 )
@@ -214,6 +226,7 @@ def test_past_actions_and_action_advice_never_drive_the_desktop(utterance: str) 
         "schau dir dieses Fenster an",
         "was steht da in diesem Dialog?",
         "mira esta ventana",
+        "Olha para esta janela",
     ],
 )
 def test_window_scope_is_detected(utterance: str) -> None:
@@ -232,6 +245,8 @@ def test_window_scope_is_detected(utterance: str) -> None:
         "kannst du das mal prüfen?",  # i18n-allow: DE input
         "que es esto?",
         "puedes revisar?",
+        "O que é isto?",
+        "podes verificar?",
     ],
 )
 def test_weak_signals_ask_instead_of_capturing(utterance: str) -> None:
@@ -291,6 +306,10 @@ def test_weak_signals_ask_instead_of_capturing(utterance: str) -> None:
         "schauen wir mal",
         "ya veo, gracias",
         "vamos a ver que pasa",
+        "Qual é a capital de Portugal?",
+        "Vamos lá ver o que acontece",
+        "Estou a ver, obrigado",
+        "Dá uma vista de olhos aos preços dos voos",
     ],
 )
 def test_non_visual_turns_are_left_alone(utterance: str) -> None:
@@ -308,6 +327,8 @@ def test_non_visual_turns_are_left_alone(utterance: str) -> None:
         "Wie kann ich dir meinen Bildschirm zeigen?",  # i18n-allow: DE input
         "Was passiert, wenn ich Screenshot sage?",  # i18n-allow: DE input
         "Como puedes ver mi pantalla?",  # i18n-allow: ES input
+        "Como podes ver o meu ecrã?",
+        "Como é que posso fazer uma captura de ecrã?",
     ],
 )
 def test_product_questions_are_not_capture_consent(utterance: str) -> None:
@@ -352,3 +373,4 @@ def test_clarifying_question_falls_back_for_an_unknown_locale() -> None:
 def test_clarifying_question_accepts_a_full_bcp47_tag() -> None:
     assert clarifying_question("de-DE") == clarifying_question("de")
     assert clarifying_question("es_ES") == clarifying_question("es")
+    assert clarifying_question("pt-PT") == clarifying_question("pt") != clarifying_question("en")

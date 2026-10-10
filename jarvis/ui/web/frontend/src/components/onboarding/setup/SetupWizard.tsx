@@ -27,11 +27,17 @@ import { QuietAction } from "../ui";
 import { ConnectStep } from "./ConnectStep";
 import { WIZARD_STEP_IDS, type WizardStepId } from "./setupSteps";
 
-const LANGS: UiLanguage[] = ["en", "de", "es", "zh"];
+const LANGS: UiLanguage[] = ["en", "de", "es", "zh", "pt"];
 // Each language names itself, so a reader finds theirs before they can read
 // the rest of the window. Latin-script codes read fine as letters; Chinese
 // readers look for the characters.
-const LANG_SWITCH_LABEL: Record<UiLanguage, string> = { en: "EN", de: "DE", es: "ES", zh: "中文" };
+const LANG_SWITCH_LABEL: Record<UiLanguage, string> = {
+  en: "EN",
+  de: "DE",
+  es: "ES",
+  zh: "中文",
+  pt: "PT",
+};
 
 export function SetupWizard({
   step,

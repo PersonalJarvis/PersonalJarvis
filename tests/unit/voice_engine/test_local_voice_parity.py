@@ -47,7 +47,7 @@ def test_typescript_mirrors_python(ts_name: str, python_values: tuple[str, ...])
     assert _ts_tuple(ts_name) == tuple(python_values)
 
 
-@pytest.mark.parametrize("locale", ["en", "de", "es"])
+@pytest.mark.parametrize("locale", ["en", "de", "es", "pt"])
 def test_every_rendered_value_has_a_label(locale: str) -> None:
     view = json.loads((LOCALES / f"{locale}.json").read_text(encoding="utf-8"))["apikeys_view"]
     needed = (
@@ -67,6 +67,6 @@ def test_locales_carry_the_same_local_voice_keys() -> None:
             k for k in json.loads((LOCALES / f"{locale}.json").read_text(encoding="utf-8"))
             ["apikeys_view"] if k.startswith("local_voice_")
         }
-        for locale in ("en", "de", "es")
+        for locale in ("en", "de", "es", "pt")
     }
-    assert keys["de"] == keys["en"] == keys["es"]
+    assert keys["de"] == keys["en"] == keys["es"] == keys["pt"]

@@ -122,8 +122,8 @@ def contains_end_signal(text: str | None) -> bool:
 # Gratitude alone is not closing intent, and neither is the assistant saying
 # that it has completed the requested work.
 _SEMANTIC_CLOSING_RE = re.compile(
-    r"\s*(?:(?:okay|ok|thanks|thank you|danke|gracias)[\s,.!]+)*"  # i18n-allow
-    r"(?:(?:i think|i guess|ich glaube|ich denke|creo que)[\s,]+)?"  # i18n-allow
+    r"\s*(?:(?:okay|ok|thanks|thank you|danke|gracias|obrigad[oa])[\s,.!]+)*"  # i18n-allow
+    r"(?:(?:i think|i guess|ich glaube|ich denke|creo que|acho que)[\s,]+)?"  # i18n-allow
     r"(?:"
     r"(?:we are|we're|i am|i'm) (?:done|finished)(?: (?:here|for now|for today))?"
     r"|(?:that is|that's|that was) all(?: (?:for now|for today|i needed))?"
@@ -138,8 +138,11 @@ _SEMANTIC_CLOSING_RE = re.compile(
     r"|eso es todo(?: por (?:ahora|hoy))?|hemos terminado|ya terminamos"
     r"|no necesito nada más|no tengo más preguntas|me tengo que ir"
     r"|cuelga|adiós|adios|hasta luego"
+    r"|é tudo(?: por (?:agora|hoje))?|já terminámos|terminámos"  # i18n-allow
+    r"|não preciso de mais nada|não tenho mais perguntas|tenho de ir"  # i18n-allow
+    r"|desliga|adeus|até logo|até já|tchau"  # i18n-allow
     r")"
-    r"(?:[\s,.!]+(?:thanks|thank you|danke|gracias|jarvis))*[\s.!]*",  # i18n-allow
+    r"(?:[\s,.!]+(?:thanks|thank you|danke|gracias|obrigad[oa]|jarvis))*[\s.!]*",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -164,9 +167,9 @@ def user_asked_to_hang_up(user_text: str | None) -> bool:
 
 
 _CONFIRM_HANGUP_RE = re.compile(
-    r"\A\s*(?:yes|yeah|yep|ja|sí|si)"  # i18n-allow
+    r"\A\s*(?:yes|yeah|yep|ja|sí|si|sim)"  # i18n-allow
     r"(?:[\s,]+(?:please|bitte|por favor|hang up|end the call|"  # i18n-allow
-    r"auflegen|leg auf|beende das gespräch|cuelga))*[\s.!]*\Z",  # i18n-allow
+    r"auflegen|leg auf|beende das gespräch|cuelga|desliga))*[\s.!]*\Z",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -181,6 +184,7 @@ def hangup_confirmation_question(language: str) -> str:
     return {
         "de": "Möchtest du wirklich auflegen?",  # i18n-allow
         "es": "¿De verdad quieres colgar?",
+        "pt": "Queres mesmo desligar?",  # i18n-allow
     }.get(language.split("-")[0].lower(), "Do you really want to hang up?")
 
 
@@ -188,6 +192,7 @@ def hangup_cancelled_reply(language: str) -> str:
     return {
         "de": "Okay, ich bleibe dran.",  # i18n-allow
         "es": "Vale, seguimos hablando.",
+        "pt": "Ok, continuamos a falar.",  # i18n-allow
     }.get(language.split("-")[0].lower(), "Okay, I'll stay on the call.")
 
 
@@ -227,7 +232,7 @@ class HangupConfirmation:
             if confirms_hangup(text):
                 return "confirmed"
             if re.fullmatch(
-                r"\A\s*(?:no|nope|nein|cancel|abbrechen)[\s.!]*\Z",  # i18n-allow
+                r"\A\s*(?:no|nope|nein|cancel|abbrechen|não|nao|cancela)[\s.!]*\Z",  # i18n-allow
                 text, re.I,
             ):
                 return "cancelled"

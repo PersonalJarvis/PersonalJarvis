@@ -34,36 +34,42 @@ NOTICE_LABELS: dict[str, dict[str, str]] = {
         "de": "Aufgabe erledigt",  # i18n-allow
         "es": "Tarea hecha",  # i18n-allow
         "zh": "任务已完成",  # i18n-allow
+        "pt": "Tarefa concluída",  # i18n-allow
     },
     "task_failed": {
         "en": "Task failed",
         "de": "Aufgabe fehlgeschlagen",  # i18n-allow
         "es": "La tarea falló",  # i18n-allow
         "zh": "任务失败",  # i18n-allow
+        "pt": "A tarefa falhou",  # i18n-allow
     },
     "result_ready": {
         "en": "{name} is done",
         "de": "{name} ist fertig",  # i18n-allow
         "es": "{name} terminó",  # i18n-allow
         "zh": "{name} 已完成",  # i18n-allow
+        "pt": "{name} terminou",  # i18n-allow
     },
     "result_failed": {
         "en": "{name} failed",
         "de": "{name} ist gescheitert",  # i18n-allow
         "es": "{name} falló",  # i18n-allow
         "zh": "{name} 失败了",  # i18n-allow
+        "pt": "{name} falhou",  # i18n-allow
     },
     "agent": {
         "en": "The agent",
         "de": "Der Agent",  # i18n-allow
         "es": "El agente",  # i18n-allow
         "zh": "智能体",  # i18n-allow
+        "pt": "O agente",  # i18n-allow
     },
     "no_answer": {
         "en": "Jarvis could not answer",
         "de": "Jarvis konnte nicht antworten",  # i18n-allow
         "es": "Jarvis no pudo responder",  # i18n-allow
         "zh": "Jarvis 无法回答",  # i18n-allow
+        "pt": "O Jarvis não conseguiu responder",  # i18n-allow
     },
 }
 

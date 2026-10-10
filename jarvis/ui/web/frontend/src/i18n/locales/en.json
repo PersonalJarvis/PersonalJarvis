@@ -3542,13 +3542,18 @@
       "zh": {
         "label": "中文 (Chinese)",
         "description": "Use Simplified Chinese for every label and button."
+      },
+      "pt": {
+        "label": "Português (Portugal)",
+        "description": "Use European Portuguese for every label and button."
       }
     },
     "reply_options": {
       "auto": "{name} mirrors whichever language you speak or type.",
       "en": "{name} answers in English.",
       "de": "{name} antwortet auf Deutsch.",
-      "es": "{name} responde en español."
+      "es": "{name} responde en español.",
+      "pt": "{name} responde em português."
     },
     "stt_options": {
       "auto": "Detect the language you speak automatically.",
