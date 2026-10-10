@@ -79,6 +79,10 @@ _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
 _WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
+#: Quiet polls in a row, each after a durable read, that the chat must report no
+#: running turn before the watcher stops waiting for a terminal event. Two, so a
+#: turn that ends between the read and the check is still read on the next poll.
+_WATCH_GONE_POLLS: Final[int] = 2
 
 _current: SocietyRuntime | None = None
 
@@ -91,6 +95,18 @@ def current_runtime() -> SocietyRuntime | None:
 def set_current_runtime(runtime: SocietyRuntime | None) -> None:
     global _current  # noqa: PLW0603 - one process, one society
     _current = runtime
+
+
+def _turn_alive(svc: Any, session_id: str) -> bool:
+    """Whether the chat still runs a turn here; unknown counts as alive."""
+    is_running = getattr(svc, "is_running", None)
+    if not callable(is_running):
+        return True
+    try:
+        return bool(is_running(session_id))
+    except Exception:  # noqa: BLE001 - an unanswerable probe must not end a live turn
+        log.debug("society: turn liveness probe failed for %s", session_id, exc_info=True)
+        return True
 
 
 def _agent_frame(agent: AgentRecord, task: str) -> str:
@@ -870,13 +886,28 @@ class SocietyRuntime:
         used_browser = False
         last_seq = 0
         read_failures = 0
+        gone_polls = 0
+        polled = False
         quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
+                if polled:
+                    # A quiet poll found no terminal event. A turn whose task has
+                    # ended without writing one (a runner that returned early, a
+                    # failed final write) would otherwise hold this agent's slot
+                    # and Jarvis's report forever.
+                    polled = False
+                    gone_polls = 0 if _turn_alive(svc, session_id) else gone_polls + 1
+                    if gone_polls >= _WATCH_GONE_POLLS:
+                        status = "blocked"
+                        error = "The agent's turn ended without reporting a result."
+                        log.warning("society: %s ended without a terminal event", run_id)
+                        break
                 try:
                     events = [
                         await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
                     ]
+                    gone_polls = 0
                 except TimeoutError:
                     # The service drops a subscriber whose queue overflows. Its
                     # events remain durable, so recover the missing terminal.
@@ -884,6 +915,7 @@ class SocietyRuntime:
                         events = await asyncio.to_thread(
                             svc.store.list_events, session_id, after_seq=last_seq
                         )
+                        polled = True
                     except Exception:  # noqa: BLE001 - a broken chat store must release the slot
                         read_failures += 1
                         log.warning(

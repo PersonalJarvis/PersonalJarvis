@@ -16131,3 +16131,44 @@ does (`tests/unit/speech/conftest.py`), so a developer's real key no longer
 flips desktop-path tests. Guards: `tests/unit/realtime/test_factory.py`,
 `tests/unit/web/test_voice_mode_route.py`,
 `tests/unit/speech/test_realtime_mode.py`.
+
+## BUG-233: a delegated job's answer never came back, or came back as "has stopped" (HIGH, FIXED 2026-10-02)
+
+**Symptom.** Jarvis handed a coding task to an IDE pane or an agent and said
+it would report back. Then it either said only "Codex has stopped." without
+the answer, read out raw terminal rows, or said nothing at all. An agent in
+the society could also stay "busy" for good, refusing every later task.
+
+**Cause.** Five gaps between "the work finished" and "Jarvis answers":
+
+1. `agentic_ide/followthrough.py` compared the newest recorded user turn to
+   the sent prompt byte for byte. The transcript reader joins a CLI's own
+   preamble records into the first prompt (Codex's AGENTS.md and environment
+   context), strips tag-shaped text such as `<div>`, and keeps only both ends
+   of a long block, so those prompts never matched. A stop seen before a
+   Codex pane's session file was found (up to 21.5 s after its first prompt)
+   was reported at once, without the answer.
+2. Enter on the agent's permission dialog counted as a new instruction and
+   ended the receipt; a dialog answer sent by Jarvis replaced the task prompt
+   with the choice ("1"), which is never recorded as a user turn.
+3. "Would you like me to commit it?" at the end of a finished answer read as
+   a question, and the readback used the terminal's bottom rows.
+4. `society/runtime.py::_watch_turn` waited for `turn_finished` with no
+   other way out, so a turn that ended without one held the agent's slot.
+5. The chat's approval card stayed open after the executor's ticket expired
+   or was answered elsewhere; a late click showed "approved".
+
+**Fix.** (1) `answers_prompt` runs the prompt through the reader's own filter
+and requires it to end the recorded turn; a stop without an answer yet is
+held for `REPORT_GRACE_S` (30 s). (2) `answered_in_pane` and
+`prepare(answering=True)` keep the task prompt across a dialog answer.
+(3) `activity.DIALOG_FRAGMENTS` separates a CLI dialog from prose; only a
+dialog uses the screen. (4) Two quiet polls with no running turn end the run
+as blocked. (5) `ChatApprovalBridge` cancels a card whose ticket was settled
+elsewhere, and the cancelled card emits `approval_resolved` "cancel".
+Guards: `tests/unit/agentic_ide/test_followthrough.py`,
+`tests/unit/agentic_ide/test_prompt_submit.py` (delegated follow-through),
+`tests/unit/society/test_chat_binding.py::test_turn_that_ends_without_a_terminal_event_releases_the_slot`,
+`tests/unit/agent_chat/test_approval_bridge.py::test_an_expired_ticket_closes_its_card`.
+
+**Status 2026-10-07.** Parts 1 to 3 were later solved differently on main (#448 reads the native event timeline and keeps completion pending until the report is readable); the dialog-answer and closing-question handling (2, 3) still needs a port onto that design. Parts 4 and 5 shipped with this entry.

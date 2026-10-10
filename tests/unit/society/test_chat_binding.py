@@ -1199,6 +1199,49 @@ async def test_lost_subscriber_recovers_the_durable_turn_result(tmp_path: Path, 
         await rt.close()
 
 
+async def test_turn_that_ends_without_a_terminal_event_releases_the_slot(
+    tmp_path: Path, monkeypatch
+):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+    from jarvis.agent_chat.events import make_event
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.01)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(
+            from_agent="user", to_agent="scout", text="Find the answer", msg_type=MsgType.ASSIGN
+        )
+        svc.busy.add("society:scout")  # The turn is running...
+        for q in svc.queues["society:scout"]:
+            q.put_nowait(make_event("assistant_text", {"turn_id": "turn-1", "text": "Halfway."}))
+        await asyncio.sleep(0.08)
+        thread = await rt.store.events_for_trace(env.trace_id)
+        assert thread[-1].msg_type is MsgType.CLAIM, "a live turn is waited for, however quiet"
+        svc.busy.discard("society:scout")  # ...and its task ends without turn_finished.
+        for _ in range(50):
+            thread = await rt.store.events_for_trace(env.trace_id)
+            if thread[-1].msg_type is MsgType.RESULT:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("watcher kept waiting for a turn that no longer runs")
+        assert thread[-1].payload["status"] == "blocked"
+        assert thread[-1].payload["open"] == [
+            "The agent's turn ended without reporting a result."
+        ]
+        assert rt.scheduler.running == {}
+    finally:
+        await rt.close()
+
+
 async def test_durable_read_failure_releases_the_agent_slot(tmp_path: Path, monkeypatch):
     import asyncio
 

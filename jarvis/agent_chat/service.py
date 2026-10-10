@@ -2006,6 +2006,21 @@ class AgentChatService:
         )
         try:
             decision = await fut
+        except asyncio.CancelledError:
+            # Nobody will answer this card any more (the ticket expired or was
+            # decided elsewhere, or the turn stopped). Close it, so it cannot
+            # take a click that would no longer reach anything.
+            try:
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "approval_resolved",
+                        {"turn_id": turn_id, "approval_id": approval_id, "decision": "cancel"},
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — the cancellation must still propagate
+                log.warning("agent chat: could not close approval card %s", approval_id)
+            raise
         finally:
             self._approvals.pop(approval_id, None)
             self._approval_session.pop(approval_id, None)
