@@ -147,6 +147,12 @@ class EventLoopWatchdog:
 
             if silent_for < self._stall_s:
                 continue
+            # A wedged loop is still running inside one callback. A loop that
+            # is stopping or not started yet runs nothing, which is no stall.
+            if self._loop.is_closed():
+                return
+            if not self._loop.is_running():
+                continue
             now = time.monotonic()
             if reported_at is not None and now - reported_at < self._repeat_s:
                 continue
